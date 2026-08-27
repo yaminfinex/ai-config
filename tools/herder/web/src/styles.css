@@ -113,6 +113,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .agent-header { display: flex; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); }
 .agent-name { overflow: hidden; font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .agent-status { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.agent-vitals { display: flex; min-width: 0; gap: 8px; overflow: hidden; color: var(--purple); font: 10px var(--mono); }
+.agent-vitals > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
 .detail-toggle { display: flex; padding: 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); }
 .detail-toggle button { padding: 2px 7px; border: 0; background: transparent; color: var(--dim); font-size: 10px; }

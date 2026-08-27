@@ -44,6 +44,7 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
     clearInterval: (() => undefined) as typeof window.clearInterval,
   }
   await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ sessionId: 's', window: { mode: 'tail', from: 0, limit: 500 } }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
   const stop = subscribeToFleet(queryClient, ['vile', 'vile'], () => {
     const source = new FakeEventSource()
     sources.push(source)
@@ -58,6 +59,7 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   sources[0].emit('entry:vile')
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
   stop()
   assert.equal(sources[0].closed, true)
 })

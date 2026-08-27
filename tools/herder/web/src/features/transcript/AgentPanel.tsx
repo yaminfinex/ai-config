@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getAgent, queryKeys } from '../../api/client'
 import { entriesQueryOptions } from '../../api/queries'
 import { Banner, gapLabel } from '../../shared/presentation'
+import { agentVitalsPresentation } from '../../shared/agentVitals'
 import { Composer } from '../composer/Composer'
 import { TranscriptEntries } from './TranscriptEntries'
 
@@ -44,10 +45,11 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly }: { n
   </main>
 
   const agent = agentQuery.data
+  const vitals = agent ? agentVitalsPresentation(agent) : []
   return <main className="agent-page">
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
-      {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {liveStatus !== '-' ? liveStatus : agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span></>}
+      {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {liveStatus !== '-' ? liveStatus : agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span>{vitals.length > 0 && <span className="agent-vitals">{vitals.map((vital, index) => <span key={`${index}:${vital}`}>{vital}</span>)}</span>}</>}
       <div className="agent-actions"><label className="system-toggle"><Checkbox.Root checked={showSystem} onCheckedChange={setShowSystem}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> show system entries</label><span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span></div>
     </header>
     {agentQuery.error && <Banner source="agent" detail={agentQuery.error.message} />}

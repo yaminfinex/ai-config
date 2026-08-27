@@ -129,7 +129,7 @@ mkdir -p "$ROOT/home/.claude/projects/-invented-violet"
 session_path="$ROOT/home/.claude/projects/-invented-violet/73100000-0000-4000-8000-000000000731.jsonl"
 cat >"$session_path" <<'SESSION'
 {"type":"user","uuid":"invented-web-human","timestamp":"2026-01-02T03:04:05.000Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Invented web endpoint prompt."}}
-{"type":"assistant","uuid":"invented-web-answer","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Invented web endpoint answer."}]}}
+{"type":"assistant","uuid":"invented-web-answer","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","model":"invented-claude-model","content":[{"type":"text","text":"Invented web endpoint answer."}],"usage":{"input_tokens":11,"cache_creation_input_tokens":101,"cache_read_input_tokens":1009,"output_tokens":19}}}
 SESSION
 
 socket="$ROOT/herdr.sock"
@@ -204,6 +204,7 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   ! grep -qF 'exchange:' "$ROOT/app.js" &&
   grep -qF '/entries' "$ROOT/app.js" &&
   grep -qF 'nextOffset' "$ROOT/app.js" &&
+  grep -qF '% left' "$ROOT/app.js" &&
   grep -qF 'show system entries' "$ROOT/app.js" &&
   grep -qF 'react-markdown' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'remark-gfm' "$WEB_ROOT/package-lock.json" &&
@@ -230,6 +231,24 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   pass "serve delivers built shell/sidebar with keyboard activation, unseen-workspace expansion, viewer layout persistence, valid tree levels, board/agent routes, and direct SPA navigation"
 else
   bad "embedded UI" "index=$(cat "$ROOT/index.html" 2>/dev/null || true)"
+fi
+
+if curl -fsS "http://127.0.0.1:$port/api/agents/vile" >"$ROOT/vitals.json" && python3 - "$ROOT/vitals.json" <<'PY'
+import json, sys
+agent = json.load(open(sys.argv[1]))
+assert agent["model"] == "invented-claude-model"
+assert agent["context_usage"] == {
+    "used_tokens": 1121,
+    "input_tokens": 11,
+    "cache_creation_input_tokens": 101,
+    "cache_read_input_tokens": 1009,
+    "output_tokens": 19,
+}
+PY
+then
+  pass "agent detail derives latest Claude model and raw context usage without a guessed window"
+else
+  bad "agent vitals detail" "body=$(cat "$ROOT/vitals.json" 2>/dev/null || true)"
 fi
 
 if python3 - "$ROOT/fleet.json" <<'PY'
@@ -384,7 +403,7 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   grep -qF 'event: fleet' "$ROOT/events.out" 2>/dev/null && break
   sleep 0.05
 done
-printf '%s\n' '{"type":"assistant","uuid":"invented-live-answer","timestamp":"2026-01-02T03:04:07.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Invented live endpoint answer."}]}}' >>"$session_path"
+printf '%s\n' '{"type":"assistant","uuid":"invented-live-answer","timestamp":"2026-01-02T03:04:07.000Z","message":{"role":"assistant","model":"invented-claude-model-latest","content":[{"type":"text","text":"Invented live endpoint answer."}],"usage":{"input_tokens":13,"cache_creation_input_tokens":103,"cache_read_input_tokens":1013,"output_tokens":23}}}' >>"$session_path"
 for _ in {1..80}; do
   grep -qF 'event: entry:vile' "$ROOT/events.out" 2>/dev/null && break
   sleep 0.05
@@ -397,6 +416,20 @@ if grep -qF 'event: fleet' <<<"$events" && grep -qF '"worktree_of":"w1"' <<<"$ev
   pass "multiplexed events SSE live-tails an endpoint-shaped immutable entry beside fleet and hcom events"
 else
   bad "events SSE frames" "frames=$events stderr=$(cat "$ROOT/events.err")"
+fi
+
+if curl -fsS "http://127.0.0.1:$port/api/agents/vile" >"$ROOT/vitals-live.json" && python3 - "$ROOT/vitals-live.json" <<'PY'
+import json, sys
+agent = json.load(open(sys.argv[1]))
+assert agent["model"] == "invented-claude-model-latest"
+assert agent["context_usage"]["used_tokens"] == 1129
+assert "window_tokens" not in agent["context_usage"]
+assert "used_percent" not in agent["context_usage"]
+PY
+then
+  pass "entry-cadence wake exposes moved model and context facts from the detail endpoint"
+else
+  bad "live agent vitals" "body=$(cat "$ROOT/vitals-live.json" 2>/dev/null || true)"
 fi
 
 kill "$socket_pid" 2>/dev/null || true
@@ -426,7 +459,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((17 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((19 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

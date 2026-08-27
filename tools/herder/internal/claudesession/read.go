@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"ai-config/tools/herder/internal/sessionjsonl"
 )
 
 const maxToolOutputBytes = 16 * 1024
@@ -43,7 +45,14 @@ type envelope struct {
 	} `json:"origin"`
 	Message struct {
 		Role    string          `json:"role"`
+		Model   string          `json:"model"`
 		Content json.RawMessage `json:"content"`
+		Usage   struct {
+			InputTokens              *int64 `json:"input_tokens"`
+			CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
+			OutputTokens             *int64 `json:"output_tokens"`
+		} `json:"usage"`
 	} `json:"message"`
 	Attachment struct {
 		Type    string          `json:"type"`
@@ -137,6 +146,51 @@ func read(path string, offset int64, limit int, keepTail bool) (ReadResult, erro
 		result.Entries = ordered
 	}
 	return result, nil
+}
+
+// ReadVitals scans complete session records and returns the latest entry that
+// carries each fact. It uses the same complete-line rule as transcript reads.
+func ReadVitals(path string) (Vitals, error) {
+	var vitals Vitals
+	err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
+		var facts Vitals
+		observeVitals(raw, &facts)
+		if vitals.Model == "" {
+			vitals.Model = facts.Model
+		}
+		if vitals.ContextUsage == nil {
+			vitals.ContextUsage = facts.ContextUsage
+		}
+		return vitals.Model == "" || vitals.ContextUsage == nil
+	})
+	return vitals, err
+}
+
+func observeVitals(raw []byte, vitals *Vitals) {
+	var env envelope
+	if json.Unmarshal(raw, &env) != nil || env.Type != "assistant" || env.IsSidechain {
+		return
+	}
+	if env.Message.Model != "" {
+		vitals.Model = env.Message.Model
+	}
+	usage := env.Message.Usage
+	if usage.InputTokens == nil {
+		return
+	}
+	used := *usage.InputTokens
+	if usage.CacheCreationInputTokens != nil {
+		used += *usage.CacheCreationInputTokens
+	}
+	if usage.CacheReadInputTokens != nil {
+		used += *usage.CacheReadInputTokens
+	}
+	vitals.ContextUsage = &ContextUsage{
+		UsedTokens: used, InputTokens: *usage.InputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		OutputTokens:             usage.OutputTokens,
+	}
 }
 
 // ReadTail returns the last limit renderable complete entries without keeping

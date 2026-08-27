@@ -49,6 +49,7 @@ type dependencies struct {
 	messages      func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
 	entryEnd      func(hcomidentity.Row) (int64, error)
 	entryTail     func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
+	agentVitals   func(hcomidentity.Row) (claudesession.Vitals, error)
 	sender        func(context.Context, string) (string, error)
 	send          func(context.Context, string, string, string) error
 	spawn         func(context.Context, []string) (webaction.Result, error)
@@ -58,18 +59,19 @@ type dependencies struct {
 }
 
 var liveDependencies = dependencies{
-	snapshot:  herdrcli.LiveSnapshot,
-	worktrees: herdrcli.WorktreeParents,
-	roster:    hcomidentity.List,
-	messages:  hcomevents.Subscribe,
-	entryEnd:  entryTailEnd,
-	entryTail: entryTail,
-	sender:    webidentity.Sender,
-	send:      hcommessage.SendRequest,
-	spawn:     webaction.Spawn,
-	poll:      PollCadence,
-	heartbeat: HeartbeatCadence,
-	listeners: liveListeners,
+	snapshot:    herdrcli.LiveSnapshot,
+	worktrees:   herdrcli.WorktreeParents,
+	roster:      hcomidentity.List,
+	messages:    hcomevents.Subscribe,
+	entryEnd:    entryTailEnd,
+	entryTail:   entryTail,
+	agentVitals: readAgentVitals,
+	sender:      webidentity.Sender,
+	send:        hcommessage.SendRequest,
+	spawn:       webaction.Spawn,
+	poll:        PollCadence,
+	heartbeat:   HeartbeatCadence,
+	listeners:   liveListeners,
 }
 
 type refusal struct {
@@ -101,15 +103,17 @@ type agentPane struct {
 }
 
 type agentDetail struct {
-	Name          string                     `json:"name"`
-	Tool          string                     `json:"tool"`
-	HerdrStatus   string                     `json:"herdr_status"`
-	BusStatus     string                     `json:"bus_status"`
-	Gap           string                     `json:"gap"`
-	Pane          *agentPane                 `json:"pane"`
-	Directory     string                     `json:"directory,omitempty"`
-	SessionID     string                     `json:"session_id,omitempty"`
-	LaunchContext hcomidentity.LaunchContext `json:"launch_context"`
+	Name          string                      `json:"name"`
+	Tool          string                      `json:"tool"`
+	HerdrStatus   string                      `json:"herdr_status"`
+	BusStatus     string                      `json:"bus_status"`
+	Gap           string                      `json:"gap"`
+	Pane          *agentPane                  `json:"pane"`
+	Directory     string                      `json:"directory,omitempty"`
+	SessionID     string                      `json:"session_id,omitempty"`
+	LaunchContext hcomidentity.LaunchContext  `json:"launch_context"`
+	Model         string                      `json:"model,omitempty"`
+	ContextUsage  *claudesession.ContextUsage `json:"context_usage,omitempty"`
 }
 
 type transcriptReset struct {
@@ -456,6 +460,12 @@ func readAgent(deps dependencies, name string) (agentDetail, error) {
 		Gap: "no visible pane", Directory: bus.Directory, SessionID: bus.SessionID,
 		LaunchContext: bus.LaunchContext,
 	}
+	vitals, err := deps.agentVitals(*bus)
+	if err != nil {
+		return agentDetail{}, err
+	}
+	result.Model = vitals.Model
+	result.ContextUsage = vitals.ContextUsage
 	resolvedPane := ""
 	for _, row := range fleetview.JoinRows(snapshot, roster) {
 		if row.Agent == name && row.BusStatus != "-" {

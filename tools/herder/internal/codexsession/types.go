@@ -6,16 +6,18 @@ import "ai-config/tools/herder/internal/claudesession"
 // model. Aliases make drift a compile-time failure while each package retains
 // its own resolver and rollout parser.
 type (
-	Kind        = claudesession.Kind
-	Quarantine  = claudesession.Quarantine
-	Entry       = claudesession.Entry
-	Stats       = claudesession.Stats
-	ReadResult  = claudesession.ReadResult
-	Cursor      = claudesession.Cursor
-	ResetReason = claudesession.ResetReason
-	Reset       = claudesession.Reset
-	TailResult  = claudesession.TailResult
-	PairedEntry = claudesession.PairedEntry
+	Kind         = claudesession.Kind
+	Quarantine   = claudesession.Quarantine
+	Entry        = claudesession.Entry
+	Stats        = claudesession.Stats
+	ReadResult   = claudesession.ReadResult
+	Cursor       = claudesession.Cursor
+	ResetReason  = claudesession.ResetReason
+	Reset        = claudesession.Reset
+	TailResult   = claudesession.TailResult
+	PairedEntry  = claudesession.PairedEntry
+	ContextUsage = claudesession.ContextUsage
+	Vitals       = claudesession.Vitals
 )
 
 const (

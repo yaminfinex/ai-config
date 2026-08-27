@@ -91,7 +91,10 @@ export function subscribeToFleet(
       touch()
       backoff = 500
       update((current) => ({ ...current, problems: without(current.problems, 'stream') }))
-      names.forEach((name) => void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true }))
+      names.forEach((name) => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+      })
     }
     events.onerror = () => scheduleReconnect('Live stream disconnected; reconnecting…')
     events.addEventListener('hello', (event) => {
@@ -124,10 +127,12 @@ export function subscribeToFleet(
       const { agent } = JSON.parse(event.data) as { agent: string }
       if (!names.includes(agent)) return
       void queryClient.resetQueries({ queryKey: queryKeys.entries(agent), exact: true })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agent(agent), exact: true })
     })
     names.forEach((name) => events?.addEventListener(`entry:${name}`, () => {
       touch()
       void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
     }))
   }
 

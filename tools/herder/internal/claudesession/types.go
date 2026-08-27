@@ -48,6 +48,26 @@ type Stats struct {
 	SidechainSkipped int `json:"sidechain_skipped"`
 }
 
+// ContextUsage is the latest context-bearing usage record in a session. The
+// optional source-specific fields stay absent rather than implying zero when a
+// tool does not report them.
+type ContextUsage struct {
+	UsedTokens               int64    `json:"used_tokens"`
+	InputTokens              int64    `json:"input_tokens"`
+	CachedInputTokens        *int64   `json:"cached_input_tokens,omitempty"`
+	CacheCreationInputTokens *int64   `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     *int64   `json:"cache_read_input_tokens,omitempty"`
+	OutputTokens             *int64   `json:"output_tokens,omitempty"`
+	WindowTokens             *int64   `json:"window_tokens,omitempty"`
+	UsedPercent              *float64 `json:"used_percent,omitempty"`
+}
+
+// Vitals contains the latest independently observed model and context facts.
+type Vitals struct {
+	Model        string        `json:"model,omitempty"`
+	ContextUsage *ContextUsage `json:"context_usage,omitempty"`
+}
+
 // ReadResult is one complete-lines-only read from a byte offset.
 type ReadResult struct {
 	Entries    []Entry `json:"entries"`
