@@ -268,7 +268,7 @@ endpoint plus multiplexed entry wake frames. Both legacy paths now receive the
 standard structured 404 unknown-endpoint refusal. This amendment records the
 conductor-authorized TASK-12 owner ruling of 2026-08-27.
 
-GET `/api/events?agents={comma-separated-bus-names}` (SSE)
+GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-herdr-pane-ids}` (SSE)
   The web shell's ONE multiplexed stream per page. `agents` is the
   de-duplicated set of open agent tabs (at most 100); changing the set
   rebuilds this one stream. An absent set subscribes only to fleet and
@@ -303,6 +303,53 @@ GET `/api/events?agents={comma-separated-bus-names}` (SSE)
   rebuilds if neither data nor heartbeat arrives for 45s. Its
   `reconnecting` indicator is present only while a rebuild is scheduled
   or in flight.
+
+  ### AMENDMENT (owner-rescoped, 2026-08-27) — read-only screens for non-agent terminal panes
+
+  Screen view is permitted as a read-only convenience for panes currently
+  reported by Herdr. Its product purpose is the panes the web could not
+  otherwise show: plain shells and other terminals with no agent claim. Agent
+  sessions keep the transcript as their record, and the client does not offer
+  a screen tab for agent-claimed panes. A watched plain pane may acquire an
+  agent without its already-open read-only screen being revoked; server scope
+  is live Herdr visibility, while client listing policy is non-agent-only.
+
+  `screens` is an independent, de-duplicated set of at most 100 exact Herdr
+  pane IDs whose screen tabs this page currently has open. It is not coupled to
+  `agents`. The server validates every requested ID against each current Herdr
+  snapshot and never accepts an arbitrary target. A pane absent from the live
+  snapshot is not read. Its `screen:{pane-id}` frame instead becomes
+  `{"pane_id":"...","status":"unavailable","text":"","truncated":false,"detail":"..."}`,
+  actively clearing any prior client snapshot.
+
+  Available frames replace the complete client snapshot:
+  `{"pane_id":"...","revision":731,"status":"available","text":"...","truncated":false}`.
+  They come only from Herdr's read-only `pane.read` RPC with `source=visible`,
+  `format=text`, and `strip_ansi=true`; plain ANSI-stripped text is deliberate
+  v1 scope. This is distinct from `hcom term`, which queries hcom's
+  bidirectional per-agent PTY inject port. The web server must never connect to,
+  proxy, or expose that inject port.
+
+  Herdr exposes no general terminal-output change subscription: its
+  subscribable `pane.updated` family tracks pane metadata/title changes, while
+  `pane.output_matched` is one-shot pattern matching rather than a screen wake.
+  Each SSE handler therefore polls only its requested-and-still-visible panes
+  every 250ms, suppresses unchanged text, and emits at most four frames per
+  second per pane. The existing 2s live-snapshot poll separately revalidates
+  pane IDs and reconciles disappearance and recovery. Unrequested and no-longer
+  visible pane IDs are filtered before any `pane.read`.
+  Frames are full snapshots rather than diffs: measured real visible panes
+  were 4,081 bytes median and 6,813 bytes maximum, so stateless replacement is
+  cheaper and safer than maintaining a reconnect-sensitive diff base.
+
+  The complete serialized SSE frame, including `event:`/`data:` framing, has a
+  hard 16,384-byte limit. The server measures final bytes and UTF-8-safely
+  truncates text when required, setting `truncated:true`. Screen frames never
+  enter transcript endpoints, transcript entries, or transcript serializers.
+  Opening or closing a screen tab rebuilds the existing single EventSource
+  with the new set; no second stream exists. The surface is a read-only `pre`
+  with no input, key handler, or write endpoint. The composer/bus remains the
+  only web typing path.
 
 ### AMENDMENT (owner-asked, 2026-08-27) — build identity handshake and manual refresh
 
@@ -488,19 +535,18 @@ outside this web API are unchanged.
 
 ## Explicitly absent (ruled)
 
-No WebSocket. No pane injection. No cull/kill. No resume or fork, no dead
+No WebSocket. No pane injection. No interactive screen input. No cull/kill. No resume or fork, no dead
 sessions, no sesh. No blank-form/global spawn, no new-workspace
 creation. No auth beyond the tailnet boundary. No server-side state.
-No screen view for AGENT sessions — the tailed transcript is the
-window.
+No client-offered screen view for agent-claimed panes — the tailed transcript
+is the agent window. Read-only screens for non-agent panes are the narrow
+exception defined by the 2026-08-27 amendment above.
 
-## Named candidate for a later unit (dated option, not scope)
+## Former candidate now ratified (2026-08-27)
 
-Non-agent terminal panes (plain shells — no transcript; the screen
-is their only content): read-only SNAPSHOT mirror, poll-on-view
-(capture-pane style, cheap), no live pty streaming. Owner sees
-"strong benefit... if cheap enough" (2026-08-25); explicitly NOT a
-v1 commitment.
+The former non-agent terminal-pane candidate is now the narrowly ratified
+read-only screen amendment above. It remains snapshot mirroring, never live PTY
+transport and never input.
 
 ## Build order inside the lane (ruled: existing sessions first)
 

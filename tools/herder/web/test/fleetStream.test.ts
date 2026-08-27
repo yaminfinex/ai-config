@@ -21,6 +21,7 @@ class FakeEventSource implements EventSourceLike {
 test('one stream URL de-duplicates and sorts every open agent', () => {
   assert.equal(eventStreamURL(['zeta', 'alpha', 'zeta']), '/api/events?agents=alpha%2Czeta')
   assert.equal(eventStreamURL([]), '/api/events')
+  assert.equal(eventStreamURL(['zeta'], ['w2:p9', 'w1:p1', 'w2:p9']), '/api/events?agents=zeta&screens=w1%3Ap1%2Cw2%3Ap9')
 })
 
 test('a changed reconnect build persistently requests a manual refresh', () => {
@@ -45,7 +46,7 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   }
   await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ sessionId: 's', window: { mode: 'tail', from: 0, limit: 500 } }) })
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
-  const stop = subscribeToFleet(queryClient, ['vile', 'vile'], () => {
+  const stop = subscribeToFleet(queryClient, ['vile', 'vile'], ['w1:p1'], () => {
     const source = new FakeEventSource()
     sources.push(source)
     return source
@@ -65,6 +66,10 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   sources[0].emit('message', JSON.stringify({ id: 731, from: 'web-owner', to: ['vile'], text: 'operator question' }))
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false }))
+  assert.deepEqual(queryClient.getQueryData(queryKeys.screen('w1:p1')), { pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false })
+  sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'unavailable', text: '', truncated: false, detail: 'pane closed' }))
+  assert.equal(queryClient.getQueryData<{ text: string }>(queryKeys.screen('w1:p1'))?.text, '')
   stop()
   assert.equal(sources[0].closed, true)
 })

@@ -48,6 +48,15 @@ export interface SubstrateEvent {
   detail?: string
 }
 
+export interface ScreenFrame {
+  pane_id: string
+  revision?: number
+  status: 'available' | 'unavailable'
+  text: string
+  truncated: boolean
+  detail?: string
+}
+
 export interface Refusal {
   error: string
   detail: string
