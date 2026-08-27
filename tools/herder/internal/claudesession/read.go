@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -23,7 +24,10 @@ var bookkeepingTypes = map[string]struct{}{
 	"worktree-state": {},
 }
 
-var hcomMessagePattern = regexp.MustCompile(`(?m)\[([^\]#]+?)\s+#(\d+)\]\s+(\S+)\s+→\s+(.+?):[ \t]+`)
+var (
+	hcomMessagePattern = regexp.MustCompile(`(?m)\[([^\]#]+?)\s+#(\d+)\]\s+(\S+)\s+→\s+(.+?):[ \t]+`)
+	hcomBatchPattern   = regexp.MustCompile(`^\[([0-9]+) new messages?\] \| `)
+)
 
 type envelope struct {
 	Type             string `json:"type"`
@@ -303,15 +307,24 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 }
 
 func hcomDeliveryBoundaries(body string) [][]int {
-	all := hcomMessagePattern.FindAllStringSubmatchIndex(body, -1)
-	matches := make([][]int, 0, len(all))
-	for _, match := range all {
-		start := match[0]
-		if start == 0 || start >= 3 && body[start-3:start] == " | " {
-			matches = append(matches, match)
+	matches := hcomMessagePattern.FindAllStringSubmatchIndex(body, -1)
+	if envelope := hcomBatchPattern.FindStringSubmatch(body); len(envelope) == 2 {
+		announced, err := strconv.Atoi(envelope[1])
+		if err == nil && announced >= 2 && len(matches) == announced {
+			return matches
 		}
+		// A count mismatch means at least one candidate boundary is not
+		// authenticated by the batch envelope. Preserve the complete body as
+		// one delivery instead of guessing which header-shaped text is forged.
+		return nil
 	}
-	return matches
+	// A non-batch attachment represents exactly one delivery. Its initial
+	// header can provide metadata, but header-shaped body text can never split
+	// it into additional deliveries.
+	if len(matches) > 0 && matches[0][0] == 0 {
+		return matches[:1]
+	}
+	return nil
 }
 
 func attachmentText(raw json.RawMessage) string {

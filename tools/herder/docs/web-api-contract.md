@@ -257,12 +257,14 @@ normalized message shape while preserving the replacement history. A textual
 compaction item takes precedence over the final retained message. Records with
 no visible replacement text remain honest rather than fabricating a summary.
 
-### AMENDMENT (conductor, 2026-08-27) — Claude delivery boundaries are explicit
+### AMENDMENT (conductor, 2026-08-27) — Claude batch envelopes authorize splits
 
-Within a Claude hcom attachment, a header-shaped substring starts a normalized
-delivery only at the beginning of the unwrapped body or after hcom's literal
-` | ` batch separator. Header-like text elsewhere in a message body remains
-part of that delivery's text and cannot create a forged extra card.
+A non-enveloped Claude hcom attachment always produces at most one normalized
+delivery; only its initial header supplies metadata, and header-shaped body text
+cannot split it. Multiple deliveries are projected only when hcom's leading
+`[N new messages]` batch envelope is present and the number of candidate
+delivery headers is exactly `N`. Any count mismatch preserves the complete
+unwrapped body as one delivery instead of guessing which boundary was forged.
 
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
