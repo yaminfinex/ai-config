@@ -195,6 +195,37 @@ GET `/api/agents/{bus-name}`
   preferences are both stored per agent in browser localStorage under separate
   `herder.web.*.v1:` keys; this is client-only state.
 
+  ### AMENDMENT (owner bug, conductor-acked, 2026-08-27) — retired agents retain read-only transcripts
+
+  Agent identity resolution is live-first: an exact live roster row always
+  wins when a name has been reused. When no live row exists, an exact retained
+  `hcom list --stopped <name>` record is server-authoritative retirement
+  evidence. Detail remains 200, carries `bus_status:"retired"`, no pane, and
+  uses only the tool, directory, immutable session identity, transcript path,
+  and session-derived facts that remain provable. `queued` is always omitted
+  for a retired agent: input not delivered before retirement can never become
+  deliverable, so an advancing queued age would be a false promise.
+
+  The canonical entries endpoint resolves a proven retired row through the
+  same immutable Claude/Codex resolver and continues serving the transcript
+  read-only. The existing single multiplexed EventSource likewise continues
+  checking that retained file without reporting retirement itself as a
+  substrate failure; no stream is added. `POST .../message` never targets the
+  stopped row and returns 409 `retired agent` with an honest read-only detail.
+
+  Retention is explicitly bounded by evidence, not promised forever: retired
+  resolution lasts only while both hcom's stopped-event history and the
+  immutable session file remain available. A session ID remembered by a
+  browser is not server-authoritative when the live and stopped records are
+  both absent and therefore never authorizes a read. In that nothing-provable
+  case detail and entries retain the structured 404, while the client renders
+  an honest tombstone inside the still-closable tab.
+
+  Every client error banner has an independent dismiss control. Closing an
+  agent tab also removes any `transcript:<name>` problem for the dropped
+  subscription. Agent panels, including tombstones, never replace or cover the
+  shell-owned close control, so no server response can wedge the page.
+
 GET `/api/viewer`
   Resolves the current connection through the same tailscale identity and
   sender-collision checks used by every write, without performing a write or
@@ -535,8 +566,9 @@ outside this web API are unchanged.
 
 ## Explicitly absent (ruled)
 
-No WebSocket. No pane injection. No interactive screen input. No cull/kill. No resume or fork, no dead
-sessions, no sesh. No blank-form/global spawn, no new-workspace
+No WebSocket. No pane injection. No interactive screen input. No cull/kill. No resume or fork, no
+retired-session lifecycle controls beyond the retained read-only transcript
+amendment, no sesh. No blank-form/global spawn, no new-workspace
 creation. No auth beyond the tailnet boundary. No server-side state.
 No client-offered screen view for agent-claimed panes — the tailed transcript
 is the agent window. Read-only screens for non-agent panes are the narrow

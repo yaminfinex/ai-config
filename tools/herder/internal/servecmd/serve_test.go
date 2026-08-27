@@ -41,6 +41,7 @@ func fixtureDeps() dependencies {
 		roster: func() ([]hcomidentity.Row, error) {
 			return []hcomidentity.Row{{Name: "dore", Tool: "codex", Status: "active", SessionID: "session-dore", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
 		},
+		stopped: func(string) (hcomidentity.Row, error) { return hcomidentity.Row{}, hcomidentity.ErrStoppedNotFound },
 		messages: func(ctx context.Context, cursor *hcomevents.Cursor, emit func(hcomevents.Message) error, healthy func() error) error {
 			<-ctx.Done()
 			return nil
@@ -253,6 +254,60 @@ func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/missing", nil))
 	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown agent"`) {
 		t.Fatalf("unknown response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentEndpointUsesLiveFirstThenRetainedStoppedEvidence(t *testing.T) {
+	retired := hcomidentity.Row{Name: "dore", BaseName: "dore", Tool: "codex", Status: "retired", Directory: "/retained", SessionID: fixtureSessionID}
+
+	deps := fixtureDeps()
+	stoppedCalls := 0
+	deps.stopped = func(string) (hcomidentity.Row, error) {
+		stoppedCalls++
+		return retired, nil
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+	if response.Code != http.StatusOK || stoppedCalls != 0 || !strings.Contains(response.Body.String(), `"bus_status":"active"`) {
+		t.Fatalf("live-first detail = %d calls=%d %s", response.Code, stoppedCalls, response.Body.String())
+	}
+
+	deps.roster = func() ([]hcomidentity.Row, error) { return nil, nil }
+	queueReads := 0
+	deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
+		queueReads++
+		return []hcomevents.Message{{ID: 731}}, nil
+	}
+	response = httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+	var detail map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || detail["bus_status"] != "retired" || detail["pane"] != nil || detail["session_id"] != fixtureSessionID || queueReads != 0 {
+		t.Fatalf("retired detail = %d queueReads=%d %#v", response.Code, queueReads, detail)
+	}
+	if _, present := detail["queued"]; present {
+		t.Fatalf("retired detail falsely emitted queued: %#v", detail["queued"])
+	}
+}
+
+func TestRetiredMessageIsRefusedBeforeAttributionOrSend(t *testing.T) {
+	deps := fixtureDeps()
+	deps.roster = func() ([]hcomidentity.Row, error) { return nil, nil }
+	deps.stopped = func(name string) (hcomidentity.Row, error) {
+		return hcomidentity.Row{Name: name, Tool: "codex", Status: "retired", SessionID: fixtureSessionID}, nil
+	}
+	deps.sender = func(context.Context, string) (string, error) {
+		t.Fatal("retired send attempted attribution")
+		return "", nil
+	}
+	deps.send = func(context.Context, string, string, string) error { t.Fatal("retired send reached hcom"); return nil }
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", strings.NewReader(`{"text":"hello"}`))
+	newHandler(deps).ServeHTTP(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"retired agent"`) || !strings.Contains(response.Body.String(), "read-only") {
+		t.Fatalf("retired send = %d %s", response.Code, response.Body.String())
 	}
 }
 
@@ -971,6 +1026,55 @@ func TestEventsMultiplexesOnlySubscribedAgentTranscripts(t *testing.T) {
 	}
 	if !seen["entry:dore"] || !seen["entry:kumo"] || calls["veno"] != 0 {
 		t.Fatalf("seen=%v latest calls=%v", seen, calls)
+	}
+}
+
+func TestEventsContinuesRetiredTranscriptWithoutSubstrateFault(t *testing.T) {
+	deps := fixtureDeps()
+	baseRoster := deps.roster
+	var rosterCalls atomic.Int32
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		if rosterCalls.Add(1) == 1 {
+			return baseRoster()
+		}
+		return nil, nil
+	}
+	deps.stopped = func(name string) (hcomidentity.Row, error) {
+		return hcomidentity.Row{Name: name, BaseName: name, Tool: "codex", Status: "retired", SessionID: "session-dore"}, nil
+	}
+	deps.entryTail = func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
+		result := claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}
+		if row.Status == "retired" && cursor.Offset == 0 {
+			result.Read = claudesession.ReadResult{Entries: []claudesession.Entry{{UUID: "retained", Kind: claudesession.KindAssistantText, Payload: json.RawMessage(`{"text":"retained"}`)}}, NextOffset: 73}
+			result.Cursor.Offset = 73
+		}
+		return result, nil
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?agents=dore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "hello" {
+		t.Fatalf("hello = %q", event)
+	}
+	if event, _ := readEvent(t, reader); event != "fleet" {
+		t.Fatalf("fleet = %q", event)
+	}
+	for {
+		event, data := readEvent(t, reader)
+		if event == "substrate" && strings.Contains(data, "transcript:dore") {
+			t.Fatalf("retirement emitted transcript fault: %s", data)
+		}
+		if event == "entry:dore" {
+			if !strings.Contains(data, `"uuid":"retained"`) {
+				t.Fatalf("retained entry = %s", data)
+			}
+			break
+		}
 	}
 }
 

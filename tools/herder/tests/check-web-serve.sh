@@ -56,6 +56,26 @@ cat >"$ROOT/bin/hcom" <<'HCOM'
 if [ "${1:-}" = list ] && [ "${2:-}" = --json ]; then
   exec /bin/cat "$WEB_SERVE_ROSTER"
 fi
+if [ "${1:-}" = list ] && [ "${2:-}" = --stopped ]; then
+  if [ "${3:-}" = retired-vava ]; then
+    cat <<'STOPPED'
+Stopped: vava
+  Time:       2026-08-27T11:06:26.298172+00:00
+  By:         cli
+  Reason:     killed
+  Tool:       claude
+  Tag:        retired
+  Directory:  /invented/violet
+  Session:    73100000-0000-4000-8000-000000000731
+  Transcript: /invented/home/.claude/projects/-invented-violet/73100000-0000-4000-8000-000000000731.jsonl
+
+  Resume: hcom r vava
+STOPPED
+  else
+    printf "No stopped events found for '%s'\n" "${3:-}"
+  fi
+  exit 0
+fi
 if [ "${1:-}" = send ]; then
   printf '<send>\n' >>"$WEB_SEND_CALLS"
   for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_SEND_LOG"
@@ -379,10 +399,22 @@ fi
 
 curl -sS -o "$ROOT/unknown-agent.json" -w '%{http_code}' "http://127.0.0.1:$port/api/agents/missing" >"$ROOT/unknown-agent.status"
 if [ "$(cat "$ROOT/unknown-agent.status")" = 404 ] &&
-  jq -e '.error == "unknown agent" and (.detail | contains("not on the hcom bus"))' "$ROOT/unknown-agent.json" >/dev/null; then
-  pass "unknown bus name refuses agent detail with structured 404"
+  jq -e '.error == "unknown agent" and (.detail | contains("no live or retained session evidence"))' "$ROOT/unknown-agent.json" >/dev/null; then
+  pass "name without live or retained evidence refuses agent detail with structured 404"
 else
   bad "unknown agent refusal" "status=$(cat "$ROOT/unknown-agent.status") body=$(cat "$ROOT/unknown-agent.json")"
+fi
+
+curl -sS -o "$ROOT/retired-message.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"text":"must refuse"}' \
+  "http://127.0.0.1:$port/api/agents/retired-vava/message" >"$ROOT/retired-message.status"
+if curl -fsS "http://127.0.0.1:$port/api/agents/retired-vava" >"$ROOT/retired-agent.json" &&
+  curl -fsS "http://127.0.0.1:$port/api/agents/retired-vava/entries?limit=10" >"$ROOT/retired-entries.json" &&
+  jq -e '.name == "retired-vava" and .bus_status == "retired" and .pane == null and .session_id == "73100000-0000-4000-8000-000000000731" and has("queued") == false' "$ROOT/retired-agent.json" >/dev/null &&
+  jq -e '.sessionId == "73100000-0000-4000-8000-000000000731" and (.entries | length) >= 2' "$ROOT/retired-entries.json" >/dev/null &&
+  [ "$(cat "$ROOT/retired-message.status")" = 409 ] && jq -e '.error == "retired agent" and (.detail | contains("read-only"))' "$ROOT/retired-message.json" >/dev/null; then
+  pass "retained stopped evidence serves a queue-free read-only transcript and refuses sends"
+else
+  bad "retired agent contract" "detail=$(cat "$ROOT/retired-agent.json" 2>/dev/null || true) entries=$(cat "$ROOT/retired-entries.json" 2>/dev/null || true) send=$(cat "$ROOT/retired-message.status" 2>/dev/null || true)/$(cat "$ROOT/retired-message.json" 2>/dev/null || true)"
 fi
 
 for legacy_path in /api/agents/mavu/transcript /api/agents/mavu/transcript/stream; do
@@ -524,7 +556,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((22 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((23 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

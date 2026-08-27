@@ -1,0 +1,11 @@
+Stopped: nelo
+  Time:       2026-08-27T11:06:26.298172+00:00
+  By:         cli
+  Reason:     killed
+  Tool:       codex
+  Tag:        finishedtabsprobe
+  Directory:  /mnt/bench-nvme/herdr-worktrees/ai-config/finished-agent-tabs
+  Session:    01a042e5-df2c-76f2-a4f1-66ba11ddc1bb
+  Transcript: /home/ubuntu/.codex/sessions/2026/08/27/rollout-2026-08-27T11-05-56-01a042e5-df2c-76f2-a4f1-66ba11ddc1bb.jsonl
+
+  Resume: hcom r nelo

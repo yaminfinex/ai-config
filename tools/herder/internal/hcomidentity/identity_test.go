@@ -2,12 +2,36 @@ package hcomidentity
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestDecodeStoppedUsesRealCulledAgentShape(t *testing.T) {
+	raw, err := os.ReadFile("testdata/real-stopped-codex.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, err := DecodeStopped("finishedtabsprobe-nelo", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Name != "finishedtabsprobe-nelo" || row.BaseName != "nelo" || row.Tool != "codex" || row.Status != "retired" || row.SessionID != "01a042e5-df2c-76f2-a4f1-66ba11ddc1bb" || row.TranscriptPath == "" {
+		t.Fatalf("stopped row = %#v", row)
+	}
+}
+
+func TestDecodeStoppedDistinguishesMissingAndMalformedEvidence(t *testing.T) {
+	if _, err := DecodeStopped("missing", []byte("No stopped events found for 'missing'\n")); !errors.Is(err, ErrStoppedNotFound) {
+		t.Fatalf("missing error = %v", err)
+	}
+	if _, err := DecodeStopped("dore", []byte("Stopped: dore\n  Tool: codex\n")); err == nil {
+		t.Fatal("incomplete stopped record was accepted")
+	}
+}
 
 func TestDecodeArrayAndJSONL(t *testing.T) {
 	for name, input := range map[string]string{

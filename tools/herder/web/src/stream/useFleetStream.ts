@@ -41,6 +41,11 @@ function without(problem: Record<string, string>, key: string) {
   return next
 }
 
+export function withoutUnsubscribedTranscripts(problems: Record<string, string>, agentNames: string[]) {
+  const subscribed = new Set(agentNames.map((name) => `transcript:${name}`))
+  return Object.fromEntries(Object.entries(problems).filter(([source]) => !source.startsWith('transcript:') || subscribed.has(source)))
+}
+
 export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = []) {
   const agents = [...new Set(agentNames)].sort().join(',')
   const screens = [...new Set(screenPaneIDs)].sort().join(',')
@@ -69,6 +74,7 @@ export function subscribeToFleet(
   const update = (change: (current: StreamState) => StreamState) => {
     queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => change(current ?? initialStreamState))
   }
+  update((current) => ({ ...current, problems: withoutUnsubscribedTranscripts(current.problems, names) }))
   const touch = (visible = true) => {
     lastActivity = Date.now()
     if (visible) update((current) => ({ ...current, lastEvent: lastActivity }))
@@ -113,6 +119,10 @@ export function subscribeToFleet(
     events.addEventListener('fleet', (event) => {
       touch()
       queryClient.setQueryData<Board>(queryKeys.fleet, JSON.parse(event.data) as Board)
+      names.forEach((name) => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
+      })
       update((current) => ({ ...current, problems: without(current.problems, 'fleet') }))
     })
     events.addEventListener('substrate', (event) => {

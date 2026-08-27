@@ -323,6 +323,21 @@ func TestEntriesEndpointRejectsWrongMethod(t *testing.T) {
 	}
 }
 
+func TestEntriesEndpointServesRetiredAgentFromStoppedSessionEvidence(t *testing.T) {
+	home, _ := writeEntrySession(t, sessionLines(`{"type":"assistant","uuid":"a1","timestamp":"2026-01-02T03:04:05Z","message":{"content":[{"type":"text","text":"retained reply"}]}}`))
+	t.Setenv("HOME", home)
+	deps := fixtureDeps()
+	deps.roster = func() ([]hcomidentity.Row, error) { return nil, nil }
+	deps.stopped = func(name string) (hcomidentity.Row, error) {
+		return hcomidentity.Row{Name: name, BaseName: name, Tool: "claude", Status: "retired", SessionID: fixtureSessionID, Directory: "/invented/violet"}, nil
+	}
+	response := requestEntries(t, deps, "/api/agents/dore/entries?limit=500")
+	page := decodeEntriesResponse(t, response)
+	if response.Code != http.StatusOK || page.SessionID != fixtureSessionID || page.Entries == nil || len(*page.Entries) != 1 {
+		t.Fatalf("retired entries = %d %#v", response.Code, page)
+	}
+}
+
 func entryFixtureDeps() dependencies {
 	return entryDepsWithRow(hcomidentity.Row{Name: "dore", Tool: "claude", Status: "active", SessionID: fixtureSessionID, Directory: "/invented/violet"})
 }

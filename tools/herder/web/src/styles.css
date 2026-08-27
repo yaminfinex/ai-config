@@ -48,6 +48,7 @@ h2, h3, p { margin-top: 0; }
 .status-dot.active { background: var(--accent); box-shadow: 0 0 5px rgba(88,166,255,.55); }
 .status-dot.listening { background: var(--green); }
 .status-dot.blocked { background: var(--red); }
+.status-dot.retired { background: var(--amber); }
 .status-dot.unknown { background: #565a66; }
 .bus-status { margin-left: auto; color: var(--dimmer); font-size: 10px; }
 .gap-badge, .pane-chip, .tool-chip { padding: 0 5px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
@@ -74,6 +75,7 @@ h2, h3, p { margin-top: 0; }
 .shell-banners:empty { display: none; }
 .banner { display: flex; min-height: 27px; align-items: center; gap: 8px; margin: 0; padding: 3px 12px; border-bottom: 1px solid #63343a; background: #301d21; color: #f0a8a3; font-size: 11px; }
 .banner strong { font: 600 10px var(--mono); }
+.banner .dismiss-banner { width: 22px; height: 20px; margin-left: auto; padding: 0; border: 0; background: transparent; color: currentColor; font-size: 15px; line-height: 1; }
 .banner.server-update { border-color: #5c4716; background: #3d2e12; color: var(--amber); }
 .banner.server-update button { margin-left: auto; padding: 2px 8px; border-color: #806322; background: #241b0b; color: var(--amber); font-size: 10px; }
 .panel-host { flex: 1; min-height: 0; }
@@ -254,6 +256,9 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 .optional { color: var(--dimmer); font-weight: 400; }
 .not-found { margin: 12vh auto 0; padding: 18px; border: 1px solid #63343a; border-radius: 7px; background: #301d21; }
 .not-found p { margin: 8px 0 0; }
+.tombstone { border-color: var(--border2); background: var(--bg2); color: var(--dim); }
+.tombstone strong { color: var(--text); }
+.tombstone span { color: var(--text); font-family: var(--mono); }
 .back-link { margin: 12px; color: var(--dim); }
 
 @media (max-width: 900px) {
