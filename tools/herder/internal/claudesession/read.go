@@ -274,7 +274,7 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 		return KindSystemChip, raw
 	}
 	body := unwrapHcom(attachmentText(env.Attachment.Content))
-	matches := hcomMessagePattern.FindAllStringSubmatchIndex(body, -1)
+	matches := hcomDeliveryBoundaries(body)
 	deliveries := make([]map[string]any, 0, max(len(matches), 1))
 	for i, match := range matches {
 		intent, thread, _ := strings.Cut(strings.TrimSpace(body[match[2]:match[3]]), ":")
@@ -300,6 +300,18 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 	return KindHcomDelivery, mustJSON(map[string]any{
 		"subtype": env.Attachment.Type, "deliveries": deliveries,
 	})
+}
+
+func hcomDeliveryBoundaries(body string) [][]int {
+	all := hcomMessagePattern.FindAllStringSubmatchIndex(body, -1)
+	matches := make([][]int, 0, len(all))
+	for _, match := range all {
+		start := match[0]
+		if start == 0 || start >= 3 && body[start-3:start] == " | " {
+			matches = append(matches, match)
+		}
+	}
+	return matches
 }
 
 func attachmentText(raw json.RawMessage) string {

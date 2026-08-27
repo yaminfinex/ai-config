@@ -257,6 +257,13 @@ normalized message shape while preserving the replacement history. A textual
 compaction item takes precedence over the final retained message. Records with
 no visible replacement text remain honest rather than fabricating a summary.
 
+### AMENDMENT (conductor, 2026-08-27) — Claude delivery boundaries are explicit
+
+Within a Claude hcom attachment, a header-shaped substring starts a normalized
+delivery only at the beginning of the unwrapped body or after hcom's literal
+` | ` batch separator. Header-like text elsewhere in a message body remains
+part of that delivery's text and cannot create a forged extra card.
+
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
 POST `/api/agents/{bus-name}/message`
