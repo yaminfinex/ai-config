@@ -6,7 +6,8 @@ import { BoardPanel } from './features/board/BoardPanel'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { AgentPanel } from './features/transcript/AgentPanel'
 import { AppLink, currentRoute, type Route } from './shared/navigation'
-import { Banner } from './shared/presentation'
+import { agentBusStatus } from './shared/agentStatus'
+import { AgentStatusDot, Banner } from './shared/presentation'
 import { useFleetStream } from './stream/useFleetStream'
 
 const layoutKey = 'herder.web.layout.v1'
@@ -165,7 +166,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       }} />
     <section className="shell-main">
       <div className="tab-strip" role="tablist" aria-label="Open panels">
-        {tabs.map((tab, index) => <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}`} key={tab.id} onAuxClick={(event) => { if (event.button === 1 && tab.kind === 'agent') close(tab.id) }}>
+        {tabs.map((tab, index) => {
+          const liveStatus = tab.kind === 'agent' ? agentBusStatus(boardQuery.data, tab.name) : '-'
+          return <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}`} key={tab.id} onAuxClick={(event) => { if (event.button === 1 && tab.kind === 'agent') close(tab.id) }}>
           <button ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id) }} id={`shell-tab-${index}`} aria-controls={`shell-panel-${index}`} role="tab" aria-selected={tab.id === activeTab} tabIndex={tab.id === activeTab ? 0 : -1}
             onClick={() => activate(tab)} onKeyDown={(event) => {
               let target = index
@@ -177,9 +180,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
               activate(tabs[target])
               requestAnimationFrame(() => tabRefs.current.get(tabs[target].id)?.focus())
               event.preventDefault()
-            }}>{tab.kind === 'board' ? '⌗ Board' : tab.label}</button>
+            }}>{tab.kind === 'board' ? '⌗ Board' : <><span>{tab.label}</span><span className="tab-agent-status"><AgentStatusDot status={liveStatus} />{liveStatus !== '-' ? liveStatus : 'unknown'}</span></>}</button>
           {tab.kind === 'agent' && <button className="close-tab" aria-label={`Close ${tab.label}`} onClick={() => close(tab.id)}>×</button>}
-        </div>)}
+        </div>})}
         <button className="new-tab" type="button" title="Open agents from the fleet sidebar" aria-label="Open an agent from the fleet sidebar">+</button>
         <span className="tab-strip-spacer" />
         <span className={`stream-chip${streamProblems.stream ? ' fault' : ''}`}>{streamProblems.stream ? 'SSE: reconnecting' : 'SSE: connected'}</span>
@@ -191,7 +194,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       </div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
-          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : <AgentPanel name={tab.name} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} />}
+          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} />}
         </div>)}
       </div>
       <footer className="status-bar">

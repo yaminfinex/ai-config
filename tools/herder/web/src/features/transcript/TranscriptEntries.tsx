@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { duplicateHcomDeliveryIndices, stripWebOperatorNote } from '../../messagePolish'
+import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
 import type { TranscriptEntry } from '../../types'
 
 type ObjectValue = Record<string, unknown>
@@ -138,13 +138,15 @@ function HcomCards({ entry, entryIndex, now, showSystem, relationships }: { entr
   if (!parsed) return showSystem ? <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{visibleValues.map(({ raw }) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details> : null
   return <>{visibleValues.map(({ raw, index }) => {
     const delivery = objectValue(raw)
-    return <article className="entry-card hcom-card" key={`${entry.uuid ?? entry.byteOffset}:${index}`}>
-      <header><strong>{valueText(delivery.sender) || 'unknown sender'}</strong><span>→ {valueText(delivery.recipient) || 'unknown recipient'}</span>
+    const text = valueText(delivery.text)
+    const webOperator = isWebOperatorMessage(text)
+    return <article className={`entry-card hcom-card${webOperator ? ' operator-card' : ''}`} key={`${entry.uuid ?? entry.byteOffset}:${index}`}>
+      <header><strong>{valueText(delivery.sender) || 'unknown sender'}</strong>{webOperator && <span className="operator-badge">web operator</span>}<span>→ {valueText(delivery.recipient) || 'unknown recipient'}</span>
         {valueText(delivery.intent) && <span className={`intent-badge ${valueText(delivery.intent)}`}>{valueText(delivery.intent)}</span>}
         {valueText(delivery.message_id) && <span className="message-id">#{valueText(delivery.message_id)}</span>}
         {valueText(delivery.thread) && <span className="thread-chip">{valueText(delivery.thread)}</span>}
         <Timestamp timestamp={entry.timestamp} now={now} />
-      </header><div>{stripWebOperatorNote(valueText(delivery.text)) || '(delivery body unavailable)'}</div>
+      </header><div>{polishHcomDeliveryText(text) || '(delivery body unavailable)'}</div>
     </article>
   })}</>
 }

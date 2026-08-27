@@ -45,9 +45,10 @@ h2, h3, p { margin-top: 0; }
 .agent-row[aria-selected='true'] { background: var(--accent-dim); }
 .shell-row { color: var(--dimmer); font-style: italic; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: #565a66; }
-.status-dot.working { background: var(--green); box-shadow: 0 0 4px rgba(63,185,80,.5); }
-.status-dot.idle { background: var(--amber); }
-.status-dot.dead { background: var(--red); }
+.status-dot.active { background: var(--accent); box-shadow: 0 0 5px rgba(88,166,255,.55); }
+.status-dot.listening { background: var(--green); }
+.status-dot.blocked { background: var(--red); }
+.status-dot.unknown { background: #565a66; }
 .bus-status { margin-left: auto; color: var(--dimmer); font-size: 10px; }
 .gap-badge, .pane-chip, .tool-chip { padding: 0 5px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
@@ -59,9 +60,10 @@ h2, h3, p { margin-top: 0; }
 .tab-strip { display: flex; flex: 0 0 32px; min-width: 0; align-items: center; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--bg2); user-select: none; }
 .shell-tab { display: flex; align-self: stretch; min-width: 0; border-right: 1px solid var(--border); color: var(--dim); }
 .shell-tab.active { box-shadow: inset 0 2px var(--accent); background: var(--bg); color: var(--text); }
-.shell-tab > button { overflow: hidden; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: inherit; font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.shell-tab > button { display: flex; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: inherit; font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .shell-tab > button:hover:not(:disabled) { color: var(--text); }
 .shell-tab .close-tab { width: 25px; padding: 0 7px 1px 0; color: var(--dimmer); font-size: 15px; }
+.tab-agent-status { display: flex; align-items: center; gap: 4px; color: var(--dimmer); font-size: 9px; }
 .new-tab { height: 100%; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--dimmer); font-size: 16px; }
 .tab-strip-spacer, .status-spacer { flex: 1; }
 .stream-chip, .layout-chip { margin-right: 6px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--chip); color: var(--dimmer); font: 10px var(--mono); white-space: nowrap; }
@@ -129,6 +131,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .entry-card header strong, .assistant-entry header strong { color: var(--text); font: 600 11px var(--mono); }
 .entry-time { margin-left: auto; color: var(--dimmer); font: 9px var(--mono); white-space: nowrap; }
 .hcom-card { border-left: 3px solid var(--accent); }
+.operator-card { max-width: 820px; margin-left: min(6%, 54px); border-left-color: var(--green); background: #1b2420; }
+.operator-card header strong { color: #b7ddb9; }
+.operator-badge { padding: 0 5px; border: 1px solid #31563a; border-radius: 4px; background: #182e1d; color: var(--green); font: 9px var(--mono); white-space: nowrap; }
 .intent-badge, .thread-chip, .message-id, .command-chip { padding: 0 6px; border-radius: 4px; font: 9px var(--mono); }
 .intent-badge { border: 1px solid var(--border2); background: var(--chip); color: var(--dim); }
 .intent-badge.request { border-color: #2c4370; background: #1b2438; color: var(--accent); }

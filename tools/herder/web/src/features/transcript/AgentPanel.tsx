@@ -7,7 +7,7 @@ import { Banner, gapLabel } from '../../shared/presentation'
 import { Composer } from '../composer/Composer'
 import { TranscriptEntries } from './TranscriptEntries'
 
-export function AgentPanel({ name, onViewer, identityReadOnly }: { name: string, onViewer: (viewer: string) => void, identityReadOnly: string }) {
+export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly }: { name: string, liveStatus: string, onViewer: (viewer: string) => void, identityReadOnly: string }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -47,7 +47,7 @@ export function AgentPanel({ name, onViewer, identityReadOnly }: { name: string,
   return <main className="agent-page">
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
-      {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span></>}
+      {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {liveStatus !== '-' ? liveStatus : agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span></>}
       <div className="agent-actions"><label className="system-toggle"><Checkbox.Root checked={showSystem} onCheckedChange={setShowSystem}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> show system entries</label><span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span></div>
     </header>
     {agentQuery.error && <Banner source="agent" detail={agentQuery.error.message} />}

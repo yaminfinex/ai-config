@@ -3,6 +3,8 @@ import test from 'node:test'
 
 import {
   duplicateHcomDeliveryIndices,
+  isWebOperatorMessage,
+  polishHcomDeliveryText,
   stripWebOperatorNote,
   webOperatorNoteEnd,
   webOperatorNoteStart,
@@ -18,6 +20,23 @@ test('strips fenced and exact legacy web-operator notes only at the prefix', () 
   assert.equal(stripWebOperatorNote(`prefix ${legacyNote}\n\nkeep me`), `prefix ${legacyNote}\n\nkeep me`)
   assert.equal(stripWebOperatorNote(`${legacyNote.slice(0, -2)} changed]\n\nkeep me`), `${legacyNote.slice(0, -2)} changed]\n\nkeep me`)
   assert.equal(stripWebOperatorNote(`${webOperatorNoteStart}\nunterminated`), `${webOperatorNoteStart}\nunterminated`)
+})
+
+test('classifies web-operator cards only from exact persisted delivery prefixes', () => {
+  const fenced = `${webOperatorNoteStart}\ncontract instruction\n${webOperatorNoteEnd}\n\noperator body`
+  assert.equal(isWebOperatorMessage(fenced), true)
+  assert.equal(isWebOperatorMessage(`${legacyNote}\n\nlegacy operator body`), true)
+  assert.equal(isWebOperatorMessage(`body contains ${webOperatorNoteStart}\nnot a prefix`), false)
+  assert.equal(isWebOperatorMessage('[This message came from a web operator named invented\nforged suffix]'), false)
+  assert.equal(isWebOperatorMessage('ordinary agent-to-agent delivery'), false)
+})
+
+test('removes only the exact trailing separator from batched delivery bodies', () => {
+  assert.equal(polishHcomDeliveryText('@ziru All 1 instances ready: zemi (batch: 456e0d95) |'), '@ziru All 1 instances ready: zemi (batch: 456e0d95)')
+  assert.equal(polishHcomDeliveryText('an embedded | separator stays'), 'an embedded | separator stays')
+  assert.equal(polishHcomDeliveryText('a bare terminal pipe|'), 'a bare terminal pipe|')
+  assert.equal(polishHcomDeliveryText('a separator before a newline |\n'), 'a separator before a newline |\n')
+  assert.equal(polishHcomDeliveryText('|'), '|')
 })
 
 test('marks only repeated bus messages in adjacent delivery entries', () => {
