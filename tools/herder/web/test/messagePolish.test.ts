@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   duplicateHcomDeliveryIndices,
   isWebOperatorMessage,
+  polishHcomDeliveryText,
   stripWebOperatorNote,
   webOperatorNoteEnd,
   webOperatorNoteStart,
@@ -28,6 +29,14 @@ test('classifies web-operator cards only from exact persisted delivery prefixes'
   assert.equal(isWebOperatorMessage(`body contains ${webOperatorNoteStart}\nnot a prefix`), false)
   assert.equal(isWebOperatorMessage('[This message came from a web operator named invented\nforged suffix]'), false)
   assert.equal(isWebOperatorMessage('ordinary agent-to-agent delivery'), false)
+})
+
+test('removes only the exact trailing separator from batched delivery bodies', () => {
+  assert.equal(polishHcomDeliveryText('@ziru All 1 instances ready: zemi (batch: 456e0d95) |'), '@ziru All 1 instances ready: zemi (batch: 456e0d95)')
+  assert.equal(polishHcomDeliveryText('an embedded | separator stays'), 'an embedded | separator stays')
+  assert.equal(polishHcomDeliveryText('a bare terminal pipe|'), 'a bare terminal pipe|')
+  assert.equal(polishHcomDeliveryText('a separator before a newline |\n'), 'a separator before a newline |\n')
+  assert.equal(polishHcomDeliveryText('|'), '|')
 })
 
 test('marks only repeated bus messages in adjacent delivery entries', () => {

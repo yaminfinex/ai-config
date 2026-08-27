@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { duplicateHcomDeliveryIndices, isWebOperatorMessage, stripWebOperatorNote } from '../../messagePolish'
+import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
 import type { TranscriptEntry } from '../../types'
 
 type ObjectValue = Record<string, unknown>
@@ -146,7 +146,7 @@ function HcomCards({ entry, entryIndex, now, showSystem, relationships }: { entr
         {valueText(delivery.message_id) && <span className="message-id">#{valueText(delivery.message_id)}</span>}
         {valueText(delivery.thread) && <span className="thread-chip">{valueText(delivery.thread)}</span>}
         <Timestamp timestamp={entry.timestamp} now={now} />
-      </header><div>{stripWebOperatorNote(text) || '(delivery body unavailable)'}</div>
+      </header><div>{polishHcomDeliveryText(text) || '(delivery body unavailable)'}</div>
     </article>
   })}</>
 }

@@ -60,6 +60,11 @@ export function stripWebOperatorNote(text: string): string {
   return removeFollowingBlankLine(text.slice(noteEnd + legacyWebOperatorEnd.length))
 }
 
+export function polishHcomDeliveryText(text: string): string {
+  const body = stripWebOperatorNote(text)
+  return body.endsWith(' |') ? body.slice(0, -2) : body
+}
+
 function deliveries(entry: HcomEntry): unknown[] {
   const value = objectValue(entry.payload).deliveries
   return Array.isArray(value) ? value : []
