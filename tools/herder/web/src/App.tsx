@@ -5,17 +5,19 @@ import { viewerQueryOptions } from './api/queries'
 import { BoardPanel } from './features/board/BoardPanel'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { AgentPanel } from './features/transcript/AgentPanel'
+import { ScreenPanel } from './features/screen/ScreenPanel'
 import { AppLink, currentRoute, type Route } from './shared/navigation'
 import { agentBusStatus } from './shared/agentStatus'
 import { AgentStatusDot, Banner } from './shared/presentation'
 import { useFleetStream } from './stream/useFleetStream'
 import { agentTabID, applyRoute, autoPinPreview, createTabState, pinAgent, previewAgent, storedPinnedAgents, type AgentTabState } from './previewTabs'
+import type { Pane } from './types'
 
 const layoutKey = 'herder.web.layout.v1'
 const boardTab = { id: 'board', kind: 'board' as const, label: 'Board' }
 const defaultSidebarWidth = 250
 
-type ShellTab = typeof boardTab | { id: string, kind: 'agent', label: string, name: string, preview: boolean }
+type ShellTab = typeof boardTab | { id: string, kind: 'agent', label: string, name: string, preview: boolean } | { id: string, kind: 'screen', label: string, pane: Pane, preview: boolean }
 type StoredLayout = {
   openTabs: string[]
   activeTab: string
@@ -27,6 +29,9 @@ type StoredLayout = {
 function agentTab(name: string, preview = false): ShellTab {
   return { id: agentTabID(name), kind: 'agent', label: name, name, preview }
 }
+
+function screenTabID(paneID: string) { return `screen:${paneID}` }
+function screenTab(pane: Pane, preview = false): ShellTab { return { id: screenTabID(pane.pane_id), kind: 'screen', label: pane.label || pane.pane_id, pane, preview } }
 
 function clampSidebarWidth(width: number) {
   return Math.min(440, Math.max(200, width))
@@ -65,18 +70,20 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     return { ...layout, tabState: applyRoute(storedTabs, initialRoute) }
   })
   const [tabState, setTabState] = useState<AgentTabState>(initial.tabState)
+  const [screenTabs, setScreenTabs] = useState<Array<{ pane: Pane, preview: boolean }>>([])
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
   const [lifecycleProblems, setLifecycleProblems] = useState<Record<string, string>>({})
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const queryClient = useQueryClient()
-  const tabs: ShellTab[] = [boardTab, ...tabState.tabs.map((tab) => agentTab(tab.name, tab.preview))]
+  const tabs: ShellTab[] = [boardTab, ...tabState.tabs.map((tab) => agentTab(tab.name, tab.preview)), ...screenTabs.map((tab) => screenTab(tab.pane, tab.preview))]
   const activeTab = tabState.activeTab
   const agentNames = tabState.tabs.map((tab) => tab.name)
+  const screenPaneIDs = screenTabs.map((tab) => tab.pane.pane_id)
   const boardQuery = useQuery({ queryKey: queryKeys.fleet, queryFn: () => getFleet(), staleTime: Infinity, retry: false })
   const viewerQuery = useQuery(viewerQueryOptions())
-  const stream = useFleetStream(agentNames)
+  const stream = useFleetStream(agentNames, screenPaneIDs)
   const active = tabs.find((tab) => tab.id === activeTab) ?? boardTab
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
   const viewer = viewerQuery.data?.viewer ?? 'unresolved'
@@ -87,6 +94,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
 
   const setPath = useCallback((tab: ShellTab, push = true) => {
+    if (tab.kind === 'screen') return
     const path = tab.kind === 'board' ? '/' : `/agents/${encodeURIComponent(tab.name)}`
     if (push && window.location.pathname !== path) window.history.pushState({}, '', path)
   }, [])
@@ -94,11 +102,30 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const activate = useCallback((tab: ShellTab, push = true) => {
     setTabState((current) => tab.kind === 'board'
       ? { ...current, activeTab: boardTab.id }
-      : current.tabs.some((item) => item.name === tab.name)
-        ? { ...current, activeTab: tab.id }
-        : previewAgent(current, tab.name))
+      : tab.kind === 'screen' ? { ...current, activeTab: tab.id }
+        : current.tabs.some((item) => item.name === tab.name)
+          ? { ...current, activeTab: tab.id }
+          : previewAgent(current, tab.name))
     setPath(tab, push)
   }, [setPath])
+
+  const previewPane = useCallback((pane: Pane) => {
+    setScreenTabs((current) => {
+      if (current.some((tab) => tab.pane.pane_id === pane.pane_id)) return current
+      const previewIndex = current.findIndex((tab) => tab.preview)
+      const next = [...current]
+      if (previewIndex === -1) next.push({ pane, preview: true }); else next[previewIndex] = { pane, preview: true }
+      return next
+    })
+    setTabState((current) => ({ ...current, activeTab: screenTabID(pane.pane_id) }))
+  }, [])
+
+  const pinPane = useCallback((pane: Pane) => {
+    setScreenTabs((current) => current.some((tab) => tab.pane.pane_id === pane.pane_id)
+      ? current.map((tab) => tab.pane.pane_id === pane.pane_id ? { pane, preview: false } : tab)
+      : [...current, { pane, preview: false }])
+    setTabState((current) => ({ ...current, activeTab: screenTabID(pane.pane_id) }))
+  }, [])
 
   const preview = useCallback((name: string) => {
     setTabState((current) => previewAgent(current, name))
@@ -143,13 +170,14 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       tabs: current.tabs.filter((tab) => agentTabID(tab.name) !== id),
       activeTab: current.activeTab === id ? next.id : current.activeTab,
     }))
+    setScreenTabs((current) => current.filter((tab) => screenTabID(tab.pane.pane_id) !== id))
     if (activeTab === id) setPath(next)
   }, [activeTab, setPath, tabs])
 
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       const command = event.ctrlKey || event.metaKey
-      if (command && event.key.toLowerCase() === 'w' && active.kind === 'agent') close(active.id)
+      if (command && event.key.toLowerCase() === 'w' && active.kind !== 'board') close(active.id)
       else if (command && (event.key === 'PageDown' || event.key === 'PageUp')) {
         const index = tabs.findIndex((tab) => tab.id === active.id)
         activate(tabs[(index + (event.key === 'PageDown' ? 1 : -1) + tabs.length) % tabs.length])
@@ -181,7 +209,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
 
   return <div className="app-shell">
     <div className="sidebar-region" style={{ width: sidebarWidth }}>
-      <FleetSidebar board={boardQuery.data} activeAgent={active.kind === 'agent' ? active.name : undefined} onPreviewAgent={preview} onPinAgent={pin}
+      <FleetSidebar board={boardQuery.data} activeAgent={active.kind === 'agent' ? active.name : undefined} activePane={active.kind === 'screen' ? active.pane.pane_id : undefined} onPreviewAgent={preview} onPinAgent={pin} onPreviewPane={previewPane} onPinPane={pinPane}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
     </div>
     <div className="sidebar-resizer" role="separator" aria-label="Resize fleet sidebar" aria-orientation="vertical" aria-valuemin={200} aria-valuemax={440} aria-valuenow={sidebarWidth} tabIndex={0}
@@ -194,10 +222,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       <div className="tab-strip" role="tablist" aria-label="Open panels">
         {tabs.map((tab, index) => {
           const liveStatus = tab.kind === 'agent' ? agentBusStatus(boardQuery.data, tab.name) : '-'
-          return <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}${tab.kind === 'agent' && tab.preview ? ' preview' : ''}`} key={tab.id} onAuxClick={(event) => { if (event.button === 1 && tab.kind === 'agent') close(tab.id) }}>
+          return <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}${tab.kind !== 'board' && tab.preview ? ' preview' : ''}`} key={tab.id} onAuxClick={(event) => { if (event.button === 1 && tab.kind !== 'board') close(tab.id) }}>
           <button ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id) }} id={`shell-tab-${index}`} aria-controls={`shell-panel-${index}`} role="tab" aria-selected={tab.id === activeTab} tabIndex={tab.id === activeTab ? 0 : -1}
-            title={tab.kind === 'agent' && tab.preview ? 'Preview — double-click to pin' : undefined}
-            onClick={() => activate(tab)} onDoubleClick={() => { if (tab.kind === 'agent' && tab.preview) pin(tab.name) }} onKeyDown={(event) => {
+            title={tab.kind !== 'board' && tab.preview ? 'Preview — double-click to pin' : undefined}
+            onClick={() => activate(tab)} onDoubleClick={() => { if (tab.kind === 'agent' && tab.preview) pin(tab.name); else if (tab.kind === 'screen' && tab.preview) pinPane(tab.pane) }} onKeyDown={(event) => {
               let target = index
               if (event.key === 'ArrowLeft') target = (index - 1 + tabs.length) % tabs.length
               else if (event.key === 'ArrowRight') target = (index + 1) % tabs.length
@@ -207,10 +235,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
               activate(tabs[target])
               requestAnimationFrame(() => tabRefs.current.get(tabs[target].id)?.focus())
               event.preventDefault()
-            }}>{tab.kind === 'board' ? '⌗ Board' : <><span className="tab-label">{tab.label}</span><span className="tab-agent-status"><AgentStatusDot status={liveStatus} />{liveStatus !== '-' ? liveStatus : 'unknown'}</span></>}</button>
-          {tab.kind === 'agent' && <button className="close-tab" aria-label={`Close ${tab.label}`} onClick={() => close(tab.id)}>×</button>}
+            }}>{tab.kind === 'board' ? '⌗ Board' : tab.kind === 'screen' ? <><span className="tab-label">▣ {tab.label}</span><span className="tab-agent-status">read-only</span></> : <><span className="tab-label">{tab.label}</span><span className="tab-agent-status"><AgentStatusDot status={liveStatus} />{liveStatus !== '-' ? liveStatus : 'unknown'}</span></>}</button>
+          {tab.kind !== 'board' && <button className="close-tab" aria-label={`Close ${tab.label}`} onClick={() => close(tab.id)}>×</button>}
         </div>})}
-        <button className="new-tab" type="button" title="Open agents from the fleet sidebar" aria-label="Open an agent from the fleet sidebar">+</button>
+        <button className="new-tab" type="button" title="Open agents and terminal panes from the fleet sidebar" aria-label="Open an agent or terminal pane from the fleet sidebar">+</button>
         <span className="tab-strip-spacer" />
         <span className={`stream-chip${streamProblems.stream ? ' fault' : ''}`}>{streamProblems.stream ? 'SSE: reconnecting' : 'SSE: connected'}</span>
         <span className="layout-chip" title="Shortcuts: Ctrl/Cmd+W close tab · Ctrl/Cmd+PageUp/PageDown previous/next tab · Alt+1 focus sidebar · Alt+2 focus composer">layout: this browser</span>
@@ -221,7 +249,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       </div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
-          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} />}
+          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} />}
         </div>)}
       </div>
       <footer className="status-bar">

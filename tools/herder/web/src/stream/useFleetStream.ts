@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { queryKeys } from '../api/client.ts'
-import type { Board, SubstrateEvent } from '../types'
+import type { Board, ScreenFrame, SubstrateEvent } from '../types'
 
 export type StreamState = {
   problems: Record<string, string>
@@ -41,14 +41,19 @@ function without(problem: Record<string, string>, key: string) {
   return next
 }
 
-export function eventStreamURL(agentNames: string[]) {
-  const subscription = [...new Set(agentNames)].sort().join(',')
-  return subscription ? `/api/events?${new URLSearchParams({ agents: subscription })}` : '/api/events'
+export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = []) {
+  const agents = [...new Set(agentNames)].sort().join(',')
+  const screens = [...new Set(screenPaneIDs)].sort().join(',')
+  const query = new URLSearchParams()
+  if (agents) query.set('agents', agents)
+  if (screens) query.set('screens', screens)
+  return query.size ? `/api/events?${query}` : '/api/events'
 }
 
 export function subscribeToFleet(
   queryClient: QueryClient,
   agentNames: string[],
+  screenPaneIDs: string[] = [],
   createEventSource: (url: string) => EventSourceLike = (url) => new EventSource(url),
   timers: TimerHost = window,
 ) {
@@ -59,6 +64,8 @@ export function subscribeToFleet(
   let backoff = 500
   let lastActivity = Date.now()
   const names = [...new Set(agentNames)].sort()
+  const panes = [...new Set(screenPaneIDs)].sort()
+  panes.forEach((paneID) => queryClient.removeQueries({ queryKey: queryKeys.screen(paneID), exact: true }))
   const update = (change: (current: StreamState) => StreamState) => {
     queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => change(current ?? initialStreamState))
   }
@@ -82,7 +89,7 @@ export function subscribeToFleet(
     lastActivity = Date.now()
     update((current) => ({ ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } }))
     try {
-      events = createEventSource(eventStreamURL(names))
+      events = createEventSource(eventStreamURL(names, panes))
     } catch {
       scheduleReconnect('Live stream disconnected; reconnecting…')
       return
@@ -138,6 +145,10 @@ export function subscribeToFleet(
       void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
       void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
     }))
+    panes.forEach((paneID) => events?.addEventListener(`screen:${paneID}`, (event) => {
+      touch()
+      queryClient.setQueryData<ScreenFrame>(queryKeys.screen(paneID), JSON.parse(event.data) as ScreenFrame)
+    }))
   }
 
   connect()
@@ -153,9 +164,10 @@ export function subscribeToFleet(
   }
 }
 
-export function useFleetStream(agentNames: string[]) {
+export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = []) {
   const queryClient = useQueryClient()
   const subscription = [...new Set(agentNames)].sort().join(',')
+  const screenSubscription = [...new Set(screenPaneIDs)].sort().join(',')
   const stream = useQuery({
     queryKey: queryKeys.stream,
     queryFn: async () => initialStreamState,
@@ -163,6 +175,6 @@ export function useFleetStream(agentNames: string[]) {
     staleTime: Infinity,
   }).data
 
-  useEffect(() => subscribeToFleet(queryClient, subscription ? subscription.split(',') : []), [queryClient, subscription])
+  useEffect(() => subscribeToFleet(queryClient, subscription ? subscription.split(',') : [], screenSubscription ? screenSubscription.split(',') : []), [queryClient, subscription, screenSubscription])
   return stream
 }

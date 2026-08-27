@@ -8,6 +8,7 @@ export const queryKeys = {
   agent: (name: string) => ['agent', name] as const,
   entries: (name: string) => ['entries', name] as const,
   stream: ['stream'] as const,
+  screen: (paneID: string) => ['screen', paneID] as const,
 }
 
 export type LifecycleProblem = {

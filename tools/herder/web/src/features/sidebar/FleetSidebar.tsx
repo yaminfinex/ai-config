@@ -4,15 +4,18 @@ import { useTree } from '@headless-tree/react'
 import { AgentStatusDot, gapLabel } from '../../shared/presentation'
 import { buildSidebarNodes } from './sidebarNodes'
 import type { SidebarNode } from './sidebarNodes'
-import type { Board } from '../../types'
+import type { Board, Pane } from '../../types'
 
 const emptyExpandedItems: string[] = []
 
-export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems }: {
+export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems }: {
   board: Board | undefined
   activeAgent?: string
+  activePane?: string
   onPreviewAgent: (name: string) => void
   onPinAgent: (name: string) => void
+  onPreviewPane: (pane: Pane) => void
+  onPinPane: (pane: Pane) => void
   expandedItems: string[] | null
   onExpandedItems: (items: string[]) => void
   knownWorkspaceItems: string[] | null
@@ -41,13 +44,13 @@ export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, e
   }, [board, expandedItems, knownWorkspaceItems, nodes, onExpandedItems, onKnownWorkspaceItems])
 
   useEffect(() => {
-    if (!activeAgent) {
+    if (!activeAgent && !activePane) {
       setSelectedItems([])
       return
     }
-    const match = [...nodes.values()].find((node) => (node.kind === 'pane' || node.kind === 'subagent') && node.pane?.agent === activeAgent)
+    const match = [...nodes.values()].find((node) => (node.kind === 'pane' || node.kind === 'subagent') && (activeAgent ? node.pane?.agent === activeAgent : node.pane?.pane_id === activePane))
     setSelectedItems(match ? [match.id] : [])
-  }, [activeAgent, nodes])
+  }, [activeAgent, activePane, nodes])
 
   const tree = useTree<SidebarNode>({
     rootItemId: 'tree-root',
@@ -63,6 +66,7 @@ export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, e
     onPrimaryAction: (item) => {
       const node = item.getItemData()
       if (node.pane?.agent && node.pane.agent !== '-') onPreviewAgent(node.pane.agent)
+      else if (node.kind === 'pane' && node.pane?.agent === '-') onPreviewPane(node.pane as Pane)
     },
     hotkeys: {
       customPrimaryActionEnter: { hotkey: 'Enter', preventDefault: true, handler: (_event, currentTree) => currentTree.getFocusedItem()?.primaryAction() },
@@ -88,7 +92,7 @@ export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, e
           style={{ paddingLeft: `${item.getItemMeta().level * 16 + 5}px` }}
           title={pane ? `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
           onFocus={() => item.setFocused()}
-          onDoubleClick={() => { if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent) }}
+          onDoubleClick={() => { if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent); else if (node.kind === 'pane' && pane?.agent === '-') onPinPane(pane as Pane) }}
         >
           {folder ? <button
             className={`disclosure${item.isExpanded() ? ' expanded' : ''}`}

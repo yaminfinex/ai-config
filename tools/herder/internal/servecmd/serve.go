@@ -58,6 +58,7 @@ type dependencies struct {
 	poll                 time.Duration
 	heartbeat            time.Duration
 	listeners            func(int) ([]net.Listener, []string, error)
+	screens              func() (screenSource, error)
 }
 
 var liveDependencies = dependencies{
@@ -76,6 +77,9 @@ var liveDependencies = dependencies{
 	poll:                 PollCadence,
 	heartbeat:            HeartbeatCadence,
 	listeners:            liveListeners,
+	screens: func() (screenSource, error) {
+		return herdrcli.NewLiveScreens()
+	},
 }
 
 type refusal struct {
@@ -730,6 +734,10 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func eventAgents(raw string) ([]string, error) {
+	return eventSet(raw, "agents")
+}
+
+func eventSet(raw, parameter string) ([]string, error) {
 	if raw == "" {
 		return nil, nil
 	}
@@ -738,14 +746,14 @@ func eventAgents(raw string) ([]string, error) {
 	for _, name := range strings.Split(raw, ",") {
 		name = strings.TrimSpace(name)
 		if name == "" || strings.ContainsAny(name, "\r\n") {
-			return nil, errors.New("agents must be a comma-separated list of bus names")
+			return nil, fmt.Errorf("%s must be a comma-separated list of names", parameter)
 		}
 		if !seen[name] {
 			seen[name] = true
 			agents = append(agents, name)
 		}
 		if len(agents) > 100 {
-			return nil, errors.New("agents accepts at most 100 bus names")
+			return nil, fmt.Errorf("%s accepts at most 100 names", parameter)
 		}
 	}
 	return agents, nil
@@ -753,6 +761,11 @@ func eventAgents(raw string) ([]string, error) {
 
 func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	agents, err := eventAgents(r.URL.Query().Get("agents"))
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	screens, err := eventSet(r.URL.Query().Get("screens"), "screens")
 	if err != nil {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
@@ -779,6 +792,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	hcomState := make(chan error, 1)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	var screenReader screenSource
 	go func() {
 		cursor := &hcomevents.Cursor{}
 		for ctx.Err() == nil {
@@ -831,6 +845,100 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	}
 	if !emit("hello", streamHello{BuildIdentity: deps.buildIdentity}) {
 		return
+	}
+	if len(screens) > 0 {
+		if source, sourceErr := deps.screens(); sourceErr == nil {
+			screenReader = source
+		}
+	}
+	screenStates := make(map[string]*eventScreen, len(screens))
+	emitScreen := func(paneID string, frame screenFrame) bool {
+		wire, encodeErr := encodeScreenEvent(paneID, frame)
+		if encodeErr != nil {
+			return false
+		}
+		if _, writeErr := w.Write(wire); writeErr != nil {
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
+	emitScreenUnavailable := func(paneID, detail string) bool {
+		state := screenStates[paneID]
+		if state == nil {
+			state = &eventScreen{paneID: paneID}
+			screenStates[paneID] = state
+		}
+		if state.status == "unavailable" && state.detail == detail {
+			return true
+		}
+		state.status, state.detail, state.text, state.truncated, state.dirty = "unavailable", detail, "", false, false
+		return emitScreen(paneID, screenFrame{PaneID: paneID, Status: "unavailable", Text: "", Detail: detail})
+	}
+	syncScreenRequests := func(panes map[string]uint64, force bool) bool {
+		for _, paneID := range screens {
+			revision, visible := panes[paneID]
+			if !visible {
+				if state := screenStates[paneID]; state != nil {
+					state.visible = false
+				}
+				if !emitScreenUnavailable(paneID, fmt.Sprintf("pane %q is not reported by Herdr", paneID)) {
+					return false
+				}
+				continue
+			}
+			if screenReader == nil {
+				if !emitScreenUnavailable(paneID, "Herdr screen reader is unavailable") {
+					return false
+				}
+				continue
+			}
+			state := screenStates[paneID]
+			if state == nil {
+				state = &eventScreen{paneID: paneID}
+				screenStates[paneID] = state
+			}
+			state.visible = true
+			if force || state.status != "available" || state.revision != revision {
+				state.dirty = true
+			}
+			state.revision = revision
+		}
+		return true
+	}
+	flushScreens := func(now time.Time) bool {
+		for _, paneID := range screens {
+			state := screenStates[paneID]
+			if state == nil || !state.dirty || screenReader == nil {
+				continue
+			}
+			if state.lastEmitNS != 0 && now.UnixNano()-state.lastEmitNS < screenThrottleNanos {
+				continue
+			}
+			state.dirty = false
+			read, readErr := screenReader.ReadVisible(paneID)
+			if readErr != nil {
+				if !emitScreenUnavailable(paneID, readErr.Error()) {
+					return false
+				}
+				continue
+			}
+			if read.PaneID != paneID {
+				if !emitScreenUnavailable(paneID, fmt.Sprintf("Herdr returned pane %q for requested pane %q", read.PaneID, paneID)) {
+					return false
+				}
+				continue
+			}
+			if state.status == "available" && state.text == read.Text && state.truncated == read.Truncated {
+				continue
+			}
+			frame := screenFrame{PaneID: paneID, Revision: state.revision, Status: "available", Text: read.Text, Truncated: read.Truncated}
+			if !emitScreen(paneID, frame) {
+				return false
+			}
+			state.status, state.detail, state.text, state.truncated, state.lastEmitNS = "available", "", read.Text, read.Truncated, now.UnixNano()
+		}
+		return true
 	}
 	emitFailure := func(err error) bool {
 		var sourced sourceError
@@ -936,18 +1044,18 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		return true
 	}
-	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, error) {
+	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, map[string]uint64, error) {
 		snapshot, roster, readErr := readFleetInputs(deps)
 		if readErr != nil {
-			return fleetview.Board{}, nil, readErr
+			return fleetview.Board{}, nil, nil, readErr
 		}
 		parents, readErr := deps.worktrees(snapshot.Workspaces)
 		if readErr != nil {
-			return fleetview.Board{}, nil, sourceError{"herdr", readErr}
+			return fleetview.Board{}, nil, nil, sourceError{"herdr", readErr}
 		}
-		return fleetview.Build(snapshot, roster, parents), roster, nil
+		return fleetview.Build(snapshot, roster, parents), roster, paneRevisions(snapshot), nil
 	}
-	board, roster, err := readEventBoard()
+	board, roster, panes, err := readEventBoard()
 	if err != nil {
 		var sourced sourceError
 		if errors.As(err, &sourced) && sourced.source == "hcom" {
@@ -964,12 +1072,22 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		if !emit("fleet", board) {
 			return
 		}
+		if !syncScreenRequests(panes, true) || !flushScreens(time.Now()) {
+			return
+		}
 	}
 
 	ticker := time.NewTicker(deps.poll)
 	defer ticker.Stop()
 	heartbeat := time.NewTicker(deps.heartbeat)
 	defer heartbeat.Stop()
+	var screenTick <-chan time.Time
+	var screenTicker *time.Ticker
+	if len(screens) > 0 {
+		screenTicker = time.NewTicker(250 * time.Millisecond)
+		screenTick = screenTicker.C
+		defer screenTicker.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -993,13 +1111,22 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					return
 				}
 			}
+		case now := <-screenTick:
+			for _, paneID := range screens {
+				if state := screenStates[paneID]; state != nil && state.visible {
+					state.dirty = true
+				}
+			}
+			if !flushScreens(now) {
+				return
+			}
 		case <-heartbeat.C:
 			if _, err := fmt.Fprint(w, ": ping\nevent: ping\ndata: {}\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
 		case <-ticker.C:
-			board, roster, boardErr := readEventBoard()
+			board, roster, panes, boardErr := readEventBoard()
 			if boardErr != nil {
 				var sourced sourceError
 				source := "unknown"
@@ -1034,6 +1161,14 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				}
 			}
 			if !syncTranscripts(roster, false) {
+				return
+			}
+			if screenReader == nil && len(screens) > 0 {
+				if source, sourceErr := deps.screens(); sourceErr == nil {
+					screenReader = source
+				}
+			}
+			if !syncScreenRequests(panes, true) || !flushScreens(time.Now()) {
 				return
 			}
 		}

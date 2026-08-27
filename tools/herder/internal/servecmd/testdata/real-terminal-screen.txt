@@ -1,0 +1,25 @@
+herder serve: watch re-exec via /home/ubuntu/Coding/ai-config/bin/herder
+herder serve: watch started on source tree /home/ubuntu/Coding/ai-config/tools/herder
+herder serve: WARNING: cannot bind tailscale address fe80::84a8:e31a:1995:676a: listen tcp [fe80::8
+4a8:e31a:1995:676a]:4400: bind: invalid argument
+herder serve: listening on http://127.0.0.1:4400
+herder serve: listening on http://100.73.240.104:4400
+herder serve: listening on http://[fd7a:115c:a1e0::af39:f068]:4400
+herder serve: watch change detected in source tree /home/ubuntu/Coding/ai-config/tools/herder; wait
+ing for it to settle
+herder serve: watch re-exec via /home/ubuntu/Coding/ai-config/bin/herder
+herder serve: watch started on source tree /home/ubuntu/Coding/ai-config/tools/herder
+herder serve: WARNING: cannot bind tailscale address fe80::84a8:e31a:1995:676a: listen tcp [fe80::8
+4a8:e31a:1995:676a]:4400: bind: invalid argument
+herder serve: listening on http://127.0.0.1:4400
+herder serve: listening on http://100.73.240.104:4400
+herder serve: listening on http://[fd7a:115c:a1e0::af39:f068]:4400
+herder serve: watch change detected in source tree /home/ubuntu/Coding/ai-config/tools/herder; wait
+ing for it to settle
+herder serve: watch re-exec via /home/ubuntu/Coding/ai-config/bin/herder
+herder serve: watch started on source tree /home/ubuntu/Coding/ai-config/tools/herder
+herder serve: WARNING: cannot bind tailscale address fe80::84a8:e31a:1995:676a: listen tcp [fe80::8
+4a8:e31a:1995:676a]:4400: bind: invalid argument
+herder serve: listening on http://127.0.0.1:4400
+herder serve: listening on http://100.73.240.104:4400
+herder serve: listening on http://[fd7a:115c:a1e0::af39:f068]:4400

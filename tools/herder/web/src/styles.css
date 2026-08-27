@@ -115,6 +115,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .empty, .loading { margin: 12px 0; color: var(--dim); }
 
 .agent-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
+.screen-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; background: #0d0f12; }
+.screen-header { display: flex; min-height: 38px; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--dim); font-size: 10px; }
+.screen-header strong { overflow: hidden; color: var(--text); font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.terminal-screen { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 12px 14px; border: 0; border-radius: 0; background: #0d0f12; color: #d3d8e2; font: 11px/1.35 var(--mono); white-space: pre; tab-size: 4; }
+.terminal-screen.unavailable { color: var(--dimmer); }
 .agent-header { display: flex; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); }
 .agent-name { overflow: hidden; font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .agent-status { color: var(--dim); font-size: 11px; white-space: nowrap; }

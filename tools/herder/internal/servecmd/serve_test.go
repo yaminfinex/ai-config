@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -60,6 +61,137 @@ func fixtureDeps() dependencies {
 		},
 		poll:      10 * time.Millisecond,
 		heartbeat: time.Second,
+		screens:   func() (screenSource, error) { return &fixtureScreenSource{}, nil },
+	}
+}
+
+type fixtureScreenSource struct {
+	reads  map[string]int
+	readCh chan string
+	text   string
+}
+
+func (s *fixtureScreenSource) ReadVisible(paneID string) (herdrcli.VisibleScreen, error) {
+	if s.reads != nil {
+		s.reads[paneID]++
+	}
+	if s.readCh != nil {
+		s.readCh <- paneID
+	}
+	return herdrcli.VisibleScreen{PaneID: paneID, Text: s.text}, nil
+}
+
+func TestScreenFrameUsesRealFixtureAndHardSerializedBudget(t *testing.T) {
+	realScreen, err := os.ReadFile("testdata/real-terminal-screen.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := encodeScreenEvent("w1:p1", screenFrame{PaneID: "w1:p1", Revision: 731, Status: "available", Text: string(realScreen)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded screenFrame
+	data := bytes.TrimSuffix(bytes.TrimPrefix(bytes.SplitN(wire, []byte("\n"), 2)[1], []byte("data: ")), []byte("\n\n"))
+	if len(wire) > maxScreenFrameBytes || json.Unmarshal(data, &decoded) != nil || decoded.Text != string(realScreen) {
+		t.Fatalf("real screen frame bytes=%d", len(wire))
+	}
+	huge := strings.Repeat(string(realScreen), 20)
+	wire, err = encodeScreenEvent("w1:p1", screenFrame{PaneID: "w1:p1", Status: "available", Text: huge})
+	if err != nil || len(wire) > maxScreenFrameBytes || !bytes.Contains(wire, []byte(`"truncated":true`)) || !json.Valid(bytes.TrimSuffix(bytes.TrimPrefix(bytes.SplitN(wire, []byte("\n"), 2)[1], []byte("data: ")), []byte("\n\n"))) {
+		t.Fatalf("budgeted frame bytes=%d err=%v", len(wire), err)
+	}
+}
+
+func TestScreensPollOnlyRequestedLivePanesAtBoundedCadence(t *testing.T) {
+	deps := fixtureDeps()
+	reads := make(chan string, 20)
+	source := &fixtureScreenSource{readCh: reads, text: "real screen"}
+	deps.screens = func() (screenSource, error) { return source, nil }
+	deps.poll = time.Hour
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/api/events?screens=p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "hello" {
+		t.Fatalf("hello=%q", event)
+	}
+	if event, _ := readEvent(t, reader); event != "fleet" {
+		t.Fatalf("fleet=%q", event)
+	}
+	if event, data := readEvent(t, reader); event != "screen:p1" || !strings.Contains(data, `"status":"available"`) {
+		t.Fatalf("screen=%q %s", event, data)
+	}
+	if pane := <-reads; pane != "p1" {
+		t.Fatalf("initial read=%q", pane)
+	}
+
+	readTimes := make([]time.Time, 0, 3)
+	for len(readTimes) < 3 {
+		select {
+		case pane := <-reads:
+			if pane != "p1" {
+				t.Fatalf("polled unrequested pane %q", pane)
+			}
+			readTimes = append(readTimes, time.Now())
+		case <-time.After(time.Second):
+			t.Fatal("requested pane was not polled")
+		}
+	}
+	for i := 1; i < len(readTimes); i++ {
+		if elapsed := readTimes[i].Sub(readTimes[i-1]); elapsed < 200*time.Millisecond {
+			t.Fatalf("screen reads were not throttled: %s", elapsed)
+		}
+	}
+}
+
+func TestUnknownScreenPaneEmitsUnavailableWithoutReading(t *testing.T) {
+	deps := fixtureDeps()
+	reads := make(chan string, 1)
+	deps.screens = func() (screenSource, error) { return &fixtureScreenSource{readCh: reads}, nil }
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?screens=not-a-live-pane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	readEvent(t, reader)
+	readEvent(t, reader)
+	if event, data := readEvent(t, reader); event != "screen:not-a-live-pane" || !strings.Contains(data, `"status":"unavailable"`) || !strings.Contains(data, "not reported by Herdr") {
+		t.Fatalf("screen=%q %s", event, data)
+	}
+	select {
+	case pane := <-reads:
+		t.Fatalf("unknown pane was read: %s", pane)
+	default:
+	}
+}
+
+func TestEventsWithoutScreensHaveZeroScreenSourceCost(t *testing.T) {
+	deps := fixtureDeps()
+	var calls atomic.Int32
+	deps.screens = func() (screenSource, error) {
+		calls.Add(1)
+		return nil, errors.New("screen source must stay dark")
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(response.Body)
+	readEvent(t, reader)
+	readEvent(t, reader)
+	response.Body.Close()
+	if got := calls.Load(); got != 0 {
+		t.Fatalf("screen source calls without screens = %d", got)
 	}
 }
 

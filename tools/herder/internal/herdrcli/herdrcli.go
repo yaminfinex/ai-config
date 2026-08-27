@@ -31,6 +31,7 @@ type Pane struct {
 	Agent        string `json:"agent"`
 	AgentStatus  string `json:"agent_status"`
 	AgentSession string `json:"agent_session"`
+	Revision     uint64 `json:"revision"`
 }
 
 type Tab struct {
@@ -103,25 +104,32 @@ type Snapshot struct {
 // socket. The CLI is used only to discover that socket and its protocol; no
 // CLI-list fallback is allowed because it could hide a placement outage.
 func LiveSnapshot() (Snapshot, error) {
-	socket := os.Getenv("HERDER_HERDR_SOCKET")
-	if socket == "" {
-		out, err := exec.Command("herdr", "status", "server").Output()
-		if err != nil {
-			return Snapshot{}, fmt.Errorf("herdr status server failed: %w", err)
-		}
-		status, err := parseServerStatus(out)
-		if err != nil {
-			return Snapshot{}, err
-		}
-		if !supportsServerProtocol(status) {
-			return Snapshot{}, fmt.Errorf("herdr protocol incompatible: list supports %d, server reported %d (compatible=%t)", supportedProtocol, status.protocol, status.compatible)
-		}
-		socket = status.socket
-	}
-	if socket == "" {
-		return Snapshot{}, fmt.Errorf("herdr server did not report a socket")
+	socket, err := liveSocket()
+	if err != nil {
+		return Snapshot{}, err
 	}
 	return snapshotFromSocket(socket)
+}
+
+func liveSocket() (string, error) {
+	if socket := os.Getenv("HERDER_HERDR_SOCKET"); socket != "" {
+		return socket, nil
+	}
+	out, err := exec.Command("herdr", "status", "server").Output()
+	if err != nil {
+		return "", fmt.Errorf("herdr status server failed: %w", err)
+	}
+	status, err := parseServerStatus(out)
+	if err != nil {
+		return "", err
+	}
+	if !supportsServerProtocol(status) {
+		return "", fmt.Errorf("herdr protocol incompatible: client supports %d, server reported %d (compatible=%t)", supportedProtocol, status.protocol, status.compatible)
+	}
+	if status.socket == "" {
+		return "", fmt.Errorf("herdr server did not report a socket")
+	}
+	return status.socket, nil
 }
 
 type serverStatus struct {
