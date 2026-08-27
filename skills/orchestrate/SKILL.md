@@ -12,10 +12,17 @@ file carries the law that real runs minted; compose everything else per run into
 
 ## State
 
-Two files in the active mission's artifacts (`using-missions` skill): the **playbook** (run shape
-+ protocol + "decisions already made — do not re-litigate"; amend by dated addendum, never
-rewrite) and the **run-log** — your journal and the run's wake authority. Cold pickup = playbook
-+ run-log + branch.
+Three artifacts in the active mission's artifacts (`using-missions` skill): the **playbook** (run
+shape + protocol + "decisions already made — do not re-litigate"; amend by dated addendum, never
+rewrite); the **run-log** — a pure chronological journal (decisions and why; append-only, never
+edited retroactively; where a log is shared between lanes, keep entries small append-only bullets
+respectful of the other writers); and the **state file** — current truth and the cold-pickup
+artifact (standing rules, in-flight units, verified-awaiting-review, the dispatch queue with
+gates, waiting-on list, seats). The state file is **wholesale-rewritten at every compaction**,
+never appended as chained deltas: chained snapshots make cold pickup monotonically more expensive
+and bloat the journal, while a wholesale rewrite forces re-verifying what is still true — git
+history archives prior versions. In-run-log compaction-snapshot entries are retired
+(operator-ruled 2026-08-27). Cold pickup = playbook + state file + run-log + branch.
 
 ## Run shape — agree with the operator upfront, record in the playbook
 
@@ -41,7 +48,7 @@ rewrite) and the **run-log** — your journal and the run's wake authority. Cold
   `hcom term <name> --json`. Submit `hcom term inject <name> '/compact <steer>' --enter`, then
   send the continuation once with `hcom send`; hcom carries the queued message through
   compaction. A busy composer queues safely, but wait for listening when compact must run now.
-- **Self-compact.** Write a superseding **wake state** block first, then run
+- **Self-compact.** Wholesale-rewrite the **state file** to current truth first, then run
   `$AI_CONFIG_ROOT/tools/fleet/selfcompact.sh <self-name> '<steer>' '<continuation>'` and end the
   turn. The detached helper owns the busy/listening latch and the two composer injections.
 - **Cull.** Use `$AI_CONFIG_ROOT/tools/fleet/cull.sh <exact-hcom-name>`. It sends one courtesy
@@ -55,8 +62,8 @@ rewrite) and the **run-log** — your journal and the run's wake authority. Cold
 
 - Hard cap **250k tokens** for every seat, yours included. Workers report context % in every
   DONE; a unit that cannot fit the band is a breakdown failure — split it, do not push through.
-- You compact in place only after the run-log wake state is complete: version it, say
-  "supersedes all earlier wake notes", and include live state, rerun commands, and next moves.
+- You compact in place only after the state file is wholesale-rewritten to current truth —
+  live state, rerun commands, and next moves; it supersedes anything older by construction.
 - Workers prefer **cull+pickup** — a tracked handoff brief and a fresh seat beat a degraded
   compact.
 
