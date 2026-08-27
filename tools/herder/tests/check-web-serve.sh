@@ -56,44 +56,6 @@ cat >"$ROOT/bin/hcom" <<'HCOM'
 if [ "${1:-}" = list ] && [ "${2:-}" = --json ]; then
   exec /bin/cat "$WEB_SERVE_ROSTER"
 fi
-if [ "${1:-}" = transcript ]; then
-  printf '%s\n' "$*" >>"$WEB_TRANSCRIPT_LOG"
-  if [[ "${3:-}" =~ ^([0-9]+)-([0-9]+)$ ]] &&
-    { [ "${4:-}" = --json ] || { [ "${4:-}" = --detailed ] && [ "${5:-}" = --json ]; }; }; then
-    start="${BASH_REMATCH[1]}"
-    end="${BASH_REMATCH[2]}"
-    detail=''
-    [ "${4:-}" != --detailed ] || detail=',"tools":["read"]'
-    printf '['
-    separator=''
-    for ((position=start; position<=end; position++)); do
-      printf '%s{"position":%d,"user":"stream %d","action":"reply %d"%s}' "$separator" "$position" "$position" "$position" "$detail"
-      separator=','
-    done
-    printf ']\n'
-    exit 0
-  fi
-  case " $* " in
-    *" transcript mavu --last 2 --json "*)
-      printf '%s\n' '[{"position":3,"user":"three","action":"reply three"},{"position":4,"user":"four","action":"reply four"}]'
-      exit 0 ;;
-    *" transcript mavu --last 2 --detailed --json "*)
-      printf '%s\n' '[{"position":3,"user":"three","action":"reply three","tools":["read"]},{"position":4,"user":"four","action":"reply four","tools":["write"]}]'
-      exit 0 ;;
-    *" transcript mavu 1-2 --json "*)
-      printf '%s\n' '[{"position":1,"user":"one","action":"reply one"},{"position":2,"user":"two","action":"reply two"}]'
-      exit 0 ;;
-    *" transcript mavu --last 1 --json "*|*" transcript mavu --last 1 --detailed --json "*)
-      count=0
-      [ ! -f "$WEB_STREAM_STATE" ] || count="$(/bin/cat "$WEB_STREAM_STATE")"
-      position=$((4 + count))
-      printf '%s\n' "$((count + 1))" >"$WEB_STREAM_STATE"
-      detail=''
-      [[ " $* " != *" --detailed "* ]] || detail=',"tools":["read"]'
-      printf '[{"position":%d,"user":"stream %d","action":"reply %d"%s}]\n' "$position" "$position" "$position" "$detail"
-      exit 0 ;;
-  esac
-fi
 if [ "${1:-}" = send ]; then
   printf '<send>\n' >>"$WEB_SEND_CALLS"
   for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_SEND_LOG"
@@ -208,8 +170,6 @@ PATH="$ROOT/bin:/usr/bin:/bin" \
 HOME="$ROOT/home" \
 XDG_CACHE_HOME="$ROOT/cache" \
 WEB_SERVE_ROSTER="$ROOT/roster.json" \
-WEB_TRANSCRIPT_LOG="$ROOT/transcript.log" \
-WEB_STREAM_STATE="$ROOT/stream.state" \
 WEB_SEND_LOG="$ROOT/send.log" \
 WEB_SEND_CALLS="$ROOT/send.calls" \
 WEB_SPAWN_LOG="$ROOT/spawn.log" \
@@ -341,40 +301,17 @@ else
   bad "unknown agent refusal" "status=$(cat "$ROOT/unknown-agent.status") body=$(cat "$ROOT/unknown-agent.json")"
 fi
 
-if curl -fsS "http://127.0.0.1:$port/api/agents/mavu/transcript?limit=2" >"$ROOT/transcript-new.json" &&
-  cursor="$(jq -r '.cursor' "$ROOT/transcript-new.json")" &&
-  curl -fsS "http://127.0.0.1:$port/api/agents/mavu/transcript?limit=2&before=$cursor" >"$ROOT/transcript-old.json" &&
-  curl -fsS "http://127.0.0.1:$port/api/agents/mavu/transcript?limit=2&detail=full" >"$ROOT/transcript-full.json" &&
-  python3 - "$ROOT/transcript-new.json" "$ROOT/transcript-old.json" "$ROOT/transcript-full.json" <<'PY'
-import json, sys
-new, old, full = [json.load(open(path)) for path in sys.argv[1:]]
-assert [item["position"] for item in new["exchanges"]] == [3, 4]
-assert [item["position"] for item in old["exchanges"]] == [1, 2]
-assert new["cursor"] and old["cursor"]
-assert full["exchanges"][0]["tools"] == ["read"]
-PY
-then
-  pass "transcript pages backward by exchange with opaque cursors and both detail levels"
-else
-  bad "transcript windows" "new=$(cat "$ROOT/transcript-new.json" 2>/dev/null || true) old=$(cat "$ROOT/transcript-old.json" 2>/dev/null || true) full=$(cat "$ROOT/transcript-full.json" 2>/dev/null || true)"
-fi
-
-stream_one="$(curl --max-time 5 -Ns "http://127.0.0.1:$port/api/agents/mavu/transcript/stream" 2>"$ROOT/transcript-stream.err" | awk '
-  /^id:/ { id=$2 }
-  /^event: exchange/ { exchange=1 }
-  /^data:/ { if (exchange) { print id; print; exit } }
-')"
-stream_id="$(sed -n '1p' <<<"$stream_one")"
-stream_data="$(sed -n '2p' <<<"$stream_one")"
-stream_two="$(curl --max-time 3 -Ns -H "Last-Event-ID: $stream_id" "http://127.0.0.1:$port/api/agents/mavu/transcript/stream" 2>>"$ROOT/transcript-stream.err" | awk '
-  /^event: exchange/ { exchange=1 }
-  /^data:/ { if (exchange) { print; exit } }
-')"
-if grep -qF '"position":5' <<<"$stream_data" && grep -qF '"position":6' <<<"$stream_two" && [ -n "$stream_id" ]; then
-  pass "per-agent transcript SSE emits incrementally and Last-Event-ID resumes"
-else
-  bad "transcript stream resume" "first=$stream_one second=$stream_two stderr=$(cat "$ROOT/transcript-stream.err")"
-fi
+for legacy_path in /api/agents/mavu/transcript /api/agents/mavu/transcript/stream; do
+  legacy_name="$(basename "$legacy_path")"
+  curl -sS -o "$ROOT/legacy-$legacy_name.json" -w '%{http_code}' \
+    "http://127.0.0.1:$port$legacy_path" >"$ROOT/legacy-$legacy_name.status"
+  if [ "$(cat "$ROOT/legacy-$legacy_name.status")" = 404 ] &&
+    jq -e '. == {error:"not found",detail:"unknown endpoint"}' "$ROOT/legacy-$legacy_name.json" >/dev/null; then
+    pass "legacy exchange endpoint $legacy_path is a structured 404"
+  else
+    bad "legacy exchange endpoint removal" "$legacy_path status=$(cat "$ROOT/legacy-$legacy_name.status") body=$(cat "$ROOT/legacy-$legacy_name.json")"
+  fi
+done
 
 message_text="please inspect --flag 'quotes'
 second line"
@@ -439,12 +376,6 @@ if [ "$(cat "$ROOT/unresolved.status")" = 409 ] && jq -e '.error == "attribution
   pass "unresolved, existing-agent, and reserved web senders are loudly refused"
 else
   bad "sender refusals" "unresolved=$(cat "$ROOT/unresolved.status")/$(cat "$ROOT/unresolved.json") existing=$(cat "$ROOT/existing.status")/$(cat "$ROOT/existing.json") reserved=$(cat "$ROOT/reserved.status")/$(cat "$ROOT/reserved.json")"
-fi
-
-if ! grep -Eq '^transcript mavu (--last (1|2)|[1-6]-[1-6])' "$ROOT/transcript.log" || grep -Eq 'transcript mavu (--last [0-9]{4,}|--json$)' "$ROOT/transcript.log"; then
-  bad "bounded transcript reads" "calls=$(cat "$ROOT/transcript.log")"
-else
-  pass "transcript substrate reads stay bounded; no whole-session invocation occurs"
 fi
 
 curl --max-time 6 -Ns "http://127.0.0.1:$port/api/events?agents=vile" >"$ROOT/events.out" 2>"$ROOT/events.err" &

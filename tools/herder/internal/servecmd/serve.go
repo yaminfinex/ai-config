@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,7 +27,6 @@ import (
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
-	"ai-config/tools/herder/internal/hcomtranscript"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
@@ -49,9 +47,6 @@ type dependencies struct {
 	worktrees     func([]herdrcli.Workspace) (map[string]string, error)
 	roster        func() ([]hcomidentity.Row, error)
 	messages      func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
-	transcript    func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
-	latest        func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error)
-	rangeRead     func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
 	entryEnd      func(hcomidentity.Row) (int64, error)
 	entryTail     func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
 	sender        func(context.Context, string) (string, error)
@@ -63,21 +58,18 @@ type dependencies struct {
 }
 
 var liveDependencies = dependencies{
-	snapshot:   herdrcli.LiveSnapshot,
-	worktrees:  herdrcli.WorktreeParents,
-	roster:     hcomidentity.List,
-	messages:   hcomevents.Subscribe,
-	transcript: hcomtranscript.Window,
-	latest:     hcomtranscript.Latest,
-	rangeRead:  hcomtranscript.Range,
-	entryEnd:   entryTailEnd,
-	entryTail:  entryTail,
-	sender:     webidentity.Sender,
-	send:       hcommessage.SendRequest,
-	spawn:      webaction.Spawn,
-	poll:       PollCadence,
-	heartbeat:  HeartbeatCadence,
-	listeners:  liveListeners,
+	snapshot:  herdrcli.LiveSnapshot,
+	worktrees: herdrcli.WorktreeParents,
+	roster:    hcomidentity.List,
+	messages:  hcomevents.Subscribe,
+	entryEnd:  entryTailEnd,
+	entryTail: entryTail,
+	sender:    webidentity.Sender,
+	send:      hcommessage.SendRequest,
+	spawn:     webaction.Spawn,
+	poll:      PollCadence,
+	heartbeat: HeartbeatCadence,
+	listeners: liveListeners,
 }
 
 type refusal struct {
@@ -118,20 +110,6 @@ type agentDetail struct {
 	Directory     string                     `json:"directory,omitempty"`
 	SessionID     string                     `json:"session_id,omitempty"`
 	LaunchContext hcomidentity.LaunchContext `json:"launch_context"`
-}
-
-type transcriptPage struct {
-	Exchanges []hcomtranscript.Exchange `json:"exchanges"`
-	Cursor    string                    `json:"cursor"`
-}
-
-type transcriptCursor struct {
-	Version  int                   `json:"v"`
-	Kind     string                `json:"kind"`
-	Agent    string                `json:"agent"`
-	Session  string                `json:"session,omitempty"`
-	Detail   hcomtranscript.Detail `json:"detail"`
-	Position int                   `json:"position"`
 }
 
 type transcriptReset struct {
@@ -384,20 +362,6 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveEntries(w, r, deps, r.PathValue("busName"))
 	})
-	mux.HandleFunc("/api/agents/{busName}/transcript", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			refuse(w, http.StatusBadRequest, "bad request", "GET required")
-			return
-		}
-		serveTranscriptWindow(w, r, deps, r.PathValue("busName"))
-	})
-	mux.HandleFunc("/api/agents/{busName}/transcript/stream", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			refuse(w, http.StatusBadRequest, "bad request", "GET required")
-			return
-		}
-		serveTranscriptStream(w, r, deps, r.PathValue("busName"))
-	})
 	mux.HandleFunc("/api/agents/{busName}/message", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			refuse(w, http.StatusBadRequest, "bad request", "POST required")
@@ -520,185 +484,6 @@ func serveAgentReadError(w http.ResponseWriter, err error) {
 		return
 	}
 	refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-}
-
-func transcriptDetail(value string) (hcomtranscript.Detail, error) {
-	if value == "" || value == string(hcomtranscript.Exchanges) {
-		return hcomtranscript.Exchanges, nil
-	}
-	if value == string(hcomtranscript.Full) {
-		return hcomtranscript.Full, nil
-	}
-	return "", fmt.Errorf("detail must be %q or %q", hcomtranscript.Exchanges, hcomtranscript.Full)
-}
-
-func serveTranscriptWindow(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
-	agent, err := readAgent(deps, name)
-	if err != nil {
-		serveAgentReadError(w, err)
-		return
-	}
-	detail, err := transcriptDetail(r.URL.Query().Get("detail"))
-	if err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", err.Error())
-		return
-	}
-	limit := 20
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		limit, err = strconv.Atoi(raw)
-		if err != nil || limit < 1 || limit > 100 {
-			refuse(w, http.StatusBadRequest, "bad request", "limit must be an integer from 1 through 100")
-			return
-		}
-	}
-	before := 0
-	if raw := r.URL.Query().Get("before"); raw != "" {
-		cursor, cursorErr := decodeTranscriptCursor(raw, "page", name, agent.SessionID, detail)
-		if cursorErr != nil {
-			refuse(w, http.StatusBadRequest, "bad request", cursorErr.Error())
-			return
-		}
-		before = cursor.Position
-	}
-	exchanges, err := deps.transcript(r.Context(), name, before, limit, detail)
-	if err != nil {
-		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-		return
-	}
-	next := before
-	if len(exchanges) > 0 {
-		next = exchanges[0].Position
-	} else if next == 0 {
-		next = 1
-	}
-	writeJSON(w, http.StatusOK, transcriptPage{Exchanges: exchanges, Cursor: encodeTranscriptCursor(transcriptCursor{
-		Version: 1, Kind: "page", Agent: name, Session: agent.SessionID, Detail: detail, Position: next,
-	})})
-}
-
-func encodeTranscriptCursor(cursor transcriptCursor) string {
-	raw, _ := json.Marshal(cursor)
-	return base64.RawURLEncoding.EncodeToString(raw)
-}
-
-func decodeTranscriptCursor(raw, kind, agent, session string, detail hcomtranscript.Detail) (transcriptCursor, error) {
-	cursor, err := decodeTranscriptCursorShape(raw, kind, agent, detail)
-	if err != nil || cursor.Session != session {
-		return transcriptCursor{}, errors.New("invalid transcript cursor")
-	}
-	return cursor, nil
-}
-
-func decodeTranscriptCursorShape(raw, kind, agent string, detail hcomtranscript.Detail) (transcriptCursor, error) {
-	decoded, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		return transcriptCursor{}, errors.New("invalid transcript cursor")
-	}
-	var cursor transcriptCursor
-	if err := json.Unmarshal(decoded, &cursor); err != nil || cursor.Version != 1 || cursor.Kind != kind || cursor.Agent != agent || cursor.Detail != detail || cursor.Position < 0 {
-		return transcriptCursor{}, errors.New("invalid transcript cursor")
-	}
-	return cursor, nil
-}
-
-func serveTranscriptStream(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
-	agent, err := readAgent(deps, name)
-	if err != nil {
-		serveAgentReadError(w, err)
-		return
-	}
-	detail, err := transcriptDetail(r.URL.Query().Get("detail"))
-	if err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", err.Error())
-		return
-	}
-	position := 0
-	resuming := false
-	if raw := r.Header.Get("Last-Event-ID"); raw != "" {
-		cursor, err := decodeTranscriptCursorShape(raw, "stream", name, detail)
-		if err != nil {
-			refuse(w, http.StatusBadRequest, "bad request", err.Error())
-			return
-		}
-		// A session change invalidates the old position but is routine during a
-		// resume or fork. Re-window at the current tail instead of fatally
-		// closing the EventSource with a 400.
-		if cursor.Session == agent.SessionID {
-			position = cursor.Position
-			resuming = true
-		}
-	}
-	latest, ok, err := deps.latest(r.Context(), name, detail)
-	if err != nil {
-		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-		return
-	}
-	if !resuming && ok {
-		position = latest.Position
-	}
-	flusher, okFlusher := w.(http.Flusher)
-	if !okFlusher {
-		refuse(w, http.StatusInternalServerError, "stream unavailable", "response writer does not support flushing")
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
-	emitThrough := func(end int) bool {
-		for position < end {
-			chunkEnd := position + 100
-			if chunkEnd > end {
-				chunkEnd = end
-			}
-			exchanges, rangeErr := deps.rangeRead(r.Context(), name, position+1, chunkEnd, detail)
-			if rangeErr != nil || len(exchanges) == 0 {
-				return false
-			}
-			for _, exchange := range exchanges {
-				cursor := encodeTranscriptCursor(transcriptCursor{
-					Version: 1, Kind: "stream", Agent: name, Session: agent.SessionID, Detail: detail, Position: exchange.Position,
-				})
-				data, marshalErr := json.Marshal(exchange)
-				if marshalErr != nil {
-					return false
-				}
-				if _, writeErr := fmt.Fprintf(w, "id: %s\nevent: exchange\ndata: %s\n\n", cursor, data); writeErr != nil {
-					return false
-				}
-				position = exchange.Position
-				flusher.Flush()
-			}
-		}
-		return true
-	}
-	if resuming && ok && latest.Position > position && !emitThrough(latest.Position) {
-		return
-	}
-	ticker := time.NewTicker(deps.poll)
-	defer ticker.Stop()
-	heartbeat := time.NewTicker(deps.heartbeat)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-heartbeat.C:
-			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
-				return
-			}
-			flusher.Flush()
-		case <-ticker.C:
-			latest, exists, latestErr := deps.latest(r.Context(), name, detail)
-			if latestErr != nil {
-				return
-			}
-			if exists && latest.Position > position && !emitThrough(latest.Position) {
-				return
-			}
-		}
-	}
 }
 
 func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
