@@ -46,6 +46,7 @@ type dependencies struct {
 	snapshot             func() (herdrcli.Snapshot, error)
 	worktrees            func([]herdrcli.Workspace) (map[string]string, error)
 	roster               func() ([]hcomidentity.Row, error)
+	stopped              func(string) (hcomidentity.Row, error)
 	messages             func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
 	recentMessages       func(context.Context, int) ([]hcomevents.Message, error)
 	entryEnd             func(hcomidentity.Row) (int64, error)
@@ -65,6 +66,7 @@ var liveDependencies = dependencies{
 	snapshot:             herdrcli.LiveSnapshot,
 	worktrees:            herdrcli.WorktreeParents,
 	roster:               hcomidentity.List,
+	stopped:              hcomidentity.Stopped,
 	messages:             hcomevents.Subscribe,
 	recentMessages:       hcomevents.Recent,
 	entryEnd:             entryTailEnd,
@@ -143,6 +145,7 @@ type eventTranscript struct {
 	initialized bool
 	session     string
 	offset      int64
+	retired     *hcomidentity.Row
 }
 
 type messageRequest struct {
@@ -460,27 +463,17 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 var errUnknownAgent = errors.New("unknown agent")
 
 func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail, error) {
-	snapshot, roster, err := readFleetInputs(deps)
+	row, retired, roster, err := resolveAgentEvidence(deps, name)
 	if err != nil {
 		return agentDetail{}, err
 	}
-	var bus *hcomidentity.Row
-	for i := range roster {
-		if roster[i].Name == name {
-			bus = &roster[i]
-			break
-		}
-	}
-	if bus == nil {
-		return agentDetail{}, fmt.Errorf("%w: agent %q is not on the hcom bus", errUnknownAgent, name)
-	}
 	result := agentDetail{
-		Name: name, Tool: bus.Tool, HerdrStatus: "-", BusStatus: bus.Status,
-		Gap: "no visible pane", Directory: bus.Directory, SessionID: bus.SessionID,
-		LaunchContext: bus.LaunchContext,
-		ParentAgent:   bus.ParentAgent,
+		Name: name, Tool: row.Tool, HerdrStatus: "-", BusStatus: row.Status,
+		Gap: "no visible pane", Directory: row.Directory, SessionID: row.SessionID,
+		LaunchContext: row.LaunchContext,
+		ParentAgent:   row.ParentAgent,
 	}
-	vitals, err := deps.agentVitals(*bus)
+	vitals, err := deps.agentVitals(row)
 	if err != nil {
 		return agentDetail{}, err
 	}
@@ -488,11 +481,23 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 	result.ContextUsage = vitals.ContextUsage
 	// Queued is an optional proven fact. A bus/session read failure must not
 	// degrade the otherwise useful detail response or invent delivery state.
-	if messages, messageErr := deps.recentMessages(ctx, 500); messageErr == nil {
-		candidates := operatorQueueCandidates(name, bus.BaseName, messages, roster)
-		if excluded, entryErr := deps.agentQueueExclusions(*bus, candidates); entryErr == nil {
-			result.Queued = diffQueuedMessages(messages, candidates, excluded)
+	if !retired {
+		if messages, messageErr := deps.recentMessages(ctx, 500); messageErr == nil {
+			candidates := operatorQueueCandidates(name, row.BaseName, messages, roster)
+			if excluded, entryErr := deps.agentQueueExclusions(row, candidates); entryErr == nil {
+				result.Queued = diffQueuedMessages(messages, candidates, excluded)
+			}
 		}
+	}
+	if retired {
+		return result, nil
+	}
+	snapshot, err := deps.snapshot()
+	if err != nil {
+		return agentDetail{}, sourceError{"herdr", err}
+	}
+	if err := fleetview.ValidateSnapshot(snapshot); err != nil {
+		return agentDetail{}, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
 	}
 	resolvedPane := ""
 	for _, row := range fleetview.JoinRows(snapshot, roster) {
@@ -514,6 +519,33 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 		}
 	}
 	return result, nil
+}
+
+// resolveAgentEvidence is deliberately live-first: a reused live name always
+// wins over an older stopped record. Stopped hcom history is the only retired
+// identity authority; a client-held session ID is never accepted as evidence.
+func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, bool, []hcomidentity.Row, error) {
+	roster, err := deps.roster()
+	if err != nil {
+		return hcomidentity.Row{}, false, nil, sourceError{"hcom", err}
+	}
+	if err := fleetview.ValidateRoster(roster); err != nil {
+		return hcomidentity.Row{}, false, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
+	}
+	roster = hcomidentity.WithParents(roster)
+	for _, row := range roster {
+		if row.Name == name {
+			return row, false, roster, nil
+		}
+	}
+	row, err := deps.stopped(name)
+	if errors.Is(err, hcomidentity.ErrStoppedNotFound) {
+		return hcomidentity.Row{}, false, roster, fmt.Errorf("%w: no live or retained session evidence for %q", errUnknownAgent, name)
+	}
+	if err != nil {
+		return hcomidentity.Row{}, false, roster, sourceError{"hcom", err}
+	}
+	return row, true, roster, nil
 }
 
 func serveAgentReadError(w http.ResponseWriter, err error) {
@@ -538,7 +570,16 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		}
 	}
 	if !found {
-		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("agent %q is not on the hcom bus", name))
+		_, stoppedErr := deps.stopped(name)
+		if stoppedErr == nil {
+			refuse(w, http.StatusConflict, "retired agent", fmt.Sprintf("agent %q is retired; its transcript is read-only", name))
+			return
+		}
+		if !errors.Is(stoppedErr, hcomidentity.ErrStoppedNotFound) {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", stoppedErr.Error())
+			return
+		}
+		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("no live or retained session evidence for %q", name))
 		return
 	}
 	var request messageRequest
@@ -967,15 +1008,37 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			state := transcripts[name]
 			row, exists := rows[name]
 			if !exists {
-				err := fmt.Errorf("agent %q is not on the hcom bus", name)
-				if initial {
-					source := "transcript:" + name
-					unreachable[source] = true
-					pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: err.Error()})
-				} else if !emitTranscriptFailure(name, err) {
-					return false
+				if state.retired != nil {
+					row = *state.retired
+					exists = true
+				} else {
+					stopped, stoppedErr := deps.stopped(name)
+					if stoppedErr == nil {
+						state.retired = &stopped
+						row = stopped
+						exists = true
+					} else {
+						detail := fmt.Sprintf("no live or retained session evidence for %q", name)
+						if !errors.Is(stoppedErr, hcomidentity.ErrStoppedNotFound) {
+							detail = stoppedErr.Error()
+						}
+						err := errors.New(detail)
+						if initial {
+							source := "transcript:" + name
+							unreachable[source] = true
+							pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: err.Error()})
+						} else if !emitTranscriptFailure(name, err) {
+							return false
+						}
+						continue
+					}
 				}
+			}
+			if !exists {
 				continue
+			}
+			if _, live := rows[name]; live {
+				state.retired = nil
 			}
 			transcriptID := entryTranscriptID(row)
 			if !state.initialized || state.session != transcriptID {

@@ -2,7 +2,7 @@ import type { Board } from '../types.ts'
 import type { Row } from '../types.ts'
 
 export type AgentStatusPresentation = {
-  className: 'active' | 'listening' | 'blocked' | 'unknown'
+  className: 'active' | 'listening' | 'blocked' | 'retired' | 'unknown'
   label: string
   meaning: string
 }
@@ -13,6 +13,7 @@ export function agentStatusPresentation(status: string): AgentStatusPresentation
   if (status === 'active') return { className: 'active', label: 'active', meaning: 'agent is currently working' }
   if (status === 'listening') return { className: 'listening', label: 'listening', meaning: 'agent is available and waiting' }
   if (status === 'blocked') return { className: 'blocked', label: 'blocked', meaning: 'agent cannot proceed' }
+  if (status === 'retired') return { className: 'retired', label: 'retired', meaning: 'agent has stopped; transcript is read-only' }
   return { className: 'unknown', label: status && status !== '-' ? status : 'unknown', meaning: 'agent status is unavailable' }
 }
 

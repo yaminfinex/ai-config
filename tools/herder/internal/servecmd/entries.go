@@ -157,16 +157,8 @@ func entryOffset(r *http.Request) (int64, bool, error) {
 }
 
 func entryAgent(deps dependencies, name string) (hcomidentity.Row, error) {
-	roster, err := deps.roster()
-	if err != nil {
-		return hcomidentity.Row{}, sourceError{"hcom", err}
-	}
-	for _, row := range hcomidentity.WithParents(roster) {
-		if row.Name == name {
-			return row, nil
-		}
-	}
-	return hcomidentity.Row{}, fmt.Errorf("%w: agent %q is not on the hcom bus", errUnknownAgent, name)
+	row, _, _, err := resolveAgentEvidence(deps, name)
+	return row, err
 }
 
 func entryTailEnd(row hcomidentity.Row) (int64, error) {

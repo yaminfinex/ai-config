@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"time"
 )
 
 const listTimeout = 5 * time.Second
+
+var ErrStoppedNotFound = fmt.Errorf("stopped agent not found")
 
 type LaunchContext struct {
 	PaneID                  string            `json:"pane_id"`
@@ -95,6 +98,57 @@ func ListContext(ctx context.Context) ([]Row, error) {
 		return nil, fmt.Errorf("hcom list --json failed: %w", err)
 	}
 	return Decode(out)
+}
+
+// Stopped reads the newest retained lifecycle record that hcom can
+// authoritatively resolve for name. The requested name remains the public
+// identity: hcom's record prints the base name even when an exact tagged name
+// was used for lookup.
+func Stopped(name string) (Row, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), listTimeout)
+	defer cancel()
+	return StoppedContext(ctx, name)
+}
+
+func StoppedContext(ctx context.Context, name string) (Row, error) {
+	cmd := exec.CommandContext(ctx, "hcom", "list", "--stopped", name)
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return Row{}, fmt.Errorf("hcom list --stopped timed out: %w", ctx.Err())
+		}
+		return Row{}, fmt.Errorf("hcom list --stopped failed: %w", err)
+	}
+	return DecodeStopped(name, out)
+}
+
+// DecodeStopped parses the labeled single-record shape emitted by
+// `hcom list --stopped <name>`. It refuses incomplete or changed output rather
+// than guessing transcript identity.
+func DecodeStopped(requestedName string, raw []byte) (Row, error) {
+	text := strings.TrimSpace(string(raw))
+	if strings.HasPrefix(text, "No stopped events found for ") {
+		return Row{}, ErrStoppedNotFound
+	}
+	lines := strings.Split(text, "\n")
+	if requestedName == "" || len(lines) == 0 || !strings.HasPrefix(lines[0], "Stopped: ") {
+		return Row{}, fmt.Errorf("could not decode hcom stopped agent")
+	}
+	baseName := strings.TrimSpace(strings.TrimPrefix(lines[0], "Stopped: "))
+	fields := make(map[string]string)
+	for _, line := range lines[1:] {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if ok {
+			fields[key] = strings.TrimSpace(value)
+		}
+	}
+	if baseName == "" || fields["Time"] == "" || fields["Tool"] == "" {
+		return Row{}, fmt.Errorf("could not decode hcom stopped agent")
+	}
+	return Row{
+		Name: requestedName, BaseName: baseName, Tool: fields["Tool"], Status: "retired",
+		Directory: fields["Directory"], SessionID: fields["Session"], TranscriptPath: fields["Transcript"],
+	}, nil
 }
 
 // Decode accepts both the array and JSONL roster formats emitted by hcom.

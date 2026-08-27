@@ -11,7 +11,7 @@ import { QueuedMessages } from './QueuedMessages'
 import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
 
-export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSend }: { name: string, liveStatus: string, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void }) {
+export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSend, onStatus }: { name: string, liveStatus: string, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -26,6 +26,11 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
   const previousEntryCount = useRef(0)
   const entries = entriesQuery.data?.entries ?? []
   const queued = visibleQueuedMessages(agentQuery.data?.queued ?? [], entries)
+
+  useEffect(() => {
+    if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
+    else if (agentQuery.error && 'response' in agentQuery.error && (agentQuery.error.response as Response)?.status === 404) onStatus(name, 'unknown')
+  }, [agentQuery.data, agentQuery.error, name, onStatus])
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
@@ -46,15 +51,16 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
   }, [entries, cleanView])
 
   if (agentQuery.error && 'response' in agentQuery.error && (agentQuery.error.response as Response)?.status === 404) return <main className="agent-page">
-    <section className="not-found" role="alert"><strong>404 · Agent not found</strong><p>{agentQuery.error.message}</p></section>
+    <section className="not-found tombstone" role="status"><strong>No retained agent evidence</strong><p>No live or retained session evidence for <span>{name}</span>. This tab is safe to close.</p></section>
   </main>
 
   const agent = agentQuery.data
+  const retired = agent?.bus_status === 'retired'
   const vitals = agent ? agentVitalsPresentation(agent) : []
   return <main className="agent-page">
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
-      {agent && <><span className="pane-chip">{agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{agent.herdr_status} · {liveStatus !== '-' ? liveStatus : agent.bus_status}</span>{agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span>{vitals.length > 0 && <span className="agent-vitals">{vitals.map((vital, index) => <span key={`${index}:${vital}`}>{vital}</span>)}</span>}</>}
+      {agent && <><span className="pane-chip">{retired ? 'retired' : agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{retired ? 'retired · read-only' : `${agent.herdr_status} · ${liveStatus !== '-' ? liveStatus : agent.bus_status}`}</span>{!retired && agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span>{vitals.length > 0 && <span className="agent-vitals">{vitals.map((vital, index) => <span key={`${index}:${vital}`}>{vital}</span>)}</span>}</>}
       <div className="agent-actions">
         <label className="system-toggle"><Checkbox.Root checked={cleanView} onCheckedChange={(checked) => { setCleanView(checked); persistCleanView(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> clean view</label>
         <label className={`system-toggle${cleanView ? ' disabled' : ''}`} title={cleanView ? 'Clean view hides system entries' : undefined}><Checkbox.Root checked={showSystem} disabled={cleanView} onCheckedChange={(checked) => { setShowSystem(checked); persistShowSystem(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> show system entries</label>
@@ -82,7 +88,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
         setNewEntryCount(0)
       }}>↓ {newEntryCount} new</button>}
     </section>
-    <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>
-    {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
+    {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
+    {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>
 }

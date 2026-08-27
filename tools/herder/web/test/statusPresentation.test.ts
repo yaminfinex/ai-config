@@ -14,6 +14,9 @@ test('fleet bus statuses map to honest operator-facing lifecycle semantics', () 
   assert.deepEqual(agentStatusPresentation('blocked'), {
     className: 'blocked', label: 'blocked', meaning: 'agent cannot proceed',
   })
+  assert.deepEqual(agentStatusPresentation('retired'), {
+    className: 'retired', label: 'retired', meaning: 'agent has stopped; transcript is read-only',
+  })
   assert.deepEqual(agentStatusPresentation('-'), {
     className: 'unknown', label: 'unknown', meaning: 'agent status is unavailable',
   })

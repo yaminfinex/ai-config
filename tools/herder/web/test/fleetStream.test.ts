@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { QueryClient } from '@tanstack/react-query'
-import { eventStreamURL, recordBuildIdentity, subscribeToFleet, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
+import { eventStreamURL, recordBuildIdentity, subscribeToFleet, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
 
 class FakeEventSource implements EventSourceLike {
@@ -35,6 +35,17 @@ test('a changed reconnect build persistently requests a manual refresh', () => {
   assert.equal(recordBuildIdentity(changed, 'source:build-a').serverUpdated, true)
 })
 
+test('closing an agent subscription prunes only that transcript fault', () => {
+  assert.deepEqual(withoutUnsubscribedTranscripts({
+    stream: 'reconnecting',
+    'transcript:retired': 'gone',
+    'transcript:still-open': 'unreadable',
+  }, ['still-open']), {
+    stream: 'reconnecting',
+    'transcript:still-open': 'unreadable',
+  })
+})
+
 test('multiplexed frames update and invalidate the shared query cache', async () => {
   const queryClient = new QueryClient()
   const sources: FakeEventSource[] = []
@@ -57,6 +68,9 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   assert.equal(queryClient.getQueryData<{ loadedBuild: string }>(queryKeys.stream)?.loadedBuild, 'source:fixture')
   sources[0].emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))
   assert.deepEqual(queryClient.getQueryData(queryKeys.fleet), { workspaces: [], unplaced: [] })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
   sources[0].emit('entry:vile')
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)

@@ -75,6 +75,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
   const [lifecycleProblems, setLifecycleProblems] = useState<Record<string, string>>({})
+  const [agentStatuses, setAgentStatuses] = useState<Record<string, string>>({})
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const queryClient = useQueryClient()
   const tabs: ShellTab[] = [boardTab, ...tabState.tabs.map((tab) => agentTab(tab.name, tab.preview)), ...screenTabs.map((tab) => screenTab(tab.pane, tab.preview))]
@@ -171,6 +172,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       activeTab: current.activeTab === id ? next.id : current.activeTab,
     }))
     setScreenTabs((current) => current.filter((tab) => screenTabID(tab.pane.pane_id) !== id))
+    if (id.startsWith('agent:')) setAgentStatuses((current) => {
+      const next = { ...current }
+      delete next[id.slice('agent:'.length)]
+      return next
+    })
     if (activeTab === id) setPath(next)
   }, [activeTab, setPath, tabs])
 
@@ -205,6 +211,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     else delete next[key]
     return next
   }), [])
+  const setAgentStatus = useCallback((name: string, status: string) => setAgentStatuses((current) => current[name] === status ? current : { ...current, [name]: status }), [])
   const streamProblems: Record<string, string> = { ...stream.problems, ...(boardQuery.error ? { fleet: boardQuery.error.message } : {}), ...lifecycleProblems }
 
   return <div className="app-shell">
@@ -221,7 +228,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     <section className="shell-main">
       <div className="tab-strip" role="tablist" aria-label="Open panels">
         {tabs.map((tab, index) => {
-          const liveStatus = tab.kind === 'agent' ? agentBusStatus(boardQuery.data, tab.name) : '-'
+          const boardStatus = tab.kind === 'agent' ? agentBusStatus(boardQuery.data, tab.name) : '-'
+          const liveStatus = boardStatus !== '-' || tab.kind !== 'agent' ? boardStatus : agentStatuses[tab.name] ?? '-'
           return <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}${tab.kind !== 'board' && tab.preview ? ' preview' : ''}`} key={tab.id} onAuxClick={(event) => { if (event.button === 1 && tab.kind !== 'board') close(tab.id) }}>
           <button ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id) }} id={`shell-tab-${index}`} aria-controls={`shell-panel-${index}`} role="tab" aria-selected={tab.id === activeTab} tabIndex={tab.id === activeTab ? 0 : -1}
             title={tab.kind !== 'board' && tab.preview ? 'Preview — double-click to pin' : undefined}
@@ -249,7 +257,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       </div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
-          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} />}
+          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} onStatus={setAgentStatus} />}
         </div>)}
       </div>
       <footer className="status-bar">
