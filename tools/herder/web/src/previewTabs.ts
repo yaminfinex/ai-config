@@ -3,6 +3,8 @@ export type AgentTabState = {
   activeTab: string
 }
 
+export type TabRoute = { page: 'board' } | { page: 'agent', name: string }
+
 export function agentTabID(name: string) {
   return `agent:${name}`
 }
@@ -27,6 +29,11 @@ export function previewAgent(state: AgentTabState, name: string): AgentTabState 
   if (previewIndex === -1) tabs.push(preview)
   else tabs[previewIndex] = preview
   return { tabs, activeTab: agentTabID(name) }
+}
+
+export function applyRoute(state: AgentTabState, route: TabRoute): AgentTabState {
+  if (route.page === 'agent') return previewAgent(state, route.name)
+  return state.activeTab === 'board' ? state : { ...state, activeTab: 'board' }
 }
 
 export function pinAgent(state: AgentTabState, name: string): AgentTabState {

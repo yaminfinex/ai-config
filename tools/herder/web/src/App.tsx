@@ -9,7 +9,7 @@ import { AppLink, currentRoute, type Route } from './shared/navigation'
 import { agentBusStatus } from './shared/agentStatus'
 import { AgentStatusDot, Banner } from './shared/presentation'
 import { useFleetStream } from './stream/useFleetStream'
-import { agentTabID, autoPinPreview, createTabState, pinAgent, previewAgent, storedPinnedAgents, type AgentTabState } from './previewTabs'
+import { agentTabID, applyRoute, autoPinPreview, createTabState, pinAgent, previewAgent, storedPinnedAgents, type AgentTabState } from './previewTabs'
 
 const layoutKey = 'herder.web.layout.v1'
 const boardTab = { id: 'board', kind: 'board' as const, label: 'Board' }
@@ -58,17 +58,13 @@ function readLayout(): {
 function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
   const [initial] = useState(() => {
     const layout = readLayout()
-    if (initialRoute.page === 'agent') {
-      const tab = agentTab(initialRoute.name)
-      if (!layout.tabs.some((item) => item.id === tab.id)) layout.tabs.push(tab)
-      layout.activeTab = tab.id
-    } else layout.activeTab = boardTab.id
-    return layout
+    const storedTabs = createTabState(
+      layout.tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.name] : []),
+      layout.activeTab,
+    )
+    return { ...layout, tabState: applyRoute(storedTabs, initialRoute) }
   })
-  const [tabState, setTabState] = useState<AgentTabState>(() => createTabState(
-    initial.tabs.flatMap((tab) => tab.kind === 'agent' ? [tab.name] : []),
-    initial.activeTab,
-  ))
+  const [tabState, setTabState] = useState<AgentTabState>(initial.tabState)
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
@@ -100,7 +96,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       ? { ...current, activeTab: boardTab.id }
       : current.tabs.some((item) => item.name === tab.name)
         ? { ...current, activeTab: tab.id }
-        : pinAgent(current, tab.name))
+        : previewAgent(current, tab.name))
     setPath(tab, push)
   }, [setPath])
 
@@ -117,12 +113,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   useEffect(() => {
     const update = () => {
       const route = currentRoute()
-      if (route.page === 'board') activate(boardTab, false)
-      else if (route.page === 'agent') activate(agentTab(route.name), false)
+      if (route.page !== 'missing') setTabState((current) => applyRoute(current, route))
     }
     window.addEventListener('popstate', update)
     return () => window.removeEventListener('popstate', update)
-  }, [activate])
+  }, [])
 
   useEffect(() => {
     const pinnedAgents = storedPinnedAgents(tabState)

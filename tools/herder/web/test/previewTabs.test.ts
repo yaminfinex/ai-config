@@ -1,12 +1,38 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  applyRoute,
   autoPinPreview,
   createTabState,
   pinAgent,
   previewAgent,
   storedPinnedAgents,
 } from '../src/previewTabs.ts'
+
+test('mounting an agent URL absent from persisted layout opens a preview', () => {
+  const mounted = applyRoute(createTabState([], 'board'), { page: 'agent', name: 'zira' })
+  assert.deepEqual(mounted, {
+    tabs: [{ name: 'zira', preview: true }],
+    activeTab: 'agent:zira',
+  })
+})
+
+test('popstate to an agent outside the open tabs uses the preview slot', () => {
+  const current = previewAgent(createTabState(['mavu'], 'agent:mavu'), 'zira')
+  const popped = applyRoute(current, { page: 'agent', name: 'vile' })
+  assert.deepEqual(popped, {
+    tabs: [{ name: 'mavu', preview: false }, { name: 'vile', preview: true }],
+    activeTab: 'agent:vile',
+  })
+})
+
+test('an agent URL already present in persisted layout stays pinned', () => {
+  const mounted = applyRoute(createTabState(['mavu'], 'board'), { page: 'agent', name: 'mavu' })
+  assert.deepEqual(mounted, {
+    tabs: [{ name: 'mavu', preview: false }],
+    activeTab: 'agent:mavu',
+  })
+})
 
 test('single-click previews one fixture agent and replaces it with the next', () => {
   const first = previewAgent(createTabState(['mavu'], 'agent:mavu'), 'zira')
