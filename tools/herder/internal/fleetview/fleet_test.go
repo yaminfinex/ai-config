@@ -137,6 +137,43 @@ func TestBuildNeverUsesSessionFallbackForLivePaneClaim(t *testing.T) {
 	}
 }
 
+func TestBuildNestsOnlyExplicitUnambiguousSubagents(t *testing.T) {
+	snapshot := sessionSnapshot(herdrcli.Pane{PaneID: "p1", Agent: "claude", AgentSession: "parent-session"})
+	roster := []hcomidentity.Row{
+		{Name: "probe-fame", BaseName: "fame", Tool: "claude", Status: "active", SessionID: "parent-session", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}},
+		{Name: "probe-fame_general_purpose_1", BaseName: "fame_general_purpose_1", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active"},
+	}
+	board := Build(snapshot, roster)
+	pane := board.Workspaces[0].Tabs[0].Panes[0]
+	if len(board.Unplaced) != 0 || len(pane.Subagents) != 1 || pane.Subagents[0].Agent != "probe-fame_general_purpose_1" || pane.Subagents[0].ParentAgent != "probe-fame" {
+		t.Fatalf("nested board = %#v", board)
+	}
+}
+
+func TestBuildLeavesUnprovableSubagentsUnplaced(t *testing.T) {
+	for name, roster := range map[string][]hcomidentity.Row{
+		"missing parent": {
+			{Name: "probe-child", BaseName: "child", ParentName: "missing", AgentID: "a35b593a6be7a9ba5", Tool: "claude"},
+		},
+		"ambiguous parent": {
+			{Name: "probe-parent-one", BaseName: "parent", Tool: "claude"},
+			{Name: "probe-parent-two", BaseName: "parent", Tool: "claude"},
+			{Name: "probe-child", BaseName: "child", ParentName: "parent", AgentID: "a35b593a6be7a9ba5", Tool: "claude"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			board := Build(herdrcli.Snapshot{}, roster)
+			found := false
+			for _, row := range board.Unplaced {
+				found = found || row.Agent == "probe-child"
+			}
+			if !found {
+				t.Fatalf("child disappeared from honest gap: %#v", board)
+			}
+		})
+	}
+}
+
 func sessionSnapshot(panes ...herdrcli.Pane) herdrcli.Snapshot {
 	for i := range panes {
 		panes[i].WorkspaceID = "w1"

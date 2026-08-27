@@ -1,4 +1,5 @@
 import type { Board } from '../types.ts'
+import type { Row } from '../types.ts'
 
 export type AgentStatusPresentation = {
   className: 'active' | 'listening' | 'blocked' | 'unknown'
@@ -19,9 +20,24 @@ export function agentBusStatus(board: Board | undefined, name: string): string {
   if (!board) return '-'
   for (const workspace of board.workspaces) {
     for (const tab of workspace.tabs) {
-      const pane = tab.panes.find((candidate) => candidate.agent === name)
-      if (pane) return pane.bus_status
+      for (const pane of tab.panes) {
+        const status = rowBusStatus(pane, name)
+        if (status) return status
+      }
     }
   }
-  return board.unplaced.find((candidate) => candidate.agent === name)?.bus_status ?? '-'
+  for (const row of board.unplaced) {
+    const status = rowBusStatus(row, name)
+    if (status) return status
+  }
+  return '-'
+}
+
+function rowBusStatus(row: Row, name: string): string | undefined {
+  if (row.agent === name) return row.bus_status
+  for (const child of row.subagents ?? []) {
+    const status = rowBusStatus(child, name)
+    if (status) return status
+  }
+  return undefined
 }

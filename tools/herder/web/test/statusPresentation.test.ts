@@ -29,12 +29,14 @@ test('open-tab status follows placed and unplaced rows from a fleet snapshot', (
       active_tab_id: 't1', agent_status: 'active',
       tabs: [{ tab_id: 't1', number: 1, label: 'work', focused: true, pane_count: 1, agent_status: 'active', panes: [{
         pane_id: 'w1:p1', agent: 'vile', tool: 'codex', herdr_status: 'idle', bus_status: 'active', gap: '-',
+        subagents: [{ pane_id: '-', agent: 'vile-task', tool: 'claude', herdr_status: '-', bus_status: 'listening', gap: 'no visible pane', parent_agent: 'vile' }],
       }] }],
     }],
     unplaced: [{ pane_id: '-', agent: 'dore', tool: 'claude', herdr_status: '-', bus_status: 'blocked', gap: 'no pane' }],
   }
 
   assert.equal(agentBusStatus(board, 'vile'), 'active')
+  assert.equal(agentBusStatus(board, 'vile-task'), 'listening')
   assert.equal(agentBusStatus(board, 'dore'), 'blocked')
   assert.equal(agentBusStatus(board, 'missing'), '-')
 })

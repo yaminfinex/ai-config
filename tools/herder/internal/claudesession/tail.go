@@ -8,7 +8,7 @@ import (
 // Tail reads new complete entries or returns an explicit reset when the
 // cursor no longer belongs to the current append-only file.
 func Tail(path, sessionID string, cursor Cursor) (TailResult, error) {
-	return tail(path, sessionID, cursor, 0)
+	return tail(path, sessionID, cursor, 0, false)
 }
 
 // TailWindow applies Tail's reset semantics while capping the successful read
@@ -17,10 +17,17 @@ func TailWindow(path, sessionID string, cursor Cursor, limit int) (TailResult, e
 	if limit < 1 {
 		return TailResult{}, os.ErrInvalid
 	}
-	return tail(path, sessionID, cursor, limit)
+	return tail(path, sessionID, cursor, limit, false)
 }
 
-func tail(path, sessionID string, cursor Cursor, limit int) (TailResult, error) {
+func TailSubagentWindow(path, transcriptID string, cursor Cursor, limit int) (TailResult, error) {
+	if limit < 1 {
+		return TailResult{}, os.ErrInvalid
+	}
+	return tail(path, transcriptID, cursor, limit, true)
+}
+
+func tail(path, sessionID string, cursor Cursor, limit int, includeSidechain bool) (TailResult, error) {
 	if cursor.SessionID != "" && cursor.SessionID != sessionID {
 		reset := &Reset{Reason: ResetSessionChanged, PreviousSessionID: cursor.SessionID, SessionID: sessionID, PreviousOffset: cursor.Offset}
 		return TailResult{Cursor: Cursor{SessionID: sessionID}, Reset: reset}, nil
@@ -35,9 +42,17 @@ func tail(path, sessionID string, cursor Cursor, limit int) (TailResult, error) 
 	}
 	var read ReadResult
 	if limit > 0 {
-		read, err = ReadWindow(path, cursor.Offset, limit)
+		if includeSidechain {
+			read, err = ReadSubagentWindow(path, cursor.Offset, limit)
+		} else {
+			read, err = ReadWindow(path, cursor.Offset, limit)
+		}
 	} else {
-		read, err = ReadFrom(path, cursor.Offset)
+		if includeSidechain {
+			read, err = ReadSubagentFrom(path, cursor.Offset)
+		} else {
+			read, err = ReadFrom(path, cursor.Offset)
+		}
 	}
 	if err != nil {
 		if reset, ok := truncatedReadReset(err, sessionID, cursor); ok {

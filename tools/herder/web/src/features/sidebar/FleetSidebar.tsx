@@ -1,20 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { AgentStatusDot, gapLabel, workspaceName } from '../../shared/presentation'
-import type { Board, Pane, Row } from '../../types'
+import { AgentStatusDot, gapLabel } from '../../shared/presentation'
+import { buildSidebarNodes } from './sidebarNodes'
+import type { SidebarNode } from './sidebarNodes'
+import type { Board } from '../../types'
 
 const emptyExpandedItems: string[] = []
-
-type SidebarNode = {
-  id: string
-  kind: 'root' | 'workspace' | 'pane' | 'unplaced'
-  name: string
-  children: string[]
-  count?: number
-  pane?: Pane | Row
-  tabLabel?: string
-}
 
 export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems }: {
   board: Board | undefined
@@ -27,54 +19,13 @@ export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, e
   onKnownWorkspaceItems: (items: string[]) => void
 }) {
   const [selectedItems, setSelectedItems] = useState<string[]>([])
-  const nodes = useMemo(() => {
-    const result = new Map<string, SidebarNode>()
-    const root: SidebarNode = { id: 'tree-root', kind: 'root', name: 'Fleet', children: [] }
-    result.set(root.id, root)
-    if (!board) return result
-
-    const workspaces = new Map(board.workspaces.map((workspace) => [workspace.workspace_id, workspace]))
-    const workspaceChildren = new Map<string, string[]>()
-    board.workspaces.forEach((workspace) => workspaceChildren.set(workspace.workspace_id, []))
-    board.workspaces.forEach((workspace) => {
-      const id = `workspace:${workspace.workspace_id}`
-      if (workspace.worktree_of && workspaces.has(workspace.worktree_of)) workspaceChildren.get(workspace.worktree_of)?.push(id)
-      else root.children.push(id)
-    })
-    board.workspaces.forEach((workspace) => {
-      const id = `workspace:${workspace.workspace_id}`
-      const children: string[] = []
-      workspace.tabs.forEach((tab) => tab.panes.forEach((pane) => {
-        const paneID = `pane:${pane.pane_id}`
-        children.push(paneID)
-        result.set(paneID, {
-          id: paneID,
-          kind: 'pane',
-          name: pane.agent !== '-' ? pane.agent : pane.label || pane.pane_id,
-          children: [],
-          pane,
-          tabLabel: `tab ${tab.number}: ${tab.label || tab.tab_id}`,
-        })
-      }))
-      children.push(...(workspaceChildren.get(workspace.workspace_id) ?? []))
-      result.set(id, { id, kind: 'workspace', name: workspaceName(workspace.label, workspace.workspace_id), children, count: workspace.pane_count })
-    })
-    const unplaced: SidebarNode = { id: 'unplaced', kind: 'unplaced', name: 'Unplaced', children: [], count: board.unplaced.length }
-    board.unplaced.forEach((row) => {
-      const id = `unplaced:${row.agent}`
-      unplaced.children.push(id)
-      result.set(id, { id, kind: 'pane', name: row.agent, children: [], pane: row })
-    })
-    root.children.push(unplaced.id)
-    result.set(unplaced.id, unplaced)
-    return result
-  }, [board])
+  const nodes = useMemo(() => buildSidebarNodes(board), [board])
 
   useEffect(() => {
     if (!board) return
     const workspaceItems = [...nodes.values()].filter((node) => node.kind === 'workspace').map((node) => node.id)
     if (expandedItems === null) {
-      onExpandedItems([...nodes.values()].filter((node) => node.kind === 'workspace' || node.kind === 'unplaced').map((node) => node.id))
+      onExpandedItems([...nodes.values()].filter((node) => node.kind === 'workspace' || node.kind === 'unplaced' || ((node.kind === 'pane' || node.kind === 'subagent') && node.children.length > 0)).map((node) => node.id))
       onKnownWorkspaceItems(workspaceItems)
       return
     }
@@ -94,7 +45,7 @@ export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, e
       setSelectedItems([])
       return
     }
-    const match = [...nodes.values()].find((node) => node.kind === 'pane' && node.pane?.agent === activeAgent)
+    const match = [...nodes.values()].find((node) => (node.kind === 'pane' || node.kind === 'subagent') && node.pane?.agent === activeAgent)
     setSelectedItems(match ? [match.id] : [])
   }, [activeAgent, nodes])
 
@@ -133,9 +84,9 @@ export function FleetSidebar({ board, activeAgent, onPreviewAgent, onPinAgent, e
         return <div
           {...item.getProps()}
           key={item.getId()}
-          className={`tree-row ${node.kind === 'pane' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${item.isFocused() ? ' tree-focused' : ''}${item.isSelected() ? ' selected' : ''}`}
+          className={`tree-row ${node.kind === 'pane' || node.kind === 'subagent' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${item.isFocused() ? ' tree-focused' : ''}${item.isSelected() ? ' selected' : ''}`}
           style={{ paddingLeft: `${item.getItemMeta().level * 16 + 5}px` }}
-          title={pane ? `${pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
+          title={pane ? `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
           onFocus={() => item.setFocused()}
           onDoubleClick={() => { if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent) }}
         >

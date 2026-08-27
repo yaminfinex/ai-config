@@ -125,6 +125,40 @@ func TestEntriesEndpointDispatchesCodexRollout(t *testing.T) {
 	}
 }
 
+func TestEntriesEndpointReadsRealSubagentSidechainShape(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, ".claude", "projects", claudesession.Slug("/invented/violet"))
+	parentPath := filepath.Join(project, fixtureSessionID+".jsonl")
+	childPath := filepath.Join(project, fixtureSessionID, "subagents", "agent-a35b593a6be7a9ba5.jsonl")
+	if err := os.MkdirAll(filepath.Dir(childPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(parentPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	child := sessionLines(
+		`{"parentUuid":null,"isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"user","message":{"role":"user","content":"Invented Task prompt."}}`,
+		`{"parentUuid":"invented-child-prompt","isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"assistant","uuid":"invented-child-answer","message":{"role":"assistant","content":[{"type":"text","text":"Invented Task answer."}]}}`,
+	)
+	if err := os.WriteFile(childPath, []byte(child), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	deps := fixtureDeps()
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{
+			{Name: "probe-fame", BaseName: "fame", Tool: "claude", Status: "active", Directory: "/invented/violet", SessionID: fixtureSessionID},
+			{Name: "probe-fame_general_purpose_1", BaseName: "fame_general_purpose_1", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active", Directory: "/invented/violet"},
+		}, nil
+	}
+
+	response := requestEntries(t, deps, "/api/agents/probe-fame_general_purpose_1/entries?limit=10")
+	page := decodeEntriesResponse(t, response)
+	if response.Code != http.StatusOK || page.SessionID != "subagent:a35b593a6be7a9ba5" || page.Entries == nil || len(*page.Entries) != 2 || (*page.Entries)[1].UUID != "invented-child-answer" || page.Stats == nil || page.Stats.SidechainSkipped != 0 {
+		t.Fatalf("subagent entries = %d %#v %s", response.Code, page, response.Body.String())
+	}
+}
+
 func TestReadQueueExclusionsUsesToolSpecificCompactBoundaryPolicy(t *testing.T) {
 	for _, fixture := range []struct {
 		name              string

@@ -53,6 +53,7 @@ h2, h3, p { margin-top: 0; }
 .gap-badge, .pane-chip, .tool-chip { padding: 0 5px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
 .unplaced-row { color: var(--dim); }
+.subagent-row .tree-name::before { content: 'task '; color: var(--dimmer); font: 9px var(--mono); }
 .sidebar-resizer { width: 5px; flex: 0 0 5px; margin-left: -3px; cursor: col-resize; outline: none; }
 .sidebar-resizer:hover, .sidebar-resizer:focus-visible { background: var(--accent); }
 
@@ -95,6 +96,9 @@ table { width: 100%; border-collapse: collapse; font-size: 11px; }
 th, td { height: 27px; padding: 3px 7px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
 thead th { background: var(--bg3); color: var(--dim); font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 tbody tr:last-child td { border-bottom: 0; }
+.subagent-table-row { background: #1e2026; }
+.subagent-table-row .pane-id { color: var(--dimmer); font-size: 9px; text-transform: uppercase; }
+.subagent-table-row .agent-cell { padding-left: 18px; }
 .tab-separator th { height: 21px; padding: 1px 7px; background: #1e1f24; color: var(--dimmer); font-size: 9px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; }
 .tab-separator span { color: var(--accent); }
 .pane-id, .agent-cell > a, .agent-cell > span:first-child { font-family: var(--mono); }

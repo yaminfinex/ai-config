@@ -24,12 +24,57 @@ type LaunchContext struct {
 }
 
 type Row struct {
-	Name          string        `json:"name"`
-	Tool          string        `json:"tool"`
-	Status        string        `json:"status"`
-	Directory     string        `json:"directory,omitempty"`
-	SessionID     string        `json:"session_id,omitempty"`
-	LaunchContext LaunchContext `json:"launch_context"`
+	Name                 string        `json:"name"`
+	BaseName             string        `json:"base_name,omitempty"`
+	Tool                 string        `json:"tool"`
+	Status               string        `json:"status"`
+	Directory            string        `json:"directory,omitempty"`
+	SessionID            string        `json:"session_id,omitempty"`
+	ParentName           string        `json:"parent_name,omitempty"`
+	AgentID              string        `json:"agent_id,omitempty"`
+	TranscriptPath       string        `json:"transcript_path,omitempty"`
+	LaunchContext        LaunchContext `json:"launch_context"`
+	ParentAgent          string        `json:"-"`
+	ParentSessionID      string        `json:"-"`
+	ParentDirectory      string        `json:"-"`
+	ParentTranscriptPath string        `json:"-"`
+}
+
+// Parent returns the one roster row explicitly named by a child row's
+// parent_name. hcom records parent_name in base-name identity, so a match is
+// accepted only when exactly one row exposes that exact base_name. Display
+// names and tag/name patterns are never parent evidence.
+func Parent(rows []Row, child Row) (Row, bool) {
+	if child.ParentName == "" {
+		return Row{}, false
+	}
+	var parent Row
+	matches := 0
+	for _, candidate := range rows {
+		if candidate.BaseName == child.ParentName {
+			parent = candidate
+			matches++
+		}
+	}
+	return parent, matches == 1
+}
+
+// WithParents returns a copy enriched only from Parent's exact, unique roster
+// relationship. The internal fields let transcript readers use the parent's
+// immutable session evidence without changing hcom's wire payload.
+func WithParents(rows []Row) []Row {
+	out := append([]Row(nil), rows...)
+	for i := range out {
+		parent, ok := Parent(rows, out[i])
+		if !ok {
+			continue
+		}
+		out[i].ParentAgent = parent.Name
+		out[i].ParentSessionID = parent.SessionID
+		out[i].ParentDirectory = parent.Directory
+		out[i].ParentTranscriptPath = parent.TranscriptPath
+	}
+	return out
 }
 
 // List reads the live hcom roster.
@@ -56,7 +101,7 @@ func ListContext(ctx context.Context) ([]Row, error) {
 func Decode(raw []byte) ([]Row, error) {
 	var rows []Row
 	if err := json.Unmarshal(raw, &rows); err == nil {
-		return rows, nil
+		return WithParents(rows), nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	for {
@@ -72,5 +117,5 @@ func Decode(raw []byte) ([]Row, error) {
 	if len(rows) == 0 && len(bytes.TrimSpace(raw)) != 0 {
 		return nil, fmt.Errorf("could not decode hcom roster")
 	}
-	return rows, nil
+	return WithParents(rows), nil
 }

@@ -84,6 +84,7 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 	}
 
 	window := entriesWindow{Mode: "from", From: from, Limit: limit}
+	currentTranscriptID := entryTranscriptID(row)
 	var read claudesession.ReadResult
 	if hasFrom {
 		tail, tailErr := readEntryWindow(path, row, claudesession.Cursor{SessionID: previousSessionID, Offset: from}, limit)
@@ -92,7 +93,7 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 			return
 		}
 		if tail.Reset != nil {
-			writeJSON(w, http.StatusOK, entriesResponse{SessionID: row.SessionID, Window: window, Reset: tail.Reset})
+			writeJSON(w, http.StatusOK, entriesResponse{SessionID: currentTranscriptID, Window: window, Reset: tail.Reset})
 			return
 		}
 		read = tail.Read
@@ -109,7 +110,7 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 	next := read.NextOffset
 	stats := entriesStats{SidechainSkipped: read.Stats.SidechainSkipped}
 	writeJSON(w, http.StatusOK, entriesResponse{
-		SessionID: row.SessionID, Window: window, Entries: &entries,
+		SessionID: currentTranscriptID, Window: window, Entries: &entries,
 		NextOffset: &next, Stats: &stats,
 	})
 }
@@ -160,7 +161,7 @@ func entryAgent(deps dependencies, name string) (hcomidentity.Row, error) {
 	if err != nil {
 		return hcomidentity.Row{}, sourceError{"hcom", err}
 	}
-	for _, row := range roster {
+	for _, row := range hcomidentity.WithParents(roster) {
 		if row.Name == name {
 			return row, nil
 		}
@@ -180,6 +181,8 @@ func entryTailEnd(row hcomidentity.Row) (int64, error) {
 	var read claudesession.ReadResult
 	if row.Tool == "codex" {
 		read, _, err = codexsession.ReadTail(path, 1)
+	} else if isSubagent(row) {
+		read, _, err = claudesession.ReadSubagentTail(path, 1)
 	} else {
 		read, _, err = claudesession.ReadTail(path, 1)
 	}
@@ -196,9 +199,12 @@ func entryTail(row hcomidentity.Row, cursor claudesession.Cursor, limit int) (cl
 		return claudesession.TailResult{}, err
 	}
 	if row.Tool == "codex" {
-		return codexsession.TailWindow(path, row.SessionID, cursor, limit)
+		return codexsession.TailWindow(path, entryTranscriptID(row), cursor, limit)
 	}
-	return claudesession.TailWindow(path, row.SessionID, cursor, limit)
+	if isSubagent(row) {
+		return claudesession.TailSubagentWindow(path, entryTranscriptID(row), cursor, limit)
+	}
+	return claudesession.TailWindow(path, entryTranscriptID(row), cursor, limit)
 }
 
 func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
@@ -220,6 +226,9 @@ func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
 	}
 	if row.Tool == "codex" {
 		return codexsession.ReadVitals(path)
+	}
+	if isSubagent(row) {
+		return claudesession.ReadSubagentVitals(path)
 	}
 	return claudesession.ReadVitals(path)
 }
@@ -249,6 +258,8 @@ func readQueueExclusions(row hcomidentity.Row, candidates map[string]string) (ma
 		var read claudesession.ReadResult
 		if row.Tool == "codex" {
 			read, err = codexsession.ReadWindow(path, offset, maxEntryWindow)
+		} else if isSubagent(row) {
+			read, err = claudesession.ReadSubagentWindow(path, offset, maxEntryWindow)
 		} else {
 			read, err = claudesession.ReadWindow(path, offset, maxEntryWindow)
 		}
@@ -271,6 +282,9 @@ func readQueueExclusions(row hcomidentity.Row, candidates map[string]string) (ma
 func resolveEntryPath(home string, row hcomidentity.Row) (string, error) {
 	switch row.Tool {
 	case "claude":
+		if isSubagent(row) {
+			return claudesession.ResolveSubagent(home, row)
+		}
 		return claudesession.Resolve(home, row)
 	case "codex":
 		return codexsession.Resolve(home, row)
@@ -282,14 +296,31 @@ func resolveEntryPath(home string, row hcomidentity.Row) (string, error) {
 
 func readEntryWindow(path string, row hcomidentity.Row, cursor claudesession.Cursor, limit int) (claudesession.TailResult, error) {
 	if row.Tool == "codex" {
-		return codexsession.TailWindow(path, row.SessionID, cursor, limit)
+		return codexsession.TailWindow(path, entryTranscriptID(row), cursor, limit)
 	}
-	return claudesession.TailWindow(path, row.SessionID, cursor, limit)
+	if isSubagent(row) {
+		return claudesession.TailSubagentWindow(path, entryTranscriptID(row), cursor, limit)
+	}
+	return claudesession.TailWindow(path, entryTranscriptID(row), cursor, limit)
 }
 
 func readEntryTail(path string, row hcomidentity.Row, limit int) (claudesession.ReadResult, int64, error) {
 	if row.Tool == "codex" {
 		return codexsession.ReadTail(path, limit)
 	}
+	if isSubagent(row) {
+		return claudesession.ReadSubagentTail(path, limit)
+	}
 	return claudesession.ReadTail(path, limit)
+}
+
+func isSubagent(row hcomidentity.Row) bool {
+	return row.ParentAgent != "" && row.AgentID != ""
+}
+
+func entryTranscriptID(row hcomidentity.Row) string {
+	if isSubagent(row) {
+		return "subagent:" + row.AgentID
+	}
+	return row.SessionID
 }
