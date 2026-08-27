@@ -83,6 +83,27 @@ func TestResolveFindsSessionWhenLiveDirectoryChanged(t *testing.T) {
 	}
 }
 
+func TestResolveRejectsAmbiguousSessionDuplicates(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	id := "73400000-0000-4000-8000-000000000734"
+	for _, directory := range []string{"/invented/violet", "/invented/indigo"} {
+		path := filepath.Join(home, ".claude", "projects", Slug(directory), id+".jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := Resolve(home, hcomidentity.Row{Tool: "claude", Directory: "/invented/changed", SessionID: id})
+	var typed *ResolveError
+	if !errors.As(err, &typed) || typed.Reason != ResolveAmbiguousFile {
+		t.Fatalf("ambiguous Resolve error = %#v", err)
+	}
+}
+
 func TestTaxonomyFixture(t *testing.T) {
 	t.Parallel()
 	result, err := ReadFrom(filepath.Join("testdata", "taxonomy.jsonl"), 0)
