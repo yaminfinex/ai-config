@@ -72,7 +72,14 @@ func (e *offsetBeyondError) Error() string {
 // ReadFrom emits every renderable complete line at or after offset. A
 // trailing line without '\n' is held back and NextOffset remains before it.
 func ReadFrom(path string, offset int64) (ReadResult, error) {
-	return read(path, offset, 0, false)
+	return read(path, offset, 0, false, false)
+}
+
+// ReadSubagentFrom reads a proven dedicated Task transcript. Claude marks
+// every record in that file as sidechain; this explicit entry point is the
+// only path that renders those records.
+func ReadSubagentFrom(path string, offset int64) (ReadResult, error) {
+	return read(path, offset, 0, false, true)
 }
 
 // ReadWindow emits at most limit renderable entries at or after offset. Its
@@ -82,10 +89,17 @@ func ReadWindow(path string, offset int64, limit int) (ReadResult, error) {
 	if limit < 1 {
 		return ReadResult{}, fmt.Errorf("session entry limit must be positive: %d", limit)
 	}
-	return read(path, offset, limit, false)
+	return read(path, offset, limit, false, false)
 }
 
-func read(path string, offset int64, limit int, keepTail bool) (ReadResult, error) {
+func ReadSubagentWindow(path string, offset int64, limit int) (ReadResult, error) {
+	if limit < 1 {
+		return ReadResult{}, fmt.Errorf("session entry limit must be positive: %d", limit)
+	}
+	return read(path, offset, limit, false, true)
+}
+
+func read(path string, offset int64, limit int, keepTail, includeSidechain bool) (ReadResult, error) {
 	if offset < 0 {
 		return ReadResult{}, fmt.Errorf("negative session offset: %d", offset)
 	}
@@ -123,7 +137,7 @@ func read(path string, offset int64, limit int, keepTail bool) (ReadResult, erro
 		}
 		result.NextOffset += int64(len(raw))
 		body := bytes.TrimSuffix(raw[:len(raw)-1], []byte{'\r'})
-		entry, render, sidechain := classify(body, line, start)
+		entry, render, sidechain := classifyMode(body, line, start, includeSidechain)
 		if sidechain {
 			result.Stats.SidechainSkipped++
 		} else if render {
@@ -151,10 +165,18 @@ func read(path string, offset int64, limit int, keepTail bool) (ReadResult, erro
 // ReadVitals scans complete session records and returns the latest entry that
 // carries each fact. It uses the same complete-line rule as transcript reads.
 func ReadVitals(path string) (Vitals, error) {
+	return readVitals(path, false)
+}
+
+func ReadSubagentVitals(path string) (Vitals, error) {
+	return readVitals(path, true)
+}
+
+func readVitals(path string, includeSidechain bool) (Vitals, error) {
 	var vitals Vitals
 	err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
 		var facts Vitals
-		observeVitals(raw, &facts)
+		observeVitals(raw, &facts, includeSidechain)
 		if vitals.Model == "" {
 			vitals.Model = facts.Model
 		}
@@ -166,9 +188,9 @@ func ReadVitals(path string) (Vitals, error) {
 	return vitals, err
 }
 
-func observeVitals(raw []byte, vitals *Vitals) {
+func observeVitals(raw []byte, vitals *Vitals, includeSidechain bool) {
 	var env envelope
-	if json.Unmarshal(raw, &env) != nil || env.Type != "assistant" || env.IsSidechain {
+	if json.Unmarshal(raw, &env) != nil || env.Type != "assistant" || (env.IsSidechain && !includeSidechain) {
 		return
 	}
 	if env.Message.Model != "" {
@@ -200,7 +222,22 @@ func ReadTail(path string, limit int) (ReadResult, int64, error) {
 	if limit < 1 {
 		return ReadResult{}, 0, fmt.Errorf("session entry limit must be positive: %d", limit)
 	}
-	result, err := read(path, 0, limit, true)
+	result, err := read(path, 0, limit, true, false)
+	if err != nil {
+		return ReadResult{}, 0, err
+	}
+	from := result.NextOffset
+	if len(result.Entries) > 0 {
+		from = result.Entries[0].ByteOffset
+	}
+	return result, from, nil
+}
+
+func ReadSubagentTail(path string, limit int) (ReadResult, int64, error) {
+	if limit < 1 {
+		return ReadResult{}, 0, fmt.Errorf("session entry limit must be positive: %d", limit)
+	}
+	result, err := read(path, 0, limit, true, true)
 	if err != nil {
 		return ReadResult{}, 0, err
 	}
@@ -233,6 +270,10 @@ func lineAt(f *os.File, offset int64) (int64, error) {
 }
 
 func classify(raw []byte, line, offset int64) (Entry, bool, bool) {
+	return classifyMode(raw, line, offset, false)
+}
+
+func classifyMode(raw []byte, line, offset int64, includeSidechain bool) (Entry, bool, bool) {
 	base := Entry{Line: line, ByteOffset: offset, Kind: KindUnknown}
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -242,7 +283,7 @@ func classify(raw []byte, line, offset int64) (Entry, bool, bool) {
 	}
 	base.UUID, base.Timestamp = env.UUID, env.Timestamp
 	base.Payload = append(json.RawMessage(nil), raw...)
-	if env.IsSidechain {
+	if env.IsSidechain && !includeSidechain {
 		return Entry{}, false, true
 	}
 	if isBookkeeping(env.Type) {

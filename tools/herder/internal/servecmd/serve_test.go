@@ -122,6 +122,25 @@ func TestAgentEndpointReturnsJoinedDetailAnd404sUnknownBusName(t *testing.T) {
 	}
 }
 
+func TestAgentEndpointCarriesOnlyProvenSubagentParent(t *testing.T) {
+	deps := fixtureDeps()
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{
+			{Name: "probe-fame", BaseName: "fame", Tool: "claude", Status: "active", SessionID: fixtureSessionID},
+			{Name: "probe-child", BaseName: "child", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active"},
+		}, nil
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/probe-child", nil))
+	var detail agentDetail
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || detail.ParentAgent != "probe-fame" || detail.Pane != nil {
+		t.Fatalf("subagent detail = %d %#v", response.Code, detail)
+	}
+}
+
 func TestAgentDetailShowsBusMessageUntilTranscriptProvesDelivery(t *testing.T) {
 	deps := fixtureDeps()
 	deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {

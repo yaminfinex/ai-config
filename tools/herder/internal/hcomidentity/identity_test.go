@@ -26,6 +26,37 @@ func TestDecodeArrayAndJSONL(t *testing.T) {
 	}
 }
 
+func TestParentUsesOnlyOneExactBaseName(t *testing.T) {
+	child := Row{Name: "probe-parent_general_purpose_1", ParentName: "parent"}
+	rows := []Row{{Name: "probe-parent", BaseName: "parent"}, child}
+	parent, ok := Parent(rows, child)
+	if !ok || parent.Name != "probe-parent" {
+		t.Fatalf("Parent() = %#v, %v", parent, ok)
+	}
+
+	rows = append(rows, Row{Name: "other-parent", BaseName: "parent"})
+	if _, ok := Parent(rows, child); ok {
+		t.Fatal("Parent accepted ambiguous base-name identity")
+	}
+	child.ParentName = "probe-parent"
+	if _, ok := Parent(rows, child); ok {
+		t.Fatal("Parent inferred from a display name")
+	}
+}
+
+func TestDecodeEnrichesOnlyProvenParentSession(t *testing.T) {
+	rows, err := Decode([]byte(`[
+		{"name":"probe-fame","base_name":"fame","session_id":"parent-session","directory":"/probe"},
+		{"name":"probe-child","base_name":"child","parent_name":"fame","agent_id":"a35b593a6be7a9ba5"}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[1].ParentAgent != "probe-fame" || rows[1].ParentSessionID != "parent-session" || rows[1].ParentDirectory != "/probe" {
+		t.Fatalf("enriched child = %#v", rows[1])
+	}
+}
+
 func TestDecodeRejectsMalformedRoster(t *testing.T) {
 	if _, err := Decode([]byte(`{"name":`)); err == nil {
 		t.Fatal("Decode accepted malformed JSON")

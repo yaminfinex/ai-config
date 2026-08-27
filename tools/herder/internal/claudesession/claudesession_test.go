@@ -104,6 +104,59 @@ func TestResolveRejectsAmbiguousSessionDuplicates(t *testing.T) {
 	}
 }
 
+func TestResolveSubagentUsesProvenParentAndRejectsHostileAgentID(t *testing.T) {
+	home := t.TempDir()
+	parentID := "73500000-0000-4000-8000-000000000735"
+	parentPath := filepath.Join(home, ".claude", "projects", Slug("/invented/violet"), parentID+".jsonl")
+	childPath := filepath.Join(strings.TrimSuffix(parentPath, ".jsonl"), "subagents", "agent-a35b593a6be7a9ba5.jsonl")
+	if err := os.MkdirAll(filepath.Dir(childPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{parentPath, childPath} {
+		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := hcomidentity.Row{Tool: "claude", AgentID: "a35b593a6be7a9ba5", ParentAgent: "probe-fame", ParentSessionID: parentID, ParentDirectory: "/invented/violet"}
+	if got, err := ResolveSubagent(home, row); err != nil || got != childPath {
+		t.Fatalf("ResolveSubagent() = %q, %v", got, err)
+	}
+	for _, invalidID := range []string{"deadbee", "../../hostile"} {
+		row.AgentID = invalidID
+		_, err := ResolveSubagent(home, row)
+		var typed *ResolveError
+		if !errors.As(err, &typed) || typed.Reason != ResolveInvalidAgentID {
+			t.Errorf("invalid agent ID %q error = %#v", invalidID, err)
+		}
+	}
+}
+
+func TestResolveSubagentRosterPathMustExistInsideProjectsTree(t *testing.T) {
+	home := t.TempDir()
+	parentID := "73600000-0000-4000-8000-000000000736"
+	parentPath := filepath.Join(home, ".claude", "projects", Slug("/invented/violet"), parentID+".jsonl")
+	derived := filepath.Join(strings.TrimSuffix(parentPath, ".jsonl"), "subagents", "agent-a35b593a6be7a9ba5.jsonl")
+	if err := os.MkdirAll(filepath.Dir(derived), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{parentPath, derived} {
+		if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outside := filepath.Join(home, "agent-a35b593a6be7a9ba5.jsonl")
+	if err := os.WriteFile(outside, []byte("hostile\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	row := hcomidentity.Row{
+		Tool: "claude", AgentID: "a35b593a6be7a9ba5", TranscriptPath: outside,
+		ParentAgent: "probe-fame", ParentSessionID: parentID, ParentDirectory: "/invented/violet",
+	}
+	if got, err := ResolveSubagent(home, row); err != nil || got != derived {
+		t.Fatalf("unsafe roster path did not fall back: %q, %v", got, err)
+	}
+}
+
 func TestTaxonomyFixture(t *testing.T) {
 	t.Parallel()
 	result, err := ReadFrom(filepath.Join("testdata", "taxonomy.jsonl"), 0)
@@ -236,6 +289,18 @@ func TestQuarantineAndSidechain(t *testing.T) {
 	}
 	if result.Stats.SidechainSkipped != 1 {
 		t.Fatalf("sidechain skipped = %d", result.Stats.SidechainSkipped)
+	}
+}
+
+func TestDedicatedSubagentReadRendersSidechainWithoutWeakeningMainRead(t *testing.T) {
+	path := writeTemp(t, `{"type":"assistant","isSidechain":true,"agentId":"a35b593a6be7a9ba5","message":{"content":[{"type":"text","text":"invented child answer"}]}}`+"\n")
+	main, err := ReadFrom(path, 0)
+	if err != nil || len(main.Entries) != 0 || main.Stats.SidechainSkipped != 1 {
+		t.Fatalf("main read = %#v, %v", main, err)
+	}
+	child, err := ReadSubagentFrom(path, 0)
+	if err != nil || len(child.Entries) != 1 || child.Entries[0].Kind != KindAssistantText || child.Stats.SidechainSkipped != 0 {
+		t.Fatalf("subagent read = %#v, %v", child, err)
 	}
 }
 

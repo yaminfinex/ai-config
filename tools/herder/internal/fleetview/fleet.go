@@ -20,7 +20,11 @@ type Row struct {
 	HerdrStatus string `json:"herdr_status"`
 	BusStatus   string `json:"bus_status"`
 	Gap         string `json:"gap"`
+	ParentAgent string `json:"parent_agent,omitempty"`
+	Subagents   *Rows  `json:"subagents,omitempty"`
 }
+
+type Rows []Row
 
 type Board struct {
 	Workspaces []Workspace `json:"workspaces"`
@@ -59,6 +63,7 @@ type Pane struct {
 	HerdrStatus  string `json:"herdr_status"`
 	BusStatus    string `json:"bus_status"`
 	Gap          string `json:"gap"`
+	Subagents    []Row  `json:"subagents,omitempty"`
 }
 
 type placement struct {
@@ -191,18 +196,18 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 			}
 		}
 		if len(matches) == 0 {
-			rows = append(rows, Row{paneID, display(place.name), display(place.tool), display(place.status), "-", "no bus row"})
+			rows = append(rows, Row{Pane: paneID, Agent: display(place.name), Tool: display(place.tool), HerdrStatus: display(place.status), BusStatus: "-", Gap: "no bus row"})
 			continue
 		}
 		for _, i := range matches {
 			matched[i] = true
 			bus := roster[i]
-			rows = append(rows, Row{paneID, display(first(bus.Name, place.name)), display(first(bus.Tool, place.tool)), display(place.status), display(bus.Status), "-"})
+			rows = append(rows, Row{Pane: paneID, Agent: display(first(bus.Name, place.name)), Tool: display(first(bus.Tool, place.tool)), HerdrStatus: display(place.status), BusStatus: display(bus.Status), Gap: "-"})
 		}
 	}
 	for i, bus := range roster {
 		if !matched[i] {
-			rows = append(rows, Row{"-", display(bus.Name), display(bus.Tool), "-", display(bus.Status), "no visible pane"})
+			rows = append(rows, Row{Pane: "-", Agent: display(bus.Name), Tool: display(bus.Tool), HerdrStatus: "-", BusStatus: display(bus.Status), Gap: "no visible pane"})
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -218,9 +223,59 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 // panes with the exact-pane-ID join. Bus-only rows remain top-level gaps.
 func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row, worktreeParents ...map[string]string) Board {
 	rows := JoinRows(snapshot, roster)
+	rowsByAgent := make(map[string]Row, len(rows))
+	for _, row := range rows {
+		if row.BusStatus != "-" {
+			rowsByAgent[row.Agent] = row
+		}
+	}
+	children := make(map[string][]string)
+	provenChildren := make(map[string]bool)
+	for _, child := range roster {
+		parent, ok := hcomidentity.Parent(roster, child)
+		if !ok {
+			continue
+		}
+		row, childVisible := rowsByAgent[child.Name]
+		_, parentVisible := rowsByAgent[parent.Name]
+		if !childVisible || !parentVisible {
+			continue
+		}
+		row.ParentAgent = parent.Name
+		rowsByAgent[child.Name] = row
+		children[parent.Name] = append(children[parent.Name], child.Name)
+		provenChildren[child.Name] = true
+	}
+	var attachChildren func(Row, map[string]bool) Row
+	attachChildren = func(row Row, ancestors map[string]bool) Row {
+		if ancestors[row.Agent] {
+			return row
+		}
+		next := make(map[string]bool, len(ancestors)+1)
+		for name := range ancestors {
+			next[name] = true
+		}
+		next[row.Agent] = true
+		var nested Rows
+		for _, childName := range children[row.Agent] {
+			child := attachChildren(rowsByAgent[childName], next)
+			nested = append(nested, child)
+		}
+		sort.SliceStable(nested, func(i, j int) bool { return nested[i].Agent < nested[j].Agent })
+		if len(nested) > 0 {
+			row.Subagents = &nested
+		}
+		return row
+	}
 	byPane := make(map[string]Row)
 	board := Board{Workspaces: []Workspace{}, Unplaced: []Row{}}
 	for _, row := range rows {
+		if provenChildren[row.Agent] && row.BusStatus != "-" {
+			continue
+		}
+		if row.BusStatus != "-" {
+			row = attachChildren(row, nil)
+		}
 		if row.Pane == "-" {
 			board.Unplaced = append(board.Unplaced, row)
 		} else {
@@ -242,6 +297,7 @@ func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row, worktreeParent
 		panesByTab[source.TabID] = append(panesByTab[source.TabID], Pane{
 			PaneID: source.PaneID, Label: source.Label, AgentSession: source.AgentSession,
 			Agent: row.Agent, Tool: row.Tool, HerdrStatus: row.HerdrStatus, BusStatus: row.BusStatus, Gap: row.Gap,
+			Subagents: rowsValue(row.Subagents),
 		})
 	}
 	tabsByWorkspace := make(map[string][]Tab)
@@ -272,6 +328,13 @@ func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row, worktreeParent
 		})
 	}
 	return board
+}
+
+func rowsValue(rows *Rows) []Row {
+	if rows == nil {
+		return nil
+	}
+	return []Row(*rows)
 }
 
 func first(values ...string) string {

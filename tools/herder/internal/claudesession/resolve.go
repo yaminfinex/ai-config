@@ -20,6 +20,8 @@ const (
 	ResolveInvalidSession ResolveReason = "invalid_session_id"
 	ResolveFileAbsent     ResolveReason = "session_file_absent"
 	ResolveAmbiguousFile  ResolveReason = "session_file_ambiguous"
+	ResolveMissingParent  ResolveReason = "subagent_parent_unproven"
+	ResolveInvalidAgentID ResolveReason = "invalid_subagent_agent_id"
 )
 
 // ResolveError is an honest, typed path-resolution refusal.
@@ -44,6 +46,7 @@ func (e *ResolveError) Is(target error) bool {
 }
 
 var sessionIDPattern = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+var subagentIDPattern = regexp.MustCompile(`^[0-9a-f]{17}$`)
 
 // Slug encodes a working directory using Claude Code's project-directory
 // convention: every non-ASCII-alphanumeric byte becomes '-', with a leading
@@ -97,4 +100,61 @@ func Resolve(home string, row hcomidentity.Row) (string, error) {
 		return "", &ResolveError{Reason: ResolveAmbiguousFile, Path: pattern}
 	}
 	return "", &ResolveError{Reason: ResolveFileAbsent, Path: pattern, Err: os.ErrNotExist}
+}
+
+// ResolveSubagent locates a dedicated Claude Task transcript. The agent ID is
+// validated before it participates in a path. An hcom-provided transcript path
+// is accepted only when its resolved target exists inside ~/.claude/projects
+// and names this exact agent; otherwise the path derived from the proven parent
+// session is used.
+func ResolveSubagent(home string, row hcomidentity.Row) (string, error) {
+	if row.Tool != "claude" {
+		return "", &ResolveError{Reason: ResolveWrongTool}
+	}
+	if !subagentIDPattern.MatchString(row.AgentID) {
+		return "", &ResolveError{Reason: ResolveInvalidAgentID}
+	}
+	projects := filepath.Join(home, ".claude", "projects")
+	if row.TranscriptPath != "" {
+		if path, ok := containedSubagentPath(projects, row.TranscriptPath, row.AgentID); ok {
+			return path, nil
+		}
+	}
+	if row.ParentAgent == "" || row.ParentSessionID == "" {
+		return "", &ResolveError{Reason: ResolveMissingParent}
+	}
+	parentPath, err := Resolve(home, hcomidentity.Row{
+		Tool: "claude", Directory: row.ParentDirectory, SessionID: row.ParentSessionID,
+	})
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(strings.TrimSuffix(parentPath, ".jsonl"), "subagents", "agent-"+row.AgentID+".jsonl")
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", &ResolveError{Reason: ResolveFileAbsent, Path: path, Err: err}
+		}
+		return "", err
+	}
+	return path, nil
+}
+
+func containedSubagentPath(projects, candidate, agentID string) (string, bool) {
+	wantBase := "agent-" + agentID + ".jsonl"
+	if filepath.Base(candidate) != wantBase {
+		return "", false
+	}
+	root, err := filepath.EvalSymlinks(projects)
+	if err != nil {
+		return "", false
+	}
+	path, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", false
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return path, true
 }

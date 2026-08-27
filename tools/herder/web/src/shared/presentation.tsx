@@ -1,4 +1,5 @@
 import { agentStatusPresentation } from './agentStatus.ts'
+export { workspaceName } from './workspaceName.ts'
 
 export function AgentStatusDot({ status }: { status: string }) {
   const presentation = agentStatusPresentation(status)
@@ -9,10 +10,6 @@ export function AgentStatusDot({ status }: { status: string }) {
 export function gapLabel(gap: string) {
   if (gap === '-') return ''
   return gap.toLowerCase().includes('pane') ? 'no pane' : 'gap'
-}
-
-export function workspaceName(label: string, id: string) {
-  return (label || id).replace(/-[0-9a-f]{8}$/i, '')
 }
 
 export function Banner({ source, detail }: { source: string, detail: string }) {

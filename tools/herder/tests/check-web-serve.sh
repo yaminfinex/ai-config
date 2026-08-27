@@ -128,7 +128,7 @@ printf '{"UserProfile":{"LoginName":"%s"}}\n' "$login"
 TAILSCALE
 chmod +x "$ROOT/bin/tailscale"
 
-jq 'map(if .name == "vile" then .session_id = "73100000-0000-4000-8000-000000000731" | .directory = "/invented/violet" else . end) + [{"name":"web-vile","base_name":"web-vile","tool":"codex","status":"listening","joined":true,"session_id":"session-web-vile","launch_context":{}}]' \
+jq 'map(if .name == "vile" then .session_id = "73100000-0000-4000-8000-000000000731" | .directory = "/invented/violet" else . end) + [{"name":"vile_general_purpose_1","base_name":"vile_general_purpose_1","parent_name":"vile","agent_id":"a35b593a6be7a9ba5","tool":"claude","status":"active","directory":"/invented/violet","launch_context":{}},{"name":"web-vile","base_name":"web-vile","tool":"codex","status":"listening","joined":true,"session_id":"session-web-vile","launch_context":{}}]' \
   "$FIXTURE/roster.json" >"$ROOT/roster.json"
 cp "$FIXTURE/snapshot.json" "$ROOT/snapshot.json"
 mkdir -p "$ROOT/home/.claude/projects/-invented-violet"
@@ -137,6 +137,12 @@ cat >"$session_path" <<'SESSION'
 {"type":"user","uuid":"invented-web-human","timestamp":"2026-01-02T03:04:05.000Z","origin":{"kind":"human"},"promptSource":"typed","message":{"role":"user","content":"Invented web endpoint prompt."}}
 {"type":"assistant","uuid":"invented-web-answer","timestamp":"2026-01-02T03:04:06.000Z","message":{"role":"assistant","model":"invented-claude-model","content":[{"type":"text","text":"Invented web endpoint answer."}],"usage":{"input_tokens":11,"cache_creation_input_tokens":101,"cache_read_input_tokens":1009,"output_tokens":19}}}
 SESSION
+subagent_path="$ROOT/home/.claude/projects/-invented-violet/73100000-0000-4000-8000-000000000731/subagents/agent-a35b593a6be7a9ba5.jsonl"
+mkdir -p "$(dirname "$subagent_path")"
+cat >"$subagent_path" <<'SUBAGENT'
+{"parentUuid":null,"isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"user","uuid":"invented-subagent-prompt","message":{"role":"user","content":"Invented real-shape Task prompt."}}
+{"parentUuid":"invented-subagent-prompt","isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"assistant","uuid":"invented-subagent-answer","message":{"role":"assistant","content":[{"type":"text","text":"Invented real-shape Task answer."}]}}
+SUBAGENT
 
 socket="$ROOT/herdr.sock"
 python3 - "$socket" "$ROOT/snapshot.json" <<'PY' &
@@ -274,9 +280,12 @@ assert "worktree_of" not in board["workspaces"][0]
 assert board["workspaces"][1]["worktree_of"] == "w1"
 assert board["workspaces"][1]["tabs"][0]["panes"][0]["agent"] == "zira"
 assert board["unplaced"][0]["agent"] == "vile"
+assert [child["agent"] for child in board["unplaced"][0]["subagents"]] == ["vile_general_purpose_1"]
+assert board["unplaced"][0]["subagents"][0]["parent_agent"] == "vile"
+assert all(row["agent"] != "vile_general_purpose_1" for row in board["unplaced"])
 PY
 then
-  pass "fleet JSON preserves hierarchy, explicit worktree parent, exact-pane join, and unplaced gaps"
+  pass "fleet JSON preserves hierarchy, exact placement, and explicit subagent families"
 else
   bad "fleet JSON contract" "body=$(cat "$ROOT/fleet.json")"
 fi
@@ -321,6 +330,19 @@ then
   pass "entries route serves a classified tail window with a session-bound byte cursor"
 else
   bad "entries route" "body=$(cat "$ROOT/entries.json" 2>/dev/null || true)"
+fi
+
+if curl -fsS "http://127.0.0.1:$port/api/agents/vile_general_purpose_1/entries?limit=10" >"$ROOT/subagent-entries.json" && python3 - "$ROOT/subagent-entries.json" <<'PY'
+import json, sys
+page = json.load(open(sys.argv[1]))
+assert page["sessionId"] == "subagent:a35b593a6be7a9ba5"
+assert [entry["uuid"] for entry in page["entries"]] == ["invented-subagent-prompt", "invented-subagent-answer"]
+assert page["stats"]["sidechainSkipped"] == 0
+PY
+then
+  pass "proven subagent serves its dedicated sidechain transcript through the canonical entries route"
+else
+  bad "subagent entries route" "body=$(cat "$ROOT/subagent-entries.json" 2>/dev/null || true)"
 fi
 
 if curl -fsS "http://127.0.0.1:$port/api/agents/vile" >"$ROOT/queued-before.json" && python3 - "$ROOT/queued-before.json" <<'PY'
@@ -502,7 +524,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((21 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((22 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

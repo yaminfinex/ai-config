@@ -88,9 +88,29 @@ GET `/api/fleet`
   rows claiming one session) keeps the gap, honestly. Applies identically to
   `herder list` and this endpoint — one shared join package serves both.
 
+  ### AMENDMENT (conductor-acked, 2026-08-27) — explicit Claude subagent families
+
+  A Claude Task subagent has no pane or independent session ID. hcom instead
+  exposes `agent_id` and an explicit `parent_name`, while the parent row exposes
+  its `base_name`. When `parent_name` equals exactly one live roster
+  `base_name`, the board nests the child in the parent's optional `subagents`
+  array and omits that proven child from top-level `unplaced`. Each nested row
+  retains its honest `pane_id:"-"`, `gap:"no visible pane"`, and adds
+  `parent_agent:"<full bus name>"`. The parent may itself be placed or
+  unplaced. Missing or ambiguous parent evidence leaves the child top-level
+  unplaced. Display-name patterns and tags are never parent evidence, and the
+  regular exact-pane/session placement join above is unchanged.
+
+  The sidebar and board render that same nested payload beneath the parent;
+  the child remains an independently addressable bus agent. No second fleet
+  projection or client-side parent inference exists.
+
 GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap
   state. 404 for names not on the bus.
+  A proven Claude Task subagent additionally carries
+  `parent_agent:"<full bus name>"`; the field is absent when the exact roster
+  parent relationship is unavailable or ambiguous.
 
   ### AMENDMENT (owner priority ruling, 2026-08-27) — agent model and context vitals
 
@@ -191,6 +211,19 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   `from` is a 400. Refusals: 404 unknown bus agent; 409 no resolvable Claude
   session (wrong tool, missing/invalid ID, or absent derived file); 502 bus,
   filesystem, or other substrate failure.
+
+  For a proven Claude Task subagent, the immutable transcript identity is
+  `subagent:<agent_id>` and is returned in the existing `sessionId` field for
+  the same cursor/reset semantics. The server validates `agent_id` against the
+  admitted strict hexadecimal Task-ID shapes before any path construction. It
+  resolves the dedicated
+  `<parent-session>/subagents/agent-<agent_id>.jsonl` file from the exact parent
+  roster/session relationship and explicitly renders that file's
+  `isSidechain:true` records. Ordinary Claude session reads continue to skip
+  sidechain records. If hcom later supplies `transcript_path`, it is preferred
+  only when the target exists, names the exact validated agent, and resolves
+  inside `$HOME/.claude/projects`; otherwise the server falls back to the
+  parent-derived path. An arbitrary or escaping roster path is never read.
 
 ### AMENDMENT (owner-ruled, 2026-08-27) — legacy exchange endpoints removed
 

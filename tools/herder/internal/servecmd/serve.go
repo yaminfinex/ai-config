@@ -115,6 +115,7 @@ type agentDetail struct {
 	Pane          *agentPane                  `json:"pane"`
 	Directory     string                      `json:"directory,omitempty"`
 	SessionID     string                      `json:"session_id,omitempty"`
+	ParentAgent   string                      `json:"parent_agent,omitempty"`
 	LaunchContext hcomidentity.LaunchContext  `json:"launch_context"`
 	Model         string                      `json:"model,omitempty"`
 	ContextUsage  *claudesession.ContextUsage `json:"context_usage,omitempty"`
@@ -449,7 +450,7 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
-	return snapshot, roster, nil
+	return snapshot, hcomidentity.WithParents(roster), nil
 }
 
 var errUnknownAgent = errors.New("unknown agent")
@@ -473,6 +474,7 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 		Name: name, Tool: bus.Tool, HerdrStatus: "-", BusStatus: bus.Status,
 		Gap: "no visible pane", Directory: bus.Directory, SessionID: bus.SessionID,
 		LaunchContext: bus.LaunchContext,
+		ParentAgent:   bus.ParentAgent,
 	}
 	vitals, err := deps.agentVitals(*bus)
 	if err != nil {
@@ -867,7 +869,8 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				}
 				continue
 			}
-			if !state.initialized || state.session != row.SessionID {
+			transcriptID := entryTranscriptID(row)
+			if !state.initialized || state.session != transcriptID {
 				end, endErr := deps.entryEnd(row)
 				if endErr != nil {
 					if initial {
@@ -880,7 +883,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					continue
 				}
 				state.initialized = true
-				state.session = row.SessionID
+				state.session = transcriptID
 				state.offset = end
 				if !initial && !emit("rewindow", transcriptReset{Agent: name}) {
 					return false
@@ -912,7 +915,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					}
 					continue
 				}
-				state.session = row.SessionID
+				state.session = transcriptID
 				state.offset = end
 				if !emit("rewindow", transcriptReset{Agent: name}) {
 					return false

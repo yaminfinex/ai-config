@@ -5,6 +5,8 @@ export interface Row {
   herdr_status: string
   bus_status: string
   gap: string
+  parent_agent?: string
+  subagents?: Row[]
 }
 
 export interface Pane extends Row {
@@ -65,6 +67,7 @@ export interface AgentDetail {
   pane: { workspace_id: string, tab_id: string, pane_id: string } | null
   directory?: string
   session_id?: string
+  parent_agent?: string
   launch_context: Record<string, unknown>
   model?: string
   context_usage?: {
