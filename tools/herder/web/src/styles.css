@@ -70,6 +70,8 @@ h2, h3, p { margin-top: 0; }
 .shell-banners:empty { display: none; }
 .banner { display: flex; min-height: 27px; align-items: center; gap: 8px; margin: 0; padding: 3px 12px; border-bottom: 1px solid #63343a; background: #301d21; color: #f0a8a3; font-size: 11px; }
 .banner strong { font: 600 10px var(--mono); }
+.banner.server-update { border-color: #5c4716; background: #3d2e12; color: var(--amber); }
+.banner.server-update button { margin-left: auto; padding: 2px 8px; border-color: #806322; background: #241b0b; color: var(--amber); font-size: 10px; }
 .panel-host { flex: 1; min-height: 0; }
 .hosted-panel { height: 100%; }
 .hosted-panel[hidden] { display: none; }

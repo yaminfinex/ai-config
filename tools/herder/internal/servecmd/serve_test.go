@@ -28,6 +28,7 @@ import (
 
 func fixtureDeps() dependencies {
 	return dependencies{
+		buildIdentity: "source:fixture731",
 		snapshot: func() (herdrcli.Snapshot, error) {
 			return herdrcli.Snapshot{
 				Workspaces: []herdrcli.Workspace{{WorkspaceID: "w1", Label: "repo", TabCount: 1, PaneCount: 1}},
@@ -784,6 +785,10 @@ func TestEventsSendsFleetThenMessage(t *testing.T) {
 	defer response.Body.Close()
 	reader := bufio.NewReader(response.Body)
 	event, data := readEvent(t, reader)
+	if event != "hello" || data != `{"buildIdentity":"source:fixture731"}` {
+		t.Fatalf("handshake event = %q %s", event, data)
+	}
+	event, data = readEvent(t, reader)
 	if event != "fleet" || !strings.Contains(data, `"workspaces"`) {
 		t.Fatalf("first event = %q %s", event, data)
 	}
@@ -826,6 +831,9 @@ func TestEventsMultiplexesOnlySubscribedAgentTranscripts(t *testing.T) {
 	}
 	defer response.Body.Close()
 	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "hello" {
+		t.Fatalf("handshake event = %q", event)
+	}
 	if event, _ := readEvent(t, reader); event != "fleet" {
 		t.Fatalf("first event = %q", event)
 	}
@@ -870,6 +878,9 @@ func TestEventsRewindowsWhenEntryTailResets(t *testing.T) {
 	}
 	defer response.Body.Close()
 	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "hello" {
+		t.Fatalf("handshake event = %q", event)
+	}
 	if event, _ := readEvent(t, reader); event != "fleet" {
 		t.Fatalf("first event = %q", event)
 	}
@@ -900,6 +911,9 @@ func TestAllEventStreamsEmitHeartbeatComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventsReader := bufio.NewReader(eventsResponse.Body)
+	if event, _ := readEvent(t, eventsReader); event != "hello" {
+		t.Fatalf("handshake event = %q", event)
+	}
 	if event, _ := readEvent(t, eventsReader); event != "fleet" {
 		t.Fatalf("first events frame = %q", event)
 	}
@@ -937,6 +951,10 @@ func TestEventsReportsUnreachableAndRecoveredWithoutEmptyFleet(t *testing.T) {
 	defer response.Body.Close()
 	reader := bufio.NewReader(response.Body)
 	event, data := readEvent(t, reader)
+	if event != "hello" {
+		t.Fatalf("handshake event = %q %s", event, data)
+	}
+	event, data = readEvent(t, reader)
 	if event != "substrate" || !strings.Contains(data, `"source":"herdr"`) || !strings.Contains(data, `"status":"unreachable"`) || strings.Contains(data, `"workspaces":[]`) {
 		t.Fatalf("unreachable event = %q %s", event, data)
 	}
@@ -978,6 +996,9 @@ func TestEventsReportsHcomSubscriptionFailureAndRecovery(t *testing.T) {
 	}
 	defer response.Body.Close()
 	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "hello" {
+		t.Fatalf("handshake event = %q", event)
+	}
 	if event, _ := readEvent(t, reader); event != "fleet" {
 		t.Fatalf("first event = %q", event)
 	}

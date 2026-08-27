@@ -90,6 +90,23 @@ func TestEntriesEndpointFromWithoutSessionIDReturnsCurrentSessionID(t *testing.T
 	}
 }
 
+func TestEntriesEndpointServesSessionAfterAgentChangesDirectory(t *testing.T) {
+	home, _ := writeEntrySession(t, sessionLines(
+		`{"type":"assistant","uuid":"invented-stable-cwd","message":{"content":[{"type":"text","text":"Still visible."}]}}`,
+	))
+	t.Setenv("HOME", home)
+	deps := entryDepsWithRow(hcomidentity.Row{
+		Name: "dore", Tool: "claude", Status: "active", SessionID: fixtureSessionID,
+		Directory: "/invented/violet/tools/herder",
+	})
+
+	response := requestEntries(t, deps, "/api/agents/dore/entries?from=0&limit=1")
+	page := decodeEntriesResponse(t, response)
+	if response.Code != http.StatusOK || page.Entries == nil || len(*page.Entries) != 1 || (*page.Entries)[0].UUID != "invented-stable-cwd" {
+		t.Fatalf("cwd-changed response = %d %#v %s", response.Code, page, response.Body.String())
+	}
+}
+
 func TestEntriesEndpointDispatchesCodexRollout(t *testing.T) {
 	home, _ := writeCodexEntrySession(t, sessionLines(
 		`{"timestamp":"2026-01-02T03:04:05Z","type":"event_msg","payload":{"type":"user_message","message":"Invented Codex prompt.","images":[],"local_images":[],"text_elements":[]}}`,
