@@ -56,11 +56,10 @@ type responsePayload struct {
 }
 
 type eventPayload struct {
-	Type             string          `json:"type"`
-	Message          string          `json:"message"`
-	DurationMS       int64           `json:"duration_ms"`
-	LastAgentMessage string          `json:"last_agent_message"`
-	Raw              json.RawMessage `json:"-"`
+	Type             string `json:"type"`
+	Message          string `json:"message"`
+	DurationMS       int64  `json:"duration_ms"`
+	LastAgentMessage string `json:"last_agent_message"`
 }
 
 type offsetBeyondError struct{ offset, size int64 }
@@ -197,7 +196,7 @@ func classify(raw []byte, line, offset int64) (Entry, bool) {
 	case "event_msg":
 		return classifyEvent(base, env.Payload)
 	case "compacted":
-		base.Kind, base.Payload = KindCompactDivider, cloneRaw(env.Payload)
+		base.Kind, base.Payload = KindCompactDivider, normalizeCompaction(env.Payload)
 		return base, true
 	case "session_meta", "turn_context", "world_state", "inter_agent_communication_metadata":
 		return Entry{}, false
@@ -272,11 +271,16 @@ func classifyMessage(base Entry, item responsePayload) (Entry, bool) {
 		return base, true
 	case "developer":
 		trimmed := strings.TrimSpace(text)
-		if !strings.HasPrefix(trimmed, "<hcom>") || !strings.HasSuffix(trimmed, "</hcom>") {
+		if strings.HasPrefix(trimmed, "<hcom>") && strings.HasSuffix(trimmed, "</hcom>") {
+			base.Kind = KindHcomDelivery
+			base.Payload = normalizeHcomDelivery(trimmed)
+			return base, true
+		}
+		if text == "" {
 			return Entry{}, false
 		}
-		base.Kind = KindHcomDelivery
-		base.Payload = normalizeHcomDelivery(trimmed)
+		base.Kind = KindInjectedSystem
+		base.Payload = messagePayload("text", text, nil)
 		return base, true
 	default:
 		// User response items mirror event_msg/user_message, which is the
@@ -349,7 +353,60 @@ func normalizeHcomDelivery(text string) json.RawMessage {
 	if len(deliveries) == 0 {
 		deliveries = append(deliveries, map[string]any{"text": body})
 	}
-	return mustJSON(map[string]any{"subtype": "codex_developer_message", "deliveries": deliveries})
+	return mustJSON(map[string]any{"subtype": "developer_message", "deliveries": deliveries})
+}
+
+func normalizeCompaction(raw json.RawMessage) json.RawMessage {
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return cloneRaw(raw)
+	}
+	text := compactionText(payload["message"])
+	if text == "" {
+		var history []responsePayload
+		if json.Unmarshal(payload["replacement_history"], &history) == nil {
+			// Prefer an explicitly textual compaction item when Codex provides
+			// one, then fall back to the final visible message retained in the
+			// replacement history.
+			for i := len(history) - 1; i >= 0; i-- {
+				if history[i].Type == "compaction" {
+					text = compactionResponseText(history[i])
+					if text != "" {
+						break
+					}
+				}
+			}
+			for i := len(history) - 1; text == "" && i >= 0; i-- {
+				text = compactionResponseText(history[i])
+			}
+		}
+	}
+	if text == "" {
+		return cloneRaw(raw)
+	}
+	var normalized map[string]json.RawMessage
+	_ = json.Unmarshal(messagePayload("text", text, nil), &normalized)
+	payload["message"] = normalized["message"]
+	return mustJSON(payload)
+}
+
+func compactionText(raw json.RawMessage) string {
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var item responsePayload
+	if json.Unmarshal(raw, &item) == nil {
+		return compactionResponseText(item)
+	}
+	return ""
+}
+
+func compactionResponseText(item responsePayload) string {
+	if text := blockText(item.Content, "input_text", "output_text", "text"); text != "" {
+		return text
+	}
+	return blockText(item.Summary, "summary_text", "input_text", "output_text", "text")
 }
 
 func normalizeToolResult(callID string, raw json.RawMessage, custom bool) json.RawMessage {

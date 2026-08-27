@@ -143,29 +143,14 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   session (wrong tool, missing/invalid ID, or absent derived file); 502 bus,
   filesystem, or other substrate failure.
 
-GET `/api/agents/{bus-name}/transcript?before={cursor}&limit=N`
-  The agent page shows the FULL SESSION TRANSCRIPT (what hcom
-  transcript actually serves), not bus correspondence. Windowed BY
-  EXCHANGE, newest-last, paging backward from an opaque `cursor`
-  (returned with every window). Never rehydrates the whole session.
-  `detail` query knob: `exchanges` (prompts + replies) vs `full`
-  (tool-level). Default resolved by delegation: pure UX call owned
-  by implementation, changeable freely without a ruling; starting
-  default `exchanges`. Both shapes exist from day one so the knob is
-  a query param, not a rebuild.
+### AMENDMENT (owner-ruled, 2026-08-27) — legacy exchange endpoints removed
 
-GET `/api/agents/{bus-name}/transcript/stream` (SSE, per-agent)
-  The legacy single-agent tail for curl and other direct API users.
-  The web shell does not open these streams. Emits `exchange` events
-  (same shape as the windowed read) as new transcript content lands,
-  incrementally from the connection's start cursor; supports
-  `Last-Event-ID` reconnect resume. A cursor from an older agent
-  session is routine after resume/fork, so it is treated as absent:
-  the request stays 200 and starts at the current tail. Malformed,
-  cross-agent, or cross-detail cursors still refuse 400. Takes the
-  same `detail` query knob as the windowed read (`exchanges` default |
-  `full`). Emits an SSE comment heartbeat (`: ping`) every 15s while
-  otherwise idle.
+The exchange-based `/api/agents/{bus-name}/transcript` and
+`/api/agents/{bus-name}/transcript/stream` endpoints are removed. They were no
+longer used by the web shell and duplicated the canonical immutable entries
+endpoint plus multiplexed entry wake frames. Both legacy paths now receive the
+standard structured 404 unknown-endpoint refusal. This amendment records the
+conductor-authorized TASK-12 owner ruling of 2026-08-27.
 
 GET `/api/events?agents={comma-separated-bus-names}` (SSE)
   The web shell's ONE multiplexed stream per page. `agents` is the
@@ -229,9 +214,8 @@ the windowed endpoint. It emits only content appended after subscription;
 reconnect catch-up always reads from the endpoint using `sessionId` plus
 `nextOffset`. Session replacement or truncation still emits `rewindow`,
 and the client discards its window and refetches. There is still exactly
-one multiplexed EventSource per page. The legacy per-agent
-`/transcript/stream` endpoint remains exchange-shaped for direct API
-consumers and is not used by the web shell.
+one multiplexed EventSource per page. The legacy per-agent exchange stream was
+subsequently removed by the 2026-08-27 owner ruling above.
 
 ### AMENDMENT (conductor, 2026-08-26) — entries are tool-dispatched
 
@@ -249,7 +233,38 @@ matches are honest 409 `no session` refusals on the endpoint and transcript
 substrate failures on the stream. Unknown complete rollout lines are served
 as quarantined `unknown` entries, and partial trailing lines are held back.
 Tools with neither a Claude nor Codex session file keep their prior refusal
-and stream-failure behavior. Legacy exchange endpoints remain untouched.
+and stream-failure behavior.
+
+### AMENDMENT (conductor, 2026-08-27) — tool-neutral developer-delivery subtype
+
+Codex hcom developer deliveries use the tool-neutral payload subtype
+`developer_message`. The former `codex_developer_message` wire name is struck;
+entry `kind` remains `hcom_delivery` and the normalized deliveries shape is
+unchanged.
+
+### AMENDMENT (conductor, 2026-08-27) — Codex developer injections are visible
+
+A Codex developer-role message that is not an hcom delivery is served as an
+`injected_system` entry with the same normalized message-content shape used by
+the shared renderer. Empty developer messages remain non-renderable. This
+brings the Codex transcript into parity with Claude's injected-system entries.
+
+### AMENDMENT (conductor, 2026-08-27) — Codex compaction summaries are visible
+
+When a Codex `compacted` record has an empty `message`, the server projects the
+last visible summary text from `replacement_history` into the compact divider's
+normalized message shape while preserving the replacement history. A textual
+compaction item takes precedence over the final retained message. Records with
+no visible replacement text remain honest rather than fabricating a summary.
+
+### AMENDMENT (conductor, 2026-08-27) — Claude batch envelopes authorize splits
+
+A non-enveloped Claude hcom attachment always produces at most one normalized
+delivery; only its initial header supplies metadata, and header-shaped body text
+cannot split it. Multiple deliveries are projected only when hcom's leading
+`[N new messages]` batch envelope is present and the number of candidate
+delivery headers is exactly `N`. Any count mismatch preserves the complete
+unwrapped body as one delivery instead of guessing which boundary was forged.
 
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
@@ -374,8 +389,7 @@ v1 commitment.
 ## Build order inside the lane (ruled: existing sessions first)
 
 1. `/api/fleet` + `/api/events` + board UI (read-only heart).
-2. `/api/agents/*` + transcript view (windowed + per-agent tail) +
-   message write.
+2. `/api/agents/*` + transcript entries view + message write.
 3. Contextual spawn (web fork removed by the 2026-08-26 owner ruling).
 Each step merges green behind the dark `serve` flag; UI ships
 embedded (React + Vite, go:embed) per the web-lane plan.

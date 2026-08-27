@@ -74,7 +74,8 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	want := []Kind{
 		KindHumanPrompt, KindAssistantText, KindThinking, KindToolUse,
 		KindToolResult, KindToolUse, KindToolResult, KindHcomStub,
-		KindHcomDelivery, KindTurnDuration, KindCompactDivider, KindUnknown,
+		KindHcomDelivery, KindInjectedSystem, KindTurnDuration,
+		KindCompactDivider, KindUnknown,
 	}
 	if len(result.Entries) != len(want) {
 		t.Fatalf("got %d entries, want %d: %#v", len(result.Entries), len(want), result.Entries)
@@ -89,12 +90,19 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	}
 	assertPayloadField(t, result.Entries[4].Payload, "is_error", true)
 	assertPayloadField(t, result.Entries[6].Payload, "image_count", float64(1))
-	assertPayloadField(t, result.Entries[9].Payload, "durationMs", float64(7310))
+	assertPayloadField(t, result.Entries[10].Payload, "durationMs", float64(7310))
 	if !strings.Contains(string(result.Entries[0].Payload), "Invented prompt") || !strings.Contains(string(result.Entries[1].Payload), "Invented answer") {
 		t.Fatal("normalized message payloads lost visible text")
 	}
+	if !strings.Contains(string(result.Entries[9].Payload), "Invented system injection.") {
+		t.Fatal("developer injection lost visible text")
+	}
+	if !strings.Contains(string(result.Entries[11].Payload), `"message":{"content":[{"text":"Invented compact summary.","type":"text"}]}`) {
+		t.Fatalf("compaction payload lost replacement-history summary: %s", result.Entries[11].Payload)
+	}
 
 	var hcom struct {
+		Subtype    string `json:"subtype"`
 		Deliveries []struct {
 			Intent    string `json:"intent"`
 			Thread    string `json:"thread"`
@@ -107,8 +115,8 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	if err := json.Unmarshal(result.Entries[8].Payload, &hcom); err != nil {
 		t.Fatal(err)
 	}
-	if len(hcom.Deliveries) != 1 || hcom.Deliveries[0].Intent != "request" || hcom.Deliveries[0].Thread != "violet-grid" || hcom.Deliveries[0].MessageID != "731" || hcom.Deliveries[0].Text != "Inspect the invented violet fixture." {
-		t.Fatalf("hcom delivery = %+v", hcom.Deliveries)
+	if hcom.Subtype != "developer_message" || len(hcom.Deliveries) != 1 || hcom.Deliveries[0].Intent != "request" || hcom.Deliveries[0].Thread != "violet-grid" || hcom.Deliveries[0].MessageID != "731" || hcom.Deliveries[0].Text != "Inspect the invented violet fixture." {
+		t.Fatalf("hcom delivery = %+v", hcom)
 	}
 
 	pairs := Pair(result.Entries)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -23,7 +24,10 @@ var bookkeepingTypes = map[string]struct{}{
 	"worktree-state": {},
 }
 
-var hcomMessagePattern = regexp.MustCompile(`(?m)\[([^\]#]+?)\s+#(\d+)\]\s+(\S+)\s+→\s+(.+?):[ \t]+`)
+var (
+	hcomMessagePattern = regexp.MustCompile(`(?m)\[([^\]#]+?)\s+#(\d+)\]\s+(\S+)\s+→\s+(.+?):[ \t]+`)
+	hcomBatchPattern   = regexp.MustCompile(`^\[([0-9]+) new messages?\] \| `)
+)
 
 type envelope struct {
 	Type             string `json:"type"`
@@ -274,7 +278,7 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 		return KindSystemChip, raw
 	}
 	body := unwrapHcom(attachmentText(env.Attachment.Content))
-	matches := hcomMessagePattern.FindAllStringSubmatchIndex(body, -1)
+	matches := hcomDeliveryBoundaries(body)
 	deliveries := make([]map[string]any, 0, max(len(matches), 1))
 	for i, match := range matches {
 		intent, thread, _ := strings.Cut(strings.TrimSpace(body[match[2]:match[3]]), ":")
@@ -300,6 +304,27 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 	return KindHcomDelivery, mustJSON(map[string]any{
 		"subtype": env.Attachment.Type, "deliveries": deliveries,
 	})
+}
+
+func hcomDeliveryBoundaries(body string) [][]int {
+	matches := hcomMessagePattern.FindAllStringSubmatchIndex(body, -1)
+	if envelope := hcomBatchPattern.FindStringSubmatch(body); len(envelope) == 2 {
+		announced, err := strconv.Atoi(envelope[1])
+		if err == nil && announced >= 2 && len(matches) == announced {
+			return matches
+		}
+		// A count mismatch means at least one candidate boundary is not
+		// authenticated by the batch envelope. Preserve the complete body as
+		// one delivery instead of guessing which header-shaped text is forged.
+		return nil
+	}
+	// A non-batch attachment represents exactly one delivery. Its initial
+	// header can provide metadata, but header-shaped body text can never split
+	// it into additional deliveries.
+	if len(matches) > 0 && matches[0][0] == 0 {
+		return matches[:1]
+	}
+	return nil
 }
 
 func attachmentText(raw json.RawMessage) string {

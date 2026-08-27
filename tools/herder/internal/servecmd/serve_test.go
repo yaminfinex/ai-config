@@ -20,7 +20,6 @@ import (
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
-	"ai-config/tools/herder/internal/hcomtranscript"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
@@ -45,19 +44,6 @@ func fixtureDeps() dependencies {
 			<-ctx.Done()
 			return nil
 		},
-		transcript: func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
-			return fixtureExchanges(1), nil
-		},
-		latest: func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
-			return fixtureExchanges(1)[0], true, nil
-		},
-		rangeRead: func(_ context.Context, _ string, start, end int, _ hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
-			positions := make([]int, 0, end-start+1)
-			for position := start; position <= end; position++ {
-				positions = append(positions, position)
-			}
-			return fixtureExchanges(positions...), nil
-		},
 		entryEnd: func(hcomidentity.Row) (int64, error) { return 0, nil },
 		entryTail: func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
 			return claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}, nil
@@ -70,22 +56,6 @@ func fixtureDeps() dependencies {
 		poll:      10 * time.Millisecond,
 		heartbeat: time.Second,
 	}
-}
-
-func fixtureExchanges(positions ...int) []hcomtranscript.Exchange {
-	raw := bytes.NewBufferString("[")
-	for index, position := range positions {
-		if index > 0 {
-			raw.WriteByte(',')
-		}
-		fmt.Fprintf(raw, `{"position":%d,"user":"prompt %d","action":"reply %d"}`, position, position, position)
-	}
-	raw.WriteByte(']')
-	var exchanges []hcomtranscript.Exchange
-	if err := json.Unmarshal(raw.Bytes(), &exchanges); err != nil {
-		panic(err)
-	}
-	return exchanges
 }
 
 func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
@@ -162,190 +132,16 @@ func TestAgentEndpointUsesSessionHealedPane(t *testing.T) {
 	}
 }
 
-func TestTranscriptWindowsPageBackwardByExchangeAndPinDetail(t *testing.T) {
-	deps := fixtureDeps()
-	type call struct {
-		before, limit int
-		detail        hcomtranscript.Detail
-	}
-	var calls []call
-	deps.transcript = func(_ context.Context, agent string, before, limit int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
-		if agent != "dore" {
-			t.Fatalf("agent = %q", agent)
+func TestLegacyExchangeEndpointsAreStructured404s(t *testing.T) {
+	for _, path := range []string{
+		"/api/agents/dore/transcript",
+		"/api/agents/dore/transcript/stream",
+	} {
+		response := httptest.NewRecorder()
+		newHandler(fixtureDeps()).ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusNotFound || response.Body.String() != "{\"error\":\"not found\",\"detail\":\"unknown endpoint\"}\n" {
+			t.Fatalf("%s = %d %s", path, response.Code, response.Body.String())
 		}
-		calls = append(calls, call{before, limit, detail})
-		if before == 0 {
-			return fixtureExchanges(4, 5), nil
-		}
-		return fixtureExchanges(2, 3), nil
-	}
-
-	first := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/api/agents/dore/transcript?limit=2", nil))
-	if first.Code != http.StatusOK {
-		t.Fatalf("first = %d %s", first.Code, first.Body.String())
-	}
-	var page transcriptPage
-	if err := json.Unmarshal(first.Body.Bytes(), &page); err != nil {
-		t.Fatal(err)
-	}
-	if len(page.Exchanges) != 2 || page.Exchanges[0].Position != 4 || page.Exchanges[1].Position != 5 || page.Cursor == "" {
-		t.Fatalf("first page = %#v", page)
-	}
-
-	olderPath := "/api/agents/dore/transcript?limit=2&before=" + page.Cursor
-	older := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(older, httptest.NewRequest(http.MethodGet, olderPath, nil))
-	var olderPage transcriptPage
-	if err := json.Unmarshal(older.Body.Bytes(), &olderPage); err != nil {
-		t.Fatal(err)
-	}
-	if older.Code != http.StatusOK || len(olderPage.Exchanges) != 2 || olderPage.Exchanges[0].Position != 2 || olderPage.Exchanges[1].Position != 3 {
-		t.Fatalf("older page = %d %#v", older.Code, olderPage)
-	}
-	repeat := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(repeat, httptest.NewRequest(http.MethodGet, olderPath, nil))
-	var repeatPage transcriptPage
-	if err := json.Unmarshal(repeat.Body.Bytes(), &repeatPage); err != nil {
-		t.Fatal(err)
-	}
-	if repeatPage.Cursor != olderPage.Cursor {
-		t.Fatalf("cursor changed for stable window: %q != %q", repeatPage.Cursor, olderPage.Cursor)
-	}
-
-	full := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(full, httptest.NewRequest(http.MethodGet, "/api/agents/dore/transcript?limit=2&detail=full", nil))
-	if full.Code != http.StatusOK || len(calls) != 4 || calls[0] != (call{0, 2, hcomtranscript.Exchanges}) || calls[1].before != 4 || calls[3].detail != hcomtranscript.Full {
-		t.Fatalf("calls = %#v full=%d %s", calls, full.Code, full.Body.String())
-	}
-	staleCursor := encodeTranscriptCursor(transcriptCursor{
-		Version: 1, Kind: "page", Agent: "dore", Session: "older-session", Detail: hcomtranscript.Exchanges, Position: 4,
-	})
-	stale := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(stale, httptest.NewRequest(http.MethodGet, "/api/agents/dore/transcript?before="+staleCursor, nil))
-	if stale.Code != http.StatusBadRequest || len(calls) != 4 {
-		t.Fatalf("stale cursor response=%d %s calls=%#v", stale.Code, stale.Body.String(), calls)
-	}
-}
-
-func TestTranscriptStreamResumesAfterLastEventID(t *testing.T) {
-	deps := fixtureDeps()
-	var latestDetail, rangeDetail hcomtranscript.Detail
-	deps.latest = func(_ context.Context, _ string, detail hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
-		latestDetail = detail
-		return fixtureExchanges(5)[0], true, nil
-	}
-	var rangeStart, rangeEnd int
-	deps.rangeRead = func(_ context.Context, _ string, start, end int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
-		rangeStart, rangeEnd = start, end
-		rangeDetail = detail
-		return fixtureExchanges(3, 4, 5), nil
-	}
-	lastID := encodeTranscriptCursor(transcriptCursor{Version: 1, Kind: "stream", Agent: "dore", Session: "session-dore", Detail: hcomtranscript.Exchanges, Position: 2})
-	server := httptest.NewServer(newHandler(deps))
-	defer server.Close()
-	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Last-Event-ID", lastID)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	event, data := readEvent(t, bufio.NewReader(response.Body))
-	if response.StatusCode != http.StatusOK || event != "exchange" || !strings.Contains(data, `"position":3`) || rangeStart != 3 || rangeEnd != 5 || latestDetail != hcomtranscript.Exchanges || rangeDetail != hcomtranscript.Exchanges {
-		t.Fatalf("resume = status=%d event=%q data=%s range=%d-%d latest=%q range-detail=%q", response.StatusCode, event, data, rangeStart, rangeEnd, latestDetail, rangeDetail)
-	}
-}
-
-func TestTranscriptStreamRewindowsStaleSessionCursorWith200(t *testing.T) {
-	deps := fixtureDeps()
-	deps.heartbeat = 10 * time.Millisecond
-	deps.latest = func(_ context.Context, _ string, _ hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
-		return fixtureExchanges(5)[0], true, nil
-	}
-	var rangeCalls atomic.Int32
-	deps.rangeRead = func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
-		rangeCalls.Add(1)
-		return nil, errors.New("stale cursor must not replay the old session")
-	}
-	staleID := encodeTranscriptCursor(transcriptCursor{
-		Version: 1, Kind: "stream", Agent: "dore", Session: "older-session", Detail: hcomtranscript.Exchanges, Position: 2,
-	})
-	server := httptest.NewServer(newHandler(deps))
-	defer server.Close()
-	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("Last-Event-ID", staleID)
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		t.Fatalf("stale-session resume status = %d, want 200", response.StatusCode)
-	}
-	if line := readSSELine(t, bufio.NewReader(response.Body), ": ping"); line != ": ping" || rangeCalls.Load() != 0 {
-		t.Fatalf("stale-session resume line=%q range calls=%d", line, rangeCalls.Load())
-	}
-}
-
-func TestTranscriptStreamPinsFullDetailAndRejectsCrossDetailResume(t *testing.T) {
-	deps := fixtureDeps()
-	var latestDetail, rangeDetail hcomtranscript.Detail
-	deps.latest = func(_ context.Context, _ string, detail hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error) {
-		latestDetail = detail
-		return fixtureExchanges(3)[0], true, nil
-	}
-	deps.rangeRead = func(_ context.Context, _ string, _, _ int, detail hcomtranscript.Detail) ([]hcomtranscript.Exchange, error) {
-		rangeDetail = detail
-		var exchanges []hcomtranscript.Exchange
-		if err := json.Unmarshal([]byte(`[{"position":3,"user":"prompt 3","action":"reply 3","tools":["read"]}]`), &exchanges); err != nil {
-			t.Fatal(err)
-		}
-		return exchanges, nil
-	}
-	server := httptest.NewServer(newHandler(deps))
-	defer server.Close()
-
-	fullID := encodeTranscriptCursor(transcriptCursor{Version: 1, Kind: "stream", Agent: "dore", Session: "session-dore", Detail: hcomtranscript.Full, Position: 2})
-	fullRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream?detail=full", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fullRequest.Header.Set("Last-Event-ID", fullID)
-	fullResponse, err := http.DefaultClient.Do(fullRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fullResponse.StatusCode != http.StatusOK {
-		fullResponse.Body.Close()
-		t.Fatalf("full stream status = %d", fullResponse.StatusCode)
-	}
-	event, data := readEvent(t, bufio.NewReader(fullResponse.Body))
-	fullResponse.Body.Close()
-	if event != "exchange" || !strings.Contains(data, `"tools":["read"]`) || latestDetail != hcomtranscript.Full || rangeDetail != hcomtranscript.Full {
-		t.Fatalf("full stream event=%q data=%s latest=%q range=%q", event, data, latestDetail, rangeDetail)
-	}
-
-	exchangesID := encodeTranscriptCursor(transcriptCursor{Version: 1, Kind: "stream", Agent: "dore", Session: "session-dore", Detail: hcomtranscript.Exchanges, Position: 2})
-	crossRequest, err := http.NewRequest(http.MethodGet, server.URL+"/api/agents/dore/transcript/stream?detail=full", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	crossRequest.Header.Set("Last-Event-ID", exchangesID)
-	crossResponse, err := http.DefaultClient.Do(crossRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	crossStatus := crossResponse.StatusCode
-	crossResponse.Body.Close()
-	if crossStatus != http.StatusBadRequest {
-		t.Fatalf("cross-detail resume status = %d, want 400", crossStatus)
 	}
 }
 
@@ -896,7 +692,7 @@ func TestEventsRewindowsWhenEntryTailResets(t *testing.T) {
 	}
 }
 
-func TestAllEventStreamsEmitHeartbeatComments(t *testing.T) {
+func TestEventStreamEmitsHeartbeatComments(t *testing.T) {
 	if HeartbeatCadence != 15*time.Second {
 		t.Fatalf("heartbeat cadence = %s, want 15s", HeartbeatCadence)
 	}
@@ -921,15 +717,6 @@ func TestAllEventStreamsEmitHeartbeatComments(t *testing.T) {
 		t.Fatalf("events heartbeat = %q", line)
 	}
 	eventsResponse.Body.Close()
-
-	transcriptResponse, err := http.Get(server.URL + "/api/agents/dore/transcript/stream")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer transcriptResponse.Body.Close()
-	if line := readSSELine(t, bufio.NewReader(transcriptResponse.Body), ": ping"); line != ": ping" {
-		t.Fatalf("transcript heartbeat = %q", line)
-	}
 }
 
 func TestEventsReportsUnreachableAndRecoveredWithoutEmptyFleet(t *testing.T) {
