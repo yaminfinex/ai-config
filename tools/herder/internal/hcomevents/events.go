@@ -21,8 +21,10 @@ type Message struct {
 	ID     int64    `json:"id"`
 	From   string   `json:"from"`
 	To     []string `json:"to"`
+	Intent string   `json:"intent,omitempty"`
 	Thread string   `json:"thread"`
 	Text   string   `json:"text"`
+	SentAt string   `json:"sent_at,omitempty"`
 }
 
 const catchUpTimeout = 5 * time.Second
@@ -40,10 +42,33 @@ type event struct {
 		From        string   `json:"from"`
 		DeliveredTo []string `json:"delivered_to"`
 		Mentions    []string `json:"mentions"`
+		Intent      string   `json:"intent"`
 		Thread      string   `json:"thread"`
 		Text        string   `json:"text"`
 	} `json:"data"`
 	TimedOut bool `json:"timed_out"`
+}
+
+// Recent returns the most recent bus message events in bus order. It uses the
+// same event decoder and projection as Subscribe so endpoint reads and stream
+// wake frames cannot drift in shape.
+func Recent(ctx context.Context, limit int) ([]Message, error) {
+	events, err := query(ctx, limit, -1)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]Message, 0, len(events))
+	for _, parsed := range events {
+		if parsed.Type != "message" {
+			continue
+		}
+		message, err := projectMessage(parsed)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, message)
+	}
+	return messages, nil
 }
 
 // Subscribe blocks, forwarding every new bus message until ctx is canceled.
@@ -98,24 +123,17 @@ func Subscribe(ctx context.Context, cursor *Cursor, emit func(Message) error, he
 			if parsed.Type != "message" {
 				continue
 			}
-			id, err := eventID(parsed)
+			message, err := projectMessage(parsed)
 			if err != nil {
 				return err
 			}
-			if id <= cursor.ID {
+			if message.ID <= cursor.ID {
 				continue
 			}
-			to := parsed.Data.DeliveredTo
-			if len(to) == 0 {
-				to = parsed.Data.Mentions
-			}
-			if to == nil {
-				to = []string{}
-			}
-			if err := emit(Message{ID: id, From: parsed.Data.From, To: to, Thread: parsed.Data.Thread, Text: parsed.Data.Text}); err != nil {
+			if err := emit(message); err != nil {
 				return err
 			}
-			cursor.ID = id
+			cursor.ID = message.ID
 			progressed = true
 		}
 		if !progressed {
@@ -128,6 +146,24 @@ func Subscribe(ctx context.Context, cursor *Cursor, emit func(Message) error, he
 			}
 		}
 	}
+}
+
+func projectMessage(parsed event) (Message, error) {
+	id, err := eventID(parsed)
+	if err != nil {
+		return Message{}, err
+	}
+	to := parsed.Data.DeliveredTo
+	if len(to) == 0 {
+		to = parsed.Data.Mentions
+	}
+	if to == nil {
+		to = []string{}
+	}
+	return Message{
+		ID: id, From: parsed.Data.From, To: to, Intent: parsed.Data.Intent,
+		Thread: parsed.Data.Thread, Text: parsed.Data.Text, SentAt: parsed.TS,
+	}, nil
 }
 
 func eventID(parsed event) (int64, error) {

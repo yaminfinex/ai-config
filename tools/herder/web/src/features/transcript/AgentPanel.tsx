@@ -7,6 +7,8 @@ import { Banner, gapLabel } from '../../shared/presentation'
 import { agentVitalsPresentation } from '../../shared/agentVitals'
 import { Composer } from '../composer/Composer'
 import { persistCleanView, readCleanView } from './cleanView'
+import { QueuedMessages } from './QueuedMessages'
+import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
 
 export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSend }: { name: string, liveStatus: string, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void }) {
@@ -23,6 +25,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
   const followingRef = useRef(true)
   const previousEntryCount = useRef(0)
   const entries = entriesQuery.data?.entries ?? []
+  const queued = visibleQueuedMessages(agentQuery.data?.queued ?? [], entries)
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
@@ -69,6 +72,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
       if (atBottom) setNewEntryCount(0)
     }}>
       <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
+      <QueuedMessages messages={queued} now={now} />
       {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
       <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={cleanView ? false : showSystem} cleanView={cleanView} />
       {newEntryCount > 0 && <button className="jump-latest" onClick={() => {

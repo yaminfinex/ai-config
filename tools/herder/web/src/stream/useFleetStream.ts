@@ -118,9 +118,13 @@ export function subscribeToFleet(
           : { ...current.problems, [state.source]: state.detail ?? `${state.source} is unreachable` },
       }))
     })
-    events.addEventListener('message', () => {
+    events.addEventListener('message', (event) => {
       touch()
       update((current) => ({ ...current, messages: current.messages + 1 }))
+      const { to } = JSON.parse(event.data) as { to?: string[] }
+      to?.filter((name) => names.includes(name)).forEach((name) => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+      })
     })
     events.addEventListener('rewindow', (event) => {
       touch()

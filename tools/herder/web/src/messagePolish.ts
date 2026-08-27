@@ -13,7 +13,7 @@ const legacyWebOperatorEnd = ' via the fleet web view. They cannot receive hcom 
 const prereleaseWebOperatorStart = '<<<HERDER_WEB_OPERATOR_NOTE>>>'
 const prereleaseWebOperatorEnd = '<<<END_HERDER_WEB_OPERATOR_NOTE>>>'
 
-function objectValue(value: unknown): ObjectValue {
+export function objectValue(value: unknown): ObjectValue {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
 }
 

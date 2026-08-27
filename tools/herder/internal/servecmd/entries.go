@@ -224,6 +224,47 @@ func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
 	return claudesession.ReadVitals(path)
 }
 
+// readDeliveredMessageIDs scans normalized session windows without retaining
+// the full transcript. It stops as soon as every recent candidate is proven.
+func readDeliveredMessageIDs(row hcomidentity.Row, candidates map[string]struct{}) (map[string]bool, error) {
+	delivered := make(map[string]bool)
+	if len(candidates) == 0 {
+		return delivered, nil
+	}
+	if row.Tool != "claude" && row.Tool != "codex" {
+		return nil, fmt.Errorf("unsupported session tool %q", row.Tool)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	path, err := resolveEntryPath(home, row)
+	if err != nil {
+		return nil, err
+	}
+	var offset int64
+	for {
+		var read claudesession.ReadResult
+		if row.Tool == "codex" {
+			read, err = codexsession.ReadWindow(path, offset, maxEntryWindow)
+		} else {
+			read, err = claudesession.ReadWindow(path, offset, maxEntryWindow)
+		}
+		if err != nil {
+			return nil, err
+		}
+		for id := range deliveredMessageIDs(read.Entries) {
+			if _, wanted := candidates[id]; wanted {
+				delivered[id] = true
+			}
+		}
+		if len(delivered) == len(candidates) || read.NextOffset == offset {
+			return delivered, nil
+		}
+		offset = read.NextOffset
+	}
+}
+
 func resolveEntryPath(home string, row hcomidentity.Row) (string, error) {
 	switch row.Tool {
 	case "claude":

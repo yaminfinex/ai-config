@@ -118,6 +118,24 @@ GET `/api/agents/{bus-name}`
   remains truth: clients invalidate both entry and agent-detail TanStack cache
   rows on the existing `entry:{bus-name}` cadence. No additional stream exists.
 
+  ### AMENDMENT (owner ask, 2026-08-27) — queued hcom delivery visibility
+
+  The detail payload additionally carries `queued` only when the server can
+  prove which recent hcom messages addressed to this agent are absent from the
+  complete current session transcript. Each item is shaped as
+  `{"id":731,"sender":"web-owner","intent":"request","preview":"operator question","sent_at":"2026-08-27T04:00:00Z","operator":true}`.
+  `operator` is present only when the server recognizes the exact fenced web
+  operator envelope; a sender name beginning with `web-` is not proof.
+  Message IDs are the shared proof key: an item remains queued while its bus ID
+  is absent from normalized `hcom_delivery` entries and disappears once that ID
+  occurs in the transcript. No timestamp or roster-cursor inference counts as
+  delivery. If the bus history or current Claude/Codex session cannot be read,
+  `queued` is absent rather than guessed. The existing multiplexed `message`
+  frame invalidates addressed agent-detail rows, and the existing
+  `entry:{bus-name}` frame invalidates both detail and entries; no stream is
+  added. This amendment answers the owner's 2026-08-27 request to make web
+  operator sends visible while they wait for the agent's next injection turn.
+
 GET `/api/viewer`
   Resolves the current connection through the same tailscale identity and
   sender-collision checks used by every write, without performing a write or
