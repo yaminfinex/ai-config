@@ -186,9 +186,9 @@ func TestReadQueueExclusionsUsesToolSpecificCompactBoundaryPolicy(t *testing.T) 
 			}
 			home, _ := fixture.put(t, string(content))
 			t.Setenv("HOME", home)
-			excluded, err := readQueueExclusions(fixture.row, map[string]string{
-				"730": "2026-01-02T03:04:04Z",
-				"733": "2026-01-02T03:04:18Z",
+			excluded, err := readQueueExclusions(fixture.row, map[string]queueCandidate{
+				"730": {SentAt: "2026-01-02T03:04:04Z"},
+				"733": {SentAt: "2026-01-02T03:04:18Z"},
 			})
 			if err != nil {
 				t.Fatal(err)

@@ -1,9 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
 import type { TranscriptEntry } from '../../types'
-import { cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
+import { aggregateActivityPills, cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
 
 type ObjectValue = Record<string, unknown>
 const objectValue = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
@@ -104,6 +104,7 @@ type EntryRelationships = {
   commandOutputs: Map<number, TranscriptEntry>
   pairedCommandOutputs: Set<number>
   duplicateHcomDeliveries: Map<number, Set<number>>
+  nextTimestamps: Map<number, string>
 }
 
 function relateEntries(entries: TranscriptEntry[]): EntryRelationships {
@@ -126,14 +127,23 @@ function relateEntries(entries: TranscriptEntry[]): EntryRelationships {
       pairedCommandOutputs.add(index + 1)
     }
   })
-  return { toolResults, pairedToolResults, pairedDeliveries, commandOutputs, pairedCommandOutputs, duplicateHcomDeliveries: duplicateHcomDeliveryIndices(entries) }
+  const nextTimestamps = new Map<number, string>()
+  let nextTimestamp = ''
+  for (let index = entries.length - 1; index >= 0; index--) {
+    if (nextTimestamp) nextTimestamps.set(index, nextTimestamp)
+    const timestamp = entries[index].timestamp
+    if (timestamp) nextTimestamp = timestamp
+  }
+  return { toolResults, pairedToolResults, pairedDeliveries, commandOutputs, pairedCommandOutputs, duplicateHcomDeliveries: duplicateHcomDeliveryIndices(entries), nextTimestamps }
 }
 
-function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationships }: { entry: TranscriptEntry, entryIndex: number, now: number, showSystem: boolean, cleanView: boolean, relationships: EntryRelationships }) {
+function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationships, deliveryIndex }: { entry: TranscriptEntry, entryIndex: number, now: number, showSystem: boolean, cleanView: boolean, relationships: EntryRelationships, deliveryIndex?: number }) {
   const deliveries = objectValue(entry.payload).deliveries
   const values = Array.isArray(deliveries) ? deliveries : []
   const duplicates = relationships.duplicateHcomDeliveries.get(entryIndex)
-  const visibleValues = values.flatMap((raw, index) => duplicates?.has(index) || cleanView && !isCleanConversationDelivery(objectValue(raw)) ? [] : [{ raw, index }])
+  const selected = deliveryIndex == null ? values.map((raw, index) => ({ raw, index }))
+    : deliveryIndex < values.length ? [{ raw: values[deliveryIndex], index: deliveryIndex }] : []
+  const visibleValues = selected.filter(({ raw, index }) => !duplicates?.has(index) && (!cleanView || isCleanConversationDelivery(objectValue(raw))))
   if (visibleValues.length === 0) return null
   const parsed = visibleValues.some(({ raw }) => Boolean(valueText(objectValue(raw).sender) && valueText(objectValue(raw).message_id)))
   if (!parsed) return showSystem ? <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{visibleValues.map(({ raw }) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details> : null
@@ -152,6 +162,91 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
   })}</>
 }
 
+type CleanActivity = {
+  key: string
+  label: string
+  entry: TranscriptEntry
+  index: number
+  deliveryIndex?: number
+}
+
+type CleanRow =
+  | { type: 'entry', key: string, entry: TranscriptEntry, index: number, deliveryIndex?: number }
+  | { type: 'run', key: string, activities: CleanActivity[] }
+
+function activityLabel(entry: TranscriptEntry) {
+  const payload = objectValue(entry.payload)
+  if (entry.kind === 'tool_use') return valueText(payload.name) || 'tool'
+  if (entry.kind === 'tool_result') return 'tool result'
+  if (entry.kind === 'thinking') return 'thinking'
+  if (entry.kind === 'command_stdout') {
+    return messageText(entry.payload).match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1] || 'command'
+  }
+  if (entry.kind === 'task_notification') return 'task'
+  return entry.quarantine ? 'quarantined' : 'unknown'
+}
+
+function cleanRows(entries: TranscriptEntry[], relationships: EntryRelationships): CleanRow[] {
+  const rows: CleanRow[] = []
+  let run: CleanActivity[] = []
+  const flush = () => {
+    if (run.length === 0) return
+    rows.push({ type: 'run', key: `run:${run[0].key}`, activities: run })
+    run = []
+  }
+  const addEntry = (entry: TranscriptEntry, index: number, deliveryIndex?: number) => {
+    flush()
+    rows.push({ type: 'entry', key: deliveryIndex == null ? `entry:${entry.uuid ?? entry.byteOffset}` : `delivery:${entry.uuid ?? entry.byteOffset}:${deliveryIndex}`, entry, index, deliveryIndex })
+  }
+
+  entries.forEach((entry, index) => {
+    if (relationships.pairedToolResults.has(index) || relationships.pairedCommandOutputs.has(index) || relationships.pairedDeliveries.has(index)) return
+    const disposition = cleanViewDisposition[entry.kind]
+    if (disposition === 'delivery') {
+      const delivery = entry.kind === 'hcom_delivery_stub' ? entries[index + 1] : entry
+      const deliveryIndex = entry.kind === 'hcom_delivery_stub' ? index + 1 : index
+      if (delivery?.kind !== 'hcom_delivery') return
+      const values = objectValue(delivery.payload).deliveries
+      if (!Array.isArray(values)) return
+      const duplicates = relationships.duplicateHcomDeliveries.get(deliveryIndex)
+      values.forEach((raw, valueIndex) => {
+        const message = objectValue(raw)
+        if (duplicates?.has(valueIndex) || !isCleanConversationDelivery(message)) return
+        if (isWebOperatorMessage(valueText(message.text))) {
+          addEntry(delivery, deliveryIndex, valueIndex)
+          return
+        }
+        run.push({
+          key: `message:${delivery.uuid ?? delivery.byteOffset}:${valueIndex}`,
+          label: `✉ ${valueText(message.sender) || 'unknown sender'}`,
+          entry: delivery,
+          index: deliveryIndex,
+          deliveryIndex: valueIndex,
+        })
+      })
+      return
+    }
+    if (disposition === 'activity') {
+      run.push({ key: `activity:${entry.uuid ?? entry.byteOffset}`, label: activityLabel(entry), entry, index })
+      return
+    }
+    if (disposition === 'show') addEntry(entry, index)
+  })
+  flush()
+  return rows
+}
+
+function ActivityStrip({ activities, entries, relationships, agentName, now }: { activities: CleanActivity[], entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number }) {
+  const [open, setOpen] = useState(false)
+  return <details className="activity-strip" onToggle={(event) => setOpen(event.currentTarget.open)}><summary aria-label={`${activities.length} hidden transcript activities`}>
+    {aggregateActivityPills(activities, (activity) => activity.entry.kind === 'tool_use' && activity.deliveryIndex == null).map((pill) => <span className="activity-pill" key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
+  </summary>{open && <div className="activity-run-detail">
+    {activities.map((activity) => activity.deliveryIndex == null
+      ? <EntryView entry={activity.entry} index={activity.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem cleanView={false} key={activity.key} />
+      : <HcomCards entry={activity.entry} entryIndex={activity.index} now={now} showSystem cleanView={false} relationships={relationships} deliveryIndex={activity.deliveryIndex} key={activity.key} />)}
+  </div>}</details>
+}
+
 function EntryView({ entry, index, entries, relationships, agentName, now, showSystem, cleanView }: { entry: TranscriptEntry, index: number, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number, showSystem: boolean, cleanView: boolean }) {
   const payload = objectValue(entry.payload)
   const content = messageText(entry.payload)
@@ -166,7 +261,7 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><pre>{resultText(payload.content)}</pre></div></details>
   if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article>
   if (entry.kind === 'thinking') {
-    const nextTime = entries.slice(index + 1).find((candidate) => candidate.timestamp)?.timestamp
+    const nextTime = relationships.nextTimestamps.get(index)
     const duration = nextTime && entry.timestamp ? formatDuration(Date.parse(nextTime) - Date.parse(entry.timestamp)) : 'duration unknown'
     return <details className="entry-expander thinking-entry"><summary>thinking · {duration}<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail">{content || 'Thinking content unavailable.'}</div></details>
   }
@@ -192,5 +287,11 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
 
 export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean }) {
   const relationships = useMemo(() => relateEntries(entries), [entries])
+  const rows = useMemo(() => cleanView ? cleanRows(entries, relationships) : [], [cleanView, entries, relationships])
+  if (cleanView) return <>{rows.map((row) => row.type === 'run'
+    ? <ActivityStrip activities={row.activities} entries={entries} relationships={relationships} agentName={agentName} now={now} key={row.key} />
+    : row.deliveryIndex == null
+      ? <EntryView entry={row.entry} index={row.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView key={row.key} />
+      : <HcomCards entry={row.entry} entryIndex={row.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={row.deliveryIndex} key={row.key} />)}</>
   return <>{entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}</>
 }

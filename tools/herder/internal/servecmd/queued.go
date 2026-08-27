@@ -11,30 +11,65 @@ import (
 
 	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/hcomevents"
+	"ai-config/tools/herder/internal/hcomidentity"
 )
 
 const queuedPreviewRunes = 240
 
-func candidateMessageTimes(agent string, messages []hcomevents.Message) map[string]string {
-	candidates := make(map[string]string)
+type queueCandidate struct {
+	SentAt    string
+	Sender    string
+	Recipient string
+	Intent    string
+	Thread    string
+	Preview   string
+}
+
+func operatorQueueCandidates(agent, baseName string, messages []hcomevents.Message, roster []hcomidentity.Row) map[string]queueCandidate {
+	candidates := make(map[string]queueCandidate)
 	for _, message := range messages {
-		if slices.Contains(message.To, agent) {
-			candidates[strconv.FormatInt(message.ID, 10)] = message.SentAt
+		if !slices.Contains(message.To, agent) && (baseName == "" || !slices.Contains(message.To, baseName)) {
+			continue
+		}
+		preview, operator := queuedPresentation(message.Text)
+		if operator {
+			candidates[strconv.FormatInt(message.ID, 10)] = queueCandidate{
+				SentAt: message.SentAt, Sender: queueSenderName(message.From, roster), Recipient: agent,
+				Intent: message.Intent, Thread: message.Thread, Preview: preview,
+			}
 		}
 	}
 	return candidates
 }
 
-func diffQueuedMessages(agent string, messages []hcomevents.Message, excluded map[string]bool) []queuedMessage {
-	queued := make([]queuedMessage, 0)
-	for _, message := range messages {
-		if !slices.Contains(message.To, agent) || excluded[strconv.FormatInt(message.ID, 10)] {
+func queueSenderName(sender string, roster []hcomidentity.Row) string {
+	resolved := ""
+	for _, row := range roster {
+		if row.Name != sender && row.BaseName != sender {
 			continue
 		}
-		preview, operator := queuedPresentation(message.Text)
+		if resolved != "" && resolved != row.Name {
+			return sender
+		}
+		resolved = row.Name
+	}
+	if resolved != "" {
+		return resolved
+	}
+	return sender
+}
+
+func diffQueuedMessages(messages []hcomevents.Message, candidates map[string]queueCandidate, excluded map[string]bool) []queuedMessage {
+	queued := make([]queuedMessage, 0)
+	for _, message := range messages {
+		id := strconv.FormatInt(message.ID, 10)
+		candidate, wanted := candidates[id]
+		if !wanted || excluded[id] {
+			continue
+		}
 		queued = append(queued, queuedMessage{
 			ID: message.ID, Sender: message.From, Intent: message.Intent,
-			Preview: preview, SentAt: message.SentAt, Operator: operator,
+			Preview: candidate.Preview, SentAt: message.SentAt, Operator: true,
 		})
 	}
 	return queued
@@ -53,20 +88,25 @@ func newQueueProof(honorCompactBoundary bool) *queueProof {
 	}
 }
 
-func (proof *queueProof) observe(entries []claudesession.Entry, candidates map[string]string) error {
+func (proof *queueProof) observe(entries []claudesession.Entry, candidates map[string]queueCandidate) error {
 	for _, entry := range entries {
 		switch entry.Kind {
 		case claudesession.KindHcomDelivery:
 			var payload struct {
 				Deliveries []struct {
 					MessageID string `json:"message_id"`
+					Sender    string `json:"sender"`
+					Recipient string `json:"recipient"`
+					Intent    string `json:"intent"`
+					Thread    string `json:"thread"`
 				} `json:"deliveries"`
 			}
 			if json.Unmarshal(entry.Payload, &payload) != nil {
 				continue
 			}
 			for _, delivery := range payload.Deliveries {
-				if _, wanted := candidates[delivery.MessageID]; wanted {
+				candidate, wanted := candidates[delivery.MessageID]
+				if wanted && delivery.Sender == candidate.Sender && delivery.Recipient == candidate.Recipient && delivery.Intent == candidate.Intent && delivery.Thread == candidate.Thread {
 					proof.excluded[delivery.MessageID] = true
 				}
 			}
@@ -86,17 +126,17 @@ func (proof *queueProof) observe(entries []claudesession.Entry, candidates map[s
 	return nil
 }
 
-func (proof *queueProof) exclusions(candidates map[string]string) (map[string]bool, error) {
+func (proof *queueProof) exclusions(candidates map[string]queueCandidate) (map[string]bool, error) {
 	if proof.latestCompact.IsZero() {
 		return proof.excluded, nil
 	}
-	for id, rawSentAt := range candidates {
+	for id, candidate := range candidates {
 		if proof.excluded[id] {
 			continue
 		}
-		sentAt, err := time.Parse(time.RFC3339Nano, rawSentAt)
+		sentAt, err := time.Parse(time.RFC3339Nano, candidate.SentAt)
 		if err != nil {
-			return nil, fmt.Errorf("invalid queued message timestamp %q: %w", rawSentAt, err)
+			return nil, fmt.Errorf("invalid queued message timestamp %q: %w", candidate.SentAt, err)
 		}
 		if sentAt.Before(proof.latestCompact) {
 			proof.excluded[id] = true

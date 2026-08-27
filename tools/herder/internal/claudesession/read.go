@@ -55,8 +55,10 @@ type envelope struct {
 		} `json:"usage"`
 	} `json:"message"`
 	Attachment struct {
-		Type    string          `json:"type"`
-		Content json.RawMessage `json:"content"`
+		Type      string          `json:"type"`
+		Content   json.RawMessage `json:"content"`
+		HookName  string          `json:"hookName"`
+		HookEvent string          `json:"hookEvent"`
 	} `json:"attachment"`
 }
 
@@ -296,7 +298,11 @@ func classifyMode(raw []byte, line, offset int64, includeSidechain bool) (Entry,
 	case "user", "message":
 		base.Kind, base.Payload = classifyUser(env, raw)
 	case "attachment":
-		base.Kind, base.Payload = classifyAttachment(env, raw)
+		var render bool
+		base.Kind, base.Payload, render = classifyAttachment(env, raw)
+		if !render {
+			return Entry{}, false, false
+		}
 	case "system":
 		switch env.Subtype {
 		case "turn_duration":
@@ -368,25 +374,35 @@ func classifyUser(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
 	return KindUnknown, raw
 }
 
-func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
-	if env.Attachment.Type != "hook_system_message" && env.Attachment.Type != "hook_additional_context" {
-		return KindSystemChip, raw
+func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessage, bool) {
+	// hook_system_message repeats the model-visible additional-context record.
+	// Omitting it keeps one structural delivery entry and lets a preceding
+	// <hcom> stub pair with that entry without client-side duplicate repair.
+	if env.Attachment.Type == "hook_system_message" {
+		return "", nil, false
 	}
-	body := unwrapHcom(attachmentText(env.Attachment.Content))
+	if env.Attachment.Type != "hook_additional_context" || !isDeliveryHook(env.Attachment.HookEvent, env.Attachment.HookName) {
+		return KindSystemChip, raw, true
+	}
+	body, ok := exactHcomAttachmentBody(env.Attachment.Content)
+	if !ok {
+		return KindSystemChip, raw, true
+	}
 	matches := hcomDeliveryBoundaries(body)
 	deliveries := make([]map[string]any, 0, max(len(matches), 1))
 	for i, match := range matches {
 		intent, thread, _ := strings.Cut(strings.TrimSpace(body[match[2]:match[3]]), ":")
+		intent = strings.TrimSpace(intent)
 		textEnd := len(body)
 		if i+1 < len(matches) {
 			textEnd = matches[i+1][0]
 		}
 		delivery := map[string]any{
-			"intent":     strings.TrimSpace(intent),
+			"intent":     intent,
 			"message_id": body[match[4]:match[5]],
 			"sender":     body[match[6]:match[7]],
 			"recipient":  strings.TrimSpace(body[match[8]:match[9]]),
-			"text":       strings.TrimSpace(body[match[1]:textEnd]),
+			"text":       stripHcomDeliveryTip(strings.TrimSpace(body[match[1]:textEnd]), intent),
 		}
 		if thread != "" {
 			delivery["thread"] = strings.TrimSpace(thread)
@@ -398,7 +414,45 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 	}
 	return KindHcomDelivery, mustJSON(map[string]any{
 		"subtype": env.Attachment.Type, "deliveries": deliveries,
-	})
+	}), true
+}
+
+func stripHcomDeliveryTip(text, intent string) string {
+	var tip string
+	switch intent {
+	case "request":
+		tip = "\n[tip] intent=request: Sender expects a response."
+	case "inform":
+		tip = "\n[tip] intent=inform: Sender doesn't expect a response."
+	case "ack":
+		tip = "\n[tip] intent=ack: Sender confirmed receipt. No response needed."
+	}
+	return strings.TrimSuffix(text, tip)
+}
+
+func isDeliveryHook(event, name string) bool {
+	switch event {
+	case "UserPromptSubmit":
+		return name == event
+	case "PostToolUse":
+		return name == event || strings.HasPrefix(name, event+":")
+	default:
+		return false
+	}
+}
+
+func exactHcomAttachmentBody(raw json.RawMessage) (string, bool) {
+	var parts []string
+	if json.Unmarshal(raw, &parts) != nil || len(parts) != 1 {
+		return "", false
+	}
+	text := strings.TrimSpace(parts[0])
+	body, ok := strings.CutPrefix(text, "<hcom>")
+	if !ok {
+		return "", false
+	}
+	body, ok = strings.CutSuffix(body, "</hcom>")
+	return strings.TrimSpace(body), ok
 }
 
 func hcomDeliveryBoundaries(body string) [][]int {
@@ -420,25 +474,6 @@ func hcomDeliveryBoundaries(body string) [][]int {
 		return matches[:1]
 	}
 	return nil
-}
-
-func attachmentText(raw json.RawMessage) string {
-	var text string
-	if json.Unmarshal(raw, &text) == nil {
-		return text
-	}
-	var parts []string
-	if json.Unmarshal(raw, &parts) == nil {
-		return strings.Join(parts, "\n")
-	}
-	return ""
-}
-
-func unwrapHcom(text string) string {
-	text = strings.TrimSpace(text)
-	text = strings.TrimPrefix(text, "<hcom>")
-	text = strings.TrimSuffix(text, "</hcom>")
-	return strings.TrimSpace(text)
 }
 
 func normalizeToolResult(block map[string]json.RawMessage, toolUseResult json.RawMessage) json.RawMessage {

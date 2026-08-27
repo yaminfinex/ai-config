@@ -349,7 +349,7 @@ if curl -fsS "http://127.0.0.1:$port/api/agents/vile" >"$ROOT/queued-before.json
 import json, sys
 agent = json.load(open(sys.argv[1]))
 queued = agent["queued"]
-assert [item["id"] for item in queued] == [97, 98]
+assert [item["id"] for item in queued] == [97]
 assert queued[0] == {
     "id": 97,
     "sender": "web-owner",
@@ -360,19 +360,19 @@ assert queued[0] == {
 }
 PY
 then
-  pass "agent detail proves sent-but-not-injected operator and idle messages from bus IDs"
+  pass "agent detail exposes only sent-but-not-injected operator messages from bus IDs"
 else
   bad "queued detail before injection" "body=$(cat "$ROOT/queued-before.json" 2>/dev/null || true)"
 fi
 
-printf '%s\n' '{"type":"attachment","attachment":{"type":"hook_system_message","content":"[request #97] web-owner → vile: operator question"},"uuid":"invented-queued-delivery","timestamp":"2026-01-02T03:04:06.500Z"}' >>"$session_path"
+printf '%s\n' '{"type":"attachment","attachment":{"type":"hook_additional_context","hookName":"PostToolUse:Bash","hookEvent":"PostToolUse","content":["<hcom>[request #97] web-owner → vile: operator question</hcom>"]},"uuid":"invented-queued-delivery","timestamp":"2026-01-02T03:04:06.500Z"}' >>"$session_path"
 if curl -fsS "http://127.0.0.1:$port/api/agents/vile" >"$ROOT/queued-after.json" && python3 - "$ROOT/queued-after.json" <<'PY'
 import json, sys
 agent = json.load(open(sys.argv[1]))
-assert [item["id"] for item in agent["queued"]] == [98]
+assert agent.get("queued") is None
 PY
 then
-  pass "matching transcript delivery ID removes the injected message while an idle message stays queued"
+  pass "matching authenticated transcript delivery removes the operator message; nonoperator traffic never queues"
 else
   bad "queued detail after injection" "body=$(cat "$ROOT/queued-after.json" 2>/dev/null || true)"
 fi
