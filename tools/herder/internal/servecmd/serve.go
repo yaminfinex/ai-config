@@ -4,7 +4,9 @@ package servecmd
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -41,21 +44,22 @@ const (
 )
 
 type dependencies struct {
-	snapshot   func() (herdrcli.Snapshot, error)
-	worktrees  func([]herdrcli.Workspace) (map[string]string, error)
-	roster     func() ([]hcomidentity.Row, error)
-	messages   func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
-	transcript func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
-	latest     func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error)
-	rangeRead  func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
-	entryEnd   func(hcomidentity.Row) (int64, error)
-	entryTail  func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
-	sender     func(context.Context, string) (string, error)
-	send       func(context.Context, string, string, string) error
-	spawn      func(context.Context, []string) (webaction.Result, error)
-	poll       time.Duration
-	heartbeat  time.Duration
-	listeners  func(int) ([]net.Listener, []string, error)
+	buildIdentity string
+	snapshot      func() (herdrcli.Snapshot, error)
+	worktrees     func([]herdrcli.Workspace) (map[string]string, error)
+	roster        func() ([]hcomidentity.Row, error)
+	messages      func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
+	transcript    func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
+	latest        func(context.Context, string, hcomtranscript.Detail) (hcomtranscript.Exchange, bool, error)
+	rangeRead     func(context.Context, string, int, int, hcomtranscript.Detail) ([]hcomtranscript.Exchange, error)
+	entryEnd      func(hcomidentity.Row) (int64, error)
+	entryTail     func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
+	sender        func(context.Context, string) (string, error)
+	send          func(context.Context, string, string, string) error
+	spawn         func(context.Context, []string) (webaction.Result, error)
+	poll          time.Duration
+	heartbeat     time.Duration
+	listeners     func(int) ([]net.Listener, []string, error)
 }
 
 var liveDependencies = dependencies{
@@ -85,6 +89,10 @@ type substrate struct {
 	Source string `json:"source"`
 	Status string `json:"status"`
 	Detail string `json:"detail,omitempty"`
+}
+
+type streamHello struct {
+	BuildIdentity string `json:"buildIdentity"`
 }
 
 type sourceError struct {
@@ -209,7 +217,39 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	for _, warning := range warnings {
 		fmt.Fprintf(stderr, "herder serve: WARNING: %s\n", warning)
 	}
-	return serve(listeners, newHandler(liveDependencies), stdout, stderr)
+	buildIdentity, err := runningBuildIdentity()
+	if err != nil {
+		for _, listener := range listeners {
+			_ = listener.Close()
+		}
+		fmt.Fprintf(stderr, "herder serve: identify running build: %v\n", err)
+		return 1
+	}
+	runtimeDependencies := liveDependencies
+	runtimeDependencies.buildIdentity = buildIdentity
+	return serve(listeners, newHandler(runtimeDependencies), stdout, stderr)
+}
+
+var cachedBuildName = regexp.MustCompile(`^herder-([0-9a-f]{16})$`)
+
+func runningBuildIdentity() (string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if match := cachedBuildName.FindStringSubmatch(filepath.Base(executable)); match != nil {
+		return "source:" + match[1], nil
+	}
+	file, err := os.Open(executable)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return "executable:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func serve(listeners []net.Listener, handler http.Handler, stdout, stderr io.Writer) int {
@@ -969,6 +1009,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		flusher.Flush()
 		return true
+	}
+	if !emit("hello", streamHello{BuildIdentity: deps.buildIdentity}) {
+		return
 	}
 	emitFailure := func(err error) bool {
 		var sourced sourceError

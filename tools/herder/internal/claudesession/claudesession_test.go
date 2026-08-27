@@ -65,6 +65,24 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestResolveFindsSessionWhenLiveDirectoryChanged(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	id := "73300000-0000-4000-8000-000000000733"
+	path := filepath.Join(home, ".claude", "projects", Slug("/project/original"), id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Resolve(home, hcomidentity.Row{Tool: "claude", Directory: "/project/original/tools/herder", SessionID: id})
+	if err != nil || got != path {
+		t.Fatalf("Resolve() after cwd change = %q, %v; want %q", got, err, path)
+	}
+}
+
 func TestTaxonomyFixture(t *testing.T) {
 	t.Parallel()
 	result, err := ReadFrom(filepath.Join("testdata", "taxonomy.jsonl"), 0)

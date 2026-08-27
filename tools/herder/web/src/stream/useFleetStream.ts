@@ -7,12 +7,22 @@ export type StreamState = {
   problems: Record<string, string>
   messages: number
   lastEvent: number | null
+  loadedBuild: string | null
+  serverUpdated: boolean
 }
 
 const initialStreamState: StreamState = {
   problems: { stream: 'Connecting to live fleet…' },
   messages: 0,
   lastEvent: null,
+  loadedBuild: null,
+  serverUpdated: false,
+}
+
+export function recordBuildIdentity(current: StreamState, identity: string): StreamState {
+  if (!current.loadedBuild) return { ...current, loadedBuild: identity }
+  if (current.loadedBuild !== identity) return { ...current, serverUpdated: true }
+  return current
 }
 
 type StreamEvent = { data: string }
@@ -84,6 +94,11 @@ export function subscribeToFleet(
       names.forEach((name) => void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true }))
     }
     events.onerror = () => scheduleReconnect('Live stream disconnected; reconnecting…')
+    events.addEventListener('hello', (event) => {
+      touch()
+      const { buildIdentity } = JSON.parse(event.data) as { buildIdentity: string }
+      update((current) => recordBuildIdentity(current, buildIdentity))
+    })
     events.addEventListener('ping', () => touch(false))
     events.addEventListener('fleet', (event) => {
       touch()

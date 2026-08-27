@@ -112,9 +112,10 @@ semantic attribution refusal.
 
 GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   The classified, immutable Claude session entry stream. The server
-  resolves the active file from the bus roster's directory and session ID;
-  it never searches for session files and never parses JSONL outside the
-  `claudesession` resolver. Pairing (`tool_use` with `tool_result`, hcom
+  resolves the active file from the immutable session ID. The roster's live
+  directory is a fast path only; if the agent has changed cwd, the resolver
+  locates that exact session ID across known Claude project directories.
+  It never parses JSONL outside the `claudesession` resolver. Pairing (`tool_use` with `tool_result`, hcom
   stub with attachment) is consumer-side and does not change this stream.
 
   `limit` defaults to and is capped at 500 entries. With `from`, entries
@@ -171,6 +172,11 @@ GET `/api/events?agents={comma-separated-bus-names}` (SSE)
   de-duplicated set of open agent tabs (at most 100); changing the set
   rebuilds this one stream. An absent set subscribes only to fleet and
   bus events. Event types:
+  - `hello`: the first frame on every connection, shaped as
+    `{"buildIdentity":"<opaque>"}`. The identity names the running server
+    build. The shell records the first identity loaded by the page; when a
+    reconnect reports a different value it persistently offers a manual
+    refresh and never reloads automatically;
   - `fleet`: a full board snapshot (sent on connect, then on any
     placement/status change — snapshot-not-delta keeps clients
     stateless; revisit only if size ever bites);
@@ -196,6 +202,18 @@ GET `/api/events?agents={comma-separated-bus-names}` (SSE)
   rebuilds if neither data nor heartbeat arrives for 45s. Its
   `reconnecting` indicator is present only while a rebuild is scheduled
   or in flight.
+
+### AMENDMENT (owner-asked, 2026-08-27) — build identity handshake and manual refresh
+
+Every multiplexed stream begins with the `hello` frame above. A server restart
+can therefore tell an already-loaded page that its embedded client differs from
+the running build. The response is a persistent “Server updated — refresh to
+load the new version” banner with an explicit refresh button. Automatic reload
+is forbidden because it can discard in-progress composer input.
+
+The production launcher identity is its content-addressed source cache key,
+which covers Go sources and embedded web distribution assets. Directly invoked
+binaries use a SHA-256 of the executable contents.
 
 ### AMENDMENT (conductor, 2026-08-26) — multiplexed transcript frames are entries
 

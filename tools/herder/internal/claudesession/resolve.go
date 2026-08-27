@@ -19,6 +19,7 @@ const (
 	ResolveWrongTool      ResolveReason = "tool_not_claude"
 	ResolveInvalidSession ResolveReason = "invalid_session_id"
 	ResolveFileAbsent     ResolveReason = "session_file_absent"
+	ResolveAmbiguousFile  ResolveReason = "session_file_ambiguous"
 )
 
 // ResolveError is an honest, typed path-resolution refusal.
@@ -63,8 +64,10 @@ func Slug(directory string) string {
 	return out
 }
 
-// Resolve derives an agent's session path from its roster row. It never
-// searches or globs the projects directory.
+// Resolve locates an agent's session file by immutable session ID. The live
+// roster directory is only a fast path: Claude agents routinely change cwd
+// during a session, so a missing cwd-derived path falls back to the known
+// project directories instead of orphaning an existing transcript.
 func Resolve(home string, row hcomidentity.Row) (string, error) {
 	if row.Tool != "claude" {
 		return "", &ResolveError{Reason: ResolveWrongTool}
@@ -76,11 +79,22 @@ func Resolve(home string, row hcomidentity.Row) (string, error) {
 		return "", &ResolveError{Reason: ResolveInvalidSession}
 	}
 	path := filepath.Join(home, ".claude", "projects", Slug(row.Directory), row.SessionID+".jsonl")
-	if _, err := os.Stat(path); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return "", &ResolveError{Reason: ResolveFileAbsent, Path: path, Err: err}
-		}
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	return path, nil
+
+	pattern := filepath.Join(home, ".claude", "projects", "*", row.SessionID+".jsonl")
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", &ResolveError{Reason: ResolveAmbiguousFile, Path: pattern}
+	}
+	return "", &ResolveError{Reason: ResolveFileAbsent, Path: pattern, Err: os.ErrNotExist}
 }
