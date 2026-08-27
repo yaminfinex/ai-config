@@ -97,6 +97,9 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	if !strings.Contains(string(result.Entries[9].Payload), "Invented system injection.") {
 		t.Fatal("developer injection lost visible text")
 	}
+	if !strings.Contains(string(result.Entries[11].Payload), `"message":{"content":[{"text":"Invented compact summary.","type":"text"}]}`) {
+		t.Fatalf("compaction payload lost replacement-history summary: %s", result.Entries[11].Payload)
+	}
 
 	var hcom struct {
 		Subtype    string `json:"subtype"`

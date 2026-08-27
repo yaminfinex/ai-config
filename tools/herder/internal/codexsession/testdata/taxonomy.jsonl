@@ -14,6 +14,6 @@
 {"timestamp":"2026-01-02T03:04:14.200Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<hcom>[request:violet-grid #731] rava → agent-nori: Inspect the invented violet fixture.</hcom>"}]}}
 {"timestamp":"2026-01-02T03:04:14.300Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"Invented system injection."}]}}
 {"timestamp":"2026-01-02T03:04:15.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn_invented","duration_ms":7310,"time_to_first_token_ms":731,"completed_at":"2026-01-02T03:04:15.000Z","last_agent_message":"Invented answer."}}
-{"timestamp":"2026-01-02T03:04:16.000Z","type":"compacted","payload":{"message":{"role":"user","content":[{"type":"input_text","text":"Invented compact summary."}]},"replacement_history":[],"previous_window_id":"window_old","window_id":"window_new","window_number":2}}
+{"timestamp":"2026-01-02T03:04:16.000Z","type":"compacted","payload":{"message":"","replacement_history":[{"type":"message","role":"user","content":[{"type":"input_text","text":"Invented compact summary."}]},{"type":"compaction","encrypted_content":"invented-opaque-summary"}],"previous_window_id":"window_old","window_id":"window_new","window_number":2}}
 {"timestamp":"2026-01-02T03:04:16.000Z","type":"event_msg","payload":{"type":"context_compacted"}}
 {"timestamp":"2026-01-02T03:04:17.000Z","type":"future_rollout_probe","payload":{"invented":true}}

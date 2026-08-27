@@ -249,6 +249,14 @@ A Codex developer-role message that is not an hcom delivery is served as an
 the shared renderer. Empty developer messages remain non-renderable. This
 brings the Codex transcript into parity with Claude's injected-system entries.
 
+### AMENDMENT (conductor, 2026-08-27) — Codex compaction summaries are visible
+
+When a Codex `compacted` record has an empty `message`, the server projects the
+last visible summary text from `replacement_history` into the compact divider's
+normalized message shape while preserving the replacement history. A textual
+compaction item takes precedence over the final retained message. Records with
+no visible replacement text remain honest rather than fabricating a summary.
+
 ## Writes (plain HTTP POST — ruled: no WebSocket in v1)
 
 POST `/api/agents/{bus-name}/message`
