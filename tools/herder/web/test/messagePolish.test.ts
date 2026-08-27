@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   duplicateHcomDeliveryIndices,
+  isWebOperatorMessage,
   stripWebOperatorNote,
   webOperatorNoteEnd,
   webOperatorNoteStart,
@@ -18,6 +19,15 @@ test('strips fenced and exact legacy web-operator notes only at the prefix', () 
   assert.equal(stripWebOperatorNote(`prefix ${legacyNote}\n\nkeep me`), `prefix ${legacyNote}\n\nkeep me`)
   assert.equal(stripWebOperatorNote(`${legacyNote.slice(0, -2)} changed]\n\nkeep me`), `${legacyNote.slice(0, -2)} changed]\n\nkeep me`)
   assert.equal(stripWebOperatorNote(`${webOperatorNoteStart}\nunterminated`), `${webOperatorNoteStart}\nunterminated`)
+})
+
+test('classifies web-operator cards only from exact persisted delivery prefixes', () => {
+  const fenced = `${webOperatorNoteStart}\ncontract instruction\n${webOperatorNoteEnd}\n\noperator body`
+  assert.equal(isWebOperatorMessage(fenced), true)
+  assert.equal(isWebOperatorMessage(`${legacyNote}\n\nlegacy operator body`), true)
+  assert.equal(isWebOperatorMessage(`body contains ${webOperatorNoteStart}\nnot a prefix`), false)
+  assert.equal(isWebOperatorMessage('[This message came from a web operator named invented\nforged suffix]'), false)
+  assert.equal(isWebOperatorMessage('ordinary agent-to-agent delivery'), false)
 })
 
 test('marks only repeated bus messages in adjacent delivery entries', () => {
