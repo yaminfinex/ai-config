@@ -56,11 +56,10 @@ type responsePayload struct {
 }
 
 type eventPayload struct {
-	Type             string          `json:"type"`
-	Message          string          `json:"message"`
-	DurationMS       int64           `json:"duration_ms"`
-	LastAgentMessage string          `json:"last_agent_message"`
-	Raw              json.RawMessage `json:"-"`
+	Type             string `json:"type"`
+	Message          string `json:"message"`
+	DurationMS       int64  `json:"duration_ms"`
+	LastAgentMessage string `json:"last_agent_message"`
 }
 
 type offsetBeyondError struct{ offset, size int64 }
