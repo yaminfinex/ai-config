@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/fileapi"
+	"ai-config/tools/herder/internal/filecandidate"
 	"ai-config/tools/herder/internal/fileindex"
 	"ai-config/tools/herder/internal/fileresolver"
 	"ai-config/tools/herder/internal/fileroots"
@@ -46,7 +47,7 @@ func TestResolveEndpointUsesLiveAgentThenConfiguredRootPreference(t *testing.T) 
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Candidates) != 2 || body.Candidates[0].Root != agentRoot || body.Candidates[1].Root != configuredRoot || body.Candidates[0].Tier != fileresolver.TierSuffix {
+	if len(body.Candidates) != 2 || body.Candidates[0].Root != agentRoot || body.Candidates[1].Root != configuredRoot || body.Candidates[0].Kind != filecandidate.KindFile || body.Candidates[1].Kind != filecandidate.KindFile || body.Candidates[0].Tier != fileresolver.TierSuffix {
 		t.Fatalf("candidates = %#v", body.Candidates)
 	}
 	if len(body.Roots) != 2 || body.Roots[0].Status != fileresolver.RootComplete || body.Roots[1].Status != fileresolver.RootComplete {

@@ -10,13 +10,14 @@ import (
 	"strings"
 	"testing"
 
+	"ai-config/tools/herder/internal/filecandidate"
 	"ai-config/tools/herder/internal/fileindex"
 )
 
-type staticSource map[string][]string
+type staticSource map[string][]filecandidate.Candidate
 
-func (s staticSource) Candidates(_ context.Context, root string, _ bool) ([]string, error) {
-	return append([]string(nil), s[root]...), nil
+func (s staticSource) Candidates(_ context.Context, root string, _ bool) ([]filecandidate.Candidate, error) {
+	return append([]filecandidate.Candidate(nil), s[root]...), nil
 }
 
 type degradedFixtureError struct{ detail string }
@@ -237,9 +238,9 @@ func TestResolveRelativeQueryRegressionIncludesScores(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Result{
-		{Root: root, Path: "docs/target.md", Tier: TierExact, Score: 344},
-		{Root: root, Path: "archive/docs/target.md", Tier: TierSuffix, Score: 359},
-		{Root: root, Path: "docs/the-target-file.md", Tier: TierFuzzy, Score: 314},
+		{Root: root, Path: "docs/target.md", Kind: filecandidate.KindFile, Tier: TierExact, Score: 344},
+		{Root: root, Path: "archive/docs/target.md", Kind: filecandidate.KindFile, Tier: TierSuffix, Score: 359},
+		{Root: root, Path: "docs/the-target-file.md", Kind: filecandidate.KindFile, Tier: TierFuzzy, Score: 314},
 	}
 	if !reflect.DeepEqual(results, want) {
 		t.Fatalf("relative results=%#v want %#v", results, want)
@@ -248,7 +249,7 @@ func TestResolveRelativeQueryRegressionIncludesScores(t *testing.T) {
 
 func TestResolvePreservesTierIdentityForAutoOpenRule(t *testing.T) {
 	root := "/repo"
-	results, err := New(staticSource{root: {"docs", "docs/file.md", "archive/docs"}}).Resolve(context.Background(), Request{
+	results, err := New(staticSource{root: fileCandidates("docs", "docs/file.md", "archive/docs")}).Resolve(context.Background(), Request{
 		Query: "docs",
 		Roots: []string{root},
 	})
@@ -264,6 +265,47 @@ func TestResolvePreservesTierIdentityForAutoOpenRule(t *testing.T) {
 	}
 	if got["docs"] != TierExact || got["docs/file.md"] != TierPrefix || got["archive/docs"] != TierSuffix {
 		t.Fatalf("tier identity lost: %#v", got)
+	}
+}
+
+func TestResolveAppliesOnePointDirectoryPenaltyOnlyWithinHardBands(t *testing.T) {
+	root := "/repo"
+	results, err := New(staticSource{root: {
+		{Path: "same", Kind: filecandidate.KindDir},
+		{Path: "same", Kind: filecandidate.KindFile},
+		{Path: "archive/same", Kind: filecandidate.KindFile},
+	}}).Resolve(context.Background(), Request{Query: "same", Roots: []string{root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("results=%#v", results)
+	}
+	if results[0].Kind != filecandidate.KindFile || results[1].Kind != filecandidate.KindDir {
+		t.Fatalf("same-score file/dir order=%#v", results[:2])
+	}
+	if results[0].Score != results[1].Score {
+		t.Fatalf("raw engine scores changed: %#v", results[:2])
+	}
+	if results[2].Tier != TierSuffix {
+		t.Fatalf("directory penalty crossed hard tier band: %#v", results)
+	}
+}
+
+func TestResolveAbsoluteDirectoryUsesSameRootStrippingAsFiles(t *testing.T) {
+	root := newResolverGitRepo(t)
+	writeResolverFile(t, root, "backlog/tasks/task.md", "fixture\n")
+	resolverGit(t, root, "add", ".")
+	resolverGit(t, root, "commit", "-m", "directory fixture")
+
+	results, err := New(fileindex.New(fileindex.Options{})).Resolve(context.Background(), Request{
+		Query: filepath.Join(root, "backlog"), Roots: []string{root},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 || results[0].Path != "backlog" || results[0].Kind != filecandidate.KindDir || results[0].Tier != TierExact {
+		t.Fatalf("absolute directory results=%#v", results)
 	}
 }
 
@@ -284,16 +326,16 @@ func TestResolveRespectsRootPreferenceAndStableTies(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Result{
-		{Root: rootB, Path: "a/readme.md", Tier: TierSuffix, Score: results[0].Score},
-		{Root: rootB, Path: "z/readme.md", Tier: TierSuffix, Score: results[1].Score},
-		{Root: rootA, Path: "a/readme.md", Tier: TierSuffix, Score: results[2].Score},
-		{Root: rootA, Path: "z/readme.md", Tier: TierSuffix, Score: results[3].Score},
+		{Root: rootB, Path: "a/readme.md", Kind: filecandidate.KindFile, Tier: TierSuffix, Score: results[0].Score},
+		{Root: rootB, Path: "z/readme.md", Kind: filecandidate.KindFile, Tier: TierSuffix, Score: results[1].Score},
+		{Root: rootA, Path: "a/readme.md", Kind: filecandidate.KindFile, Tier: TierSuffix, Score: results[2].Score},
+		{Root: rootA, Path: "z/readme.md", Kind: filecandidate.KindFile, Tier: TierSuffix, Score: results[3].Score},
 	}
 	if !reflect.DeepEqual(results, want) {
 		t.Fatalf("results=%#v want %#v", results, want)
 	}
 
-	stable, err := New(staticSource{"/stable": {"z/readme.md", "a/readme.md"}}).Resolve(context.Background(), Request{
+	stable, err := New(staticSource{"/stable": fileCandidates("z/readme.md", "a/readme.md")}).Resolve(context.Background(), Request{
 		Query: "readme.md", Roots: []string{"/stable"},
 	})
 	if err != nil {
@@ -306,7 +348,7 @@ func TestResolveRespectsRootPreferenceAndStableTies(t *testing.T) {
 
 func TestResolvePropagatesCandidateSourceFailure(t *testing.T) {
 	sourceErr := errors.New("index unavailable")
-	source := sourceFunc(func(context.Context, string, bool) ([]string, error) { return nil, sourceErr })
+	source := sourceFunc(func(context.Context, string, bool) ([]filecandidate.Candidate, error) { return nil, sourceErr })
 	_, err := New(source).Resolve(context.Background(), Request{Query: "x", Roots: []string{"/root"}})
 	if !errors.Is(err, sourceErr) {
 		t.Fatalf("error=%v", err)
@@ -314,14 +356,14 @@ func TestResolvePropagatesCandidateSourceFailure(t *testing.T) {
 }
 
 func TestResolveDetailedReportsEachRootAndRanksUsableCandidatesGlobally(t *testing.T) {
-	source := sourceFunc(func(_ context.Context, root string, _ bool) ([]string, error) {
+	source := sourceFunc(func(_ context.Context, root string, _ bool) ([]filecandidate.Candidate, error) {
 		switch root {
 		case "/healthy":
-			return []string{"z/needle.md"}, nil
+			return fileCandidates("z/needle.md"), nil
 		case "/degraded":
-			return []string{"a/needle.md"}, degradedFixtureError{"permission denied below root"}
+			return fileCandidates("a/needle.md"), degradedFixtureError{"permission denied below root"}
 		default:
-			return []string{"must-not-leak.md"}, errors.New("index failed")
+			return fileCandidates("must-not-leak.md"), errors.New("index failed")
 		}
 	})
 	resolution, err := New(source).ResolveDetailed(context.Background(), Request{
@@ -343,11 +385,11 @@ func TestResolveDetailedReportsEachRootAndRanksUsableCandidatesGlobally(t *testi
 
 func TestResolvePassesForcedRefreshToEveryRoot(t *testing.T) {
 	var refreshed []string
-	source := sourceFunc(func(_ context.Context, root string, refresh bool) ([]string, error) {
+	source := sourceFunc(func(_ context.Context, root string, refresh bool) ([]filecandidate.Candidate, error) {
 		if refresh {
 			refreshed = append(refreshed, root)
 		}
-		return []string{"x"}, nil
+		return fileCandidates("x"), nil
 	})
 	_, err := New(source).Resolve(context.Background(), Request{Query: "x", Roots: []string{"/a", "/b"}, Refresh: true})
 	if err != nil {
@@ -358,10 +400,18 @@ func TestResolvePassesForcedRefreshToEveryRoot(t *testing.T) {
 	}
 }
 
-type sourceFunc func(context.Context, string, bool) ([]string, error)
+type sourceFunc func(context.Context, string, bool) ([]filecandidate.Candidate, error)
 
-func (f sourceFunc) Candidates(ctx context.Context, root string, refresh bool) ([]string, error) {
+func (f sourceFunc) Candidates(ctx context.Context, root string, refresh bool) ([]filecandidate.Candidate, error) {
 	return f(ctx, root, refresh)
+}
+
+func fileCandidates(paths ...string) []filecandidate.Candidate {
+	candidates := make([]filecandidate.Candidate, 0, len(paths))
+	for _, path := range paths {
+		candidates = append(candidates, filecandidate.Candidate{Path: path, Kind: filecandidate.KindFile})
+	}
+	return candidates
 }
 
 func TestNormalizeQuery(t *testing.T) {

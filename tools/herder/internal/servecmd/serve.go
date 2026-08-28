@@ -422,6 +422,13 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveTree(w, r, deps)
 	})
+	mux.HandleFunc("/api/backlog", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveBacklog(w, r, deps)
+	})
 	mux.HandleFunc("/api/agents/{busName}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")

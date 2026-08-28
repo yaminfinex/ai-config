@@ -328,7 +328,7 @@ path that is not an exact current root ID never authorizes a read.
 GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
   Resolves a required, non-empty path-like query against the complete current
   root universe. Success is
-  `{"candidates":[{"root":"/opaque/root","path":"relative/file.md","tier":"exact|prefix|suffix|fuzzy","score":731}],"roots":[{"root":"/opaque/root","status":"complete|degraded|failed","detail":"honest bounded diagnostic when not complete"}]}`.
+  `{"candidates":[{"root":"/opaque/root","path":"relative/file.md","kind":"file|dir","tier":"exact|prefix|suffix|fuzzy","score":731}],"roots":[{"root":"/opaque/root","status":"complete|degraded|failed","detail":"honest bounded diagnostic when not complete"}]}`.
   Candidates are already ranked by the resolver and the server never applies
   the client auto-open rule or re-ranks them. The tier is therefore preserved
   exactly: the client may auto-open only when exactly one candidate is
@@ -349,6 +349,57 @@ GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
   returned when another root degrades or fails. A whole-response 502
   `substrate unreachable` is reserved for request-level failure such as an
   unreadable live roster or unavailable root-universe construction.
+
+  Directory candidates are the unique non-root ancestors of indexed files,
+  derived during the same candidate-index rebuild. There is no second walk or
+  directory source, empty directories are consequently absent, and the root
+  itself is not a candidate. Files and directories use the same tier ladder,
+  root preference, and raw fzf score. Inside one tier and root, ranking applies
+  a one-point directory deduction without changing the raw `score` returned on
+  the wire; existing deterministic candidate order breaks a remaining tie.
+  Absolute queries strip each containing root exactly as file queries already
+  do, then match the relative remainder symmetrically against both kinds. A
+  query equal to the root remains an honest miss.
+
+GET `/api/backlog?root={root-id}&path={root-relative-directory}`
+  Reads the board facts for any Backlog.md directory inside the opaque root
+  universe. `root` and `path` are each required exactly once; `path` may be
+  empty to address the root directory itself. A directory is a board only when
+  it contains a parseable `config.yml` with non-empty `statuses` and a readable
+  `tasks/` directory. Success is
+  `{"root":"/opaque/root","path":"backlog","statuses":["To Do","In Progress","Done"],"tasks":[{"id":"TASK-49","title":"Folder panel","status":"To Do","ordinal":49000,"labels":[],"priority":"low","assignee":[],"created_date":"2026-08-28 08:03","updated_date":"2026-08-28 09:00","file":"tasks/task-49 - Folder-panel.md"}],"unparsed":[{"file":"tasks/broken.md","reason":"parse task frontmatter: ..."}],"truncated":false,"fetched_at":"2026-08-28T09:00:00Z"}`.
+
+  Only `statuses` is read from `config.yml`. Only `id`, `title`, `status`,
+  `ordinal`, `labels`, `priority`, `assignee`, `created_date`, and
+  `updated_date` are read from task YAML frontmatter; a field absent in the
+  source task is absent in its wire task. Unknown YAML keys are ignored. Task
+  bodies are never read into the response: `file` is relative to the board
+  directory and combines with `path` to open through `/api/files`. Explicit
+  empty list fields remain empty lists.
+
+  Task files are regular `.md` files directly inside `tasks/`, selected in
+  deterministic filename order. At most 2,000 are selected; additional task
+  files set `truncated:true`. Selected tasks are returned by ascending ordinal
+  (missing ordinal last), then ID and file. Duplicate IDs remain distinct
+  records. Each selected file has a 64 KiB frontmatter cap. An unclosed,
+  oversized, syntactically invalid, or projected-type-invalid frontmatter
+  quarantines that whole file in `unparsed` with its filename and honest reason;
+  it is never silently dropped and still consumes one selected-file slot.
+  `tasks` and `unparsed` are explicit arrays, including on an empty board.
+
+  A readable directory that does not prove this format is an honest 200 rather
+  than an error:
+  `{"root":"/opaque/root","path":"ordinary-dir","backlog":{"status":"unavailable","reason":"directory does not contain config.yml"},"fetched_at":"2026-08-28T09:00:00Z"}`.
+  Missing `config.yml`, missing `tasks/`, malformed or oversized config, and an
+  empty configured status vocabulary use this unavailable shape with the
+  concrete reason. No partial task facts accompany it.
+
+  The endpoint inherits the file endpoints' containment and refusal law:
+  unknown roots and missing requested paths are 404; traversal, `.git`
+  internals, symlink escapes, and wrong file/directory kinds are 409 `refused by
+  substrate`; missing or duplicate query parameters are 400 `bad request`; and
+  other filesystem failures are 502 `substrate unreachable`. Every refusal uses
+  the pinned `{"error":"<short>","detail":"<honest>"}` serializer.
 
 GET `/api/files?root={root-id}&path={root-relative-file}`
   Reads one regular file exactly as it exists at request time. A text response
