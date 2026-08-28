@@ -20,3 +20,8 @@ test('owner-ruled composer noise is removed without dropping accessibility or at
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   assert.match(app, /Web sends are attributed to this viewer; web senders are not addressable bus peers\./)
 })
+
+test('Alt+W does not close a panel while an editable target has focus', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  assert.match(app, /isClosePanelShortcut\(event\) && !isEditableShortcutTarget\(event\.target\) && api\?\.activePanel/)
+})

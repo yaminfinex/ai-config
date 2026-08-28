@@ -518,7 +518,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       const api = apiRef.current
       const command = event.ctrlKey || event.metaKey
       if (isQuickOpenShortcut(event, navigator.userAgent)) showQuickOpen()
-      else if (isClosePanelShortcut(event) && api?.activePanel) api.activePanel.api.close()
+      else if (isClosePanelShortcut(event) && !isEditableShortcutTarget(event.target) && api?.activePanel) api.activePanel.api.close()
       else if (isShortcutReferenceShortcut(event) && !isEditableShortcutTarget(event.target)) setShortcutReference(true)
       else if (event.key === 'Escape' && shortcutReference) setShortcutReference(false)
       else if (command && (event.key === 'PageDown' || event.key === 'PageUp') && api?.activeGroup) {
