@@ -77,12 +77,16 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
   const [lifecycleProblems, setLifecycleProblems] = useState<Record<string, string>>({})
   const [agentStatuses, setAgentStatuses] = useState<Record<string, string>>({})
+  const [agentScreenPanes, setAgentScreenPanes] = useState<Record<string, string>>({})
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const queryClient = useQueryClient()
   const tabs: ShellTab[] = [boardTab, ...tabState.tabs.map((tab) => agentTab(tab.name, tab.preview)), ...screenTabs.map((tab) => screenTab(tab.pane, tab.preview))]
   const activeTab = tabState.activeTab
   const agentNames = tabState.tabs.map((tab) => tab.name)
-  const screenPaneIDs = screenTabs.map((tab) => tab.pane.pane_id)
+  const screenPaneIDs = [
+    ...screenTabs.map((tab) => tab.pane.pane_id),
+    ...agentNames.flatMap((name) => agentScreenPanes[name] ? [agentScreenPanes[name]] : []),
+  ]
   const boardQuery = useQuery({ queryKey: queryKeys.fleet, queryFn: () => getFleet(), staleTime: Infinity, retry: false })
   const viewerQuery = useQuery(viewerQueryOptions())
   const stream = useFleetStream(agentNames, screenPaneIDs)
@@ -178,6 +182,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       delete next[id.slice('agent:'.length)]
       return next
     })
+    if (id.startsWith('agent:')) setAgentScreenPanes((current) => {
+      const next = { ...current }
+      delete next[id.slice('agent:'.length)]
+      return next
+    })
     if (activeTab === id) setPath(next)
   }, [activeTab, setPath, tabs])
 
@@ -259,7 +268,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       </div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
-          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} onStatus={setAgentStatus} />}
+          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} screenPaneID={agentScreenPanes[tab.name]} onScreenPane={(paneID) => setAgentScreenPanes((current) => {
+            if (paneID) return current[tab.name] === paneID ? current : { ...current, [tab.name]: paneID }
+            if (!(tab.name in current)) return current
+            const next = { ...current }
+            delete next[tab.name]
+            return next
+          })} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} onStatus={setAgentStatus} />}
         </div>)}
       </div>
       <footer className="status-bar">

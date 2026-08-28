@@ -5,6 +5,7 @@ import { AgentStatusDot, gapLabel } from '../../shared/presentation'
 import { buildSidebarNodes } from './sidebarNodes'
 import type { SidebarNode } from './sidebarNodes'
 import type { Board, Pane } from '../../types'
+import { unattributedTerminalWarning } from '../screen/screenPresentation'
 
 const emptyExpandedItems: string[] = []
 
@@ -90,7 +91,7 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
           key={item.getId()}
           className={`tree-row ${node.kind === 'pane' || node.kind === 'subagent' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${item.isFocused() ? ' tree-focused' : ''}${item.isSelected() ? ' selected' : ''}`}
           style={{ paddingLeft: `${item.getItemMeta().level * 16 + 5}px` }}
-          title={pane ? `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
+          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning}` : `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
           onFocus={() => item.setFocused()}
           onDoubleClick={() => { if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent); else if (node.kind === 'pane' && pane?.agent === '-') onPinPane(pane as Pane) }}
         >

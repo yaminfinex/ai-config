@@ -88,6 +88,21 @@ GET `/api/fleet`
   rows claiming one session) keeps the gap, honestly. Applies identically to
   `herder list` and this endpoint — one shared join package serves both.
 
+  ### AMENDMENT (owner-approved, conductor-acked, 2026-08-28) — pane-session tool evidence and unattributed terminals
+
+  Herdr's live `agent_session` object is a single placement evidence record:
+  its `agent` member is the detected tool and its `value` member is the
+  immutable session ID. The shared join preserves both members and applies the
+  exact unique tool-plus-session rule above. A pane title, label, command line,
+  environment name, or bus display name remains display-only and never places
+  an agent. When neither an exact live pane claim nor a unique live
+  tool-plus-session match exists, the bus row stays `unplaced`.
+
+  Conversely, a visible Herdr pane without join evidence is not asserted to be
+  agent-free. The client labels it **Unattributed terminal** and states plainly
+  that Herdr cannot attribute the terminal and that it may belong to an
+  unplaced agent. This warning accompanies its standalone read-only screen.
+
   ### AMENDMENT (conductor-acked, 2026-08-27) — explicit Claude subagent families
 
   A Claude Task subagent has no pane or independent session ID. hcom instead
@@ -335,19 +350,29 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   `reconnecting` indicator is present only while a rebuild is scheduled
   or in flight.
 
-  ### AMENDMENT (owner-rescoped, 2026-08-27) — read-only screens for non-agent terminal panes
+  ### AMENDMENT (owner-rescoped 2026-08-27, expanded 2026-08-28) — read-only terminal screens
 
   Screen view is permitted as a read-only convenience for panes currently
-  reported by Herdr. Its product purpose is the panes the web could not
-  otherwise show: plain shells and other terminals with no agent claim. Agent
-  sessions keep the transcript as their record, and the client does not offer
-  a screen tab for agent-claimed panes. A watched plain pane may acquire an
-  agent without its already-open read-only screen being revoked; server scope
-  is live Herdr visibility, while client listing policy is non-agent-only.
+  reported by Herdr. Standalone screen tabs remain offered for panes without
+  an agent claim and use the unattributed-terminal wording ruled above. A
+  watched pane may acquire an agent without its already-open read-only screen
+  being revoked. The server's readable scope is every currently visible Herdr
+  pane; it does not infer ownership or restrict reads by client presentation.
+
+  Each agent tab additionally offers an opt-in `Transcript` / `Screen` switch.
+  `Transcript` is the default. `Screen` is enabled only while that exact agent
+  detail has a proven live pane and mirrors that pane inside the agent tab; a
+  pane move updates the selected pane. An unplaced agent says `No live pane.`
+  and disables the switch. A retired agent says it has no live pane and remains
+  transcript-only. Switching the viewport does not replace the queued-message
+  dock or composer: the composer continues to send bus messages only. Preview,
+  pinning, close, clean-view, and show-system semantics are unchanged.
 
   `screens` is an independent, de-duplicated set of at most 100 exact Herdr
-  pane IDs whose screen tabs this page currently has open. It is not coupled to
-  `agents`. The server validates every requested ID against each current Herdr
+  pane IDs whose standalone screen tabs or opted-in agent screen viewports this
+  page currently has open. The client folds those IDs and the open `agents`
+  set into the same one EventSource query; it never creates a second stream.
+  The server validates every requested ID against each current Herdr
   snapshot and never accepts an arbitrary target. A pane absent from the live
   snapshot is not read. Its `screen:{pane-id}` frame instead becomes
   `{"pane_id":"...","status":"unavailable","text":"","truncated":false,"detail":"..."}`,
@@ -377,10 +402,13 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   hard 16,384-byte limit. The server measures final bytes and UTF-8-safely
   truncates text when required, setting `truncated:true`. Screen frames never
   enter transcript endpoints, transcript entries, or transcript serializers.
-  Opening or closing a screen tab rebuilds the existing single EventSource
-  with the new set; no second stream exists. The surface is a read-only `pre`
-  with no input, key handler, or write endpoint. The composer/bus remains the
-  only web typing path.
+  Opening or closing a standalone screen, or opting an agent viewport in or
+  out, rebuilds the existing single EventSource with the new set; no second
+  stream exists. Every screen surface is a read-only `pre` with no input, key
+  handler, terminal-write endpoint, or browser path to Herdr input. Screen
+  reads use only `pane.read` as pinned above. The server must not connect to or
+  expose hcom's per-agent inject port. The composer/bus remains the only web
+  typing path.
 
 ### AMENDMENT (owner-asked, 2026-08-27) — build identity handshake and manual refresh
 
@@ -570,9 +598,9 @@ No WebSocket. No pane injection. No interactive screen input. No cull/kill. No r
 retired-session lifecycle controls beyond the retained read-only transcript
 amendment, no sesh. No blank-form/global spawn, no new-workspace
 creation. No auth beyond the tailnet boundary. No server-side state.
-No client-offered screen view for agent-claimed panes — the tailed transcript
-is the agent window. Read-only screens for non-agent panes are the narrow
-exception defined by the 2026-08-27 amendment above.
+No screen is interactive and no agent screen is selected by default. The
+opt-in read-only agent viewport and unattributed-terminal screen are only the
+narrow exceptions defined by the 2026-08-28 expansion above.
 
 ## Former candidate now ratified (2026-08-27)
 

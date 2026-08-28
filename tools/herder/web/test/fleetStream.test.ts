@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { QueryClient } from '@tanstack/react-query'
-import { eventStreamURL, recordBuildIdentity, subscribeToFleet, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
+import { eventStreamURL, recordBuildIdentity, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
 
 class FakeEventSource implements EventSourceLike {
@@ -22,6 +22,10 @@ test('one stream URL de-duplicates and sorts every open agent', () => {
   assert.equal(eventStreamURL(['zeta', 'alpha', 'zeta']), '/api/events?agents=alpha%2Czeta')
   assert.equal(eventStreamURL([]), '/api/events')
   assert.equal(eventStreamURL(['zeta'], ['w2:p9', 'w1:p1', 'w2:p9']), '/api/events?agents=zeta&screens=w1%3Ap1%2Cw2%3Ap9')
+})
+
+test('closing the last screen consumer identifies only stale screen caches', () => {
+  assert.deepEqual(unsubscribedScreenPaneIDs(['w1:p1', 'w2:p2', 'w1:p1'], ['w2:p2', 'w3:p3']), ['w1:p1'])
 })
 
 test('a changed reconnect build persistently requests a manual refresh', () => {

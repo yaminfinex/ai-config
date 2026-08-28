@@ -9,12 +9,14 @@ import (
 )
 
 func TestParseSessionSnapshotResult(t *testing.T) {
-	wrapped := []byte(`{"type":"session_snapshot","snapshot":{"protocol":19,"version":"fixture","panes":[{"pane_id":"p1","agent_session":{"value":"s1"}}],"agents":[{"pane_id":"p1","name":"mavu"}]}}`)
+	// Captured 2026-08-28 from a disposable native-hcom Claude probe. Herdr
+	// supplied the detected tool only inside the object-shaped agent_session.
+	wrapped := []byte(`{"type":"session_snapshot","snapshot":{"protocol":19,"version":"0.4.1","panes":[{"pane_id":"wY:p6M","workspace_id":"wY","tab_id":"wY:t1","label":"pjsprobe2-kame","agent_session":{"agent":"claude","kind":"id","source":"herdr:claude","value":"aa319d4e-5a61-4a93-ad55-6fa205f67598"}}],"agents":[]}}`)
 	snapshot, err := ParseSessionSnapshotResult(wrapped)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Protocol != 19 || len(snapshot.Panes) != 1 || snapshot.Panes[0].AgentSession != "s1" {
+	if snapshot.Protocol != 19 || len(snapshot.Panes) != 1 || snapshot.Panes[0].AgentSession != "aa319d4e-5a61-4a93-ad55-6fa205f67598" || snapshot.Panes[0].Agent != "claude" {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 

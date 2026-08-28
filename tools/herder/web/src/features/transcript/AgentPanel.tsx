@@ -11,8 +11,10 @@ import { persistCleanView, persistShowSystem, readCleanView, readShowSystem } fr
 import { QueuedMessages } from './QueuedMessages'
 import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
+import { ScreenViewport } from '../screen/ScreenPanel'
+import { agentScreenChoice } from '../screen/screenPresentation'
 
-export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSend, onStatus }: { name: string, liveStatus: string, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
+export function AgentPanel({ name, liveStatus, screenPaneID, onScreenPane, onViewer, identityReadOnly, onSend, onStatus }: { name: string, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -28,11 +30,20 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
   const entries = entriesQuery.data?.entries ?? []
   const queued = visibleQueuedMessages(agentQuery.data?.queued ?? [], entries)
   const entriesNotice = transcriptNotice(entriesQuery.isPending, entriesQuery.error?.message ?? '')
+  const screenChoice = agentScreenChoice(agentQuery.data, screenPaneID)
+  const screenMode = screenChoice.active
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
     else if (agentQuery.error && 'response' in agentQuery.error && (agentQuery.error.response as Response)?.status === 404) onStatus(name, 'unknown')
   }, [agentQuery.data, agentQuery.error, name, onStatus])
+
+  useEffect(() => {
+    if (!screenPaneID || !agentQuery.data) return
+    const currentPaneID = agentScreenChoice(agentQuery.data, screenPaneID).paneID
+    if (!currentPaneID) onScreenPane(undefined)
+    else if (currentPaneID !== screenPaneID) onScreenPane(currentPaneID)
+  }, [agentQuery.data, onScreenPane, screenPaneID])
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
@@ -64,15 +75,20 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
       <strong className="agent-name">{name}</strong>
       {agent && <><span className="pane-chip">{retired ? 'retired' : agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{retired ? 'retired · read-only' : `${agent.herdr_status} · ${liveStatus !== '-' ? liveStatus : agent.bus_status}`}</span>{!retired && agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span>{vitals.length > 0 && <span className="agent-vitals">{vitals.map((vital, index) => <span key={`${index}:${vital}`}>{vital}</span>)}</span>}</>}
       <div className="agent-actions">
+        <div className="detail-toggle agent-view-toggle" aria-label="Agent view">
+          <button type="button" className={screenMode ? '' : 'active'} aria-pressed={!screenMode} onClick={() => onScreenPane(undefined)}>Transcript</button>
+          <button type="button" className={screenMode ? 'active' : ''} aria-pressed={screenMode} disabled={!screenChoice.enabled} title={screenChoice.reason || 'Show the read-only live screen'} onClick={() => { if (screenChoice.paneID) onScreenPane(screenChoice.paneID) }}>Screen</button>
+        </div>
+        {screenChoice.reason && <span className="view-reason">{screenChoice.reason}</span>}
         <label className="system-toggle"><Checkbox.Root checked={cleanView} onCheckedChange={(checked) => { setCleanView(checked); persistCleanView(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> clean view</label>
         <label className={`system-toggle${cleanView ? ' disabled' : ''}`} title={cleanView ? 'Clean view hides system entries' : undefined}><Checkbox.Root checked={showSystem} disabled={cleanView} onCheckedChange={(checked) => { setShowSystem(checked); persistShowSystem(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> show system entries</label>
-        <span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span>
+        {!screenMode && <span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span>}
       </div>
     </header>
     {agentQuery.error && <Banner source="agent" detail={agentQuery.error.message} />}
     {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
-    <section className="transcript" aria-label="Transcript" ref={transcriptRef} onScroll={(event) => {
+    {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} /> : <section className="transcript" aria-label="Transcript" ref={transcriptRef} onScroll={(event) => {
       const node = event.currentTarget
       const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 48
       followingRef.current = atBottom
@@ -89,7 +105,7 @@ export function AgentPanel({ name, liveStatus, onViewer, identityReadOnly, onSen
         setFollowing(true)
         setNewEntryCount(0)
       }}>↓ {newEntryCount} new</button>}
-    </section>
+    </section>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>

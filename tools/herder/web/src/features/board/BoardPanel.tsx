@@ -2,15 +2,17 @@ import { Fragment } from 'react'
 import { AppLink, navigate } from '../../shared/navigation'
 import { AgentStatusDot, gapLabel, workspaceName } from '../../shared/presentation'
 import { SpawnControl } from '../spawn/SpawnControl'
+import { screenPanePresentation } from '../screen/screenPresentation'
 import type { Board, Pane, Row } from '../../types'
 
 function RowCells({ row, spawning = false, onBanner = () => {} }: { row: Row | Pane, spawning?: boolean, onBanner?: (key: string, detail: string) => void }) {
   const hasAgent = row.agent !== '-'
+  const terminal = hasAgent ? null : screenPanePresentation(row as Pane)
   return <>
     <td className="pane-id">{row.parent_agent ? 'subagent' : row.pane_id}</td>
     <td className="agent-cell">{hasAgent
       ? <><AppLink to={`/agents/${encodeURIComponent(row.agent)}`}>{row.agent}</AppLink><span>{row.tool}</span></>
-      : <><span>{'label' in row && row.label ? row.label : 'shell'}</span><span>shell</span></>}</td>
+      : <><span title={terminal?.warning}>{terminal?.label}</span><span>unattributed</span></>}</td>
     <td className="status-cell">{hasAgent && <AgentStatusDot status={row.bus_status} />}{row.herdr_status} · {row.bus_status !== '-' ? row.bus_status : 'no bus'}{hasAgent && gapLabel(row.gap) && <span className="gap-badge">{gapLabel(row.gap)}</span>}</td>
     <td className="actions-cell">{spawning && hasAgent && <SpawnControl pane={row as Pane} onBanner={onBanner} />}</td>
   </>

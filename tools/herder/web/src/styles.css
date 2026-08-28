@@ -157,10 +157,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .empty, .loading { margin: 12px 0; color: var(--dim); }
 
 .agent-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
-.screen-page { position: relative; display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; background: var(--terminal-bg); }
+.screen-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; background: var(--terminal-bg); }
 .screen-header { display: flex; min-height: 38px; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--dim); font-size: 10px; }
 .screen-header strong { overflow: hidden; color: var(--text); font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.screen-notice { position: absolute; z-index: 1; top: 38px; right: 0; left: 0; }
+.screen-viewport { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; background: var(--terminal-bg); }
+.screen-notice { position: absolute; z-index: 1; top: 0; right: 0; left: 0; }
 .terminal-screen { flex: 1; min-height: 0; margin: 0; overflow: auto; padding: 12px 14px; border: 0; border-radius: 0; background: var(--terminal-bg); color: var(--terminal-text); font: 11px/1.35 var(--mono); white-space: pre; tab-size: 4; }
 .terminal-screen.unavailable { color: var(--terminal-dim); }
 .agent-header { display: flex; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); }
@@ -172,6 +173,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .detail-toggle { display: flex; padding: 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); }
 .detail-toggle button { padding: 2px 7px; border: 0; background: transparent; color: var(--dim); font-size: 10px; }
 .detail-toggle button.active { background: var(--accent-dim); color: var(--text); }
+.agent-view-toggle { flex: 0 0 auto; }
+.view-reason { color: var(--dimmer); font-size: 9px; white-space: nowrap; }
 .transcript { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; }
 .transcript > * { max-width: 900px; }
 .window-note { margin: 2px 0 10px; color: var(--dimmer); font: 9px var(--mono); text-align: center; }

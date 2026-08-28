@@ -75,6 +75,26 @@ func TestBuildDoesNotInferPlacementFromMatchingName(t *testing.T) {
 	}
 }
 
+func TestBuildKeepsNativeHcomDoubleGapWithoutJoinEvidence(t *testing.T) {
+	// Captured from the pane-less native hcom probe on 2026-08-28: the bus row
+	// carried a real session and process but no pane claim, while Herdr exposed
+	// the terminal without an agent_session. Its matching title is not evidence.
+	snapshot := sessionSnapshot(herdrcli.Pane{PaneID: "w4R:p3", Label: "pjsbare-kole"})
+	snapshot.Panes[0].AgentStatus = ""
+	roster := []hcomidentity.Row{{
+		Name: "pjsbare-kole", Tool: "claude", SessionID: "d84ed22c-8af1-4636-aa97-45f638e53ec4", Status: "active",
+	}}
+
+	board := Build(snapshot, roster)
+	pane := board.Workspaces[0].Tabs[0].Panes[0]
+	if pane.PaneID != "w4R:p3" || pane.Agent != "-" || pane.Tool != "-" || pane.Gap != "-" {
+		t.Fatalf("unattributed terminal was assigned by display name: %#v", pane)
+	}
+	if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "pjsbare-kole" || board.Unplaced[0].Gap != "no visible pane" {
+		t.Fatalf("pane-less bus row did not remain unplaced: %#v", board.Unplaced)
+	}
+}
+
 func TestBuildHealsMissingPaneClaimFromUniqueToolAndSession(t *testing.T) {
 	for name, claim := range map[string]string{"absent claim": "", "stale claim": "gone"} {
 		t.Run(name, func(t *testing.T) {
