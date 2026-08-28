@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
 import type { TranscriptEntry } from '../../types'
-import { aggregateActivityPills, cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
+import { activityPillTone, aggregateActivityPills, cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
 
 type ObjectValue = Record<string, unknown>
 const objectValue = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
@@ -165,6 +165,7 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
 type CleanActivity = {
   key: string
   label: string
+  tone: ReturnType<typeof activityPillTone>
   entry: TranscriptEntry
   index: number
   deliveryIndex?: number
@@ -219,6 +220,7 @@ function cleanRows(entries: TranscriptEntry[], relationships: EntryRelationships
         run.push({
           key: `message:${delivery.uuid ?? delivery.byteOffset}:${valueIndex}`,
           label: `✉ ${valueText(message.sender) || 'unknown sender'}`,
+          tone: activityPillTone(delivery.kind, true),
           entry: delivery,
           index: deliveryIndex,
           deliveryIndex: valueIndex,
@@ -227,7 +229,7 @@ function cleanRows(entries: TranscriptEntry[], relationships: EntryRelationships
       return
     }
     if (disposition === 'activity') {
-      run.push({ key: `activity:${entry.uuid ?? entry.byteOffset}`, label: activityLabel(entry), entry, index })
+      run.push({ key: `activity:${entry.uuid ?? entry.byteOffset}`, label: activityLabel(entry), tone: activityPillTone(entry.kind), entry, index })
       return
     }
     if (disposition === 'show') addEntry(entry, index)
@@ -239,7 +241,7 @@ function cleanRows(entries: TranscriptEntry[], relationships: EntryRelationships
 function ActivityStrip({ activities, entries, relationships, agentName, now }: { activities: CleanActivity[], entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number }) {
   const [open, setOpen] = useState(false)
   return <details className="activity-strip" onToggle={(event) => setOpen(event.currentTarget.open)}><summary aria-label={`${activities.length} hidden transcript activities`}>
-    {aggregateActivityPills(activities, (activity) => activity.entry.kind === 'tool_use' && activity.deliveryIndex == null).map((pill) => <span className="activity-pill" key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
+    {aggregateActivityPills(activities, (activity) => activity.entry.kind === 'tool_use' && activity.deliveryIndex == null).map((pill) => <span className={`activity-pill ${pill.tone}`} key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
   </summary>{open && <div className="activity-run-detail">
     {activities.map((activity) => activity.deliveryIndex == null
       ? <EntryView entry={activity.entry} index={activity.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem cleanView={false} key={activity.key} />

@@ -25,7 +25,7 @@ function agent(overrides: Partial<AgentDetail> = {}): AgentDetail {
 
 test('agent-less Herdr panes are described as unattributed, never agent-free', () => {
   assert.deepEqual(screenPanePresentation(pane), {
-    label: 'Unattributed terminal',
+    label: 'Terminal',
     warning: unattributedTerminalWarning,
   })
   const board = readFileSync(new URL('../src/features/board/BoardPanel.tsx', import.meta.url), 'utf8')

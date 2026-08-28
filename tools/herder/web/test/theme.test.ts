@@ -82,3 +82,24 @@ test('all concrete stylesheet colors live in the light/dark token declarations',
   const rules = css.slice(css.indexOf('* {'))
   assert.equal(rules.match(/#[\da-f]{3,8}\b|rgba?\(|hsla?\(/gi), null)
 })
+
+test('compact pill text tokens meet WCAG AA contrast in both themes', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const themeBlocks = [...css.matchAll(/:root\[data-theme='(?:light|dark)'\] \{([\s\S]*?)\n\}/g)].map((match) => match[1])
+  const luminance = (hex: string) => {
+    const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255)
+      .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+  }
+  for (const block of themeBlocks) {
+    for (const tone of ['tool', 'thinking', 'message', 'other']) {
+      const foreground = block.match(new RegExp(`--pill-${tone}-text: (#[\\da-f]{6})`, 'i'))?.[1]
+      const background = block.match(new RegExp(`--pill-${tone}-bg: (#[\\da-f]{6})`, 'i'))?.[1]
+      assert.ok(foreground && background, `${tone} pill tokens must be concrete theme declarations`)
+      const foregroundLuminance = luminance(foreground)
+      const backgroundLuminance = luminance(background)
+      const ratio = (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+      assert.ok(ratio >= 4.5, `${tone} pill contrast ${ratio.toFixed(2)} must meet WCAG AA`)
+    }
+  }
+})

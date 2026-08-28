@@ -239,9 +239,11 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '% left' "$ROOT/app.js" &&
   grep -qF 'waiting for the agent’s next turn' "$ROOT/app.js" &&
   grep -qF 'queued-messages' "$ROOT/app.js" &&
-  grep -qF 'clean view' "$ROOT/app.js" &&
-  grep -qF 'herder.web.cleanView.v1:' "$ROOT/app.js" &&
-  grep -qF 'show system entries' "$ROOT/app.js" &&
+  grep -qF 'Compact' "$ROOT/app.js" &&
+  grep -qF 'Normal' "$ROOT/app.js" &&
+  grep -qF 'Full' "$ROOT/app.js" &&
+  grep -qF 'herder.web.transcriptView.v1:' "$ROOT/app.js" &&
+  grep -qF 'Jump to bottom' "$ROOT/app.js" &&
   grep -qF 'react-markdown' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'remark-gfm' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'Live stream timed out' "$ROOT/app.js" &&
