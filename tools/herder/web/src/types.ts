@@ -92,6 +92,48 @@ export interface AgentDetail {
   queued?: QueuedMessage[]
 }
 
+export type MatchTier = 'exact' | 'prefix' | 'suffix' | 'fuzzy'
+
+export interface FileCandidate {
+  root: string
+  path: string
+  tier: MatchTier
+  score: number
+}
+
+export interface RootOutcome {
+  root: string
+  status: 'complete' | 'degraded' | 'failed'
+  detail?: string
+}
+
+export interface ResolveResponse {
+  candidates: FileCandidate[]
+  roots: RootOutcome[]
+}
+
+export type FileRead = {
+  root: string
+  path: string
+  binary: true
+  size: number
+  fetched_at: string
+} | {
+  root: string
+  path: string
+  content: string
+  binary: false
+  size: number
+  truncated: boolean
+  fetched_at: string
+}
+
+export interface FileTarget {
+  root: string
+  path: string
+  line?: number
+}
+
 export interface QueuedMessage {
   id: number
   sender: string

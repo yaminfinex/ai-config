@@ -13,12 +13,18 @@ import { ThemeToggle } from './shared/ThemeToggle'
 import { useFleetStream } from './stream/useFleetStream'
 import { agentTabID, applyRoute, autoPinPreview, createTabState, pinAgent, previewAgent, storedPinnedAgents, type AgentTabState } from './previewTabs'
 import type { Pane } from './types'
+import type { FileTarget } from './types'
+import { FilePanel } from './features/files/FilePanel'
+import { QuickOpen } from './features/files/QuickOpen'
+import { fileTabID, pinFileTab, previewFileTab, type FileTab } from './features/files/fileTabs'
+import { isQuickOpenShortcut } from './features/files/fileShortcut'
+import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 
 const layoutKey = 'herder.web.layout.v1'
 const boardTab = { id: 'board', kind: 'board' as const, label: 'Board' }
 const defaultSidebarWidth = 250
 
-type ShellTab = typeof boardTab | { id: string, kind: 'agent', label: string, name: string, preview: boolean } | { id: string, kind: 'screen', label: string, pane: Pane, preview: boolean }
+type ShellTab = typeof boardTab | { id: string, kind: 'agent', label: string, name: string, preview: boolean } | { id: string, kind: 'screen', label: string, pane: Pane, preview: boolean } | (FileTab & { kind: 'file', label: string })
 type StoredLayout = {
   openTabs: string[]
   activeTab: string
@@ -33,6 +39,7 @@ function agentTab(name: string, preview = false): ShellTab {
 
 function screenTabID(paneID: string) { return `screen:${paneID}` }
 function screenTab(pane: Pane, preview = false): ShellTab { return { id: screenTabID(pane.pane_id), kind: 'screen', label: pane.label || pane.pane_id, pane, preview } }
+function fileShellTab(tab: FileTab): ShellTab { return { ...tab, kind: 'file', label: rootLabel(tab.path) } }
 
 function clampSidebarWidth(width: number) {
   return Math.min(440, Math.max(200, width))
@@ -72,6 +79,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   })
   const [tabState, setTabState] = useState<AgentTabState>(initial.tabState)
   const [screenTabs, setScreenTabs] = useState<Array<{ pane: Pane, preview: boolean }>>([])
+  // Opaque live root IDs are unsafe persistence keys; file tabs follow session-only screen-tab precedent.
+  const [fileTabs, setFileTabs] = useState<FileTab[]>([])
+  const [quickOpen, setQuickOpen] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
@@ -80,7 +90,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [agentScreenPanes, setAgentScreenPanes] = useState<Record<string, string>>({})
   const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const queryClient = useQueryClient()
-  const tabs: ShellTab[] = [boardTab, ...tabState.tabs.map((tab) => agentTab(tab.name, tab.preview)), ...screenTabs.map((tab) => screenTab(tab.pane, tab.preview))]
+  const tabs: ShellTab[] = [boardTab, ...tabState.tabs.map((tab) => agentTab(tab.name, tab.preview)), ...screenTabs.map((tab) => screenTab(tab.pane, tab.preview)), ...fileTabs.map(fileShellTab)]
   const activeTab = tabState.activeTab
   const agentNames = tabState.tabs.map((tab) => tab.name)
   const screenPaneIDs = [
@@ -100,7 +110,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
 
   const setPath = useCallback((tab: ShellTab, push = true) => {
-    if (tab.kind === 'screen') return
+    if (tab.kind === 'screen' || tab.kind === 'file') return
     const path = tab.kind === 'board' ? '/' : `/agents/${encodeURIComponent(tab.name)}`
     if (push && window.location.pathname !== path) window.history.pushState({}, '', path)
   }, [])
@@ -108,7 +118,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const activate = useCallback((tab: ShellTab, push = true) => {
     setTabState((current) => tab.kind === 'board'
       ? { ...current, activeTab: boardTab.id }
-      : tab.kind === 'screen' ? { ...current, activeTab: tab.id }
+      : tab.kind === 'screen' || tab.kind === 'file' ? { ...current, activeTab: tab.id }
         : current.tabs.some((item) => item.name === tab.name)
           ? { ...current, activeTab: tab.id }
           : previewAgent(current, tab.name))
@@ -131,6 +141,17 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       ? current.map((tab) => tab.pane.pane_id === pane.pane_id ? { pane, preview: false } : tab)
       : [...current, { pane, preview: false }])
     setTabState((current) => ({ ...current, activeTab: screenTabID(pane.pane_id) }))
+  }, [])
+
+  const openFile = useCallback((target: FileTarget) => {
+    setFileTabs((current) => previewFileTab(current, target))
+    setTabState((current) => ({ ...current, activeTab: fileTabID(target.root, target.path) }))
+    queryClient.invalidateQueries({ queryKey: queryKeys.file(target.root, target.path) })
+  }, [queryClient])
+
+  const pinFile = useCallback((target: FileTarget) => {
+    setFileTabs((current) => pinFileTab(current, target))
+    setTabState((current) => ({ ...current, activeTab: fileTabID(target.root, target.path) }))
   }, [])
 
   const preview = useCallback((name: string) => {
@@ -177,6 +198,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       activeTab: current.activeTab === id ? next.id : current.activeTab,
     }))
     setScreenTabs((current) => current.filter((tab) => screenTabID(tab.pane.pane_id) !== id))
+    setFileTabs((current) => current.filter((tab) => tab.id !== id))
     if (id.startsWith('agent:')) setAgentStatuses((current) => {
       const next = { ...current }
       delete next[id.slice('agent:'.length)]
@@ -193,7 +215,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       const command = event.ctrlKey || event.metaKey
-      if (command && event.key.toLowerCase() === 'w' && active.kind !== 'board') close(active.id)
+      if (isQuickOpenShortcut(event, navigator.userAgent)) setQuickOpen(true)
+      else if (command && event.key.toLowerCase() === 'w' && active.kind !== 'board') close(active.id)
       else if (command && (event.key === 'PageDown' || event.key === 'PageUp')) {
         const index = tabs.findIndex((tab) => tab.id === active.id)
         activate(tabs[(index + (event.key === 'PageDown' ? 1 : -1) + tabs.length) % tabs.length])
@@ -223,8 +246,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   }), [])
   const setAgentStatus = useCallback((name: string, status: string) => setAgentStatuses((current) => current[name] === status ? current : { ...current, [name]: status }), [])
   const streamProblems: Record<string, string> = { ...stream.problems, ...(boardQuery.error ? { fleet: boardQuery.error.message } : {}), ...lifecycleProblems }
+  const activeAgentStatus = active.kind === 'agent' ? agentBusStatus(boardQuery.data, active.name) : '-'
+  const quickOpenAgent = active.kind === 'agent' ? quickOpenAgentPreference(active.name, activeAgentStatus) : undefined
 
   return <div className="app-shell">
+    <QuickOpen open={quickOpen} agent={quickOpenAgent} onClose={() => setQuickOpen(false)} onOpenFile={openFile} />
     <div className="sidebar-region" style={{ width: sidebarWidth }}>
       <FleetSidebar board={boardQuery.data} activeAgent={active.kind === 'agent' ? active.name : undefined} activePane={active.kind === 'screen' ? active.pane.pane_id : undefined} onPreviewAgent={preview} onPinAgent={pin} onPreviewPane={previewPane} onPinPane={pinPane}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
@@ -243,7 +269,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
           return <div role="presentation" className={`shell-tab${tab.id === activeTab ? ' active' : ''}${tab.kind !== 'board' && tab.preview ? ' preview' : ''}`} key={tab.id} onAuxClick={(event) => { if (event.button === 1 && tab.kind !== 'board') close(tab.id) }}>
           <button ref={(node) => { if (node) tabRefs.current.set(tab.id, node); else tabRefs.current.delete(tab.id) }} id={`shell-tab-${index}`} aria-controls={`shell-panel-${index}`} role="tab" aria-selected={tab.id === activeTab} tabIndex={tab.id === activeTab ? 0 : -1}
             title={tab.kind !== 'board' && tab.preview ? 'Preview — double-click to pin' : undefined}
-            onClick={() => activate(tab)} onDoubleClick={() => { if (tab.kind === 'agent' && tab.preview) pin(tab.name); else if (tab.kind === 'screen' && tab.preview) pinPane(tab.pane) }} onKeyDown={(event) => {
+            onClick={() => activate(tab)} onDoubleClick={() => { if (tab.kind === 'agent' && tab.preview) pin(tab.name); else if (tab.kind === 'screen' && tab.preview) pinPane(tab.pane); else if (tab.kind === 'file' && tab.preview) pinFile(tab) }} onKeyDown={(event) => {
               let target = index
               if (event.key === 'ArrowLeft') target = (index - 1 + tabs.length) % tabs.length
               else if (event.key === 'ArrowRight') target = (index + 1) % tabs.length
@@ -253,10 +279,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
               activate(tabs[target])
               requestAnimationFrame(() => tabRefs.current.get(tabs[target].id)?.focus())
               event.preventDefault()
-            }}>{tab.kind === 'board' ? '⌗ Board' : tab.kind === 'screen' ? <><span className="tab-label">▣ {tab.label}</span><span className="tab-agent-status">read-only</span></> : <><span className="tab-label">{tab.label}</span><span className="tab-agent-status"><AgentStatusDot status={liveStatus} />{liveStatus !== '-' ? liveStatus : 'unknown'}</span></>}</button>
+            }}>{tab.kind === 'board' ? '⌗ Board' : tab.kind === 'screen' ? <><span className="tab-label">▣ {tab.label}</span><span className="tab-agent-status">read-only</span></> : tab.kind === 'file' ? <><span className="tab-label">◇ {tab.label}</span><span className="tab-agent-status">file · read-only</span></> : <><span className="tab-label">{tab.label}</span><span className="tab-agent-status"><AgentStatusDot status={liveStatus} />{liveStatus !== '-' ? liveStatus : 'unknown'}</span></>}</button>
           {tab.kind !== 'board' && <button className="close-tab" aria-label={`Close ${tab.label}`} onClick={() => close(tab.id)}>×</button>}
         </div>})}
-        <button className="new-tab" type="button" title="Open agents and terminal panes from the fleet sidebar" aria-label="Open an agent or terminal pane from the fleet sidebar">+</button>
+        <button className="new-tab" type="button" title="Quick open file · Ctrl/Cmd+K" aria-label="Quick open file" onClick={() => setQuickOpen(true)}>+</button>
         <span className="tab-strip-spacer" />
         <span className={`stream-chip${streamProblems.stream ? ' fault' : ''}`}>{streamProblems.stream ? 'SSE: reconnecting' : 'SSE: connected'}</span>
         <span className="layout-chip" title="Shortcuts: Ctrl/Cmd+W close tab · Ctrl/Cmd+PageUp/PageDown previous/next tab · Alt+1 focus sidebar · Alt+2 focus composer">layout: this browser</span>
@@ -268,13 +294,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       </div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
-          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : <AgentPanel name={tab.name} liveStatus={agentBusStatus(boardQuery.data, tab.name)} screenPaneID={agentScreenPanes[tab.name]} onScreenPane={(paneID) => setAgentScreenPanes((current) => {
+          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : tab.kind === 'file' ? tab.id === activeTab && <FilePanel target={tab} onOpenFile={openFile} /> : <AgentPanel name={tab.name} active={tab.id === activeTab} liveStatus={agentBusStatus(boardQuery.data, tab.name)} screenPaneID={agentScreenPanes[tab.name]} onScreenPane={(paneID) => setAgentScreenPanes((current) => {
             if (paneID) return current[tab.name] === paneID ? current : { ...current, [tab.name]: paneID }
             if (!(tab.name in current)) return current
             const next = { ...current }
             delete next[tab.name]
             return next
-          })} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} onStatus={setAgentStatus} />}
+          })} onOpenFile={openFile} identityReadOnly={viewerReadOnly} onViewer={(resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer })} onSend={() => setTabState((current) => autoPinPreview(current, tab.name))} onStatus={setAgentStatus} />}
         </div>)}
       </div>
       <footer className="status-bar">

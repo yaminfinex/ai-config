@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getAgent, getEntries, lifecycleProblem, sendMessage, spawnAgent, viewerReadOnlyMessage } from '../src/api/client.ts'
+import { getAgent, getEntries, getFile, lifecycleProblem, resolveFiles, sendMessage, spawnAgent, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
@@ -18,6 +18,22 @@ test('typed reads encode agent names and transcript cursors', async () => {
   assert.deepEqual(calls, [
     '/api/agents/a%2Fb',
     '/api/agents/a%2Fb/entries?limit=500&from=7&sessionId=session+one',
+  ])
+})
+
+test('file reads encode opaque roots, paths, queries, and optional agent context', async () => {
+  const calls: string[] = []
+  const fetcher = (async (input: RequestInfo | URL) => {
+    calls.push(String(input))
+    return jsonResponse({})
+  }) as typeof fetch
+  await resolveFiles('src/App.tsx:14', 'agent one', fetcher)
+  await resolveFiles('README.md', undefined, fetcher)
+  await getFile('/repo with space', 'src/App.tsx', fetcher)
+  assert.deepEqual(calls, [
+    '/api/resolve?q=src%2FApp.tsx%3A14&agent=agent+one',
+    '/api/resolve?q=README.md',
+    '/api/files?root=%2Frepo+with+space&path=src%2FApp.tsx',
   ])
 })
 
