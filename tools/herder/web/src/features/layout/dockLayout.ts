@@ -1,4 +1,4 @@
-import type { SerializedDockview } from 'dockview-react'
+import type { DockviewApi, SerializedDockview } from 'dockview-react'
 import type { Board, Pane } from '../../types'
 import { fileTabID, type FileViewMode } from '../files/fileTabs.ts'
 import { agentTabID } from '../../previewTabs.ts'
@@ -12,8 +12,9 @@ export type ScreenIdentity = { paneID: string, workspaceID: string, tabID: strin
 export type ScreenPanelParams = { kind: 'screen', pane: Pane, identity: ScreenIdentity, preview: boolean }
 export type FilePanelParams = {
   kind: 'file'
+  // The API's canonical absolute served-root path is the root ID. File reads
+  // re-prove it server-side: an unserved root is refused instead of remapped.
   root: string
-  rootIdentity: string
   path: string
   line?: number
   preview: boolean
@@ -67,11 +68,11 @@ export function panelParams(value: unknown): DockPanelParams | null {
   if (value.kind === 'screen') return validPane(value.pane) && validIdentity(value.identity)
     ? { kind: 'screen', pane: value.pane, identity: value.identity, preview: value.preview }
     : null
-  if (value.kind !== 'file' || typeof value.root !== 'string' || typeof value.rootIdentity !== 'string' ||
+  if (value.kind !== 'file' || typeof value.root !== 'string' || !value.root ||
     typeof value.path !== 'string' || (value.line !== undefined && (!Number.isInteger(value.line) || Number(value.line) < 1)) ||
     (value.viewMode !== 'rendered' && value.viewMode !== 'source')) return null
   return {
-    kind: 'file', root: value.root, rootIdentity: value.rootIdentity, path: value.path,
+    kind: 'file', root: value.root, path: value.path,
     ...(value.line === undefined ? {} : { line: Number(value.line) }), preview: value.preview, viewMode: value.viewMode,
   }
 }
@@ -93,6 +94,7 @@ function validGridNode(value: unknown, panelIDs: Set<string>): value is GridNode
 
 function validDock(value: unknown): value is SerializedDockview {
   if (!record(value) || !record(value.panels) || !record(value.grid) || !record(value.grid.root)) return false
+  if (value.grid.root.type !== 'branch') return false
   if ('floatingGroups' in value || 'popoutGroups' in value || 'edgeGroups' in value) return false
   const panelIDs = new Set(Object.keys(value.panels))
   if (panelIDs.size === 0) return false
@@ -187,8 +189,9 @@ export function persistableDockLayout(value: unknown): SerializedDockview | null
       return record(serialized) && panelParams(serialized.params)?.preview === false
     }))
     const keep = new Set(Object.keys(panels))
-    const root = pruneGridNode(cloned.grid.root, keep)
-    if (!root || keep.size === 0) return null
+    const prunedRoot = pruneGridNode(cloned.grid.root, keep)
+    if (!prunedRoot || keep.size === 0) return null
+    const root: GridNode = prunedRoot.type === 'branch' ? prunedRoot : { type: 'branch', data: [prunedRoot] }
     const ids = groupIDs(root)
     const activeGroup = typeof cloned.activeGroup === 'string' && ids.has(cloned.activeGroup) ? cloned.activeGroup : firstGroupID(root)
     const dock: UnknownRecord = { ...cloned, panels, grid: { ...cloned.grid, root }, activeGroup }
@@ -201,8 +204,14 @@ export function persistableDockLayout(value: unknown): SerializedDockview | null
   }
 }
 
-export function fileIdentityMatches(params: FilePanelParams) {
-  return Boolean(params.root && params.rootIdentity && params.root === params.rootIdentity)
+export function restoreDockLayout(api: Pick<DockviewApi, 'fromJSON'>, dock: SerializedDockview) {
+  try {
+    api.fromJSON(dock)
+    return true
+  } catch (error) {
+    console.error('Failed to restore persisted dock layout; using the default layout.', error)
+    return false
+  }
 }
 
 export type ScreenIdentityState = 'checking' | 'ready' | 'mismatch'

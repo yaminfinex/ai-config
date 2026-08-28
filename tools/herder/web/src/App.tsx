@@ -29,13 +29,13 @@ import { fileTabID, isMarkdownPath, type FileViewMode } from './features/files/f
 import { isQuickOpenShortcut } from './features/files/fileShortcut'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import {
-  fileIdentityMatches,
   layoutStorageKey,
   legacyLayoutStorageKey,
   panelParams,
   parseLegacyLayout,
   parseStoredLayout,
   persistableDockLayout,
+  restoreDockLayout,
   screenIdentityState,
   screenPanelParams,
   type AgentPanelParams,
@@ -181,7 +181,6 @@ function ScreenDockPanel({ params }: IDockviewPanelProps<ScreenPanelParams>) {
 
 function FileDockPanel({ params, api }: IDockviewPanelProps<FilePanelParams>) {
   const workspace = useWorkspace()
-  if (!fileIdentityMatches(params)) return <main className="panel-unavailable tombstone" role="status"><strong>File root no longer matches</strong><p>The saved root identifier does not resolve to the directory recorded when this panel was pinned. No similarly named path was opened.</p></main>
   return <FilePanel target={{ root: params.root, path: params.path, ...(params.line ? { line: params.line } : {}) }} viewMode={params.viewMode}
     onViewMode={(mode) => workspace.setFileViewMode(api.id, mode)} onOpenFile={workspace.openFile} />
 }
@@ -335,7 +334,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       return current?.kind === 'file' && current.preview
     })
     const params: FilePanelParams = {
-      kind: 'file', root: target.root, rootIdentity: target.root, path: target.path,
+      kind: 'file', root: target.root, path: target.path,
       ...(target.line ? { line: target.line } : {}), preview: true,
       viewMode: isMarkdownPath(target.path) && !target.line ? 'rendered' : 'source',
     }
@@ -377,7 +376,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     apiRef.current = event.api
     let restored = false
     if (initial.stored?.dock) {
-      try { event.api.fromJSON(initial.stored.dock); restored = true } catch { restored = false }
+      restored = restoreDockLayout(event.api, initial.stored.dock)
     }
     if (!restored && initial.legacy) {
       addPanel(boardPanel)
