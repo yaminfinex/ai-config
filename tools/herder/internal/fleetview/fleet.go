@@ -8,6 +8,7 @@ import (
 
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/repoctx"
 )
 
 // Row is one honest placement/bus join result. Gap is empty only when a live
@@ -32,16 +33,18 @@ type Board struct {
 }
 
 type Workspace struct {
-	WorkspaceID string `json:"workspace_id"`
-	WorktreeOf  string `json:"worktree_of,omitempty"`
-	Number      int    `json:"number"`
-	Label       string `json:"label"`
-	Focused     bool   `json:"focused"`
-	PaneCount   int    `json:"pane_count"`
-	TabCount    int    `json:"tab_count"`
-	ActiveTabID string `json:"active_tab_id"`
-	AgentStatus string `json:"agent_status"`
-	Tabs        []Tab  `json:"tabs"`
+	WorkspaceID string       `json:"workspace_id"`
+	WorktreeOf  string       `json:"worktree_of,omitempty"`
+	Number      int          `json:"number"`
+	Label       string       `json:"label"`
+	Focused     bool         `json:"focused"`
+	PaneCount   int          `json:"pane_count"`
+	TabCount    int          `json:"tab_count"`
+	ActiveTabID string       `json:"active_tab_id"`
+	AgentStatus string       `json:"agent_status"`
+	CWD         string       `json:"cwd,omitempty"`
+	Git         *repoctx.Git `json:"git,omitempty"`
+	Tabs        []Tab        `json:"tabs"`
 }
 
 type Tab struct {

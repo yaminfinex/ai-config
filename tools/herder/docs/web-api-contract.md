@@ -305,6 +305,92 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   inside `$HOME/.claude/projects`; otherwise the server falls back to the
   parent-derived path. An arbitrary or escaping roster path is never read.
 
+### AMENDMENT (owner-ratified, conductor-acked, 2026-08-28) — opaque-root file reads and resolution
+
+The server's readable file universe consists only of opaque absolute roots.
+It derives live roots from non-empty working directories in the current hcom
+roster and accepts additional operator roots through repeatable
+`herder serve --root PATH` flags. Flag order is configuration order. Relative
+flag values are made absolute from the serve invocation directory; every
+configured value is cleaned, symlink-resolved, and required to name an
+existing directory at startup. Invalid configured roots prevent startup.
+Exact duplicates collapse first-wins, but configured roots remain independently
+addressable when path-nested.
+
+Agent working directories are cleaned, symlink-resolved, and de-duplicated into
+an enclosing agent root when path-nested. A working directory proven by Git to
+be inside a linked worktree is never folded into another root, even when
+path-nested; exact identical working directories still coalesce. The server has
+no mission-, plan-, or repository-name-specific root knowledge. Root IDs are
+the resulting canonical absolute directory strings; a client-supplied absolute
+path that is not an exact current root ID never authorizes a read.
+
+GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
+  Resolves a required, non-empty path-like query against the complete current
+  root universe. Success is
+  `{"candidates":[{"root":"/opaque/root","path":"relative/file.md","tier":"exact|prefix|suffix|fuzzy","score":731}],"roots":[{"root":"/opaque/root","status":"complete|degraded|failed","detail":"honest bounded diagnostic when not complete"}]}`.
+  Candidates are already ranked by the resolver and the server never applies
+  the client auto-open rule or re-ranks them. The tier is therefore preserved
+  exactly: the client may auto-open only when exactly one candidate is
+  `exact` or `suffix`; it never auto-opens a fuzzy candidate. No current match,
+  including a formerly mentioned path that has vanished, is an honest 200 with
+  `candidates:[]`.
+
+  Hard ranking bands are exact, then prefix/suffix, then fuzzy. Within a band,
+  an optional agent context prefers that agent's mapped live root, then
+  configured roots in flag order, then remaining live agent roots. Without an
+  agent, configured roots lead. `q` and `agent` may each appear at most once;
+  malformed or empty input is 400 `bad request`, an unknown agent is 404
+  `unknown agent`. Each root reports its index outcome: `complete` means its
+  candidate set is whole; `degraded` means usable candidates are included but
+  an indexing diagnostic occurred; `failed` means that root contributed no
+  candidates. Non-complete outcomes carry an honest diagnostic, bounded at
+  4 KiB with an explicit truncation marker. Healthy roots remain ranked and
+  returned when another root degrades or fails. A whole-response 502
+  `substrate unreachable` is reserved for request-level failure such as an
+  unreadable live roster or unavailable root-universe construction.
+
+GET `/api/files?root={root-id}&path={root-relative-file}`
+  Reads one regular file exactly as it exists at request time. A text response
+  is
+  `{"root":"...","path":"relative/file.md","content":"...","binary":false,"size":123,"truncated":false,"fetched_at":"2026-08-28T02:30:00.000000731Z"}`.
+  `size` is the complete current byte size. Text content has a 256 KiB soft cap,
+  is shortened only on a UTF-8 boundary, and reports `truncated:true` when
+  shortened. A binary response is
+  `{"root":"...","path":"relative/file.bin","binary":true,"size":123,"fetched_at":"..."}`;
+  `content` and `truncated` are absent rather than fabricated. Files above the
+  4 MiB hard cap are never served.
+
+GET `/api/files/tree?root={root-id}&path={optional-root-relative-directory}`
+  Lists exactly one directory level; an absent or empty path means the root.
+  Success is
+  `{"root":"...","path":"relative/directory","entries":[{"name":"file.md","kind":"file","size":123},{"name":"child","kind":"directory"},{"name":"alias","kind":"symlink"}]}`.
+  Entries are name-sorted. `kind` is `file`, `directory`, or `symlink`; `size`
+  appears only for regular files. Symlinks are identified without following
+  them merely to construct a listing. A requested directory symlink is resolved
+  and containment-checked before it is read.
+
+Both file endpoints require one exact current root ID and root-relative paths.
+They resolve the root and requested target through the shared containment
+primitive before reading. A symlink escape is 409 `refused by substrate` and
+its detail quotes the requested and resolved paths. Traversal, explicit or
+symlink-aliased `.git` internals, the 4 MiB hard cap, and wrong file/directory
+kind are likewise 409 refusals. Unknown roots and missing paths are 404;
+malformed or duplicate parameters are 400; other filesystem failures are 502.
+Every refusal retains the pinned `{"error":"<short>","detail":"<honest>"}`
+serializer. Dotfiles other than `.git` internals are readable. Attributed and
+unattributed viewers have the same read access, and no file write exists.
+
+Agent detail additionally carries top-level `cwd` and optional
+`git:{branch,remote_url,worktree_of}` derived read-only from its current roster
+working directory; the existing `directory` field remains compatible. Every
+fleet workspace carries the same fields only when Herdr supplies a live
+`worktree.checkout_path`. `worktree_of` inside `git` is a proven main-checkout
+path for a linked Git worktree and is distinct from the existing workspace-level
+`worktree_of` parent workspace ID. Detached heads, missing origins, non-Git
+directories, and unavailable facts are honestly omitted rather than inferred
+from labels, paths, or branch-looking text.
+
 ### AMENDMENT (owner-ruled, 2026-08-27) — legacy exchange endpoints removed
 
 The exchange-based `/api/agents/{bus-name}/transcript` and
@@ -601,6 +687,10 @@ creation. No auth beyond the tailnet boundary. No server-side state.
 No screen is interactive and no agent screen is selected by default. The
 opt-in read-only agent viewport and unattributed-terminal screen are only the
 narrow exceptions defined by the 2026-08-28 expansion above.
+There are no file writes, file watch/EventSource, content grep/search endpoint,
+archive/download surface, arbitrary-path read, mission-aware root behavior,
+file history, or persistent file state. The short-lived candidate index is
+derived and rebuildable; restart loses no source of truth.
 
 ## Former candidate now ratified (2026-08-27)
 

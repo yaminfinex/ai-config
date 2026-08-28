@@ -19,6 +19,11 @@ func (s staticSource) Candidates(_ context.Context, root string, _ bool) ([]stri
 	return append([]string(nil), s[root]...), nil
 }
 
+type degradedFixtureError struct{ detail string }
+
+func (e degradedFixtureError) Error() string  { return e.detail }
+func (e degradedFixtureError) Degraded() bool { return true }
+
 func TestResolveHardTiersExactSuffixAndFuzzyAcrossCorpus(t *testing.T) {
 	fixtures := []struct {
 		query  string
@@ -172,6 +177,34 @@ func TestResolvePropagatesCandidateSourceFailure(t *testing.T) {
 	}
 }
 
+func TestResolveDetailedReportsEachRootAndRanksUsableCandidatesGlobally(t *testing.T) {
+	source := sourceFunc(func(_ context.Context, root string, _ bool) ([]string, error) {
+		switch root {
+		case "/healthy":
+			return []string{"z/needle.md"}, nil
+		case "/degraded":
+			return []string{"a/needle.md"}, degradedFixtureError{"permission denied below root"}
+		default:
+			return []string{"must-not-leak.md"}, errors.New("index failed")
+		}
+	})
+	resolution, err := New(source).ResolveDetailed(context.Background(), Request{
+		Query: "needle.md", Roots: []string{"/healthy", "/degraded", "/failed"}, RootPreference: []string{"/degraded"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolution.Results) != 2 || resolution.Results[0].Root != "/degraded" || resolution.Results[1].Root != "/healthy" {
+		t.Fatalf("results=%#v", resolution.Results)
+	}
+	want := []RootStatus{RootComplete, RootDegraded, RootFailed}
+	for i, status := range want {
+		if resolution.Roots[i].Status != status {
+			t.Errorf("roots[%d]=%#v want %q", i, resolution.Roots[i], status)
+		}
+	}
+}
+
 func TestResolvePassesForcedRefreshToEveryRoot(t *testing.T) {
 	var refreshed []string
 	source := sourceFunc(func(_ context.Context, root string, refresh bool) ([]string, error) {
@@ -203,6 +236,10 @@ func TestNormalizeQuery(t *testing.T) {
 		{"`docs/file.md`", NormalizedQuery{Path: "docs/file.md"}},
 		{`"docs/file.md",`, NormalizedQuery{Path: "docs/file.md"}},
 		{"'docs/file.md';", NormalizedQuery{Path: "docs/file.md"}},
+		{"(docs/file.md)", NormalizedQuery{Path: "docs/file.md"}},
+		{"[docs/file.md]", NormalizedQuery{Path: "docs/file.md"}},
+		{"{docs/file.md}", NormalizedQuery{Path: "docs/file.md"}},
+		{"<docs/file.md>", NormalizedQuery{Path: "docs/file.md"}},
 		{"docs/file.md:123).", NormalizedQuery{Path: "docs/file.md", Line: 123}},
 		{"backlog/A name with spaces — retained.md:7", NormalizedQuery{Path: "backlog/A name with spaces — retained.md", Line: 7}},
 		{`literal\backslash.md`, NormalizedQuery{Path: `literal\backslash.md`}},

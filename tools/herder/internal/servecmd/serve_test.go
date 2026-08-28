@@ -18,10 +18,13 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/claudesession"
+	"ai-config/tools/herder/internal/fileindex"
+	"ai-config/tools/herder/internal/fileresolver"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/repoctx"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 )
@@ -60,9 +63,13 @@ func fixtureDeps() dependencies {
 		spawn: func(context.Context, []string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
-		poll:      10 * time.Millisecond,
-		heartbeat: time.Second,
-		screens:   func() (screenSource, error) { return &fixtureScreenSource{}, nil },
+		poll:         10 * time.Millisecond,
+		heartbeat:    time.Second,
+		screens:      func() (screenSource, error) { return &fixtureScreenSource{}, nil },
+		roots:        buildRootSet,
+		fileResolver: fileresolver.New(fileindex.New(fileindex.Options{})),
+		repoContext:  repoctx.Read,
+		now:          time.Now,
 	}
 }
 

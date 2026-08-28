@@ -3,7 +3,9 @@
 package fileindex
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,11 +19,28 @@ import (
 const (
 	DefaultTTL     = 5 * time.Second
 	commandTimeout = 10 * time.Second
+	maxErrorDetail = 4 * 1024
 )
 
-// RunFunc runs a command in dir and returns its combined output. It is a seam
+// CommandOutput keeps candidate data separate from command diagnostics.
+type CommandOutput struct {
+	Stdout []byte
+	Stderr []byte
+}
+
+// RunFunc runs a command in dir and returns its output. It is a seam
 // for deterministic tests; production callers normally leave Options.Run nil.
-type RunFunc func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
+type RunFunc func(ctx context.Context, dir, name string, args ...string) (CommandOutput, error)
+
+// DegradedError reports a partial non-git index whose returned candidates are
+// still usable. Callers must surface the diagnostic rather than silently
+// treating the root as complete.
+type DegradedError struct {
+	detail string
+}
+
+func (e *DegradedError) Error() string  { return e.detail }
+func (e *DegradedError) Degraded() bool { return true }
 
 // Options configures an Index. Zero values select production defaults.
 type Options struct {
@@ -44,6 +63,7 @@ type Index struct {
 type cacheEntry struct {
 	refreshed time.Time
 	paths     []string
+	degraded  string
 }
 
 // New returns a per-root candidate index.
@@ -82,18 +102,23 @@ func (i *Index) Candidates(ctx context.Context, root string, refresh bool) ([]st
 		entry, ok := i.cache[root]
 		i.mu.Unlock()
 		if ok && now.Before(entry.refreshed.Add(i.ttl)) {
-			return slices.Clone(entry.paths), nil
+			return slices.Clone(entry.paths), degradedError(entry.degraded)
 		}
 	}
 
 	paths, err := i.load(ctx, root)
-	if err != nil {
+	var degraded *DegradedError
+	if err != nil && !errors.As(err, &degraded) {
 		return nil, err
 	}
 	i.mu.Lock()
-	i.cache[root] = cacheEntry{refreshed: now, paths: slices.Clone(paths)}
+	entry := cacheEntry{refreshed: now, paths: slices.Clone(paths)}
+	if degraded != nil {
+		entry.degraded = degraded.Error()
+	}
+	i.cache[root] = entry
 	i.mu.Unlock()
-	return slices.Clone(paths), nil
+	return slices.Clone(paths), degradedError(entry.degraded)
 }
 
 func (i *Index) load(ctx context.Context, root string) ([]string, error) {
@@ -102,23 +127,47 @@ func (i *Index) load(ctx context.Context, root string) ([]string, error) {
 
 	out, err := i.run(commandCtx, root, "git", "ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err == nil {
-		return parseCandidates(out), nil
+		return parseCandidates(out.Stdout), nil
 	}
 	if commandCtx.Err() != nil {
 		return nil, fmt.Errorf("index git root %q: %w", root, commandCtx.Err())
 	}
-	if !strings.Contains(string(out), "not a git repository") {
-		return nil, fmt.Errorf("git ls-files in %q failed: %w: %s", root, err, strings.TrimSpace(string(out)))
+	if !strings.Contains(string(out.Stderr), "not a git repository") {
+		return nil, fmt.Errorf("git ls-files in %q failed: %w: %s", root, err, errorDetail(out))
 	}
 
 	out, err = i.run(commandCtx, root, "rg", "--files", "--hidden", "--no-require-git", "--null", "--glob", "!.git", "--glob", "!.git/**")
 	if err != nil {
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 && len(out.Stdout) == 0 {
+			return []string{}, nil
+		}
 		if commandCtx.Err() != nil {
 			return nil, fmt.Errorf("index non-git root %q: %w", root, commandCtx.Err())
 		}
-		return nil, fmt.Errorf("rg --files in non-git root %q failed: %w: %s", root, err, strings.TrimSpace(string(out)))
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 2 && len(out.Stdout) > 0 && len(out.Stderr) > 0 {
+			return parseCandidates(out.Stdout), &DegradedError{detail: fmt.Sprintf("rg --files in non-git root %q was partial: %s", root, errorDetail(out))}
+		}
+		return nil, fmt.Errorf("rg --files in non-git root %q failed: %w: %s", root, err, errorDetail(out))
 	}
-	return parseCandidates(out), nil
+	return parseCandidates(out.Stdout), nil
+}
+
+func degradedError(detail string) error {
+	if detail == "" {
+		return nil
+	}
+	return &DegradedError{detail: detail}
+}
+
+func errorDetail(out CommandOutput) string {
+	detail := bytes.TrimSpace(out.Stderr)
+	if len(detail) == 0 {
+		detail = bytes.TrimSpace(out.Stdout)
+	}
+	if len(detail) <= maxErrorDetail {
+		return string(detail)
+	}
+	return string(detail[:maxErrorDetail]) + " [detail truncated]"
 }
 
 func parseCandidates(out []byte) []string {
@@ -135,9 +184,13 @@ func parseCandidates(out []byte) []string {
 	return paths
 }
 
-func runCommand(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+func runCommand(ctx context.Context, dir, name string, args ...string) (CommandOutput, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	return cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return CommandOutput{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, err
 }
