@@ -1,6 +1,7 @@
 [tools]
 go = "1.26.5"
 "npm:backlog.md" = "1.47.1"
+ripgrep = "14.1.0"
 
 [env]
 # config_root, not env.HOME: scrubbed-env invocations (grokbridge seat-scrub
