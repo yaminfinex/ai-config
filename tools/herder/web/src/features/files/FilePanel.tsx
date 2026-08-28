@@ -3,14 +3,16 @@ import { useQuery } from '@tanstack/react-query'
 import { apiProblem, getFile, queryKeys, resolveFiles } from '../../api/client'
 import type { FileTarget } from '../../types'
 import { Banner } from '../../shared/presentation'
+import { fileMarkdownComponents, Markdown } from '../../shared/Markdown'
 import { FileResults } from './FileResults'
 import { fileFailureKind, rootLabel } from './fileResolution'
+import { isMarkdownPath, type FileViewMode } from './fileTabs'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
 }
 
-export function FilePanel({ target, onOpenFile }: { target: FileTarget, onOpenFile: (target: FileTarget) => void }) {
+export function FilePanel({ target, viewMode, onViewMode, onOpenFile }: { target: FileTarget, viewMode: FileViewMode, onViewMode: (mode: FileViewMode) => void, onOpenFile: (target: FileTarget) => void }) {
   const targetLineRef = useRef<HTMLElement | null>(null)
   const fileQuery = useQuery({
     queryKey: queryKeys.file(target.root, target.path),
@@ -30,14 +32,19 @@ export function FilePanel({ target, onOpenFile }: { target: FileTarget, onOpenFi
   })
 
   useEffect(() => {
-    if (!target.line || !fileQuery.data || fileQuery.data.binary) return
+    if (viewMode !== 'source' || !target.line || !fileQuery.data || fileQuery.data.binary) return
     requestAnimationFrame(() => targetLineRef.current?.scrollIntoView({ block: 'center' }))
-  }, [fileQuery.data, target.line])
+  }, [fileQuery.data, target.line, viewMode])
 
   const data = fileQuery.data
+  const markdown = isMarkdownPath(target.path)
   return <main className="file-panel">
     <header className="file-header">
-      <div><strong>{rootLabel(target.path)}</strong><span>{target.path}</span><span className="root-path" title={target.root}>{target.root}</span></div>
+      <div className="file-title"><strong>{rootLabel(target.path)}</strong><span>{target.path}</span><span className="root-path" title={target.root}>{target.root}</span></div>
+      {markdown && <div className="detail-toggle file-view-toggle" aria-label="Markdown view">
+        <button type="button" className={viewMode === 'rendered' ? 'active' : ''} aria-pressed={viewMode === 'rendered'} onClick={() => onViewMode('rendered')}>Rendered</button>
+        <button type="button" className={viewMode === 'source' ? 'active' : ''} aria-pressed={viewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
+      </div>}
       <button type="button" onClick={() => fileQuery.refetch()} disabled={fileQuery.isFetching}>{fileQuery.isFetching ? 'Refreshing…' : 'Refresh'}</button>
     </header>
     {fileQuery.isPending && <div className="file-state" role="status">Reading current file…</div>}
@@ -52,12 +59,13 @@ export function FilePanel({ target, onOpenFile }: { target: FileTarget, onOpenFi
       {data.binary ? <section className="file-state binary" role="status"><strong>Binary file</strong><p>No text content is available for this {formattedBytes(data.size)} file.</p></section>
         : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`}>
           {data.truncated && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
-          <pre>{data.content.split('\n').map((line, index) => {
+          {markdown && viewMode === 'rendered' ? <div className="markdown file-markdown"><Markdown components={fileMarkdownComponents}>{data.content}</Markdown></div> : <pre className="file-source">{data.content.split('\n').map((line, index) => {
             const number = index + 1
             return <span className={`file-line${number === target.line ? ' target-line' : ''}`} ref={number === target.line ? targetLineRef : undefined} key={number}>
               <span className="line-number" aria-hidden="true">{number}</span><span className="line-text">{line || ' '}</span>{'\n'}
             </span>
           })}</pre>
+          }
         </div>}
     </>}
   </main>

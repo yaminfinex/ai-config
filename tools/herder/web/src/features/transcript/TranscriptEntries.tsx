@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
+import { Markdown } from '../../shared/Markdown'
 import type { TranscriptEntry } from '../../types'
 import { activityPillTone, aggregateActivityPills, cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
 
@@ -261,7 +260,7 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} />
   if (entry.kind === 'tool_use') return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
   if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><pre>{resultText(payload.content)}</pre></div></details>
-  if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article>
+  if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><Markdown>{content}</Markdown></div></article>
   if (entry.kind === 'thinking') {
     const nextTime = relationships.nextTimestamps.get(index)
     const duration = nextTime && entry.timestamp ? formatDuration(Date.parse(nextTime) - Date.parse(entry.timestamp)) : 'duration unknown'
@@ -278,7 +277,7 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (entry.kind === 'compact_divider') {
     const metadata = objectValue(payload.compactMetadata)
     if (Object.keys(metadata).length > 0) return <div className="compaction-divider"><span>context compacted ({valueText(metadata.trigger) || 'unknown'}, {Number(metadata.preTokens).toLocaleString()} → {Number(metadata.postTokens).toLocaleString()} tokens)</span><Timestamp timestamp={entry.timestamp} now={now} /></div>
-    return <details className="entry-expander compact-summary"><summary>compaction summary<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail markdown"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content || valueText(payload.content)}</ReactMarkdown></div></details>
+    return <details className="entry-expander compact-summary"><summary>compaction summary<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail markdown"><Markdown>{content || valueText(payload.content)}</Markdown></div></details>
   }
   if (entry.kind === 'turn_duration') return <div className="turn-footer">turn · {formatDuration(Number(payload.durationMs))}{payload.messageCount != null ? ` · ${Number(payload.messageCount)} messages` : ''} · <Timestamp timestamp={entry.timestamp} now={now} /></div>
   if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div>{content || JSON.stringify(payload)}</div></details>
