@@ -1,4 +1,5 @@
 import { workspaceName } from '../../shared/workspaceName.ts'
+import { screenPanePresentation } from '../screen/screenPresentation.ts'
 import type { Board, Pane, Row } from '../../types.ts'
 
 export type SidebarNode = {
@@ -52,7 +53,7 @@ function addAgentNode(result: Map<string, SidebarNode>, id: string, pane: Pane |
   result.set(id, {
     id,
     kind: pane.parent_agent ? 'subagent' : 'pane',
-    name: pane.agent !== '-' ? pane.agent : ('label' in pane && pane.label) || pane.pane_id,
+    name: pane.agent !== '-' ? pane.agent : screenPanePresentation(pane as Pane).label,
     children,
     pane,
     tabLabel,

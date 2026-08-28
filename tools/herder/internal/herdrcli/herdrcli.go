@@ -82,12 +82,19 @@ func (p *Pane) UnmarshalJSON(data []byte) error {
 		return json.Unmarshal(trimmed, &p.AgentSession)
 	}
 	var object struct {
+		Agent string `json:"agent"`
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(trimmed, &object); err != nil {
 		return fmt.Errorf("pane %s: agent_session: %w", p.PaneID, err)
 	}
 	p.AgentSession = object.Value
+	if p.Agent == "" {
+		// The live Herdr shape can carry the authoritative tool only inside
+		// agent_session. Preserve that evidence so the shared fleet join can
+		// use its existing unambiguous tool/session fallback.
+		p.Agent = object.Agent
+	}
 	return nil
 }
 

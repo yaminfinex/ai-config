@@ -30,7 +30,7 @@ test('screen first-load and truncation are informational while unavailable is an
 test('screen loading notice overlays a header and terminal that remain mounted', () => {
   const component = readFileSync(new URL('../src/features/screen/ScreenPanel.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
-  assert.match(component, /className="screen-page" aria-busy=\{!frame\}/)
+  assert.match(component, /className="screen-viewport" aria-busy=\{!frame\}/)
   assert.match(component, /className="screen-notice"/)
   assert.match(component, /className=\{`terminal-screen/)
   assert.match(css, /\.screen-notice \{[^}]*position: absolute;/s)

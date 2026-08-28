@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { queryKeys } from '../api/client.ts'
 import type { Board, ScreenFrame, SubstrateEvent } from '../types'
@@ -53,6 +53,11 @@ export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [
   if (agents) query.set('agents', agents)
   if (screens) query.set('screens', screens)
   return query.size ? `/api/events?${query}` : '/api/events'
+}
+
+export function unsubscribedScreenPaneIDs(previous: string[], current: string[]) {
+  const subscribed = new Set(current)
+  return [...new Set(previous)].filter((paneID) => !subscribed.has(paneID))
 }
 
 export function subscribeToFleet(
@@ -175,6 +180,7 @@ export function subscribeToFleet(
 
 export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = []) {
   const queryClient = useQueryClient()
+  const previousScreenSubscription = useRef('')
   const subscription = [...new Set(agentNames)].sort().join(',')
   const screenSubscription = [...new Set(screenPaneIDs)].sort().join(',')
   const stream = useQuery({
@@ -184,6 +190,15 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
     staleTime: Infinity,
   }).data
 
+  useEffect(() => {
+    const current = screenSubscription ? screenSubscription.split(',') : []
+    if (previousScreenSubscription.current) {
+      unsubscribedScreenPaneIDs(previousScreenSubscription.current.split(','), current).forEach((paneID) => {
+        queryClient.removeQueries({ queryKey: queryKeys.screen(paneID), exact: true })
+      })
+    }
+    previousScreenSubscription.current = screenSubscription
+  }, [queryClient, screenSubscription])
   useEffect(() => subscribeToFleet(queryClient, subscription ? subscription.split(',') : [], screenSubscription ? screenSubscription.split(',') : []), [queryClient, subscription, screenSubscription])
   return stream
 }
