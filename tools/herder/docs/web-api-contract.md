@@ -432,6 +432,125 @@ Every refusal retains the pinned `{"error":"<short>","detail":"<honest>"}`
 serializer. Dotfiles other than `.git` internals are readable. Attributed and
 unattributed viewers have the same read access, and no file write exists.
 
+### AMENDMENT (owner-ratified, conductor-acked, 2026-08-28) — bounded Git reads
+
+Four read-only Git endpoints extend the opaque-root file universe. They compute
+facts on demand and hold no persistent state. Each path is root-relative and
+inherits the file endpoints' traversal, `.git`-internal, and symlink-escape
+refusals. A root nested inside a repository remains its own readable universe:
+status and diff pathspecs are scoped to that root and wire paths remain relative
+to it. Git output is hand-parsed from its documented byte-oriented machine
+formats; an unrecognized record is unavailable or a 502 substrate failure,
+never guessed. Mutable successes carry `fetched_at`.
+
+"Read-only" here means the API never changes source content, refs, commits, or
+the staged set. Git status may still refresh and write the index stat cache as
+benign repository metadata; `--no-optional-locks` does not prevent that write,
+so the record does not claim byte-for-byte repository immutability.
+
+GET `/api/git/status?root={root-id}`
+  Returns the root-scoped changed-file list from
+  `git status --porcelain=v2 -z --branch`. Success is:
+  `{"root":"/opaque/root","repo":{"branch":"feature/x","head":"<full-sha>","upstream":"origin/feature/x","ahead":3,"behind":1,"branch_base":{"status":"available","default_ref":"origin/main","default_sha":"<full-sha>","merge_base":"<full-sha>"}},"entries":[{"path":"new/name.md","kind":"renamed","old_path":"old/name.md","staged":true,"unstaged":false,"index_kind":"renamed","additions":12,"deletions":3,"binary":false}],"fetched_at":"2026-08-28T15:00:00.000000731Z"}`.
+
+  `kind` is `modified`, `added`, `deleted`, `renamed`, `copied`,
+  `untracked`, `conflicted`, or `type_changed`; conflicted takes precedence.
+  `index_kind` and `worktree_kind` independently use the tracked kinds and are
+  omitted when that side is clean, so a staged-plus-unstaged file is never
+  collapsed. `entries` is an explicit array. Optional repository and entry
+  facts are omitted when Git cannot prove them.
+
+  Per-entry `additions`, `deletions`, and `binary` are computed against
+  **HEAD**, using root-scoped `git diff --numstat -z --find-renames
+  --find-copies-harder HEAD`. They therefore describe the combined staged and
+  unstaged tracked change versus the current commit; untracked files have no
+  fabricated counts. Failure of this optional numstat probe omits only those
+  three facts and does not discard the porcelain status truth.
+
+  `branch_base` is proved only from the symbolic `origin/HEAD`, its resolved
+  commit, and `merge-base HEAD refs/remotes/origin/HEAD`. Missing or
+  unprovable evidence is explicit, for example
+  `{"status":"unavailable","reason":"origin/HEAD is not configured"}`.
+  Detached HEAD omits branch/upstream/ahead/behind but may carry `head`. A root
+  that is not a Git repository, or whose essential porcelain status cannot be
+  read, is an honest HTTP 200 rather than a page-breaking error:
+  `{"root":"/opaque/root","git":{"status":"unavailable","reason":"not a git repository"},"fetched_at":"..."}`.
+
+GET `/api/git/diff?root={root-id}&path={relative-file}&base={uncommitted|branch}`
+  Returns one capped raw Git patch plus separately parsed header facts. Success
+  is:
+  `{"root":"/opaque/root","path":"new/name.md","base":{"kind":"branch","sha":"<merge-base-full-sha>","default_ref":"origin/main","label":"merge-base with origin/main; includes committed and uncommitted work"},"facts":{"kind":"renamed","old_path":"old/name.md","binary":false,"old_mode":"100644","new_mode":"100755"},"stats":{"additions":12,"deletions":3},"patch":"diff --git ...\n","patch_bytes":731,"truncated":false,"fetched_at":"..."}`.
+
+  `uncommitted` compares the index and working tree with this checkout's own
+  HEAD and identifies its base as
+  `{"kind":"uncommitted","sha":"<HEAD-full-sha>","label":"HEAD"}`.
+  `branch` compares the same checkout, including its committed and uncommitted
+  work, with the proved merge-base of its own HEAD and symbolic `origin/HEAD`.
+  Every proof and diff command runs with `git -C` set to that linked checkout;
+  the main checkout and guessed branch names are never consulted.
+
+  `facts.kind` is `unchanged`, `modified`, `added`, `deleted`, `renamed`,
+  `copied`, or `type_changed`. `old_path` appears for a proved rename/copy;
+  modes appear only when changed; `binary` is explicit; `stats` is absent when
+  Git reports a binary change. `patch` is the Git-produced raw patch text for
+  `PatchDiff`; the server does not parse or normalize its hunks or line
+  endings. An unchanged file has an empty patch and zero stats.
+  Repository-configured external diff and text-conversion helpers are disabled;
+  serving a diff never executes a repository-provided formatter.
+
+  Every Git subprocess also forces an empty `core.hooksPath` and
+  `core.fsmonitor=false`, preventing status refresh hooks and configured
+  filesystem-monitor commands from executing. **KNOWN defense-in-depth
+  limitation:** `filter.<driver>.clean` cannot be closed by an enumerable set of
+  `-c` overrides because the driver name is repository-controlled. Under the
+  current deployment this remains in the same unreachable tier as the other
+  hostile `.git/config` cases: changing that file already requires the serving
+  OS user's authority.
+
+  Fleet currently runs agent seats and the serve process under the same OS
+  identity. If fleet ever runs agent seats under an identity less privileged
+  than the serve process, repository-configured execution becomes a blocking
+  privilege-boundary issue; this entire class, including
+  `filter.<driver>.clean`, must be revisited before those roots are served.
+
+  Patch stdout has a 256 KiB soft cap and 4 MiB hard cap. The server retains
+  at most the soft cap while draining and counting through the hard cap, so
+  memory is O(soft cap). A soft-capped response backs up only to a valid UTF-8
+  boundary, sets `truncated:true`, and reports the complete byte count in
+  `patch_bytes`; separately parsed facts and totals remain honest. Crossing
+  the hard cap kills Git, discards the partial body, and returns a 409 pinned
+  refusal. An unavailable requested branch base is a 409
+  `{"error":"base unavailable","detail":"..."}`; malformed parameters are
+  400, unknown roots/paths are 404, containment refusals are 409, and
+  unexpected Git/parser failures are 502.
+
+GET `/api/git/log?root={root-id}&path={relative-file}&cursor={optional}`
+  Returns single-file history, newest first, following renames:
+  `{"root":"/opaque/root","path":"new/name.md","entries":[{"sha":"<full-sha>","author":"Fixture","date":"2026-08-28T12:34:56Z","subject":"rename file"}],"next_cursor":"<opaque>","fetched_at":"..."}`.
+  The page size is fixed at 50; `entries` is explicit and each entry contains
+  exactly sha/author/date/subject. `next_cursor` is absent at end, and an
+  untracked/no-history file is an honest 200 with `entries:[]`.
+
+  The cursor is an opaque, versioned, base64url token containing the first
+  page's fixed HEAD anchor, next skip offset, and a SHA-256 binding to the
+  repository, opaque root, and root-relative path. Its fields, version, SHA,
+  bounded skip, and binding are validated. Each page reruns one anchored
+  `git log --follow` traversal with `--skip`; using `cursor^` is forbidden
+  because it can lose the rename boundary and historical path. The server has
+  no cursor store.
+
+GET `/api/git/file?root={root-id}&path={relative-file}&sha={full-commit-sha}`
+  Reads a blob at an exact commit without changing `/api/files`' as-of-now
+  meaning. Text success is
+  `{"root":"/opaque/root","path":"old/name.md","sha":"<full-commit-sha>","content":"...","binary":false,"size":123,"truncated":false}`;
+  binary success is
+  `{"root":"/opaque/root","path":"img.bin","sha":"<full-commit-sha>","binary":true,"size":123}`.
+  Text, binary, UTF-8-safe truncation, and 256 KiB/4 MiB caps exactly match
+  `/api/files`. Invalid/unknown SHAs and paths absent at that commit are honest
+  404s. Successful responses omit `fetched_at` and set
+  `Cache-Control: public, max-age=31536000, immutable` because the SHA-addressed
+  representation cannot change.
+
 Agent detail additionally carries top-level `cwd` and optional
 `git:{branch,remote_url,worktree_of}` derived read-only from its current roster
 working directory; the existing `directory` field remains compatible. Every
@@ -740,7 +859,7 @@ opt-in read-only agent viewport and unattributed-terminal screen are only the
 narrow exceptions defined by the 2026-08-28 expansion above.
 There are no file writes, file watch/EventSource, content grep/search endpoint,
 archive/download surface, arbitrary-path read, mission-aware root behavior,
-file history, or persistent file state. The short-lived candidate index is
+whole-repository history browser, or persistent file state. The short-lived candidate index is
 derived and rebuildable; restart loses no source of truth.
 
 ## Former candidate now ratified (2026-08-27)
