@@ -1,4 +1,4 @@
-import type { AgentDetail, Board, EntriesPage, FileRead, LifecycleResult, Refusal, ResolveResponse } from '../types'
+import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTreeRead, LifecycleResult, Refusal, ResolveResponse } from '../types'
 
 export type Fetcher = typeof fetch
 
@@ -11,6 +11,8 @@ export const queryKeys = {
   screen: (paneID: string) => ['screen', paneID] as const,
   resolve: (query: string, agent?: string) => ['resolve', query, agent ?? ''] as const,
   file: (root: string, path: string) => ['file', root, path] as const,
+  fileTree: (root: string, path: string) => ['file-tree', root, path] as const,
+  backlog: (root: string, path: string) => ['backlog', root, path] as const,
 }
 
 export type LifecycleProblem = {
@@ -78,6 +80,16 @@ export function resolveFiles(queryText: string, agent?: string, fetcher: Fetcher
 export function getFile(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
   const query = new URLSearchParams({ root, path })
   return requestJSON<FileRead>(`/api/files?${query}`, { signal }, fetcher)
+}
+
+export function getFileTree(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root, path })
+  return requestJSON<FileTreeRead>(`/api/files/tree?${query}`, { signal }, fetcher)
+}
+
+export function getBacklog(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root, path })
+  return requestJSON<BacklogResponse>(`/api/backlog?${query}`, { signal }, fetcher)
 }
 
 export function sendMessage(name: string, text: string, fetcher?: Fetcher) {

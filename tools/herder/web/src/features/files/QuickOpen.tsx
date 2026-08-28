@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { queryKeys, resolveFiles } from '../../api/client'
-import type { FileCandidate, FileTarget } from '../../types'
+import type { FileCandidate, FileTarget, FolderTarget } from '../../types'
 import { keyboardCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
+import { candidateDestination } from '../folders/folderModel'
 
 const QUICK_OPEN_RESULT_LIMIT = 100
 
@@ -16,7 +17,7 @@ function useDebounced(value: string, delay = 120) {
   return debounced
 }
 
-export function QuickOpen({ open, agent, onClose, onOpenFile }: { open: boolean, agent?: string, onClose: () => void, onOpenFile: (target: FileTarget) => void }) {
+export function QuickOpen({ open, agent, onClose, onOpenFile, onOpenFolder }: { open: boolean, agent?: string, onClose: () => void, onOpenFile: (target: FileTarget) => void, onOpenFolder: (target: FolderTarget) => void }) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -42,16 +43,17 @@ export function QuickOpen({ open, agent, onClose, onOpenFile }: { open: boolean,
 
   if (!open) return null
   const choose = (candidate: FileCandidate) => {
-    onOpenFile({ root: candidate.root, path: candidate.path, line: mentionLine(query).line })
+    if (candidateDestination(candidate) === 'folder') onOpenFolder({ root: candidate.root, path: candidate.path })
+    else onOpenFile({ root: candidate.root, path: candidate.path, line: mentionLine(query).line })
     onClose()
   }
   const settled = query.trim() === debounced
   const settledResolution = settled ? resolution.data : undefined
   const candidates = settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? []
   return <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="quick-open" role="dialog" aria-modal="true" aria-label="Quick open file">
+    <section className="quick-open" role="dialog" aria-modal="true" aria-label="Quick open file or folder">
       <header><strong>Quick open</strong><span>{agent ? `prioritizing ${agent}` : 'all roots'}</span><kbd>Esc</kbd></header>
-      <input ref={inputRef} value={query} aria-label="Find a file" placeholder="Type a filename or path…" autoComplete="off" spellCheck={false}
+      <input ref={inputRef} value={query} aria-label="Find a file or folder" placeholder="Type a file or folder path…" autoComplete="off" spellCheck={false}
         onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
           if (event.key === 'Escape') onClose()
           else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

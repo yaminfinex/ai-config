@@ -14,9 +14,9 @@ import { TranscriptEntries } from './TranscriptEntries'
 import { ScreenViewport } from '../screen/ScreenPanel'
 import { agentScreenChoice } from '../screen/screenPresentation'
 import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
-import type { FileTarget } from '../../types'
+import type { FileTarget, FolderTarget } from '../../types'
 
-export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPane, onOpenFile, onViewer, identityReadOnly, onSend, onStatus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
+export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPane, onOpenFile, onOpenFolder, onViewer, identityReadOnly, onSend, onStatus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget) => void, onOpenFolder: (target: FolderTarget) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -35,7 +35,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPan
     setViewMode(mode)
     persistTranscriptViewMode(name, mode)
   }
-  const fileResolver = useTranscriptFileResolver(name, active && !screenMode, onOpenFile)
+  const fileResolver = useTranscriptFileResolver(name, active && !screenMode, onOpenFile, onOpenFolder)
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
@@ -89,7 +89,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPan
       <JumpToBottomButton visible={!transcriptFollow.following} onJump={transcriptFollow.jumpToBottom} />
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
-    <AgentContextStrip agent={agent} liveStatus={liveStatus} />
+    <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} />
     {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>
 }
