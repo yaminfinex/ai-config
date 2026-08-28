@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"ai-config/tools/herder/internal/filecandidate"
 )
 
 const (
@@ -61,9 +64,9 @@ type Index struct {
 }
 
 type cacheEntry struct {
-	refreshed time.Time
-	paths     []string
-	degraded  string
+	refreshed  time.Time
+	candidates []filecandidate.Candidate
+	degraded   string
 }
 
 // New returns a per-root candidate index.
@@ -88,9 +91,9 @@ func New(options Options) *Index {
 	}
 }
 
-// Candidates returns root-relative file paths. A true refresh bypasses an
-// otherwise fresh cache entry.
-func (i *Index) Candidates(ctx context.Context, root string, refresh bool) ([]string, error) {
+// Candidates returns root-relative files and their unique ancestor
+// directories. A true refresh bypasses an otherwise fresh cache entry.
+func (i *Index) Candidates(ctx context.Context, root string, refresh bool) ([]filecandidate.Candidate, error) {
 	if !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("file index root must be absolute: %q", root)
 	}
@@ -102,26 +105,26 @@ func (i *Index) Candidates(ctx context.Context, root string, refresh bool) ([]st
 		entry, ok := i.cache[root]
 		i.mu.Unlock()
 		if ok && now.Before(entry.refreshed.Add(i.ttl)) {
-			return slices.Clone(entry.paths), degradedError(entry.degraded)
+			return slices.Clone(entry.candidates), degradedError(entry.degraded)
 		}
 	}
 
-	paths, err := i.load(ctx, root)
+	candidates, err := i.load(ctx, root)
 	var degraded *DegradedError
 	if err != nil && !errors.As(err, &degraded) {
 		return nil, err
 	}
 	i.mu.Lock()
-	entry := cacheEntry{refreshed: now, paths: slices.Clone(paths)}
+	entry := cacheEntry{refreshed: now, candidates: slices.Clone(candidates)}
 	if degraded != nil {
 		entry.degraded = degraded.Error()
 	}
 	i.cache[root] = entry
 	i.mu.Unlock()
-	return slices.Clone(paths), degradedError(entry.degraded)
+	return slices.Clone(candidates), degradedError(entry.degraded)
 }
 
-func (i *Index) load(ctx context.Context, root string) ([]string, error) {
+func (i *Index) load(ctx context.Context, root string) ([]filecandidate.Candidate, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 
@@ -139,7 +142,7 @@ func (i *Index) load(ctx context.Context, root string) ([]string, error) {
 	out, err = i.run(commandCtx, root, "rg", "--files", "--hidden", "--no-require-git", "--null", "--glob", "!.git", "--glob", "!.git/**")
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 && len(out.Stdout) == 0 {
-			return []string{}, nil
+			return []filecandidate.Candidate{}, nil
 		}
 		if commandCtx.Err() != nil {
 			return nil, fmt.Errorf("index non-git root %q: %w", root, commandCtx.Err())
@@ -170,18 +173,35 @@ func errorDetail(out CommandOutput) string {
 	return string(detail[:maxErrorDetail]) + " [detail truncated]"
 }
 
-func parseCandidates(out []byte) []string {
+func parseCandidates(out []byte) []filecandidate.Candidate {
 	parts := strings.Split(string(out), "\x00")
-	paths := make([]string, 0, len(parts))
-	for _, path := range parts {
-		path = filepath.ToSlash(strings.TrimPrefix(path, "./"))
-		if path == "" || path == ".git" || strings.HasPrefix(path, ".git/") {
+	files := make([]string, 0, len(parts))
+	directories := make(map[string]struct{})
+	for _, candidatePath := range parts {
+		candidatePath = filepath.ToSlash(strings.TrimPrefix(candidatePath, "./"))
+		if candidatePath == "" || candidatePath == ".git" || strings.HasPrefix(candidatePath, ".git/") {
 			continue
 		}
-		paths = append(paths, path)
+		files = append(files, candidatePath)
+		for directory := path.Dir(candidatePath); directory != "."; directory = path.Dir(directory) {
+			directories[directory] = struct{}{}
+		}
 	}
-	slices.Sort(paths)
-	return paths
+	slices.Sort(files)
+	candidates := make([]filecandidate.Candidate, 0, len(files)+len(directories))
+	for _, file := range files {
+		candidates = append(candidates, filecandidate.Candidate{Path: file, Kind: filecandidate.KindFile})
+	}
+	for directory := range directories {
+		candidates = append(candidates, filecandidate.Candidate{Path: directory, Kind: filecandidate.KindDir})
+	}
+	slices.SortFunc(candidates, func(a, b filecandidate.Candidate) int {
+		if a.Path != b.Path {
+			return strings.Compare(a.Path, b.Path)
+		}
+		return strings.Compare(string(a.Kind), string(b.Kind))
+	})
+	return candidates
 }
 
 func runCommand(ctx context.Context, dir, name string, args ...string) (CommandOutput, error) {

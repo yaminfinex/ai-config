@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"ai-config/tools/herder/internal/filecandidate"
+
 	"github.com/junegunn/fzf/src/algo"
 	"github.com/junegunn/fzf/src/util"
 )
@@ -38,10 +40,11 @@ const (
 
 // Result is one ranked root-relative candidate.
 type Result struct {
-	Root  string `json:"root"`
-	Path  string `json:"path"`
-	Tier  Tier   `json:"tier"`
-	Score int    `json:"score"`
+	Root  string             `json:"root"`
+	Path  string             `json:"path"`
+	Kind  filecandidate.Kind `json:"kind"`
+	Tier  Tier               `json:"tier"`
+	Score int                `json:"score"`
 }
 
 type RootStatus string
@@ -78,7 +81,7 @@ type Request struct {
 // CandidateSource supplies root-relative candidates without exposing the
 // resolver to the index implementation or cache mechanics.
 type CandidateSource interface {
-	Candidates(ctx context.Context, root string, refresh bool) ([]string, error)
+	Candidates(ctx context.Context, root string, refresh bool) ([]filecandidate.Candidate, error)
 }
 
 // Resolver is the narrow engine seam used by later server units.
@@ -156,10 +159,10 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 			}
 			rootPattern = []rune(strings.ToLower(remainder))
 		}
-		for _, path := range paths {
-			tier, score, ok := match(path, rootPattern, slab)
+		for _, candidate := range paths {
+			tier, score, ok := match(candidate.Path, rootPattern, slab)
 			if ok {
-				results = append(results, Result{Root: root, Path: path, Tier: tier, Score: score})
+				results = append(results, Result{Root: root, Path: candidate.Path, Kind: candidate.Kind, Tier: tier, Score: score})
 			}
 		}
 	}
@@ -173,9 +176,20 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 		if rootRanks[a.Root] != rootRanks[b.Root] {
 			return rootRanks[a.Root] < rootRanks[b.Root]
 		}
-		return a.Score > b.Score
+		aScore, bScore := rankedScore(a), rankedScore(b)
+		if aScore != bScore {
+			return aScore > bScore
+		}
+		return false
 	})
 	return Resolution{Results: results, Roots: outcomes}, nil
+}
+
+func rankedScore(result Result) int {
+	if result.Kind == filecandidate.KindDir {
+		return result.Score - 1
+	}
+	return result.Score
 }
 
 func boundedDetail(detail string) string {

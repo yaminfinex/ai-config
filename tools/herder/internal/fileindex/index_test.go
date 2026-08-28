@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ai-config/tools/herder/internal/filecandidate"
 )
 
 func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
@@ -32,12 +34,12 @@ func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first[0] = "caller mutation"
+	first[0].Path = "caller mutation"
 	cached, err := index.Candidates(context.Background(), "/opaque/root", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(cached, []string{"first"}) || gitCalls != 1 {
+	if !reflect.DeepEqual(cached, []filecandidate.Candidate{{Path: "first", Kind: filecandidate.KindFile}}) || gitCalls != 1 {
 		t.Fatalf("cached=%q gitCalls=%d", cached, gitCalls)
 	}
 
@@ -46,7 +48,7 @@ func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(refreshed, []string{"second"}) || gitCalls != 2 {
+	if !reflect.DeepEqual(refreshed, []filecandidate.Candidate{{Path: "second", Kind: filecandidate.KindFile}}) || gitCalls != 2 {
 		t.Fatalf("refreshed=%q gitCalls=%d", refreshed, gitCalls)
 	}
 
@@ -54,7 +56,7 @@ func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(forced, []string{"third"}) || gitCalls != 3 {
+	if !reflect.DeepEqual(forced, []filecandidate.Candidate{{Path: "third", Kind: filecandidate.KindFile}}) || gitCalls != 3 {
 		t.Fatalf("forced=%q gitCalls=%d", forced, gitCalls)
 	}
 }
@@ -73,15 +75,15 @@ func TestIndexIncludesTrackedAndUntrackedButNotIgnoredOrGitInternals(t *testing.
 		t.Fatal(err)
 	}
 	for _, want := range []string{".gitignore", "tracked.md", "untracked.md"} {
-		if !slices.Contains(candidates, want) {
+		if !slices.Contains(candidates, filecandidate.Candidate{Path: want, Kind: filecandidate.KindFile}) {
 			t.Errorf("candidates %q do not contain %q", candidates, want)
 		}
 	}
-	if slices.Contains(candidates, "ignored.txt") {
+	if hasPath(candidates, "ignored.txt") {
 		t.Fatalf("ignored file included: %q", candidates)
 	}
 	for _, candidate := range candidates {
-		if candidate == ".git" || strings.HasPrefix(candidate, ".git/") {
+		if candidate.Path == ".git" || strings.HasPrefix(candidate.Path, ".git/") {
 			t.Fatalf("git internal included: %q", candidate)
 		}
 	}
@@ -99,11 +101,11 @@ func TestIndexUsesRipgrepForNonGitRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{".gitignore", ".hidden.md", "visible.md"} {
-		if !slices.Contains(candidates, want) {
+		if !slices.Contains(candidates, filecandidate.Candidate{Path: want, Kind: filecandidate.KindFile}) {
 			t.Errorf("candidates %q do not contain %q", candidates, want)
 		}
 	}
-	if slices.Contains(candidates, "ignored.txt") {
+	if hasPath(candidates, "ignored.txt") {
 		t.Fatalf("ignored file included: %q", candidates)
 	}
 }
@@ -133,7 +135,7 @@ func TestIndexReportsPartialNonGitRootAsDegraded(t *testing.T) {
 	if !errors.As(err, &degraded) {
 		t.Fatalf("error=%v, want DegradedError", err)
 	}
-	if !slices.Contains(candidates, "visible.md") {
+	if !slices.Contains(candidates, filecandidate.Candidate{Path: "visible.md", Kind: filecandidate.KindFile}) {
 		t.Fatalf("partial candidates=%q", candidates)
 	}
 	if !strings.Contains(err.Error(), "Permission denied") {
@@ -151,7 +153,7 @@ func TestIndexExcludesGitInternalsFromNonGitFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, candidate := range candidates {
-		if candidate == ".git" || strings.HasPrefix(candidate, ".git/") {
+		if candidate.Path == ".git" || strings.HasPrefix(candidate.Path, ".git/") {
 			t.Fatalf("git internal included: %q", candidate)
 		}
 	}
@@ -191,12 +193,42 @@ func TestIndexKeepsLinkedWorktreeAsItsOwnRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(rootCandidates, "root-only.md") || slices.Contains(rootCandidates, "worktree-only.md") {
+	if !hasCandidate(rootCandidates, "root-only.md", filecandidate.KindFile) || hasPath(rootCandidates, "worktree-only.md") {
 		t.Fatalf("root candidates folded worktree: %q", rootCandidates)
 	}
-	if !slices.Contains(worktreeCandidates, "worktree-only.md") {
+	if !hasCandidate(worktreeCandidates, "worktree-only.md", filecandidate.KindFile) {
 		t.Fatalf("worktree candidates missing own file: %q", worktreeCandidates)
 	}
+}
+
+func TestIndexDerivesUniqueAncestorDirectoriesWithoutRootCandidate(t *testing.T) {
+	candidates := parseCandidates([]byte("docs/a.md\x00docs/nested/b.md\x00root.md\x00"))
+	want := []filecandidate.Candidate{
+		{Path: "docs", Kind: filecandidate.KindDir},
+		{Path: "docs/a.md", Kind: filecandidate.KindFile},
+		{Path: "docs/nested", Kind: filecandidate.KindDir},
+		{Path: "docs/nested/b.md", Kind: filecandidate.KindFile},
+		{Path: "root.md", Kind: filecandidate.KindFile},
+	}
+	if !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("candidates=%#v want %#v", candidates, want)
+	}
+	if hasPath(candidates, ".") || hasPath(candidates, "") {
+		t.Fatalf("root candidate leaked: %#v", candidates)
+	}
+}
+
+func hasPath(candidates []filecandidate.Candidate, path string) bool {
+	for _, candidate := range candidates {
+		if candidate.Path == path {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCandidate(candidates []filecandidate.Candidate, path string, kind filecandidate.Kind) bool {
+	return slices.Contains(candidates, filecandidate.Candidate{Path: path, Kind: kind})
 }
 
 func newGitRepo(t *testing.T) string {

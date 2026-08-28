@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"ai-config/tools/herder/internal/backlogapi"
 	"ai-config/tools/herder/internal/fileapi"
 	"ai-config/tools/herder/internal/fileresolver"
 	"ai-config/tools/herder/internal/fileroots"
@@ -133,6 +134,34 @@ func serveTree(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func serveBacklog(w http.ResponseWriter, r *http.Request, deps dependencies) {
+	root, err := requiredQuery(r, "root")
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	path, err := requiredDirectoryQuery(r, "path")
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	set, _, err := liveRootSet(r.Context(), deps)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	if !set.Contains(root) {
+		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+		return
+	}
+	result, err := backlogapi.Read(root, path, deps.now)
+	if err != nil {
+		serveFileError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func fileQueries(w http.ResponseWriter, r *http.Request, tree bool) (string, string, bool) {
 	root, err := requiredQuery(r, "root")
 	if err != nil {
@@ -167,6 +196,14 @@ func optionalQuery(r *http.Request, name string) (string, error) {
 	}
 	if len(values) != 1 {
 		return "", fmt.Errorf("query parameter %q may appear at most once", name)
+	}
+	return values[0], nil
+}
+
+func requiredDirectoryQuery(r *http.Request, name string) (string, error) {
+	values, present := r.URL.Query()[name]
+	if !present || len(values) != 1 {
+		return "", fmt.Errorf("query parameter %q is required exactly once", name)
 	}
 	return values[0], nil
 }

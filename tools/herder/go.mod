@@ -2,7 +2,10 @@ module ai-config/tools/herder
 
 go 1.26.5
 
-require github.com/junegunn/fzf v0.74.3
+require (
+	github.com/junegunn/fzf v0.74.3
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
