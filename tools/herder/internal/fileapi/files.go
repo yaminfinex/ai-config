@@ -81,16 +81,16 @@ func Read(root, path string, now func() time.Time) (File, error) {
 		return File{}, fmt.Errorf("read file %q: %w", resolved, err)
 	}
 	result := File{Root: root, Path: filepath.ToSlash(relative), Size: info.Size(), FetchedAt: now()}
-	if bytes.IndexByte(content, 0) >= 0 || !utf8.Valid(content) {
-		result.Binary = true
-		return result, nil
-	}
 	truncated := int64(len(content)) > SoftCap
 	if truncated {
 		content = content[:SoftCap]
-		for len(content) > 0 && !utf8.Valid(content) {
+		for removed := 0; removed < utf8.UTFMax-1 && !utf8.Valid(content); removed++ {
 			content = content[:len(content)-1]
 		}
+	}
+	if bytes.IndexByte(content, 0) >= 0 || !utf8.Valid(content) {
+		result.Binary = true
+		return result, nil
 	}
 	text := string(content)
 	result.Content = &text

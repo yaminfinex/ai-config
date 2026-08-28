@@ -203,6 +203,29 @@ func TestFileEndpointsRejectMissingDuplicateAndWrongMethodParameters(t *testing.
 	}
 }
 
+func TestFileEndpointRootUniverseSurvivesMissingGit(t *testing.T) {
+	root := t.TempDir()
+	writeFileAPIFixture(t, root, "readme.md", "fixture\n")
+	t.Setenv("PATH", t.TempDir())
+	deps := fileAPIDeps(t, nil, []hcomidentity.Row{{Name: "dore", Tool: "codex", Status: "active", Directory: root}})
+	rootQuery := url.QueryEscape(root)
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/api/resolve?q=readme", `"status":"failed"`},
+		{"/api/files?root=" + rootQuery + "&path=readme.md", `"content":"fixture\n"`},
+		{"/api/files/tree?root=" + rootQuery, `"name":"readme.md"`},
+	}
+	for _, test := range tests {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), test.want) {
+			t.Errorf("%s = %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+}
+
 func TestRootFlagIsRepeatableAndInvalidConfiguredRootFailsBeforeServe(t *testing.T) {
 	var roots rootFlags
 	if err := roots.Set("/first"); err != nil {

@@ -3,7 +3,6 @@ package repoctx
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -68,10 +67,7 @@ func LinkedWorktree(ctx context.Context, cwd string) (bool, error) {
 	defer cancel()
 	paths, err := repositoryPaths(ctx, cwd)
 	if err != nil {
-		if isExitError(err) {
-			return false, nil
-		}
-		return false, err
+		return false, nil
 	}
 	return filepath.Clean(paths[1]) != filepath.Clean(paths[2]), nil
 }
@@ -105,9 +101,4 @@ func nonemptyLines(value string) []string {
 		}
 	}
 	return lines
-}
-
-func isExitError(err error) bool {
-	var exit *exec.ExitError
-	return errors.As(err, &exit)
 }

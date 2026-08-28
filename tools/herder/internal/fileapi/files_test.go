@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestReadTextReportsAsNowShapeAndSoftTruncation(t *testing.T) {
@@ -56,6 +57,52 @@ func TestReadBinaryOmitsContentTruncationAndRefusesHardCap(t *testing.T) {
 	}
 	if _, err := Read(root, "too-large.txt", time.Now); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "4 MiB") {
 		t.Fatalf("hard-cap error = %v", err)
+	}
+}
+
+func TestReadKeepsSplitRuneTextAndLargeNULFileClassificationsHonest(t *testing.T) {
+	root := t.TempDir()
+	text := strings.Repeat("a", int(SoftCap-1)) + strings.Repeat("—", 2000)
+	writeFile(t, root, "split-rune.md", text)
+	binaryBytes := make([]byte, SoftCap+100)
+	for index := range binaryBytes {
+		binaryBytes[index] = 'x'
+	}
+	binaryBytes[17] = 0
+	if err := os.WriteFile(filepath.Join(root, "large-binary.bin"), binaryBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	invalidBytes := append([]byte(nil), binaryBytes...)
+	invalidBytes[17] = 0xff
+	if err := os.WriteFile(filepath.Join(root, "large-invalid.bin"), invalidBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gotText, err := Read(root, "split-rune.md", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotText.Binary || gotText.Content == nil || gotText.Truncated == nil || !*gotText.Truncated || !utf8.ValidString(*gotText.Content) {
+		t.Fatalf("split-rune text = %#v", gotText)
+	}
+	if len(*gotText.Content) != int(SoftCap-1) {
+		t.Fatalf("split-rune content bytes = %d, want %d", len(*gotText.Content), SoftCap-1)
+	}
+
+	gotBinary, err := Read(root, "large-binary.bin", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotBinary.Binary || gotBinary.Content != nil || gotBinary.Truncated != nil || gotBinary.Size != int64(len(binaryBytes)) {
+		t.Fatalf("large binary = %#v", gotBinary)
+	}
+
+	gotInvalid, err := Read(root, "large-invalid.bin", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gotInvalid.Binary || gotInvalid.Content != nil || gotInvalid.Truncated != nil {
+		t.Fatalf("large invalid UTF-8 binary = %#v", gotInvalid)
 	}
 }
 

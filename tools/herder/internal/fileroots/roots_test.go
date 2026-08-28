@@ -75,6 +75,18 @@ func TestCanonicalConfiguredRootsPreservesNestedEntriesAndFirstOrder(t *testing.
 	}
 }
 
+func TestBuildTreatsMissingGitAsUnprovenWorktree(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	root := t.TempDir()
+	set, err := Build(context.Background(), nil, []Agent{{Name: "agent", CWD: root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(set.Roots, []string{root}) || set.AgentRoot["agent"] != root {
+		t.Fatalf("set = %#v", set)
+	}
+}
+
 func TestPreferencePlacesAgentThenConfiguredThenRemaining(t *testing.T) {
 	set := Set{
 		Roots:      []string{"/configured-a", "/configured-b", "/agent-a", "/agent-b"},
