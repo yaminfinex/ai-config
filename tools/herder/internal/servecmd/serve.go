@@ -429,6 +429,34 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveBacklog(w, r, deps)
 	})
+	mux.HandleFunc("/api/git/status", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveGitStatus(w, r, deps)
+	})
+	mux.HandleFunc("/api/git/diff", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveGitDiff(w, r, deps)
+	})
+	mux.HandleFunc("/api/git/log", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveGitLog(w, r, deps)
+	})
+	mux.HandleFunc("/api/git/file", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveGitFile(w, r, deps)
+	})
 	mux.HandleFunc("/api/agents/{busName}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")
