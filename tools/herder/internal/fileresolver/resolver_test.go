@@ -110,6 +110,142 @@ func TestResolveUppercaseQueryMatchesExactAndSuffixPaths(t *testing.T) {
 	}
 }
 
+func TestResolveAbsoluteOwnerPathAfterNormalization(t *testing.T) {
+	root := newResolverGitRepo(t)
+	const ownerPath = "missions/missions/fleet-refit/artifacts/conductor/briefs/git-view-design-brief.md"
+	writeResolverFile(t, root, ownerPath, "fixture\n")
+	writeResolverFile(t, root, "README.md", "uppercase fixture\n")
+	resolverGit(t, root, "add", ".")
+	resolverGit(t, root, "commit", "-m", "absolute path fixtures")
+
+	resolver := New(fileindex.New(fileindex.Options{}))
+	ownerAbsolute := filepath.Join(root, filepath.FromSlash(ownerPath))
+	for _, query := range []string{ownerAbsolute, "`" + ownerAbsolute + ":4400`"} {
+		results, err := resolver.Resolve(context.Background(), Request{Query: query, Roots: []string{root}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 1 || results[0].Root != root || results[0].Path != ownerPath || results[0].Tier != TierExact || results[0].Score <= 0 {
+			t.Fatalf("query=%q results=%#v", query, results)
+		}
+	}
+
+	results, err := resolver.Resolve(context.Background(), Request{
+		Query: filepath.Join(root, "README.md"), Roots: []string{root},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Path != "README.md" || results[0].Tier != TierExact {
+		t.Fatalf("uppercase absolute results=%#v", results)
+	}
+}
+
+func TestResolveAbsoluteQueryAcrossNestedRoots(t *testing.T) {
+	parent := newResolverGitRepo(t)
+	nested := filepath.Join(parent, "worktrees", "resolver-absolute")
+	const nestedPath = "artifacts/conductor/target.md"
+	const parentPath = "worktrees/resolver-absolute/" + nestedPath
+	writeResolverFile(t, parent, parentPath, "target\n")
+	writeResolverFile(t, parent, "archive/"+parentPath, "parent suffix\n")
+	resolverGit(t, parent, "add", ".")
+	resolverGit(t, parent, "commit", "-m", "nested root fixture")
+
+	results, err := New(fileindex.New(fileindex.Options{})).Resolve(context.Background(), Request{
+		Query:          filepath.Join(nested, filepath.FromSlash(nestedPath)),
+		Roots:          []string{parent, nested},
+		RootPreference: []string{nested, parent},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		root string
+		path string
+		tier Tier
+	}{
+		{nested, nestedPath, TierExact},
+		{parent, parentPath, TierExact},
+		{parent, "archive/" + parentPath, TierSuffix},
+	}
+	if len(results) != len(want) {
+		t.Fatalf("results=%#v", results)
+	}
+	seen := make(map[string]bool, len(results))
+	for index, expected := range want {
+		result := results[index]
+		if result.Root != expected.root || result.Path != expected.path || result.Tier != expected.tier || result.Score <= 0 {
+			t.Fatalf("result[%d]=%#v want root=%q path=%q tier=%q positive score", index, result, expected.root, expected.path, expected.tier)
+		}
+		key := result.Root + "\x00" + result.Path
+		if seen[key] {
+			t.Fatalf("duplicate result invented: %#v", result)
+		}
+		seen[key] = true
+	}
+}
+
+func TestResolveAbsoluteQueryBoundariesAndTrailingSlashes(t *testing.T) {
+	root := newResolverGitRepo(t)
+	writeResolverFile(t, root, "docs/file.md", "fixture\n")
+	writeResolverFile(t, root, "file.md", "fixture\n")
+	resolverGit(t, root, "add", ".")
+	resolverGit(t, root, "commit", "-m", "absolute boundary fixtures")
+	resolver := New(fileindex.New(fileindex.Options{}))
+
+	resolution, err := resolver.ResolveDetailed(context.Background(), Request{
+		Query: filepath.Join(root, "docs") + string(filepath.Separator),
+		Roots: []string{root + string(filepath.Separator), root},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolution.Roots) != 1 || len(resolution.Results) != 1 || resolution.Results[0].Path != "docs/file.md" || resolution.Results[0].Tier != TierPrefix {
+		t.Fatalf("directory trailing slash resolution=%#v", resolution)
+	}
+
+	queriesWithNoMatch := []string{
+		filepath.Join(root, "file.md") + string(filepath.Separator),
+		root,
+		root + string(filepath.Separator),
+		root + "2" + string(filepath.Separator) + "file.md",
+		filepath.Join(filepath.Dir(root), "outside", "file.md"),
+	}
+	for _, query := range queriesWithNoMatch {
+		results, err := resolver.Resolve(context.Background(), Request{Query: query, Roots: []string{root}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(results) != 0 {
+			t.Fatalf("query=%q results=%#v want empty", query, results)
+		}
+	}
+}
+
+func TestResolveRelativeQueryRegressionIncludesScores(t *testing.T) {
+	root := newResolverGitRepo(t)
+	for _, path := range []string{"docs/target.md", "archive/docs/target.md", "docs/the-target-file.md"} {
+		writeResolverFile(t, root, path, "fixture\n")
+	}
+	resolverGit(t, root, "add", ".")
+	resolverGit(t, root, "commit", "-m", "relative regression fixture")
+
+	results, err := New(fileindex.New(fileindex.Options{})).Resolve(context.Background(), Request{
+		Query: "docs/target.md", Roots: []string{root},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Result{
+		{Root: root, Path: "docs/target.md", Tier: TierExact, Score: 344},
+		{Root: root, Path: "archive/docs/target.md", Tier: TierSuffix, Score: 359},
+		{Root: root, Path: "docs/the-target-file.md", Tier: TierFuzzy, Score: 314},
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("relative results=%#v want %#v", results, want)
+	}
+}
+
 func TestResolvePreservesTierIdentityForAutoOpenRule(t *testing.T) {
 	root := "/repo"
 	results, err := New(staticSource{root: {"docs", "docs/file.md", "archive/docs"}}).Resolve(context.Background(), Request{

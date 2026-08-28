@@ -121,6 +121,9 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 	roots := uniqueRoots(request.Roots)
 	rootRanks := rankRoots(roots, request.RootPreference)
 	pattern := []rune(strings.ToLower(query))
+	// Absolute-path scoping follows the host path syntax. In particular,
+	// Windows-style backslashes are intentionally not interpreted on Unix.
+	absoluteQuery := filepath.IsAbs(query)
 	slab := util.MakeSlab(matchSlab16Size, matchSlab32Size)
 	results := make([]Result, 0)
 	outcomes := make([]RootOutcome, 0, len(roots))
@@ -138,8 +141,23 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 			}
 		}
 		outcomes = append(outcomes, outcome)
+		rootPattern := pattern
+		if absoluteQuery {
+			rootPrefix := root
+			if !strings.HasSuffix(rootPrefix, string(filepath.Separator)) {
+				rootPrefix += string(filepath.Separator)
+			}
+			if query == root || !strings.HasPrefix(query, rootPrefix) {
+				continue
+			}
+			remainder := strings.TrimPrefix(query, rootPrefix)
+			if remainder == "" {
+				continue
+			}
+			rootPattern = []rune(strings.ToLower(remainder))
+		}
 		for _, path := range paths {
-			tier, score, ok := match(path, pattern, slab)
+			tier, score, ok := match(path, rootPattern, slab)
 			if ok {
 				results = append(results, Result{Root: root, Path: path, Tier: tier, Score: score})
 			}
