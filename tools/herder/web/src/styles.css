@@ -252,6 +252,17 @@ tbody tr:last-child td { border-bottom: 0; }
 .queued-dock { flex: 0 0 auto; padding: 0 14px; background: var(--bg); }
 .queued-dock:empty { display: none; }
 .queued-dock .queued-messages { max-width: 900px; margin-bottom: 7px; }
+.agent-context-strip { display: flex; flex: 0 0 32px; min-width: 0; align-items: center; overflow: hidden; padding: 0 14px; border-top: 1px solid var(--border); background: var(--bg); }
+.agent-context-strip-inner { display: flex; min-width: 0; max-width: 100%; align-items: center; gap: 8px; overflow-x: auto; color: var(--dim); font: 10px var(--mono); scrollbar-width: none; }
+.agent-context-strip-inner::-webkit-scrollbar { display: none; }
+.context-fact, .context-status, .context-detail, .context-vital { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; white-space: nowrap; }
+.context-fact { min-width: 0; }
+.context-fact > span { color: var(--dim); font-size: 9px; text-transform: uppercase; }
+.context-cwd { color: var(--text); }
+.context-repository { color: var(--accent-text); }
+.context-status { color: var(--text); }
+.context-detail, .context-vital { padding-left: 8px; border-left: 1px solid var(--border); }
+.context-vital { color: var(--purple); }
 .queued-messages { margin: 0 0 12px; padding: 7px; border: 1px solid var(--warning-border); border-radius: 7px; background: var(--warning-bg); font: 10px var(--mono); }
 .queued-messages > header { display: flex; align-items: baseline; gap: 8px; padding: 0 3px 5px; color: var(--amber); }
 .queued-messages > header strong { letter-spacing: .08em; text-transform: uppercase; }

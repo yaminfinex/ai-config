@@ -75,6 +75,12 @@ export interface AgentDetail {
   gap: string
   pane: { workspace_id: string, tab_id: string, pane_id: string } | null
   directory?: string
+  cwd?: string
+  git?: {
+    branch?: string
+    remote_url?: string
+    worktree_of?: string
+  }
   session_id?: string
   parent_agent?: string
   launch_context: Record<string, unknown>
