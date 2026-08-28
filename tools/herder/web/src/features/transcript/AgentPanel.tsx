@@ -2,12 +2,12 @@ import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getAgent, queryKeys } from '../../api/client'
 import { entriesQueryOptions } from '../../api/queries'
-import { Banner, gapLabel } from '../../shared/presentation'
+import { Banner } from '../../shared/presentation'
 import { transcriptNotice } from '../../shared/loadingPresentation'
-import { agentVitalsPresentation } from '../../shared/agentVitals'
 import { JumpToBottomButton, useFollowScroll } from '../../shared/useFollowScroll'
 import { Composer } from '../composer/Composer'
 import { persistTranscriptViewMode, readTranscriptViewMode } from './cleanView'
+import { AgentContextStrip } from './AgentContextStrip'
 import { QueuedMessages } from './QueuedMessages'
 import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
@@ -60,11 +60,9 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPan
 
   const agent = agentQuery.data
   const retired = agent?.bus_status === 'retired'
-  const vitals = agent ? agentVitalsPresentation(agent) : []
   return <main className="agent-page">
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
-      {agent && <><span className="pane-chip">{retired ? 'retired' : agent.pane?.pane_id ?? 'unplaced'}</span><span className="agent-status">{retired ? 'retired · read-only' : `${agent.herdr_status} · ${liveStatus !== '-' ? liveStatus : agent.bus_status}`}</span>{!retired && agent.gap !== '-' && <span className="gap-badge">{gapLabel(agent.gap)}</span>}<span className="tool-chip">{agent.tool}</span>{vitals.length > 0 && <span className="agent-vitals">{vitals.map((vital, index) => <span key={`${index}:${vital}`}>{vital}</span>)}</span>}</>}
       <div className="agent-actions">
         <div className="detail-toggle agent-view-toggle" aria-label="Agent view">
           <button type="button" className={screenMode ? '' : 'active'} aria-pressed={!screenMode} onClick={() => onScreenPane(undefined)}>Transcript</button>
@@ -91,6 +89,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPan
       <JumpToBottomButton visible={!transcriptFollow.following} onJump={transcriptFollow.jumpToBottom} />
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
+    <AgentContextStrip agent={agent} liveStatus={liveStatus} />
     {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>
 }
