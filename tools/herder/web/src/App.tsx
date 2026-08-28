@@ -16,7 +16,7 @@ import type { Pane } from './types'
 import type { FileTarget } from './types'
 import { FilePanel } from './features/files/FilePanel'
 import { QuickOpen } from './features/files/QuickOpen'
-import { fileTabID, pinFileTab, previewFileTab, type FileTab } from './features/files/fileTabs'
+import { closeFileTab, fileTabID, pinFileTab, previewFileTab, setFileTabViewMode, type FileTab } from './features/files/fileTabs'
 import { isQuickOpenShortcut } from './features/files/fileShortcut'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 
@@ -198,7 +198,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       activeTab: current.activeTab === id ? next.id : current.activeTab,
     }))
     setScreenTabs((current) => current.filter((tab) => screenTabID(tab.pane.pane_id) !== id))
-    setFileTabs((current) => current.filter((tab) => tab.id !== id))
+    setFileTabs((current) => closeFileTab(current, id))
     if (id.startsWith('agent:')) setAgentStatuses((current) => {
       const next = { ...current }
       delete next[id.slice('agent:'.length)]
@@ -294,7 +294,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       </div>
       <div className="panel-host">
         {tabs.map((tab, index) => <div id={`shell-panel-${index}`} role="tabpanel" aria-labelledby={`shell-tab-${index}`} hidden={tab.id !== activeTab} className="hosted-panel" key={tab.id}>
-          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : tab.kind === 'file' ? tab.id === activeTab && <FilePanel target={tab} onOpenFile={openFile} /> : <AgentPanel name={tab.name} active={tab.id === activeTab} liveStatus={agentBusStatus(boardQuery.data, tab.name)} screenPaneID={agentScreenPanes[tab.name]} onScreenPane={(paneID) => setAgentScreenPanes((current) => {
+          {tab.kind === 'board' ? <BoardPanel board={boardQuery.data} onBanner={setLifecycleBanner} /> : tab.kind === 'screen' ? <ScreenPanel pane={tab.pane} /> : tab.kind === 'file' ? tab.id === activeTab && <FilePanel target={tab} viewMode={tab.viewMode} onViewMode={(viewMode) => setFileTabs((current) => setFileTabViewMode(current, tab.id, viewMode))} onOpenFile={openFile} /> : <AgentPanel name={tab.name} active={tab.id === activeTab} liveStatus={agentBusStatus(boardQuery.data, tab.name)} screenPaneID={agentScreenPanes[tab.name]} onScreenPane={(paneID) => setAgentScreenPanes((current) => {
             if (paneID) return current[tab.name] === paneID ? current : { ...current, [tab.name]: paneID }
             if (!(tab.name in current)) return current
             const next = { ...current }

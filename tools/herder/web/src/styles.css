@@ -164,15 +164,24 @@ h2, h3, p { margin-top: 0; }
 
 .file-panel { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
 .file-header { display: flex; flex: 0 0 auto; align-items: center; gap: 12px; padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--bg2); }
-.file-header > div { display: grid; min-width: 0; flex: 1; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 2px 10px; }
+.file-header > .file-title { display: grid; min-width: 0; flex: 1; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 2px 10px; }
 .file-header strong { font: 600 13px var(--mono); }
 .file-header span { overflow: hidden; color: var(--dim); font: 10px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .file-header .root-path { grid-column: 1 / -1; color: var(--dimmer); }
 .file-header button { white-space: nowrap; }
+.file-view-toggle { flex: 0 0 auto; }
 .file-facts { display: flex; flex: 0 0 auto; gap: 12px; padding: 4px 12px; border-bottom: 1px solid var(--border); background: var(--bg); color: var(--dimmer); font: 9px var(--mono); }
 .file-content { flex: 1; min-height: 0; overflow: auto; background: var(--detail-bg); }
 .file-content > .truncation-banner { margin: 8px 12px 0; }
-.file-content pre { min-width: max-content; margin: 0; padding: 8px 0 40px; border-radius: 0; background: transparent; white-space: pre; }
+.file-source { min-width: max-content; margin: 0; padding: 8px 0 40px; border-radius: 0; background: transparent; white-space: pre; }
+.file-markdown { max-width: 900px; padding: 10px 16px 40px; }
+.file-markdown pre { overflow-x: auto; white-space: pre; }
+.file-markdown img { max-width: 100%; }
+.markdown-relative-link { color: var(--dim); }
+.markdown-image-stub { display: flex; max-width: 100%; align-items: center; gap: 7px; margin: 7px 0; padding: 8px; overflow: hidden; border: 1px dashed var(--border2); border-radius: 5px; color: var(--dim); }
+.markdown-image-stub::before { content: '▧'; flex: 0 0 auto; }
+.markdown-image-stub span { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.markdown-image-stub code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-line { display: block; min-height: 1.45em; }
 .file-line.target-line { background: var(--warning-bg); color: var(--warning-text); box-shadow: inset 3px 0 var(--amber); }
 .line-number { display: inline-block; width: 58px; margin-right: 12px; padding-right: 10px; color: var(--dimmer); text-align: right; user-select: none; }
