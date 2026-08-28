@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-
-import { agentContextPresentation, middleEllipsis, repoNameFromRemote } from '../src/shared/agentContext.ts'
+import { agentContextPresentation, hasRightOverflow, middleEllipsis, repoNameFromRemote } from '../src/shared/agentContext.ts'
 import type { AgentDetail } from '../src/types.ts'
 
 function detail(overrides: Partial<AgentDetail> = {}): AgentDetail {
@@ -76,4 +75,10 @@ test('the reserved strip sits between the queued dock and composer while the hea
 
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.match(css, /\.agent-context-strip \{[^}]*flex: 0 0 32px;/)
+})
+
+test('narrow panes show the fade only while facts remain offscreen to the right', () => {
+  assert.equal(hasRightOverflow(500, 240, 0), true)
+  assert.equal(hasRightOverflow(500, 240, 260), false)
+  assert.equal(hasRightOverflow(240, 240, 0), false)
 })

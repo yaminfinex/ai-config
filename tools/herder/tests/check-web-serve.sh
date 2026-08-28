@@ -261,7 +261,8 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF 'customPrimaryActionEnter' "$ROOT/app.js" &&
   grep -qF 'customPrimaryActionSpace' "$ROOT/app.js" &&
   grep -qF 'knownWorkspaceItems' "$ROOT/app.js" &&
-  grep -qF 'Shortcuts: Ctrl/Cmd+W close tab' "$ROOT/app.js" &&
+  grep -qF 'Drag tabs to an edge to split' "$ROOT/app.js" &&
+  grep -qF 'dockview-react' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'Collapse' "$ROOT/app.js" &&
   grep -qF 'aria-level' "$ROOT/app.js" &&
   grep -qF 'aria-expanded' "$ROOT/app.js" &&

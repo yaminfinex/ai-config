@@ -103,3 +103,26 @@ test('compact pill text tokens meet WCAG AA contrast in both themes', () => {
     }
   }
 })
+
+test('dock tab text uses AA theme token pairs with no stock skin colors', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const themeBlocks = [...css.matchAll(/:root\[data-theme='(?:light|dark)'\] \{([\s\S]*?)\n\}/g)].map((match) => match[1])
+  const luminance = (hex: string) => {
+    const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255)
+      .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+  }
+  for (const block of themeBlocks) {
+    for (const [foregroundName, backgroundName] of [['text', 'bg'], ['dim', 'bg2']]) {
+      const foreground = block.match(new RegExp(`--${foregroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+      const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+      assert.ok(foreground && background)
+      const ratio = (Math.max(luminance(foreground), luminance(background)) + 0.05) / (Math.min(luminance(foreground), luminance(background)) + 0.05)
+      assert.ok(ratio >= 4.5, `${foregroundName} on ${backgroundName} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
+    }
+  }
+  const dockTheme = css.slice(css.indexOf('.dockview-theme-herder'), css.indexOf('.dockview-theme-herder .dv-drop-target-container'))
+  assert.match(dockTheme, /--dv-activegroup-visiblepanel-tab-color: var\(--text\)/)
+  assert.match(dockTheme, /--dv-activegroup-hiddenpanel-tab-color: var\(--dim\)/)
+  assert.equal(dockTheme.match(/#[\da-f]{3,8}\b|rgba?\(|hsla?\(/gi), null)
+})

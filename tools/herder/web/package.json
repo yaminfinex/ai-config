@@ -14,6 +14,7 @@
     "@base-ui/react": "^1.7.0",
     "@headless-tree/react": "^1.7.0",
     "@tanstack/react-query": "^5.102.6",
+    "dockview-react": "8.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",
