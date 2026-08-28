@@ -4,6 +4,7 @@ import {
   FUZZY_POPOVER_SCORE_PER_RUNE,
   autoOpenCandidate,
   hasPathSignal,
+  isRenderedInlineCode,
   isConfidentResolution,
   fileFailureKind,
   keyboardCandidate,
@@ -38,9 +39,23 @@ test('quoted and backticked paths retain literal spaces as one token', () => {
   assert.equal(mentionLine('"artifacts/backlog/my file — notes.md:12"').line, 12)
 })
 
-test('rendered code keeps literal spaces while prose between quotes stays fenced', () => {
+test('fenced code expands only the token under the pointer while inline code keeps the whole node', () => {
+  const fenced = 'alpha\ntools/herder/web/src/App.tsx:44\nomega'
+  assert.equal(pathTokenSpanAt(fenced, fenced.indexOf('herder'), false).text, 'tools/herder/web/src/App.tsx:44')
+  assert.equal(pathTokenSpanAt(fenced, fenced.indexOf('alpha'), false).text, 'alpha')
   const rendered = 'artifacts/backlog/my file — notes.md:12'
   assert.equal(pathTokenSpanAt(rendered, rendered.indexOf('file'), true).text, rendered)
+})
+
+test('only inline code enables whole-node token expansion', () => {
+  const target = (insidePre: boolean) => ({
+    closest: (selector: string) => selector === 'code' || (selector === 'pre' && insidePre) ? {} : null,
+  }) as Pick<Element, 'closest'>
+  assert.equal(isRenderedInlineCode(target(false)), true)
+  assert.equal(isRenderedInlineCode(target(true)), false)
+})
+
+test('prose between quotes stays fenced', () => {
   const prose = 'Compare "old.ts" against "new.ts"'
   assert.equal(pathTokenSpanAt(prose, prose.indexOf('against')).text, 'against')
 })

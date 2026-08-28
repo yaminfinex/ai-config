@@ -6,6 +6,10 @@ export const FUZZY_POPOVER_SCORE_PER_RUNE = 20
 const structuralDelimiter = /[\s()[\]{}<>]/u
 const enclosingDelimiters = ['`', '"', "'"] as const
 
+export function isRenderedInlineCode(target: Pick<Element, 'closest'>) {
+  return Boolean(target.closest('code')) && !target.closest('pre')
+}
+
 export function pathTokenSpanAt(text: string, offset: number, renderedCode = false) {
   const point = Math.max(0, Math.min(text.length, offset))
   if (renderedCode) return { start: 0, end: text.length, text }

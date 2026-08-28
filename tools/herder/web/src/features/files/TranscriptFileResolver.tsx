@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveFiles } from '../../api/client'
 import type { FileCandidate, FileTarget, ResolveResponse } from '../../types'
-import { autoOpenCandidate, hasPathSignal, isConfidentResolution, mentionLine, pathTokenSpanAt } from './fileResolution'
+import { autoOpenCandidate, hasPathSignal, isConfidentResolution, isRenderedInlineCode, mentionLine, pathTokenSpanAt } from './fileResolution'
 import { FileResults } from './FileResults'
 
 type PopoverState = { left: number, top: number, mention: string, resolution: ResolveResponse }
@@ -52,7 +52,7 @@ export function useTranscriptFileResolver(agent: string, enabled: boolean, onOpe
     const point = textPoint(event)
     if (!point) return
     const text = point.node.textContent ?? ''
-    const renderedCode = Boolean(target.closest('code'))
+    const renderedCode = isRenderedInlineCode(target)
     const token = pathTokenSpanAt(text, point.offset, renderedCode)
     const mention = token.text
     const codeOrQuoted = Boolean(target.closest('code, pre')) || /^[`"']/.test(mention)
