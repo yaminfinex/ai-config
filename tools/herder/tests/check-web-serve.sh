@@ -249,10 +249,12 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF 'Live stream timed out' "$ROOT/app.js" &&
   ! grep -qF '/transcript/stream' "$ROOT/app.js" &&
   grep -qF '/message' "$ROOT/app.js" &&
-  grep -qF '/api/spawn' "$ROOT/app.js" &&
+  ! grep -qF '/api/spawn' "$ROOT/app.js" &&
   ! grep -qF '/fork' "$ROOT/app.js" &&
   ! grep -qF 'Fork agent' "$ROOT/app.js" &&
-  grep -qF 'placement pending' "$ROOT/app.js" &&
+  ! grep -qF 'placement pending' "$ROOT/app.js" &&
+  ! grep -qF 'Spawn agent' "$ROOT/app.js" &&
+  ! grep -qF 'Fleet board' "$ROOT/app.js" &&
   grep -qF '/agents/' "$ROOT/app.js" &&
   grep -qF 'herder.web.layout.v1' "$ROOT/app.js" &&
   grep -qF 'Preview — double-click to pin' "$ROOT/app.js" &&
@@ -261,14 +263,16 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF 'customPrimaryActionEnter' "$ROOT/app.js" &&
   grep -qF 'customPrimaryActionSpace' "$ROOT/app.js" &&
   grep -qF 'knownWorkspaceItems' "$ROOT/app.js" &&
-  grep -qF 'Drag tabs to an edge to split' "$ROOT/app.js" &&
+  grep -qF 'No panels open' "$ROOT/app.js" &&
+  grep -qF 'Keyboard shortcuts' "$ROOT/app.js" &&
+  grep -qF 'Ctrl/Cmd+W belongs to the browser' "$ROOT/app.js" &&
   grep -qF 'dockview-react' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'Collapse' "$ROOT/app.js" &&
   grep -qF 'aria-level' "$ROOT/app.js" &&
   grep -qF 'aria-expanded' "$ROOT/app.js" &&
   ! grep -qF 'tree-tab-separator' "$ROOT/app.js" &&
   curl -fsS "http://127.0.0.1:$port/agents/mavu" | grep -qF '<title>Herder fleet</title>'; then
-  pass "serve delivers built shell/sidebar with ephemeral preview tabs, pin affordance, keyboard activation, unseen-workspace expansion, pinned layout persistence, valid tree levels, board/agent routes, and direct SPA navigation"
+  pass "serve delivers built shell/sidebar with ephemeral preview tabs, pin affordance, shortcut reference, empty-shell watermark, no retired board/spawn UI, pinned layout persistence, valid tree levels, and direct agent SPA navigation"
 else
   bad "embedded UI" "index=$(cat "$ROOT/index.html" 2>/dev/null || true)"
 fi

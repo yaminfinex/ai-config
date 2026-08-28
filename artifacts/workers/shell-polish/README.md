@@ -80,7 +80,7 @@ Legacy Board normalization and reload:
 - dist drift: two consecutive builds produced identical SHA-256 hashes
 - `go vet ./...`: pass
 - `go test -count=1 ./...`: pass
-- `env -u HERDER_BIN` repository battery: all current 12/12
-  `tools/herder/tests/check-*.sh` gates pass
+- `env -u HERDER_BIN` repository battery: all 13/13 gates pass across
+  `tools/herder/tests/check-*.sh` and `tools/fleet/tests/check-*.sh`
 - `bin/ai-doctor`: completes with the same 33 environment/local-skill warnings
   seen before the change
