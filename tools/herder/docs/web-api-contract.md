@@ -443,6 +443,11 @@ to it. Git output is hand-parsed from its documented byte-oriented machine
 formats; an unrecognized record is unavailable or a 502 substrate failure,
 never guessed. Mutable successes carry `fetched_at`.
 
+"Read-only" here means the API never changes source content, refs, commits, or
+the staged set. Git status may still refresh and write the index stat cache as
+benign repository metadata; `--no-optional-locks` does not prevent that write,
+so the record does not claim byte-for-byte repository immutability.
+
 GET `/api/git/status?root={root-id}`
   Returns the root-scoped changed-file list from
   `git status --porcelain=v2 -z --branch`. Success is:
@@ -492,6 +497,21 @@ GET `/api/git/diff?root={root-id}&path={relative-file}&base={uncommitted|branch}
   endings. An unchanged file has an empty patch and zero stats.
   Repository-configured external diff and text-conversion helpers are disabled;
   serving a diff never executes a repository-provided formatter.
+
+  Every Git subprocess also forces an empty `core.hooksPath` and
+  `core.fsmonitor=false`, preventing status refresh hooks and configured
+  filesystem-monitor commands from executing. **KNOWN defense-in-depth
+  limitation:** `filter.<driver>.clean` cannot be closed by an enumerable set of
+  `-c` overrides because the driver name is repository-controlled. Under the
+  current deployment this remains in the same unreachable tier as the other
+  hostile `.git/config` cases: changing that file already requires the serving
+  OS user's authority.
+
+  Fleet currently runs agent seats and the serve process under the same OS
+  identity. If fleet ever runs agent seats under an identity less privileged
+  than the serve process, repository-configured execution becomes a blocking
+  privilege-boundary issue; this entire class, including
+  `filter.<driver>.clean`, must be revisited before those roots are served.
 
   Patch stdout has a 256 KiB soft cap and 4 MiB hard cap. The server retains
   at most the soft cap while draining and counting through the hard cap, so

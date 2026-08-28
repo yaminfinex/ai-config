@@ -217,6 +217,41 @@ func TestDiffDoesNotRunRepositoryTextconv(t *testing.T) {
 	}
 }
 
+func TestGitReadsDoNotRunRepositoryHooksOrFSMonitor(t *testing.T) {
+	repo := newRepo(t)
+	write(t, repo, "file.txt", "base\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "base")
+
+	markers := t.TempDir()
+	hookMarker := filepath.Join(markers, "hook-ran")
+	monitorMarker := filepath.Join(markers, "fsmonitor-ran")
+	hooks := filepath.Join(t.TempDir(), "hooks")
+	if err := os.MkdirAll(hooks, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeExecutable(t, filepath.Join(hooks, "post-index-change"), "#!/bin/sh\ntouch \""+hookMarker+"\"\n")
+	monitor := filepath.Join(t.TempDir(), "fsmonitor.sh")
+	writeExecutable(t, monitor, "#!/bin/sh\ntouch \""+monitorMarker+"\"\n")
+	git(t, repo, "config", "core.hooksPath", hooks)
+	git(t, repo, "config", "core.fsmonitor", monitor)
+	write(t, repo, "file.txt", "changed\n")
+
+	status, err := ReadStatus(context.Background(), repo, time.Now)
+	if err != nil || status.Entries == nil || len(*status.Entries) != 1 {
+		t.Fatalf("status = %#v err=%v", status, err)
+	}
+	assertMarkerAbsent(t, hookMarker)
+	assertMarkerAbsent(t, monitorMarker)
+
+	diff, err := ReadDiff(context.Background(), repo, "file.txt", "uncommitted", time.Now)
+	if err != nil || !strings.Contains(diff.Patch, "+changed") {
+		t.Fatalf("diff = %#v err=%v", diff, err)
+	}
+	assertMarkerAbsent(t, hookMarker)
+	assertMarkerAbsent(t, monitorMarker)
+}
+
 func TestLogFollowsRenameAndPaginatesWithOpaqueCursor(t *testing.T) {
 	repo := newRepo(t)
 	write(t, repo, "old.txt", "zero\n")
@@ -361,6 +396,20 @@ func writeBytes(t *testing.T, root, name string, content []byte) {
 	}
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertMarkerAbsent(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("repository helper ran; marker %q stat error = %v", path, err)
 	}
 }
 

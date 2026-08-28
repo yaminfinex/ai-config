@@ -131,7 +131,7 @@ func gitOutputAllowExitOne(ctx context.Context, cwd string, args ...string) ([]b
 }
 
 func gitOutputWithExit(ctx context.Context, cwd string, allowExitOne bool, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", cwd}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", gitCommandArgs(cwd, args...)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -146,7 +146,7 @@ func gitOutputWithExit(ctx context.Context, cwd string, allowExitOne bool, args 
 }
 
 func gitStream(ctx context.Context, cwd string, retainLimit, hardLimit int64, allowExitOne bool, args ...string) ([]byte, int64, bool, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", cwd}, args...)...)
+	cmd := exec.CommandContext(ctx, "git", gitCommandArgs(cwd, args...)...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("open git stdout: %w", err)
@@ -191,6 +191,11 @@ func gitStream(ctx context.Context, cwd string, retainLimit, hardLimit int64, al
 		return nil, total, false, fmt.Errorf("git %s in %q: %w: %s", strings.Join(args, " "), cwd, waitErr, stderr.String())
 	}
 	return retained, total, hard, nil
+}
+
+func gitCommandArgs(cwd string, args ...string) []string {
+	command := []string{"-C", cwd, "-c", "core.hooksPath=", "-c", "core.fsmonitor=false"}
+	return append(command, args...)
 }
 
 type limitedBuffer struct{ bytes.Buffer }
