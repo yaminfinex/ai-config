@@ -82,7 +82,7 @@ func (r *resolver) Resolve(ctx context.Context, request Request) ([]Result, erro
 
 	roots := uniqueRoots(request.Roots)
 	rootRanks := rankRoots(roots, request.RootPreference)
-	pattern := []rune(query)
+	pattern := []rune(strings.ToLower(query))
 	slab := util.MakeSlab(matchSlab16Size, matchSlab32Size)
 	results := make([]Result, 0)
 	for _, root := range roots {

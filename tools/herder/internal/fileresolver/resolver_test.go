@@ -74,6 +74,37 @@ func TestResolveSuffixMatchesMissionsPathStutter(t *testing.T) {
 	}
 }
 
+func TestResolveUppercaseQueryMatchesExactAndSuffixPaths(t *testing.T) {
+	root := newResolverGitRepo(t)
+	writeResolverFile(t, root, "README.md", "root readme\n")
+	writeResolverFile(t, root, "tools/herder/README.md", "nested readme\n")
+	resolverGit(t, root, "add", ".")
+	resolverGit(t, root, "commit", "-m", "uppercase fixture")
+
+	results, err := New(fileindex.New(fileindex.Options{})).Resolve(context.Background(), Request{
+		Query: "README.md",
+		Roots: []string{root},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		path string
+		tier Tier
+	}{
+		{path: "README.md", tier: TierExact},
+		{path: "tools/herder/README.md", tier: TierSuffix},
+	}
+	if len(results) != len(want) {
+		t.Fatalf("results=%#v want paths/tiers %#v", results, want)
+	}
+	for index, expected := range want {
+		if results[index].Root != root || results[index].Path != expected.path || results[index].Tier != expected.tier || results[index].Score <= 0 {
+			t.Fatalf("result[%d]=%#v want root=%q path=%q tier=%q positive score", index, results[index], root, expected.path, expected.tier)
+		}
+	}
+}
+
 func TestResolvePreservesTierIdentityForAutoOpenRule(t *testing.T) {
 	root := "/repo"
 	results, err := New(staticSource{root: {"docs", "docs/file.md", "archive/docs"}}).Resolve(context.Background(), Request{
