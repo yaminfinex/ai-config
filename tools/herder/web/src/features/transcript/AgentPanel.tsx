@@ -13,8 +13,10 @@ import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
 import { ScreenViewport } from '../screen/ScreenPanel'
 import { agentScreenChoice } from '../screen/screenPresentation'
+import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
+import type { FileTarget } from '../../types'
 
-export function AgentPanel({ name, liveStatus, screenPaneID, onScreenPane, onViewer, identityReadOnly, onSend, onStatus }: { name: string, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
+export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPane, onOpenFile, onViewer, identityReadOnly, onSend, onStatus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -33,6 +35,7 @@ export function AgentPanel({ name, liveStatus, screenPaneID, onScreenPane, onVie
     setViewMode(mode)
     persistTranscriptViewMode(name, mode)
   }
+  const fileResolver = useTranscriptFileResolver(name, active && !screenMode, onOpenFile)
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
@@ -79,11 +82,12 @@ export function AgentPanel({ name, liveStatus, screenPaneID, onScreenPane, onVie
     {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
     {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} /> : <div className="transcript-viewport">
-      <section className="transcript" aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll}>
+      <section className="transcript" aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick}>
         <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
         {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
         <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} />
       </section>
+      {fileResolver.element}
       <JumpToBottomButton visible={!transcriptFollow.following} onJump={transcriptFollow.jumpToBottom} />
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}

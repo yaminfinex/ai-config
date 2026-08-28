@@ -1,4 +1,4 @@
-import type { AgentDetail, Board, EntriesPage, LifecycleResult, Refusal } from '../types'
+import type { AgentDetail, Board, EntriesPage, FileRead, LifecycleResult, Refusal, ResolveResponse } from '../types'
 
 export type Fetcher = typeof fetch
 
@@ -9,6 +9,8 @@ export const queryKeys = {
   entries: (name: string) => ['entries', name] as const,
   stream: ['stream'] as const,
   screen: (paneID: string) => ['screen', paneID] as const,
+  resolve: (query: string, agent?: string) => ['resolve', query, agent ?? ''] as const,
+  file: (root: string, path: string) => ['file', root, path] as const,
 }
 
 export type LifecycleProblem = {
@@ -65,6 +67,17 @@ export function getEntries(name: string, options: { from?: number, limit: number
   if (options.from !== undefined) query.set('from', String(options.from))
   if (options.sessionId) query.set('sessionId', options.sessionId)
   return requestJSON<EntriesPage>(`/api/agents/${encodeURIComponent(name)}/entries?${query}`, undefined, fetcher)
+}
+
+export function resolveFiles(queryText: string, agent?: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ q: queryText })
+  if (agent) query.set('agent', agent)
+  return requestJSON<ResolveResponse>(`/api/resolve?${query}`, { signal }, fetcher)
+}
+
+export function getFile(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root, path })
+  return requestJSON<FileRead>(`/api/files?${query}`, { signal }, fetcher)
 }
 
 export function sendMessage(name: string, text: string, fetcher?: Fetcher) {

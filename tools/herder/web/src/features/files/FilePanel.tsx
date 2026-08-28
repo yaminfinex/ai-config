@@ -1,0 +1,64 @@
+import { useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { apiProblem, getFile, queryKeys, resolveFiles } from '../../api/client'
+import type { FileTarget } from '../../types'
+import { Banner } from '../../shared/presentation'
+import { FileResults } from './FileResults'
+import { fileFailureKind, rootLabel } from './fileResolution'
+
+function formattedBytes(size: number) {
+  return `${size.toLocaleString()} bytes`
+}
+
+export function FilePanel({ target, onOpenFile }: { target: FileTarget, onOpenFile: (target: FileTarget) => void }) {
+  const targetLineRef = useRef<HTMLElement | null>(null)
+  const fileQuery = useQuery({
+    queryKey: queryKeys.file(target.root, target.path),
+    queryFn: ({ signal }) => getFile(target.root, target.path, fetch, signal),
+    retry: false,
+  })
+  const failure = fileQuery.error ? apiProblem(fileQuery.error) : null
+  const failureKind = fileFailureKind(failure?.response?.status, failure?.problem.error)
+  const vanished = failureKind === 'vanished'
+  const unknownRoot = failureKind === 'unknown-root'
+  const needsAlternatives = vanished || unknownRoot
+  const alternatives = useQuery({
+    queryKey: queryKeys.resolve(target.path),
+    queryFn: ({ signal }) => resolveFiles(target.path, undefined, fetch, signal),
+    enabled: needsAlternatives,
+    retry: false,
+  })
+
+  useEffect(() => {
+    if (!target.line || !fileQuery.data || fileQuery.data.binary) return
+    requestAnimationFrame(() => targetLineRef.current?.scrollIntoView({ block: 'center' }))
+  }, [fileQuery.data, target.line])
+
+  const data = fileQuery.data
+  return <main className="file-panel">
+    <header className="file-header">
+      <div><strong>{rootLabel(target.path)}</strong><span>{target.path}</span><span className="root-path" title={target.root}>{target.root}</span></div>
+      <button type="button" onClick={() => fileQuery.refetch()} disabled={fileQuery.isFetching}>{fileQuery.isFetching ? 'Refreshing…' : 'Refresh'}</button>
+    </header>
+    {fileQuery.isPending && <div className="file-state" role="status">Reading current file…</div>}
+    {failure && !needsAlternatives && <Banner source="file" detail={`${failure.problem.error}: ${failure.problem.detail}`} />}
+    {needsAlternatives && <section className="file-state vanished" role="status"><strong>{vanished ? 'File vanished' : 'Root no longer served'}</strong><p>{vanished ? 'This path no longer exists in its root.' : 'This file root is no longer in the live readable universe.'} Closest current matches:</p>
+      {alternatives.isPending && <p>Resolving current files…</p>}
+      {alternatives.error && <Banner source="resolve" detail={alternatives.error.message} />}
+      {!alternatives.isFetching && !alternatives.error && <FileResults resolution={alternatives.data} limit={8} onSelect={(candidate) => onOpenFile({ root: candidate.root, path: candidate.path, line: target.line })} />}
+    </section>}
+    {data && !failure && <>
+      <div className="file-facts"><span>Fetched {new Date(data.fetched_at).toLocaleString()}</span><span>{formattedBytes(data.size)}</span>{target.line && <span>line {target.line}</span>}</div>
+      {data.binary ? <section className="file-state binary" role="status"><strong>Binary file</strong><p>No text content is available for this {formattedBytes(data.size)} file.</p></section>
+        : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`}>
+          {data.truncated && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
+          <pre>{data.content.split('\n').map((line, index) => {
+            const number = index + 1
+            return <span className={`file-line${number === target.line ? ' target-line' : ''}`} ref={number === target.line ? targetLineRef : undefined} key={number}>
+              <span className="line-number" aria-hidden="true">{number}</span><span className="line-text">{line || ' '}</span>{'\n'}
+            </span>
+          })}</pre>
+        </div>}
+    </>}
+  </main>
+}
