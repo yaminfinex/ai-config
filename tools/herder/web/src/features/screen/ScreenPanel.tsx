@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { queryKeys } from '../../api/client'
 import { Banner } from '../../shared/presentation'
 import { screenNotice } from '../../shared/loadingPresentation'
+import { JumpToBottomButton, useFollowScroll } from '../../shared/useFollowScroll'
 import type { Pane, ScreenFrame } from '../../types'
 import { screenPanePresentation } from './screenPresentation'
 
@@ -12,9 +13,11 @@ export function ScreenViewport({ paneID }: { paneID: string }) {
     enabled: false,
   }).data
   const notice = screenNotice(frame)
+  const screenFollow = useFollowScroll<HTMLPreElement>(frame)
   return <section className="screen-viewport" aria-busy={!frame}>
     <div className="screen-notice">{notice && <Banner source="screen" detail={notice.detail} tone={notice.tone} />}</div>
-    <pre className={`terminal-screen${frame?.status === 'unavailable' ? ' unavailable' : ''}`} aria-label="Live terminal screen">{frame?.status === 'available' ? frame.text : ''}</pre>
+    <pre className={`terminal-screen${frame?.status === 'unavailable' ? ' unavailable' : ''}`} aria-label="Live terminal screen" ref={screenFollow.viewportRef} onScroll={screenFollow.onScroll}>{frame?.status === 'available' ? frame.text : ''}</pre>
+    <JumpToBottomButton visible={!screenFollow.following} onJump={screenFollow.jumpToBottom} />
   </section>
 }
 

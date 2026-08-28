@@ -99,7 +99,7 @@ GET `/api/fleet`
   tool-plus-session match exists, the bus row stays `unplaced`.
 
   Conversely, a visible Herdr pane without join evidence is not asserted to be
-  agent-free. The client labels it **Unattributed terminal** and states plainly
+  agent-free. The client labels it **Terminal** and states plainly
   that Herdr cannot attribute the terminal and that it may belong to an
   unplaced agent. This warning accompanies its standalone read-only screen.
 

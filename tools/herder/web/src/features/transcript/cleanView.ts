@@ -22,17 +22,16 @@ export const cleanViewDisposition = {
 } as const satisfies Record<EntryKind, CleanViewDisposition>
 
 type DeliveryValue = Record<string, unknown>
-type CleanViewStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+type CleanViewStorage = Pick<Storage, 'getItem' | 'setItem'>
+export type TranscriptViewMode = 'compact' | 'normal' | 'full'
+export type ActivityPillTone = 'tool' | 'thinking' | 'message' | 'other'
 
-export const cleanViewPreferencePrefix = 'herder.web.cleanView.v1:'
-export const showSystemPreferencePrefix = 'herder.web.showSystem.v1:'
+const legacyCleanViewPreferencePrefix = 'herder.web.cleanView.v1:'
+const legacyShowSystemPreferencePrefix = 'herder.web.showSystem.v1:'
+export const transcriptViewPreferencePrefix = 'herder.web.transcriptView.v1:'
 
-export function cleanViewPreferenceKey(agentName: string) {
-  return `${cleanViewPreferencePrefix}${encodeURIComponent(agentName)}`
-}
-
-export function showSystemPreferenceKey(agentName: string) {
-  return `${showSystemPreferencePrefix}${encodeURIComponent(agentName)}`
+export function transcriptViewPreferenceKey(agentName: string) {
+  return `${transcriptViewPreferencePrefix}${encodeURIComponent(agentName)}`
 }
 
 export function isCleanConversationDelivery(delivery: DeliveryValue): boolean {
@@ -42,47 +41,44 @@ export function isCleanConversationDelivery(delivery: DeliveryValue): boolean {
 }
 
 export function aggregateActivityPills<T extends { key: string, label: string }>(activities: T[], canAggregate: (activity: T) => boolean) {
-  const pills: { key: string, label: string, count: number }[] = []
+  const pills: Array<T & { count: number }> = []
   activities.forEach((activity) => {
     const previous = pills[pills.length - 1]
     if (canAggregate(activity) && previous?.label === activity.label) {
       previous.count++
       return
     }
-    pills.push({ key: activity.key, label: activity.label, count: 1 })
+    pills.push({ ...activity, count: 1 })
   })
   return pills
 }
 
-export function readCleanView(agentName: string, storage: Pick<CleanViewStorage, 'getItem'> | null = browserStorage()) {
-  return readPreference(cleanViewPreferenceKey(agentName), storage)
+export function activityPillTone(kind: EntryKind, busMessage = false): ActivityPillTone {
+  if (busMessage) return 'message'
+  if (kind === 'tool_use' || kind === 'tool_result' || kind === 'command_stdout') return 'tool'
+  if (kind === 'thinking') return 'thinking'
+  return 'other'
 }
 
-export function persistCleanView(agentName: string, enabled: boolean, storage: Pick<CleanViewStorage, 'setItem' | 'removeItem'> | null = browserStorage()) {
-  persistPreference(cleanViewPreferenceKey(agentName), enabled, storage)
-}
-
-export function readShowSystem(agentName: string, storage: Pick<CleanViewStorage, 'getItem'> | null = browserStorage()) {
-  return readPreference(showSystemPreferenceKey(agentName), storage)
-}
-
-export function persistShowSystem(agentName: string, enabled: boolean, storage: Pick<CleanViewStorage, 'setItem' | 'removeItem'> | null = browserStorage()) {
-  persistPreference(showSystemPreferenceKey(agentName), enabled, storage)
-}
-
-function readPreference(key: string, storage: Pick<CleanViewStorage, 'getItem'> | null) {
+export function readTranscriptViewMode(agentName: string, storage: CleanViewStorage | null = browserStorage()): TranscriptViewMode {
+  if (!storage) return 'compact'
+  const encodedName = encodeURIComponent(agentName)
   try {
-    return storage?.getItem(key) === 'true'
+    const stored = storage.getItem(transcriptViewPreferenceKey(agentName))
+    if (stored === 'compact' || stored === 'normal' || stored === 'full') return stored
+    const cleanView = storage.getItem(`${legacyCleanViewPreferencePrefix}${encodedName}`) === 'true'
+    const showSystem = storage.getItem(`${legacyShowSystemPreferencePrefix}${encodedName}`) === 'true'
+    const migrated = cleanView ? 'compact' : showSystem ? 'full' : 'compact'
+    try { storage.setItem(transcriptViewPreferenceKey(agentName), migrated) } catch { /* best-effort migration */ }
+    return migrated
   } catch {
-    return false
+    return 'compact'
   }
 }
 
-function persistPreference(key: string, enabled: boolean, storage: Pick<CleanViewStorage, 'setItem' | 'removeItem'> | null) {
+export function persistTranscriptViewMode(agentName: string, mode: TranscriptViewMode, storage: Pick<CleanViewStorage, 'setItem'> | null = browserStorage()) {
   try {
-    if (!storage) return
-    if (enabled) storage.setItem(key, 'true')
-    else storage.removeItem(key)
+    storage?.setItem(transcriptViewPreferenceKey(agentName), mode)
   } catch {
     // View persistence is best-effort when browser storage is unavailable.
   }

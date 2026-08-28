@@ -1,13 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Checkbox } from '@base-ui/react/checkbox'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getAgent, queryKeys } from '../../api/client'
 import { entriesQueryOptions } from '../../api/queries'
 import { Banner, gapLabel } from '../../shared/presentation'
 import { transcriptNotice } from '../../shared/loadingPresentation'
 import { agentVitalsPresentation } from '../../shared/agentVitals'
+import { JumpToBottomButton, useFollowScroll } from '../../shared/useFollowScroll'
 import { Composer } from '../composer/Composer'
-import { persistCleanView, persistShowSystem, readCleanView, readShowSystem } from './cleanView'
+import { persistTranscriptViewMode, readTranscriptViewMode } from './cleanView'
 import { QueuedMessages } from './QueuedMessages'
 import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
@@ -18,20 +18,21 @@ export function AgentPanel({ name, liveStatus, screenPaneID, onScreenPane, onVie
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
-  const [showSystem, setShowSystem] = useState(() => readShowSystem(name))
-  const [cleanView, setCleanView] = useState(() => readCleanView(name))
+  const [viewMode, setViewMode] = useState(() => readTranscriptViewMode(name))
   const [now, setNow] = useState(Date.now())
-  const [following, setFollowing] = useState(true)
-  const [newEntryCount, setNewEntryCount] = useState(0)
   const [sendProblem, setSendProblem] = useState('')
-  const transcriptRef = useRef<HTMLElement>(null)
-  const followingRef = useRef(true)
-  const previousEntryCount = useRef(0)
   const entries = entriesQuery.data?.entries ?? []
+  const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode)
   const queued = visibleQueuedMessages(agentQuery.data?.queued ?? [], entries)
   const entriesNotice = transcriptNotice(entriesQuery.isPending, entriesQuery.error?.message ?? '')
   const screenChoice = agentScreenChoice(agentQuery.data, screenPaneID)
   const screenMode = screenChoice.active
+  const cleanView = viewMode === 'compact'
+  const showSystem = viewMode === 'full'
+  const selectViewMode = (mode: typeof viewMode) => {
+    setViewMode(mode)
+    persistTranscriptViewMode(name, mode)
+  }
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
@@ -50,19 +51,6 @@ export function AgentPanel({ name, liveStatus, screenPaneID, onScreenPane, onVie
     return () => window.clearInterval(timer)
   }, [])
 
-  useLayoutEffect(() => {
-    const added = Math.max(0, entries.length - previousEntryCount.current)
-    previousEntryCount.current = entries.length
-    if (!followingRef.current) {
-      if (added) setNewEntryCount((count) => count + added)
-      return
-    }
-    const transcript = transcriptRef.current
-    if (transcript) transcript.scrollTop = transcript.scrollHeight
-    setFollowing(true)
-    setNewEntryCount(0)
-  }, [entries, cleanView])
-
   if (agentQuery.error && 'response' in agentQuery.error && (agentQuery.error.response as Response)?.status === 404) return <main className="agent-page">
     <section className="not-found tombstone" role="status"><strong>No retained agent evidence</strong><p>No live or retained session evidence for <span>{name}</span>. This tab is safe to close.</p></section>
   </main>
@@ -80,32 +68,24 @@ export function AgentPanel({ name, liveStatus, screenPaneID, onScreenPane, onVie
           <button type="button" className={screenMode ? 'active' : ''} aria-pressed={screenMode} disabled={!screenChoice.enabled} title={screenChoice.reason || 'Show the read-only live screen'} onClick={() => { if (screenChoice.paneID) onScreenPane(screenChoice.paneID) }}>Screen</button>
         </div>
         {screenChoice.reason && <span className="view-reason">{screenChoice.reason}</span>}
-        <label className="system-toggle"><Checkbox.Root checked={cleanView} onCheckedChange={(checked) => { setCleanView(checked); persistCleanView(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> clean view</label>
-        <label className={`system-toggle${cleanView ? ' disabled' : ''}`} title={cleanView ? 'Clean view hides system entries' : undefined}><Checkbox.Root checked={showSystem} disabled={cleanView} onCheckedChange={(checked) => { setShowSystem(checked); persistShowSystem(name, checked) }}><Checkbox.Indicator>✓</Checkbox.Indicator></Checkbox.Root> show system entries</label>
-        {!screenMode && <span className={`follow-chip${following ? '' : ' paused'}`}>{following ? 'follow ✓' : 'follow paused'}</span>}
+        <div className="detail-toggle transcript-mode-toggle" aria-label="Transcript detail">
+          <button type="button" className={viewMode === 'compact' ? 'active' : ''} aria-pressed={viewMode === 'compact'} title="Compact conversation with activity pills" onClick={() => selectViewMode('compact')}>Compact</button>
+          <button type="button" className={viewMode === 'normal' ? 'active' : ''} aria-pressed={viewMode === 'normal'} title="Full transcript without system entries" onClick={() => selectViewMode('normal')}>Normal</button>
+          <button type="button" className={viewMode === 'full' ? 'active' : ''} aria-pressed={viewMode === 'full'} title="Full transcript including system entries" onClick={() => selectViewMode('full')}>Full</button>
+        </div>
       </div>
     </header>
     {agentQuery.error && <Banner source="agent" detail={agentQuery.error.message} />}
     {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
-    {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} /> : <section className="transcript" aria-label="Transcript" ref={transcriptRef} onScroll={(event) => {
-      const node = event.currentTarget
-      const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 48
-      followingRef.current = atBottom
-      setFollowing(atBottom)
-      if (atBottom) setNewEntryCount(0)
-    }}>
-      <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
-      {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
-      <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={cleanView ? false : showSystem} cleanView={cleanView} />
-      {newEntryCount > 0 && <button className="jump-latest" onClick={() => {
-        const transcript = transcriptRef.current
-        if (transcript) transcript.scrollTop = transcript.scrollHeight
-        followingRef.current = true
-        setFollowing(true)
-        setNewEntryCount(0)
-      }}>↓ {newEntryCount} new</button>}
-    </section>}
+    {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} /> : <div className="transcript-viewport">
+      <section className="transcript" aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll}>
+        <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
+        {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
+        <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} />
+      </section>
+      <JumpToBottomButton visible={!transcriptFollow.following} onJump={transcriptFollow.jumpToBottom} />
+    </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>

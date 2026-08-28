@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
   aggregateActivityPills,
+  activityPillTone,
   cleanViewDisposition,
-  cleanViewPreferenceKey,
   isCleanConversationDelivery,
-  persistCleanView,
-  persistShowSystem,
-  readCleanView,
-  readShowSystem,
-  showSystemPreferenceKey,
+  persistTranscriptViewMode,
+  readTranscriptViewMode,
+  transcriptViewPreferenceKey,
 } from '../src/features/transcript/cleanView.ts'
 
 function memoryStorage() {
@@ -50,38 +49,57 @@ test('clean conversation delivery policy hides lifecycle traffic without guessin
   assert.equal(isCleanConversationDelivery({ sender: 'impl-vile', intent: 'new message', text: 'ordinary delivery' }), true)
 })
 
-test('clean view preference is persisted per agent tab and defaults off', () => {
+test('transcript view mode is persisted per agent and defaults to compact', () => {
   const storage = memoryStorage()
-  assert.equal(readCleanView('agent one', storage), false)
-  persistCleanView('agent one', true, storage)
-  persistCleanView('agent two', true, storage)
-  assert.equal(readCleanView('agent one', storage), true)
-  assert.equal(readCleanView('agent two', storage), true)
-  assert.notEqual(cleanViewPreferenceKey('agent one'), cleanViewPreferenceKey('agent two'))
-  persistCleanView('agent one', false, storage)
-  assert.equal(readCleanView('agent one', storage), false)
-  assert.equal(readCleanView('agent two', storage), true)
+  assert.equal(readTranscriptViewMode('agent one', storage), 'compact')
+  persistTranscriptViewMode('agent one', 'normal', storage)
+  persistTranscriptViewMode('agent two', 'full', storage)
+  assert.equal(readTranscriptViewMode('agent one', storage), 'normal')
+  assert.equal(readTranscriptViewMode('agent two', storage), 'full')
+  assert.notEqual(transcriptViewPreferenceKey('agent one'), transcriptViewPreferenceKey('agent two'))
 })
 
-test('blocked browser storage degrades to clean view off', () => {
+test('legacy true preferences migrate once to their equivalent transcript mode', () => {
+  const storage = memoryStorage()
+  storage.setItem('herder.web.showSystem.v1:full-agent', 'true')
+  storage.setItem('herder.web.cleanView.v1:compact-agent', 'true')
+  storage.setItem('herder.web.cleanView.v1:both-agent', 'true')
+  storage.setItem('herder.web.showSystem.v1:both-agent', 'true')
+
+  assert.equal(readTranscriptViewMode('full-agent', storage), 'full')
+  assert.equal(readTranscriptViewMode('compact-agent', storage), 'compact')
+  assert.equal(readTranscriptViewMode('both-agent', storage), 'compact')
+
+  storage.removeItem('herder.web.showSystem.v1:full-agent')
+  assert.equal(readTranscriptViewMode('full-agent', storage), 'full', 'the new key makes migration one-time')
+})
+
+test('blocked browser storage degrades to compact without throwing', () => {
   const blocked = {
     getItem: () => { throw new Error('blocked') },
     setItem: () => { throw new Error('blocked') },
     removeItem: () => { throw new Error('blocked') },
   }
-  assert.equal(readCleanView('agent', blocked), false)
-  assert.doesNotThrow(() => persistCleanView('agent', true, blocked))
+  assert.equal(readTranscriptViewMode('agent', blocked), 'compact')
+  assert.doesNotThrow(() => persistTranscriptViewMode('agent', 'full', blocked))
 })
 
-test('system entry preference uses the same per-agent v1 persistence pattern', () => {
-  const storage = memoryStorage()
-  assert.equal(readShowSystem('agent one', storage), false)
-  persistShowSystem('agent one', true, storage)
-  assert.equal(readShowSystem('agent one', storage), true)
-  assert.equal(readShowSystem('agent two', storage), false)
-  assert.notEqual(showSystemPreferenceKey('agent one'), cleanViewPreferenceKey('agent one'))
-  persistShowSystem('agent one', false, storage)
-  assert.equal(readShowSystem('agent one', storage), false)
+test('agent header exposes one three-way segmented transcript control', () => {
+  const component = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(component, /Checkbox|clean view|show system entries/)
+  assert.match(component, />Compact</)
+  assert.match(component, />Normal</)
+  assert.match(component, />Full</)
+})
+
+test('compact activity pills use distinct non-error semantic tones', () => {
+  assert.equal(activityPillTone('tool_use'), 'tool')
+  assert.equal(activityPillTone('tool_result'), 'tool')
+  assert.equal(activityPillTone('command_stdout'), 'tool')
+  assert.equal(activityPillTone('thinking'), 'thinking')
+  assert.equal(activityPillTone('hcom_delivery', true), 'message')
+  assert.equal(activityPillTone('task_notification'), 'other')
+  assert.equal(activityPillTone('unknown'), 'other')
 })
 
 test('pill aggregation combines only consecutive repeatable activities', () => {
@@ -92,9 +110,9 @@ test('pill aggregation combines only consecutive repeatable activities', () => {
     { key: 'message-2', label: '✉ nero', kind: 'message' },
     { key: 'read-3', label: 'Read', kind: 'tool_use' },
   ], (activity) => activity.kind === 'tool_use'), [
-    { key: 'read-1', label: 'Read', count: 2 },
-    { key: 'message-1', label: '✉ nero', count: 1 },
-    { key: 'message-2', label: '✉ nero', count: 1 },
-    { key: 'read-3', label: 'Read', count: 1 },
+    { key: 'read-1', label: 'Read', kind: 'tool_use', count: 2 },
+    { key: 'message-1', label: '✉ nero', kind: 'message', count: 1 },
+    { key: 'message-2', label: '✉ nero', kind: 'message', count: 1 },
+    { key: 'read-3', label: 'Read', kind: 'tool_use', count: 1 },
   ])
 })
