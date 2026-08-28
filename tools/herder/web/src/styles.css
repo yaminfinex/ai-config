@@ -103,16 +103,38 @@ h2, h3, p { margin-top: 0; }
 .sidebar-resizer:hover, .sidebar-resizer:focus-visible { background: var(--accent); }
 
 .shell-main { display: flex; flex: 1; min-width: 0; flex-direction: column; }
-.tab-strip { display: flex; flex: 0 0 32px; min-width: 0; align-items: center; overflow-x: auto; border-bottom: 1px solid var(--border); background: var(--bg2); user-select: none; }
-.shell-tab { display: flex; align-self: stretch; min-width: 0; border-right: 1px solid var(--border); color: var(--dim); }
-.shell-tab.active { box-shadow: inset 0 2px var(--accent); background: var(--bg); color: var(--text); }
-.shell-tab.preview .tab-label { font-style: italic; }
-.shell-tab > button { display: flex; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 0 12px; border: 0; border-radius: 0; background: transparent; color: inherit; font: 12px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.shell-tab > button:hover:not(:disabled) { color: var(--text); }
-.shell-tab .close-tab { width: 25px; padding: 0 7px 1px 0; color: var(--dimmer); font-size: 15px; }
-.tab-agent-status { display: flex; align-items: center; gap: 4px; color: var(--dimmer); font-size: 9px; }
+.dock-host { flex: 1; min-height: 0; min-width: 0; }
+.dockview-theme-herder {
+  --dv-paneview-active-outline-color: var(--accent); --dv-tabs-and-actions-container-font-size: 12px; --dv-tabs-and-actions-container-height: 32px;
+  --dv-drag-over-background-color: var(--accent-dim); --dv-drag-over-border-color: var(--accent); --dv-edge-dock-indicator-color: var(--accent);
+  --dv-tabs-container-scrollbar-color: var(--scrollbar-thumb); --dv-icon-hover-background-color: var(--bg3); --dv-floating-box-shadow: 0 8px 32px var(--floating-shadow);
+  --dv-floating-border: 1px solid var(--border2); --dv-overlay-z-index: 30; --dv-tab-font-size: 12px; --dv-border-radius: 0; --dv-tab-margin: 0;
+  --dv-sash-color: var(--border); --dv-active-sash-color: var(--accent); --dv-active-sash-transition-duration: 100ms; --dv-active-sash-transition-delay: 100ms;
+  --dv-spacing-padding: 0; --dv-tab-border-radius: 0; --dv-sash-border-radius: 0; --dv-dropdown-border-radius: 5px; --dv-tab-close-icon-size: 11px;
+  --dv-floating-group-border: none; --dv-drag-over-border: 2px solid var(--accent); --dv-floating-group-dragging-opacity: 1;
+  --dv-group-view-background-color: var(--bg); --dv-tabs-and-actions-container-background-color: var(--bg2);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg); --dv-activegroup-hiddenpanel-tab-background-color: var(--bg2);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg); --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg2);
+  --dv-tab-divider-color: var(--border); --dv-activegroup-visiblepanel-tab-color: var(--text); --dv-activegroup-hiddenpanel-tab-color: var(--dim);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--dim); --dv-inactivegroup-hiddenpanel-tab-color: var(--dim); --dv-separator-border: var(--border2);
+  --dv-paneview-header-border-color: var(--border); --dv-context-menu-background-color: var(--bg2); --dv-context-menu-color: var(--text);
+  --dv-scrollbar-background-color: var(--scrollbar-thumb); --dv-transition-duration: 120ms;
+  color: var(--text); background: var(--bg); font-family: inherit;
+}
+.dockview-theme-herder .dv-drop-target-container .dv-drop-target-anchor.dv-drop-target-anchor-container-changed { opacity: 0; transition: none; }
+.dockview-theme-herder .dv-tabs-and-actions-container { border-bottom: 1px solid var(--border); }
+.dockview-theme-herder .dv-tab { min-width: 0; padding: 0; border-right: 1px solid var(--border); }
+.dockview-theme-herder .dv-tab.dv-active-tab { box-shadow: inset 0 2px var(--accent); }
+.dockview-theme-herder .dv-sash-container .dv-sash { z-index: 2; }
+.herder-dock-tab { display: flex; width: 100%; min-width: 0; height: 31px; align-items: center; gap: 8px; padding-left: 11px; color: inherit; font: 12px var(--mono); }
+.herder-dock-tab.preview .dock-tab-label { font-style: italic; }
+.dock-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dock-tab-meta { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; color: var(--dim); font-size: 9px; }
+.dock-tab-close { width: 25px; height: 100%; margin-left: auto; padding: 0 7px 1px 0; border: 0; border-radius: 0; background: transparent; color: var(--dim); font-size: 15px; }
+.dock-tab-close:hover:not(:disabled) { background: var(--bg3); color: var(--text); }
+.dock-header-actions { display: flex; height: 32px; align-items: center; min-width: 0; }
 .new-tab { height: 100%; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--dimmer); font-size: 16px; }
-.tab-strip-spacer, .status-spacer { flex: 1; }
+.status-spacer { flex: 1; }
 .stream-chip, .layout-chip { margin-right: 6px; padding: 1px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--chip); color: var(--dimmer); font: 10px var(--mono); white-space: nowrap; }
 .theme-toggle { display: flex; height: 24px; align-items: center; gap: 5px; margin-right: 6px; padding: 0 8px; border-color: var(--border); background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .theme-toggle:hover:not(:disabled) { color: var(--text); }
@@ -126,9 +148,11 @@ h2, h3, p { margin-top: 0; }
 .banner .dismiss-banner { width: 22px; height: 20px; margin-left: auto; padding: 0; border: 0; background: transparent; color: currentColor; font-size: 15px; line-height: 1; }
 .banner.server-update { border-color: var(--warning-border); background: var(--warning-bg); color: var(--amber); }
 .banner.server-update button { margin-left: auto; padding: 2px 8px; border-color: var(--warning-button-border); background: var(--warning-button-bg); color: var(--amber); font-size: 10px; }
-.panel-host { flex: 1; min-height: 0; }
-.hosted-panel { height: 100%; }
-.hosted-panel[hidden] { display: none; }
+.dock-watermark, .panel-unavailable { display: grid; width: 100%; height: 100%; place-content: center; justify-items: center; padding: 28px; background: var(--bg); color: var(--dim); text-align: center; }
+.dock-watermark strong, .panel-unavailable strong { color: var(--text); font: 600 14px var(--mono); }
+.dock-watermark p, .panel-unavailable p { max-width: 520px; margin: 7px 0 14px; }
+.dock-watermark > div { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.panel-unavailable.tombstone { border: 1px dashed var(--warning-border); background: var(--warning-bg); color: var(--warning-text); }
 .status-bar { display: flex; flex: 0 0 24px; align-items: center; gap: 9px; overflow: hidden; padding: 0 9px; border-top: 1px solid var(--border); background: var(--accent-dim); color: var(--status-bar-text); font: 10px var(--mono); white-space: nowrap; }
 
 .quick-open-backdrop { position: fixed; z-index: 20; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 120px) 16px 16px; background: var(--overlay-subtle); backdrop-filter: blur(2px); }
@@ -252,7 +276,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .queued-dock { flex: 0 0 auto; padding: 0 14px; background: var(--bg); }
 .queued-dock:empty { display: none; }
 .queued-dock .queued-messages { max-width: 900px; margin-bottom: 7px; }
-.agent-context-strip { display: flex; flex: 0 0 32px; min-width: 0; align-items: center; overflow: hidden; padding: 0 14px; border-top: 1px solid var(--border); background: var(--bg); }
+.agent-context-strip { position: relative; display: flex; flex: 0 0 32px; min-width: 0; align-items: center; overflow: hidden; padding: 0 14px; border-top: 1px solid var(--border); background: var(--bg); }
+.agent-context-strip[data-overflow-right]::after { position: absolute; top: 0; right: 0; bottom: 0; width: 38px; background: linear-gradient(90deg, transparent, var(--bg)); content: ''; pointer-events: none; }
 .agent-context-strip-inner { display: flex; min-width: 0; max-width: 100%; align-items: center; gap: 8px; overflow-x: auto; color: var(--dim); font: 10px var(--mono); scrollbar-width: none; }
 .agent-context-strip-inner::-webkit-scrollbar { display: none; }
 .context-fact, .context-status, .context-detail, .context-vital { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; white-space: nowrap; }

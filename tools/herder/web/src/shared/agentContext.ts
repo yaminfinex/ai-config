@@ -1,6 +1,10 @@
 import type { AgentDetail } from '../types.ts'
 import { agentVitalsPresentation } from './agentVitals.ts'
 
+export function hasRightOverflow(scrollWidth: number, clientWidth: number, scrollLeft: number) {
+  return scrollWidth - clientWidth - scrollLeft > 1
+}
+
 export type AgentContextPresentation = {
   status: string
   cwd?: { display: string, full: string }
