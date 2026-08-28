@@ -23,11 +23,15 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/claudesession"
+	"ai-config/tools/herder/internal/fileindex"
+	"ai-config/tools/herder/internal/fileresolver"
+	"ai-config/tools/herder/internal/fileroots"
 	"ai-config/tools/herder/internal/fleetview"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/repoctx"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 	"ai-config/tools/herder/internal/webui"
@@ -60,6 +64,11 @@ type dependencies struct {
 	heartbeat            time.Duration
 	listeners            func(int) ([]net.Listener, []string, error)
 	screens              func() (screenSource, error)
+	configuredRoots      []string
+	roots                func(context.Context, []string, []hcomidentity.Row) (fileroots.Set, error)
+	fileResolver         fileresolver.Resolver
+	repoContext          func(context.Context, string) (repoctx.Context, error)
+	now                  func() time.Time
 }
 
 var liveDependencies = dependencies{
@@ -82,6 +91,10 @@ var liveDependencies = dependencies{
 	screens: func() (screenSource, error) {
 		return herdrcli.NewLiveScreens()
 	},
+	roots:        buildRootSet,
+	fileResolver: fileresolver.New(fileindex.New(fileindex.Options{})),
+	repoContext:  repoctx.Read,
+	now:          time.Now,
 }
 
 type refusal struct {
@@ -120,6 +133,8 @@ type agentDetail struct {
 	Gap           string                      `json:"gap"`
 	Pane          *agentPane                  `json:"pane"`
 	Directory     string                      `json:"directory,omitempty"`
+	CWD           string                      `json:"cwd,omitempty"`
+	Git           *repoctx.Git                `json:"git,omitempty"`
 	SessionID     string                      `json:"session_id,omitempty"`
 	ParentAgent   string                      `json:"parent_agent,omitempty"`
 	LaunchContext hcomidentity.LaunchContext  `json:"launch_context"`
@@ -189,8 +204,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	port := fs.Int("port", DefaultPort, "TCP port for loopback and tailscale listeners")
 	watch := fs.Bool("watch", false, "re-exec when the deployed herder build changes")
+	var rootArgs rootFlags
+	fs.Var(&rootArgs, "root", "additional readable root (repeatable; order controls resolve preference)")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "herder serve — expose the read-only live fleet API.\n\nUsage:\n  herder serve [--port PORT] [--watch]\n")
+		fmt.Fprint(fs.Output(), "herder serve — expose the read-only live fleet API.\n\nUsage:\n  herder serve [--port PORT] [--watch] [--root PATH ...]\n")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -201,6 +218,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if *port < 1 || *port > 65535 {
 		fmt.Fprintf(stderr, "herder serve: invalid port %d\n", *port)
+		return 2
+	}
+	configuredRoots, err := fileroots.CanonicalConfigured(rootArgs)
+	if err != nil {
+		fmt.Fprintf(stderr, "herder serve: invalid root: %v\n", err)
 		return 2
 	}
 	ctx, cancelWatch := context.WithCancel(context.Background())
@@ -231,7 +253,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	runtimeDependencies := liveDependencies
 	runtimeDependencies.buildIdentity = buildIdentity
+	runtimeDependencies.configuredRoots = configuredRoots
 	return serve(listeners, newHandler(runtimeDependencies), stdout, stderr)
+}
+
+type rootFlags []string
+
+func (r *rootFlags) String() string { return strings.Join(*r, ",") }
+
+func (r *rootFlags) Set(value string) error {
+	*r = append(*r, value)
+	return nil
 }
 
 var cachedBuildName = regexp.MustCompile(`^herder-([0-9a-f]{16})$`)
@@ -348,7 +380,7 @@ func newHandler(deps dependencies) http.Handler {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")
 			return
 		}
-		board, err := readBoard(deps)
+		board, err := readBoard(r.Context(), deps)
 		if err != nil {
 			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 			return
@@ -368,6 +400,27 @@ func newHandler(deps dependencies) http.Handler {
 			return
 		}
 		serveViewer(w, r, deps)
+	})
+	mux.HandleFunc("/api/resolve", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveResolve(w, r, deps)
+	})
+	mux.HandleFunc("/api/files", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveFile(w, r, deps)
+	})
+	mux.HandleFunc("/api/files/tree", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveTree(w, r, deps)
 	})
 	mux.HandleFunc("/api/agents/{busName}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -430,16 +483,37 @@ func newHandler(deps dependencies) http.Handler {
 	})
 }
 
-func readBoard(deps dependencies) (fleetview.Board, error) {
+func readBoard(ctx context.Context, deps dependencies) (fleetview.Board, error) {
 	snapshot, roster, err := readFleetInputs(deps)
 	if err != nil {
 		return fleetview.Board{}, err
 	}
+	return buildBoard(ctx, deps, snapshot, roster)
+}
+
+func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapshot, roster []hcomidentity.Row) (fleetview.Board, error) {
 	parents, err := deps.worktrees(snapshot.Workspaces)
 	if err != nil {
 		return fleetview.Board{}, sourceError{"herdr", err}
 	}
-	return fleetview.Build(snapshot, roster, parents), nil
+	board := fleetview.Build(snapshot, roster, parents)
+	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))
+	for _, workspace := range snapshot.Workspaces {
+		workspaces[workspace.WorkspaceID] = workspace
+	}
+	for index := range board.Workspaces {
+		source := workspaces[board.Workspaces[index].WorkspaceID]
+		if source.Worktree == nil || source.Worktree.CheckoutPath == "" {
+			continue
+		}
+		repository, contextErr := deps.repoContext(ctx, source.Worktree.CheckoutPath)
+		if contextErr != nil {
+			return fleetview.Board{}, sourceError{"git", contextErr}
+		}
+		board.Workspaces[index].CWD = repository.CWD
+		board.Workspaces[index].Git = repository.Git
+	}
+	return board, nil
 }
 
 func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, error) {
@@ -472,6 +546,14 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 		Gap: "no visible pane", Directory: row.Directory, SessionID: row.SessionID,
 		LaunchContext: row.LaunchContext,
 		ParentAgent:   row.ParentAgent,
+	}
+	if row.Directory != "" {
+		repository, contextErr := deps.repoContext(ctx, row.Directory)
+		if contextErr != nil {
+			return agentDetail{}, sourceError{"git", contextErr}
+		}
+		result.CWD = repository.CWD
+		result.Git = repository.Git
 	}
 	vitals, err := deps.agentVitals(row)
 	if err != nil {
@@ -1112,11 +1194,8 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		if readErr != nil {
 			return fleetview.Board{}, nil, nil, readErr
 		}
-		parents, readErr := deps.worktrees(snapshot.Workspaces)
-		if readErr != nil {
-			return fleetview.Board{}, nil, nil, sourceError{"herdr", readErr}
-		}
-		return fleetview.Build(snapshot, roster, parents), roster, paneRevisions(snapshot), nil
+		board, readErr := buildBoard(r.Context(), deps, snapshot, roster)
+		return board, roster, paneRevisions(snapshot), readErr
 	}
 	board, roster, panes, err := readEventBoard()
 	if err != nil {

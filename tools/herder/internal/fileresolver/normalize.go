@@ -35,7 +35,8 @@ func NormalizeQuery(input string) NormalizedQuery {
 }
 
 func isLeadingFence(r rune) bool {
-	return r == '`' || r == '"' || r == '\'' || r == '“' || r == '‘'
+	return r == '`' || r == '"' || r == '\'' || r == '“' || r == '‘' ||
+		r == '(' || r == '[' || r == '{' || r == '<'
 }
 
 func isTrailingFence(r rune) bool {

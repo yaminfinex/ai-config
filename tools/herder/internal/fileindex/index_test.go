@@ -19,12 +19,12 @@ func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
 	index := New(Options{
 		TTL: time.Minute,
 		Now: func() time.Time { return now },
-		Run: func(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+		Run: func(_ context.Context, dir, name string, args ...string) (CommandOutput, error) {
 			if dir != "/opaque/root" || name != "git" {
 				t.Fatalf("run dir=%q name=%q args=%q", dir, name, args)
 			}
 			gitCalls++
-			return []byte([]string{"first\x00", "second\x00", "third\x00"}[gitCalls-1]), nil
+			return CommandOutput{Stdout: []byte([]string{"first\x00", "second\x00", "third\x00"}[gitCalls-1])}, nil
 		},
 	})
 
@@ -108,6 +108,39 @@ func TestIndexUsesRipgrepForNonGitRoot(t *testing.T) {
 	}
 }
 
+func TestIndexTreatsEmptyNonGitRootAsEmptyCandidateSet(t *testing.T) {
+	candidates, err := New(Options{}).Candidates(context.Background(), t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("candidates = %q", candidates)
+	}
+}
+
+func TestIndexReportsPartialNonGitRootAsDegraded(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "visible.md", "visible\n")
+	writeFile(t, root, "blocked/secret.md", "secret\n")
+	blocked := filepath.Join(root, "blocked")
+	if err := os.Chmod(blocked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
+
+	candidates, err := New(Options{}).Candidates(context.Background(), root, false)
+	var degraded *DegradedError
+	if !errors.As(err, &degraded) {
+		t.Fatalf("error=%v, want DegradedError", err)
+	}
+	if !slices.Contains(candidates, "visible.md") {
+		t.Fatalf("partial candidates=%q", candidates)
+	}
+	if !strings.Contains(err.Error(), "Permission denied") {
+		t.Fatalf("degraded detail=%q", err)
+	}
+}
+
 func TestIndexExcludesGitInternalsFromNonGitFallback(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "visible.md", "visible\n")
@@ -125,11 +158,11 @@ func TestIndexExcludesGitInternalsFromNonGitFallback(t *testing.T) {
 }
 
 func TestIndexReportsMissingRipgrepForNonGitRoot(t *testing.T) {
-	run := func(_ context.Context, _ string, name string, _ ...string) ([]byte, error) {
+	run := func(_ context.Context, _ string, name string, _ ...string) (CommandOutput, error) {
 		if name == "git" {
-			return []byte("fatal: not a git repository"), errors.New("exit status 128")
+			return CommandOutput{Stderr: []byte("fatal: not a git repository")}, errors.New("exit status 128")
 		}
-		return nil, errors.New("executable file not found")
+		return CommandOutput{}, errors.New("executable file not found")
 	}
 	_, err := New(Options{Run: run}).Candidates(context.Background(), "/non-git", false)
 	if err == nil || !strings.Contains(err.Error(), "rg --files") || !strings.Contains(err.Error(), "executable file not found") {
