@@ -28,9 +28,9 @@ test('agent-less Herdr panes are described as unattributed, never agent-free', (
     label: 'Terminal',
     warning: unattributedTerminalWarning,
   })
-  const board = readFileSync(new URL('../src/features/board/BoardPanel.tsx', import.meta.url), 'utf8')
-  assert.match(board, /screenPanePresentation/)
-  assert.doesNotMatch(board, />shell</)
+  const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
+  assert.match(sidebar, /unattributedTerminalWarning/)
+  assert.doesNotMatch(sidebar, />shell</)
 })
 
 test('agent screen choice requires a live proven pane and defaults to transcript', () => {

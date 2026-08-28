@@ -54,9 +54,10 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
 
   return <form className="send-box" onSubmit={(event) => void send(event)}>
     {effectiveReadOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{effectiveReadOnly}</span></div>}
-    <label htmlFor={fieldId}>Message {name} <span>· Enter for newline · Ctrl/Cmd+Enter to send</span></label><textarea
+    <textarea
       id={fieldId}
       data-composer
+      aria-label={`Message ${name}`}
       ref={composerRef}
       rows={1}
       value={message}
@@ -73,6 +74,5 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
       <div>{sendProblem && <p className="inline-error" role="alert">{sendProblem}</p>}{sendNotice && <p className="send-notice">{sendNotice}</p>}</div>
       <button type="submit" disabled={!message.trim() || mutation.isPending || Boolean(effectiveReadOnly)}>{mutation.isPending ? 'Sending…' : 'Send request'}</button>
     </div>
-    <p className="attribution-copy">sends as an attributed web viewer · web senders are not addressable bus peers</p>
   </form>
 }

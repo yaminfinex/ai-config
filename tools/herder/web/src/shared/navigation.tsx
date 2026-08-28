@@ -11,7 +11,7 @@ export function AppLink({ to, className, children }: { to: string, className?: s
   }}>{children}</a>
 }
 
-export type Route = { page: 'board' } | { page: 'agent', name: string } | { page: 'missing' }
+export type Route = { page: 'shell' } | { page: 'agent', name: string } | { page: 'missing' }
 
 export function currentRoute(): Route {
   const match = window.location.pathname.match(/^\/agents\/([^/]+)\/?$/)
@@ -22,5 +22,5 @@ export function currentRoute(): Route {
       return { page: 'missing' }
     }
   }
-  return window.location.pathname === '/' ? { page: 'board' } : { page: 'missing' }
+  return window.location.pathname === '/' ? { page: 'shell' } : { page: 'missing' }
 }

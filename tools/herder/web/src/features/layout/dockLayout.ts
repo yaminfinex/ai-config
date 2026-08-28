@@ -7,7 +7,6 @@ import { folderTabID } from '../folders/folderModel.ts'
 export const layoutStorageKey = 'herder.web.layout.v2'
 export const legacyLayoutStorageKey = 'herder.web.layout.v1'
 
-export type BoardPanelParams = { kind: 'board', preview: false }
 export type AgentPanelParams = { kind: 'agent', name: string, preview: boolean }
 export type ScreenIdentity = { paneID: string, workspaceID: string, tabID: string, agent: string, sessionID?: string }
 export type ScreenPanelParams = { kind: 'screen', pane: Pane, identity: ScreenIdentity, preview: boolean }
@@ -22,7 +21,7 @@ export type FilePanelParams = {
   viewMode: FileViewMode
 }
 export type FolderPanelParams = { kind: 'folder', root: string, path: string, preview: boolean }
-export type DockPanelParams = BoardPanelParams | AgentPanelParams | ScreenPanelParams | FilePanelParams | FolderPanelParams
+export type DockPanelParams = AgentPanelParams | ScreenPanelParams | FilePanelParams | FolderPanelParams
 
 export type StoredLayout = {
   version: 2
@@ -65,7 +64,6 @@ function validIdentity(value: unknown): value is ScreenIdentity {
 
 export function panelParams(value: unknown): DockPanelParams | null {
   if (!record(value) || typeof value.kind !== 'string' || typeof value.preview !== 'boolean') return null
-  if (value.kind === 'board') return value.preview === false ? { kind: 'board', preview: false } : null
   if (value.kind === 'agent') return typeof value.name === 'string' && value.name ? { kind: 'agent', name: value.name, preview: value.preview } : null
   if (value.kind === 'screen') return validPane(value.pane) && validIdentity(value.identity)
     ? { kind: 'screen', pane: value.pane, identity: value.identity, preview: value.preview }
@@ -83,7 +81,6 @@ export function panelParams(value: unknown): DockPanelParams | null {
 }
 
 function expectedPanelID(params: DockPanelParams) {
-  if (params.kind === 'board') return 'board'
   if (params.kind === 'agent') return agentTabID(params.name)
   if (params.kind === 'screen') return `screen:${params.pane.pane_id}`
   if (params.kind === 'folder') return folderTabID(params.root, params.path)
@@ -115,11 +112,17 @@ function validDock(value: unknown): value is SerializedDockview {
 export function parseStoredLayout(raw: string | null): StoredLayout | null {
   try {
     const value: unknown = JSON.parse(raw ?? '')
-    if (!record(value) || value.version !== 2 || (value.dock !== null && !validDock(value.dock)) ||
+    if (!record(value) || value.version !== 2 ||
       typeof value.sidebarWidth !== 'number' || !Number.isFinite(value.sidebarWidth) ||
       (value.expandedItems !== undefined && !strings(value.expandedItems)) ||
       (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems))) return null
-    return value as StoredLayout
+    const dock = dropRemovedBoardPanel(value.dock)
+    if (dock !== null && !validDock(dock)) return null
+    return {
+      version: 2, dock, sidebarWidth: value.sidebarWidth,
+      ...(value.expandedItems === undefined ? {} : { expandedItems: value.expandedItems }),
+      ...(value.knownWorkspaceItems === undefined ? {} : { knownWorkspaceItems: value.knownWorkspaceItems }),
+    }
   } catch {
     return null
   }
@@ -185,6 +188,34 @@ function firstGroupID(node: GridNode): string | undefined {
 function groupIDs(node: GridNode): Set<string> {
   if (node.type === 'leaf') return new Set([String((node.data as UnknownRecord).id)])
   return new Set((node.data as GridNode[]).flatMap((child) => [...groupIDs(child)]))
+}
+
+// Board was a dock panel in layout v2. Retired panel kinds are removed before
+// strict validation so an otherwise healthy saved layout still restores.
+function dropRemovedBoardPanel(value: unknown): unknown | null {
+  if (value === null || !record(value) || !record(value.panels) || !record(value.grid)) return value
+  const panels = Object.fromEntries(Object.entries(value.panels).filter(([, serialized]) => {
+    return !record(serialized) || !record(serialized.params) || serialized.params.kind !== 'board'
+  }))
+  if (Object.keys(panels).length === Object.keys(value.panels).length) return value
+  const keep = new Set(Object.keys(panels))
+  const prunedRoot = pruneGridNode(value.grid.root, keep)
+  if (!prunedRoot || keep.size === 0) return null
+  const root: GridNode = prunedRoot.type === 'branch' ? prunedRoot : { type: 'branch', data: [prunedRoot] }
+  const ids = groupIDs(root)
+  const activeGroup = typeof value.activeGroup === 'string' && ids.has(value.activeGroup) ? value.activeGroup : firstGroupID(root)
+  return { ...value, panels, grid: { ...value.grid, root }, activeGroup }
+}
+
+export function pinMovedPreview(panel: { params: unknown, api: { updateParameters: (params: DockPanelParams) => void } }) {
+  const params = panelParams(panel.params)
+  if (!params?.preview) return false
+  panel.api.updateParameters({ ...params, preview: false })
+  return true
+}
+
+export function shouldGuardBeforeUnload(values: unknown[]) {
+  return values.length >= 2 && values.some((value) => panelParams(value)?.preview === true)
 }
 
 export function persistableDockLayout(value: unknown): SerializedDockview | null {

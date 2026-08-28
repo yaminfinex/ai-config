@@ -12,7 +12,6 @@ import {
 } from 'dockview-react'
 import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from './api/client'
 import { viewerQueryOptions } from './api/queries'
-import { BoardPanel } from './features/board/BoardPanel'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { AgentPanel } from './features/transcript/AgentPanel'
 import { ScreenPanel } from './features/screen/ScreenPanel'
@@ -30,16 +29,20 @@ import { isQuickOpenShortcut } from './features/files/fileShortcut'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
 import { folderTabID } from './features/folders/folderModel'
+import { ShortcutReference } from './features/layout/ShortcutReference'
+import { isClosePanelShortcut, isEditableShortcutTarget, isShortcutReferenceShortcut } from './features/layout/shellShortcuts'
 import {
   layoutStorageKey,
   legacyLayoutStorageKey,
   panelParams,
   parseLegacyLayout,
   parseStoredLayout,
+  pinMovedPreview,
   persistableDockLayout,
   restoreDockLayout,
   screenIdentityState,
   screenPanelParams,
+  shouldGuardBeforeUnload,
   type AgentPanelParams,
   type DockPanelParams,
   type FilePanelParams,
@@ -49,7 +52,6 @@ import {
   type StoredLayout,
 } from './features/layout/dockLayout'
 
-const boardPanel: DockPanelParams = { kind: 'board', preview: false }
 const defaultSidebarWidth = 250
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
@@ -88,7 +90,6 @@ function readInitialLayout(): InitialLayout {
 function screenTabID(paneID: string) { return `screen:${paneID}` }
 
 function dockPanelID(params: DockPanelParams) {
-  if (params.kind === 'board') return 'board'
   if (params.kind === 'agent') return agentTabID(params.name)
   if (params.kind === 'screen') return screenTabID(params.pane.pane_id)
   if (params.kind === 'folder') return folderTabID(params.root, params.path)
@@ -96,7 +97,6 @@ function dockPanelID(params: DockPanelParams) {
 }
 
 function panelTitle(params: DockPanelParams) {
-  if (params.kind === 'board') return 'Board'
   if (params.kind === 'agent') return params.name
   if (params.kind === 'screen') return params.pane.label || params.pane.pane_id
   if (params.kind === 'folder') return rootLabel(params.path) || rootLabel(params.root)
@@ -104,8 +104,8 @@ function panelTitle(params: DockPanelParams) {
 }
 
 function setPathForPanel(params: DockPanelParams, push = true) {
-  if (params.kind !== 'board' && params.kind !== 'agent') return
-  const path = params.kind === 'board' ? '/' : `/agents/${encodeURIComponent(params.name)}`
+  if (params.kind !== 'agent') return
+  const path = `/agents/${encodeURIComponent(params.name)}`
   if (push && window.location.pathname !== path) window.history.pushState({}, '', path)
 }
 
@@ -127,7 +127,6 @@ function visiblePane(board: Board | undefined, params: ScreenPanelParams): Pane 
 
 type WorkspaceContextValue = {
   board?: Board
-  lifecycleBanner: (key: string, detail: string) => void
   identityReadOnly: string
   openFile: (target: FileTarget, groupID?: string) => void
   openFolder: (target: FolderTarget, groupID?: string) => void
@@ -138,7 +137,6 @@ type WorkspaceContextValue = {
   onViewer: (viewer: string) => void
   onAgentStatus: (name: string, status: string) => void
   agentStatuses: Record<string, string>
-  openBoard: () => void
   resetLayout: () => void
   showQuickOpen: (groupID?: string) => void
   stream: StreamState
@@ -161,11 +159,6 @@ function usePanelVisibility(api: IDockviewPanelProps['api']) {
     return () => disposable.dispose()
   }, [api])
   return visible
-}
-
-function BoardDockPanel() {
-  const workspace = useWorkspace()
-  return <BoardPanel board={workspace.board} onBanner={workspace.lifecycleBanner} />
 }
 
 function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) {
@@ -205,47 +198,40 @@ function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelParams>) {
   return <div className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
     onDoubleClick={(event) => { if (params.preview) workspace.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) api.close() }}>
-    <span className="dock-tab-label">{params.kind === 'board' ? '⌗ ' : params.kind === 'screen' ? '▣ ' : params.kind === 'file' ? '◇ ' : params.kind === 'folder' ? '▰ ' : ''}{panelTitle(params)}</span>
+    <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{params.kind === 'screen' ? '▣ ' : params.kind === 'file' ? '◇ ' : params.kind === 'folder' ? '▰ ' : ''}{panelTitle(params)}</span>
     {meta && <span className="dock-tab-meta">{params.kind === 'agent' && <AgentStatusDot status={status} />}{meta}</span>}
     <button type="button" className="dock-tab-close" aria-label={`Close ${panelTitle(params)}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => api.close()}>×</button>
   </div>
 }
 
-function DockHeaderActions({ containerApi, group, activePanel }: IDockviewHeaderActionsProps) {
+function DockHeaderActions({ group, activePanel }: IDockviewHeaderActionsProps) {
   const workspace = useWorkspace()
-  const primary = containerApi.groups[0]?.id === group.id
   return <div className="dock-header-actions">
     <button type="button" className="new-tab" title="Quick open file or folder · Ctrl/Cmd+K" aria-label="Quick open file or folder in this group" onClick={() => {
       activePanel?.api.setActive()
       workspace.showQuickOpen(group.id)
     }}>+</button>
-    {primary && <>
-      <span className={`stream-chip${workspace.streamProblems.stream ? ' fault' : ''}`}>{workspace.streamProblems.stream ? 'SSE: reconnecting' : 'SSE: connected'}</span>
-      <span className="layout-chip" title="Drag tabs to an edge to split · Ctrl/Cmd+W close · Ctrl/Cmd+PageUp/PageDown switch · Alt+1 sidebar · Alt+2 composer">layout: this browser</span>
-      <ThemeToggle />
-    </>}
   </div>
 }
 
 function DockWatermark({ containerApi }: IWatermarkPanelProps) {
   const workspace = useWorkspace()
-  return <section className="dock-watermark" role="status"><strong>No panels open</strong><p>Open the fleet board or find a file or folder. Your sidebar and shortcuts are still available.</p><div>
-    <button type="button" onClick={workspace.openBoard}>Open Board</button>
+  return <section className="dock-watermark" role="status"><strong>No panels open</strong><p>Open an agent from the fleet sidebar or find a file or folder. Your sidebar and shortcuts are still available.</p><div>
     <button type="button" onClick={() => workspace.showQuickOpen(containerApi.activeGroup?.id)}>Quick Open</button>
     <button type="button" onClick={workspace.resetLayout}>Reset layout</button>
   </div></section>
 }
 
-const dockComponents = { board: BoardDockPanel, agent: AgentDockPanel, screen: ScreenDockPanel, file: FileDockPanel, folder: FolderDockPanel }
+const dockComponents = { agent: AgentDockPanel, screen: ScreenDockPanel, file: FileDockPanel, folder: FolderDockPanel }
 
 function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
   const [initial] = useState(readInitialLayout)
   const [quickOpen, setQuickOpen] = useState(false)
+  const [shortcutReference, setShortcutReference] = useState(false)
   const [quickOpenGroup, setQuickOpenGroup] = useState<string>()
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
-  const [lifecycleProblems, setLifecycleProblems] = useState<Record<string, string>>({})
   const [agentStatuses, setAgentStatuses] = useState<Record<string, string>>({})
   const [agentScreenPanes, setAgentScreenPanes] = useState<Record<string, string>>({})
   const [activePanelID, setActivePanelID] = useState('')
@@ -281,8 +267,6 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     syncDock()
     return added
   }, [syncDock])
-
-  const openBoard = useCallback(() => { addPanel(boardPanel) }, [addPanel])
 
   const openAgent = useCallback((name: string, preview: boolean, groupID?: string) => {
     const api = apiRef.current
@@ -401,13 +385,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   }, [syncDock])
 
   const applyRoute = useCallback((route: Exclude<Route, { page: 'missing' }>, push = false) => {
-    if (route.page === 'board') openBoard()
-    else openAgent(route.name, true)
+    if (route.page === 'shell') return
+    openAgent(route.name, true)
     const api = apiRef.current
-    const id = route.page === 'board' ? 'board' : agentTabID(route.name)
+    const id = agentTabID(route.name)
     const current = api ? panelFromAPI(api, id) : null
     if (current) setPathForPanel(current.params, push)
-  }, [openAgent, openBoard])
+  }, [openAgent])
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     dockDisposables.current.forEach((disposable) => disposable.dispose())
@@ -418,12 +402,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       restored = restoreDockLayout(event.api, initial.stored.dock)
     }
     if (!restored && initial.legacy) {
-      addPanel(boardPanel)
       initial.legacy.openTabs.forEach((name) => openAgent(name, false))
-      const active = initial.legacy.activeTab === 'board' ? event.api.getPanel('board') : event.api.getPanel(initial.legacy.activeTab)
+      const active = initial.legacy.activeTab === 'board' ? event.api.panels[0] : event.api.getPanel(initial.legacy.activeTab)
       active?.api.setActive()
     }
-    if (!restored && !initial.legacy) addPanel(boardPanel)
     applyRoute(initialRoute)
     const onLayout = event.api.onDidLayoutChange(syncDock)
     const onActive = event.api.onDidActivePanelChange(({ panel }) => {
@@ -443,10 +425,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         const next = { ...current }; delete next[params.name]; return next
       })
     })
-    dockDisposables.current = [onLayout, onActive, onRemove]
+    const onMove = event.api.onDidMovePanel(({ panel }) => {
+      if (pinMovedPreview(panel)) syncDock()
+    })
+    dockDisposables.current = [onLayout, onActive, onRemove, onMove]
     setDockReady(true)
     syncDock()
-  }, [addPanel, applyRoute, initial, initialRoute, openAgent, syncDock])
+  }, [applyRoute, initial, initialRoute, openAgent, syncDock])
 
   useEffect(() => () => dockDisposables.current.forEach((disposable) => disposable.dispose()), [])
 
@@ -472,10 +457,20 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     return () => window.clearTimeout(timer)
   }, [dockReady, expandedItems, knownWorkspaceItems, revision, sidebarWidth])
 
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      if (!shouldGuardBeforeUnload(apiRef.current?.panels.map((panel) => panel.params) ?? [])) return
+      event.preventDefault()
+      event.returnValue = true
+    }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [])
+
   const restoredPanels = initial.stored?.dock ? Object.values(initial.stored.dock.panels).flatMap((panel) => {
     const params = panelParams(panel.params)
     return params ? [params] : []
-  }) : initial.legacy ? [boardPanel, ...initial.legacy.openTabs.map((name): AgentPanelParams => ({ kind: 'agent', name, preview: false }))] : [boardPanel]
+  }) : initial.legacy ? initial.legacy.openTabs.map((name): AgentPanelParams => ({ kind: 'agent', name, preview: false })) : []
   const openPanels = apiRef.current?.panels.flatMap((panel) => {
     const params = panelParams(panel.params)
     return params ? [params] : []
@@ -486,7 +481,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const stream = useFleetStream(agentNames, screenPaneIDs)
   const activeParams = openPanels.find((params) => {
     return dockPanelID(params) === activePanelID
-  }) ?? boardPanel
+  })
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
   const viewer = viewerQuery.data?.viewer ?? 'unresolved'
   const viewerState = viewerQuery.isPending ? 'resolving' : viewerQuery.data ? 'attributed' : viewerFailure?.response?.status === 409 ? 'unresolved' : 'unavailable'
@@ -494,11 +489,6 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const viewerReadOnly = viewerQuery.isPending ? 'Resolving viewer identity…' : viewerQuery.data ? ''
     : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
 
-  const setLifecycleBanner = useCallback((key: string, detail: string) => setLifecycleProblems((current) => {
-    const next = { ...current }
-    if (detail) next[key] = detail; else delete next[key]
-    return next
-  }), [])
   const setAgentStatus = useCallback((name: string, status: string) => setAgentStatuses((current) => current[name] === status ? current : { ...current, [name]: status }), [])
   const setAgentScreenPane = useCallback((name: string, paneID?: string) => setAgentScreenPanes((current) => {
     if (paneID) return current[name] === paneID ? current : { ...current, [name]: paneID }
@@ -508,8 +498,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const streamProblems = useMemo<Record<string, string>>(() => ({
     ...stream.problems,
     ...(boardQuery.error ? { fleet: boardQuery.error.message } : {}),
-    ...lifecycleProblems,
-  }), [boardQuery.error, lifecycleProblems, stream.problems])
+  }), [boardQuery.error, stream.problems])
 
   const showQuickOpen = useCallback((groupID?: string) => {
     setQuickOpenGroup(groupID ?? apiRef.current?.activeGroup?.id)
@@ -520,17 +509,18 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     if (!api) return
     api.clear()
     try { localStorage.removeItem(layoutStorageKey) } catch { /* best effort */ }
-    addPanel(boardPanel)
     setSidebarWidth(defaultSidebarWidth)
     syncDock()
-  }, [addPanel, syncDock])
+  }, [syncDock])
 
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       const api = apiRef.current
       const command = event.ctrlKey || event.metaKey
       if (isQuickOpenShortcut(event, navigator.userAgent)) showQuickOpen()
-      else if (command && event.key.toLowerCase() === 'w' && api?.activePanel) api.activePanel.api.close()
+      else if (isClosePanelShortcut(event) && !isEditableShortcutTarget(event.target) && api?.activePanel) api.activePanel.api.close()
+      else if (isShortcutReferenceShortcut(event) && !isEditableShortcutTarget(event.target)) setShortcutReference(true)
+      else if (event.key === 'Escape' && shortcutReference) setShortcutReference(false)
       else if (command && (event.key === 'PageDown' || event.key === 'PageUp') && api?.activeGroup) {
         const panels = api.activeGroup.panels
         const index = panels.findIndex((panel) => panel.id === api.activeGroup?.activePanel?.id)
@@ -542,7 +532,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     }
     window.addEventListener('keydown', shortcut)
     return () => window.removeEventListener('keydown', shortcut)
-  }, [showQuickOpen])
+  }, [shortcutReference, showQuickOpen])
 
   const startResize = (event: React.PointerEvent) => {
     const startX = event.clientX
@@ -552,18 +542,19 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop)
   }
 
-  const activeAgentStatus = activeParams.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
-  const quickOpenAgent = activeParams.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
+  const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
+  const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
   const workspace = useMemo<WorkspaceContextValue>(() => ({
-    board: boardQuery.data, lifecycleBanner: setLifecycleBanner, identityReadOnly: viewerReadOnly, openFile, openFolder, pinPanel, setFileViewMode,
+    board: boardQuery.data, identityReadOnly: viewerReadOnly, openFile, openFolder, pinPanel, setFileViewMode,
     agentScreenPanes, setAgentScreenPane, onViewer: (resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer }),
-    onAgentStatus: setAgentStatus, agentStatuses, openBoard, resetLayout, showQuickOpen, stream, streamProblems,
-  }), [agentScreenPanes, agentStatuses, boardQuery.data, openBoard, openFile, openFolder, pinPanel, queryClient, resetLayout, setAgentScreenPane, setAgentStatus, setFileViewMode, setLifecycleBanner, showQuickOpen, stream, streamProblems, viewerReadOnly])
+    onAgentStatus: setAgentStatus, agentStatuses, resetLayout, showQuickOpen, stream, streamProblems,
+  }), [agentScreenPanes, agentStatuses, boardQuery.data, openFile, openFolder, pinPanel, queryClient, resetLayout, setAgentScreenPane, setAgentStatus, setFileViewMode, showQuickOpen, stream, streamProblems, viewerReadOnly])
 
   return <WorkspaceContext.Provider value={workspace}><div className="app-shell">
     <QuickOpen open={quickOpen} agent={quickOpenAgent} onClose={() => { setQuickOpen(false); setQuickOpenGroup(undefined) }} onOpenFile={openFile} onOpenFolder={openFolder} />
+    <ShortcutReference open={shortcutReference} onClose={() => setShortcutReference(false)} />
     <div className="sidebar-region" style={{ width: sidebarWidth }}>
-      <FleetSidebar board={boardQuery.data} activeAgent={activeParams.kind === 'agent' ? activeParams.name : undefined} activePane={activeParams.kind === 'screen' ? activeParams.pane.pane_id : undefined}
+      <FleetSidebar board={boardQuery.data} activeAgent={activeParams?.kind === 'agent' ? activeParams.name : undefined} activePane={activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined}
         onPreviewAgent={(name) => openAgent(name, true)} onPinAgent={(name) => openAgent(name, false)} onPreviewPane={(pane) => openScreen(pane, true)} onPinPane={(pane) => openScreen(pane, false)}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
     </div>
@@ -583,8 +574,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       <footer className="status-bar">
         <span>substrate: herdr {boardQuery.data ? '✓' : '…'} · hcom {streamProblems.hcom ? '×' : '✓'}</span>
         <span className={streamProblems.stream ? 'fault' : ''}>SSE: {streamProblems.stream ? 'reconnecting' : 'connected'}</span>
-        <span>viewer: {viewerQuery.isPending ? 'resolving…' : viewer}</span><span>{viewerState === 'resolving' ? 'resolving identity' : viewerState === 'attributed' ? 'attributed' : viewerState === 'unavailable' ? 'identity unavailable' : 'read-only · unattributed'}</span>
+        <span title="Dock layout is stored in this browser">layout: this browser</span>
+        <span title="Web sends are attributed to this viewer; web senders are not addressable bus peers.">viewer: {viewerQuery.isPending ? 'resolving…' : viewer}</span><span>{viewerState === 'resolving' ? 'resolving identity' : viewerState === 'attributed' ? 'attributed' : viewerState === 'unavailable' ? 'identity unavailable' : 'read-only · unattributed'}</span>
         <span className="status-spacer" /><span>{stream.messages} messages</span><span>last event: {stream.lastEvent ? new Date(stream.lastEvent).toLocaleTimeString() : '—'}</span>
+        <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={() => setShortcutReference(true)}>?</button>
+        <ThemeToggle />
       </footer>
     </section>
   </div></WorkspaceContext.Provider>
@@ -593,5 +587,5 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
 export default function App() {
   const route = currentRoute()
   if (route.page !== 'missing') return <Shell initialRoute={route} />
-  return <main className="agent-page"><AppLink to="/" className="back-link">← Fleet board</AppLink><section className="not-found"><strong>404 · Page not found</strong></section></main>
+  return <main className="agent-page"><AppLink to="/" className="back-link">← Workspace</AppLink><section className="not-found"><strong>404 · Page not found</strong></section></main>
 }

@@ -66,6 +66,18 @@ test('retired and absent facts remain honest', () => {
   assert.deepEqual(presentation.vitals, [])
 })
 
+test('owner-ruled strip exceptions hide the bus word and herdr idle only', () => {
+  const idle = agentContextPresentation(detail({ herdr_status: 'idle' }), 'listening')
+  assert.equal(idle.status, 'listening')
+  assert.deepEqual(idle.details, ['p1', 'codex'])
+  const active = agentContextPresentation(detail({ herdr_status: 'active' }), 'active')
+  assert.deepEqual(active.details, ['p1', 'herdr active', 'codex'])
+
+  const strip = readFileSync(new URL('../src/features/transcript/AgentContextStrip.tsx', import.meta.url), 'utf8')
+  assert.match(strip, /<AgentStatusDot status=\{context\.status\} \/>/)
+  assert.doesNotMatch(strip, /\}\{context\.status !==/)
+})
+
 test('the reserved strip sits between the queued dock and composer while the header stays minimal', () => {
   const panel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
   const header = panel.slice(panel.indexOf('<header className="agent-header">'), panel.indexOf('</header>'))

@@ -3,9 +3,12 @@ import test from 'node:test'
 import {
   parseLegacyLayout,
   parseStoredLayout,
+  pinMovedPreview,
   persistableDockLayout,
   restoreDockLayout,
   screenIdentityState,
+  shouldGuardBeforeUnload,
+  type DockPanelParams,
   type ScreenPanelParams,
 } from '../src/features/layout/dockLayout.ts'
 import type { Board } from '../src/types.ts'
@@ -87,41 +90,56 @@ test('malformed and stale layout storage never blocks shell mount', () => {
     openTabs: ['mavu'], activeTab: 'agent:mavu', sidebarWidth: 250,
   })
 
-  const boardDock = {
-    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'group-board', views: ['board'], activeView: 'board' } }] } },
-    panels: { board: { id: 'board', contentComponent: 'board', params: { kind: 'board', preview: false } } },
-    activeGroup: 'group-board',
-  }
-  assert.ok(parseStoredLayout(JSON.stringify({ version: 2, dock: boardDock, sidebarWidth: 250 })))
-  assert.equal(parseStoredLayout(JSON.stringify({ version: 2, dock: {
-    ...boardDock, panels: { board: { ...boardDock.panels.board, contentComponent: 'agent' } },
-  }, sidebarWidth: 250 })), null)
-  assert.equal(parseStoredLayout(JSON.stringify({ version: 2, dock: {
-    ...boardDock, panels: { board: { ...boardDock.panels.board, id: 'agent:mavu' } },
-  }, sidebarWidth: 250 })), null)
 })
 
-test('persisted dock JSON removes preview panels and empty groups', () => {
+test('stored v2 layouts drop the retired Board panel and retain healthy neighbours', () => {
   const dock = {
     grid: {
       width: 900, height: 600, orientation: 0,
       root: {
         type: 'branch', size: 900, data: [
           { type: 'leaf', size: 450, data: { id: 'group-board', views: ['board'], activeView: 'board' } },
-          { type: 'leaf', size: 450, data: { id: 'group-preview', views: ['file:%2Frepo:README.md'], activeView: 'file:%2Frepo:README.md' } },
+          { type: 'leaf', size: 450, data: { id: 'group-agent', views: ['agent:mavu'], activeView: 'agent:mavu' } },
         ],
       },
     },
     panels: {
       board: { id: 'board', contentComponent: 'board', params: { kind: 'board', preview: false } },
-      'file:%2Frepo:README.md': { id: 'file:%2Frepo:README.md', contentComponent: 'file', params: { kind: 'file', root: '/repo', path: 'README.md', preview: true, viewMode: 'rendered' } },
+      'agent:mavu': { id: 'agent:mavu', contentComponent: 'agent', params: { kind: 'agent', name: 'mavu', preview: false } },
     },
-    activeGroup: 'group-preview',
+    activeGroup: 'group-board',
   }
-  const persisted = persistableDockLayout(dock)
-  assert.ok(persisted)
-  assert.deepEqual(Object.keys(persisted.panels), ['board'])
-  assert.equal(persisted.grid.root.type, 'branch')
-  assert.equal(persisted.grid.root.data[0].data.id, 'group-board')
-  assert.equal(persisted.activeGroup, 'group-board')
+  const restored = parseStoredLayout(JSON.stringify({ version: 2, dock, sidebarWidth: 250 }))
+  assert.deepEqual(Object.keys(restored?.dock?.panels ?? {}), ['agent:mavu'])
+  assert.equal(restored?.dock?.grid.root.data[0].data.id, 'group-agent')
+  assert.equal(restored?.dock?.activeGroup, 'group-agent')
+
+  const boardOnly = { ...dock, grid: { root: { type: 'branch', data: [dock.grid.root.data[0]] } }, panels: { board: dock.panels.board } }
+  assert.equal(parseStoredLayout(JSON.stringify({ version: 2, dock: boardOnly, sidebarWidth: 250 }))?.dock, null)
+})
+
+test('moved previews pin, persist, and restore while untouched previews remain ephemeral', () => {
+  const preview = { kind: 'file', root: '/repo', path: 'README.md', preview: true, viewMode: 'rendered' } as const
+  let moved: DockPanelParams = preview
+  assert.equal(pinMovedPreview({ params: preview, api: { updateParameters: (params) => { moved = params } } }), true)
+  assert.equal(moved.preview, false)
+
+  const dock = {
+    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'group-file', views: ['file:%2Frepo:README.md'], activeView: 'file:%2Frepo:README.md' } }] } },
+    panels: { 'file:%2Frepo:README.md': { id: 'file:%2Frepo:README.md', contentComponent: 'file', params: moved } },
+    activeGroup: 'group-file',
+  }
+  const saved = persistableDockLayout(dock)
+  assert.ok(saved)
+  assert.ok(parseStoredLayout(JSON.stringify({ version: 2, dock: saved, sidebarWidth: 250 }))?.dock)
+  assert.equal(persistableDockLayout({ ...dock, panels: { 'file:%2Frepo:README.md': { ...dock.panels['file:%2Frepo:README.md'], params: preview } } }), null)
+})
+
+test('unload guard is limited to multi-panel layouts with an ephemeral preview', () => {
+  const pinned = { kind: 'agent', name: 'mavu', preview: false }
+  const preview = { kind: 'agent', name: 'zira', preview: true }
+  assert.equal(shouldGuardBeforeUnload([]), false)
+  assert.equal(shouldGuardBeforeUnload([preview]), false)
+  assert.equal(shouldGuardBeforeUnload([pinned, pinned]), false)
+  assert.equal(shouldGuardBeforeUnload([pinned, preview]), true)
 })

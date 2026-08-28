@@ -50,7 +50,7 @@ export function agentContextPresentation(agent: AgentDetail, liveStatus: string)
   const retired = status === 'retired' || agent.bus_status === 'retired'
   const details = [
     retired ? 'read-only' : agent.pane?.pane_id ?? 'unplaced',
-    agent.herdr_status !== '-' ? `herdr ${agent.herdr_status}` : '',
+    agent.herdr_status !== '-' && agent.herdr_status.toLowerCase() !== 'idle' ? `herdr ${agent.herdr_status}` : '',
     !retired && agent.gap !== '-' ? gapLabel(agent.gap) : '',
     agent.tool,
   ].filter(Boolean)
