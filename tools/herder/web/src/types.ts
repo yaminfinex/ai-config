@@ -103,6 +103,7 @@ export type MatchTier = 'exact' | 'prefix' | 'suffix' | 'fuzzy'
 export interface FileCandidate {
   root: string
   path: string
+  kind: 'file' | 'dir'
   tier: MatchTier
   score: number
 }
@@ -139,6 +140,55 @@ export interface FileTarget {
   path: string
   line?: number
 }
+
+export interface FolderTarget {
+  root: string
+  path: string
+}
+
+export interface FileTreeEntry {
+  name: string
+  kind: 'file' | 'directory' | 'symlink'
+  size?: number
+}
+
+export interface FileTreeRead {
+  root: string
+  path: string
+  entries: FileTreeEntry[]
+}
+
+export interface BacklogTask {
+  id?: string
+  title?: string
+  status?: string
+  ordinal?: number
+  labels?: string[]
+  priority?: string
+  assignee?: string[]
+  created_date?: string
+  updated_date?: string
+  file: string
+}
+
+export interface BacklogRead {
+  root: string
+  path: string
+  statuses: string[]
+  tasks: BacklogTask[]
+  unparsed: Array<{ file: string, reason: string }>
+  truncated: boolean
+  fetched_at: string
+}
+
+export interface BacklogUnavailable {
+  root: string
+  path: string
+  backlog: { status: 'unavailable', reason: string }
+  fetched_at: string
+}
+
+export type BacklogResponse = BacklogRead | BacklogUnavailable
 
 export interface QueuedMessage {
   id: number

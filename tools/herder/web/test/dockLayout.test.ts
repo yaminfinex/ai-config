@@ -25,11 +25,12 @@ const board: Board = {
 
 const singleGroupDock = {
   grid: { root: { type: 'branch', data: [{
-    type: 'leaf', data: { id: 'group-main', views: ['agent:mavu', 'file:%2Frepo:README.md'], activeView: 'file:%2Frepo:README.md' },
+    type: 'leaf', data: { id: 'group-main', views: ['agent:mavu', 'file:%2Frepo:README.md', 'folder:%2Frepo:src'], activeView: 'folder:%2Frepo:src' },
   }] } },
   panels: {
     'agent:mavu': { id: 'agent:mavu', contentComponent: 'agent', params: { kind: 'agent', name: 'mavu', preview: false } },
     'file:%2Frepo:README.md': { id: 'file:%2Frepo:README.md', contentComponent: 'file', params: { kind: 'file', root: '/repo', path: 'README.md', preview: false, viewMode: 'rendered' } },
+    'folder:%2Frepo:src': { id: 'folder:%2Frepo:src', contentComponent: 'folder', params: { kind: 'folder', root: '/repo', path: 'src', preview: false } },
   },
   activeGroup: 'group-main',
 }
@@ -46,14 +47,14 @@ test('screen restore waits for the fleet and rejects reused pane identities', ()
   assert.equal(screenIdentityState({ ...params, identity: { ...params.identity, paneID: 'vanished' } }, board), 'mismatch')
 })
 
-test('single-group pinned agent and file panels round-trip with a branch root', () => {
+test('single-group pinned agent, file, and folder panels round-trip with a branch root', () => {
   const saved = persistableDockLayout(singleGroupDock)
   assert.ok(saved)
   assert.equal(saved.grid.root.type, 'branch')
   assert.equal(saved.grid.root.data.length, 1)
   const restored = parseStoredLayout(JSON.stringify({ version: 2, dock: saved, sidebarWidth: 250 }))
   assert.deepEqual(restored?.dock, saved)
-  assert.deepEqual(Object.keys(restored?.dock?.panels ?? {}), ['agent:mavu', 'file:%2Frepo:README.md'])
+  assert.deepEqual(Object.keys(restored?.dock?.panels ?? {}), ['agent:mavu', 'file:%2Frepo:README.md', 'folder:%2Frepo:src'])
   let loaded: unknown
   assert.equal(restoreDockLayout({ fromJSON: (value) => { loaded = value } }, restored.dock), true)
   assert.deepEqual(loaded, saved)
