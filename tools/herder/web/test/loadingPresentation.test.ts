@@ -20,7 +20,7 @@ test('screen first-load and truncation are informational while unavailable is an
   assert.deepEqual(screenNotice(undefined), { tone: 'info', detail: 'Connecting to live pane…' })
   assert.equal(screenNotice({ pane_id: 'w1:p2', revision: 1, status: 'available', text: 'ready', truncated: false }), null)
   assert.deepEqual(screenNotice({ pane_id: 'w1:p2', revision: 1, status: 'available', text: 'partial', truncated: true }), {
-    tone: 'info', detail: 'Screen exceeds the 16 KiB live-frame budget; this snapshot is truncated.',
+    tone: 'info', detail: 'Screen exceeds the 64 KiB live-frame budget; this snapshot is truncated.',
   })
   assert.deepEqual(screenNotice({ pane_id: 'w1:p2', status: 'unavailable', text: '', truncated: false, detail: 'pane gone' }), {
     tone: 'error', detail: 'pane gone',
@@ -32,6 +32,6 @@ test('screen loading notice overlays a header and terminal that remain mounted',
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.match(component, /className="screen-viewport" aria-busy=\{!frame\}/)
   assert.match(component, /className="screen-notice"/)
-  assert.match(component, /className=\{`terminal-screen/)
+  assert.match(component, /className="terminal-host"/)
   assert.match(css, /\.screen-notice \{[^}]*position: absolute;/s)
 })

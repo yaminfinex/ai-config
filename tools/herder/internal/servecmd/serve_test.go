@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/quick"
 	"time"
 
 	"ai-config/tools/herder/internal/claudesession"
@@ -72,13 +73,24 @@ func fixtureDeps() dependencies {
 		fileResolver: fileresolver.New(fileindex.New(fileindex.Options{})),
 		repoContext:  repoctx.Read,
 		now:          time.Now,
+		audit:        func(string, ...any) {},
+		inputSerial:  &paneInputSerial{},
 	}
 }
 
 type fixtureScreenSource struct {
-	reads  map[string]int
-	readCh chan string
-	text   string
+	reads            map[string]int
+	readCh           chan string
+	text             string
+	history          string
+	historyTruncated bool
+	inputs           []herdrcli.PaneInput
+	inputErr         error
+}
+
+func (s *fixtureScreenSource) SendInput(input herdrcli.PaneInput) error {
+	s.inputs = append(s.inputs, input)
+	return s.inputErr
 }
 
 func (s *fixtureScreenSource) ReadVisible(paneID string) (herdrcli.VisibleScreen, error) {
@@ -91,7 +103,137 @@ func (s *fixtureScreenSource) ReadVisible(paneID string) (herdrcli.VisibleScreen
 	return herdrcli.VisibleScreen{PaneID: paneID, Text: s.text}, nil
 }
 
+func (s *fixtureScreenSource) ReadHistory(paneID string, _ int) (herdrcli.VisibleScreen, error) {
+	return herdrcli.VisibleScreen{PaneID: paneID, Text: s.history, Truncated: s.historyTruncated}, nil
+}
+
+func TestPaneInputPinsValidationAttributionForwardingAndAudit(t *testing.T) {
+	source := &fixtureScreenSource{}
+	deps := fixtureDeps()
+	deps.screens = func() (screenSource, error) { return source, nil }
+	var audits []string
+	deps.audit = func(format string, values ...any) { audits = append(audits, fmt.Sprintf(format, values...)) }
+
+	for _, body := range []string{`{}`, `{"text":"x","keys":["up"]}`, `{"text":"","keys":[]}`, `{"bogus":"x"}`} {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/panes/p1/input", strings.NewReader(body)))
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("body %s = %d %s", body, response.Code, response.Body.String())
+		}
+	}
+	oversized := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(oversized, httptest.NewRequest(http.MethodPost, "/api/panes/p1/input", strings.NewReader(`{"text":"`+strings.Repeat("x", 9<<10)+`"}`)))
+	if oversized.Code != http.StatusBadRequest || !strings.Contains(oversized.Body.String(), "8 KiB") {
+		t.Fatalf("oversized = %d %s", oversized.Code, oversized.Body.String())
+	}
+
+	for _, body := range []string{`{"text":"\u0003\u001b[A"}`, `{"keys":["ctrl+c","up"]}`} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/panes/p1/input", strings.NewReader(body))
+		request.RemoteAddr = "100.64.0.8:4400"
+		newHandler(deps).ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"sent":true`) || !strings.Contains(response.Body.String(), `"viewer":"web-alice-example-com"`) {
+			t.Fatalf("success = %d %s", response.Code, response.Body.String())
+		}
+	}
+	if len(source.inputs) != 2 || source.inputs[0].Text != "\x03\x1b[A" || fmt.Sprint(source.inputs[1].Keys) != "[ctrl+c up]" {
+		t.Fatalf("inputs = %#v", source.inputs)
+	}
+	if len(audits) != 2 || !strings.Contains(audits[0], "viewer=web-alice-example-com") || !strings.Contains(audits[0], "pane=p1") || strings.Contains(strings.Join(audits, "\n"), "ctrl+c") {
+		t.Fatalf("audits = %#v", audits)
+	}
+}
+
+func TestPaneInputPins404409And502Refusals(t *testing.T) {
+	unknown := httptest.NewRecorder()
+	newHandler(fixtureDeps()).ServeHTTP(unknown, httptest.NewRequest(http.MethodPost, "/api/panes/missing/input", strings.NewReader(`{"text":"x"}`)))
+	if unknown.Code != http.StatusNotFound {
+		t.Fatalf("unknown = %d %s", unknown.Code, unknown.Body.String())
+	}
+
+	for name, test := range map[string]struct {
+		err    error
+		status int
+	}{
+		"gone mid-write":    {herdrcli.ErrPaneGone, http.StatusConflict},
+		"substrate failure": {errors.New("socket unavailable"), http.StatusBadGateway},
+	} {
+		t.Run(name, func(t *testing.T) {
+			deps := fixtureDeps()
+			deps.screens = func() (screenSource, error) { return &fixtureScreenSource{inputErr: test.err}, nil }
+			response := httptest.NewRecorder()
+			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/panes/p1/input", strings.NewReader(`{"text":"x"}`)))
+			if response.Code != test.status {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func decodedScreenFrame(t *testing.T, wire []byte) screenFrame {
+	t.Helper()
+	parts := bytes.SplitN(wire, []byte("\n"), 2)
+	if len(parts) != 2 {
+		t.Fatalf("invalid SSE wire %q", wire)
+	}
+	data := bytes.TrimSuffix(bytes.TrimPrefix(parts[1], []byte("data: ")), []byte("\n\n"))
+	var decoded screenFrame
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return decoded
+}
+
+func ansiPrefixIsGround(text string) bool {
+	const (
+		ground = iota
+		escape
+		csi
+		stringEscape
+		stringEscapeEnd
+	)
+	state := ground
+	for index := 0; index < len(text); index++ {
+		value := text[index]
+		switch state {
+		case ground:
+			if value == 0x1b {
+				state = escape
+			}
+		case escape:
+			switch value {
+			case '[':
+				state = csi
+			case ']', 'P', 'X', '^', '_':
+				state = stringEscape
+			default:
+				state = ground
+			}
+		case csi:
+			if value >= 0x40 && value <= 0x7e {
+				state = ground
+			}
+		case stringEscape:
+			if value == 0x07 {
+				state = ground
+			} else if value == 0x1b {
+				state = stringEscapeEnd
+			}
+		case stringEscapeEnd:
+			if value == '\\' {
+				state = ground
+			} else if value != 0x1b {
+				state = stringEscape
+			}
+		}
+	}
+	return state == ground
+}
+
 func TestScreenFrameUsesRealFixtureAndHardSerializedBudget(t *testing.T) {
+	if maxScreenFrameBytes != 64<<10 {
+		t.Fatalf("screen frame budget=%d", maxScreenFrameBytes)
+	}
 	realScreen, err := os.ReadFile("testdata/real-terminal-screen.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -100,15 +242,90 @@ func TestScreenFrameUsesRealFixtureAndHardSerializedBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded screenFrame
-	data := bytes.TrimSuffix(bytes.TrimPrefix(bytes.SplitN(wire, []byte("\n"), 2)[1], []byte("data: ")), []byte("\n\n"))
-	if len(wire) > maxScreenFrameBytes || json.Unmarshal(data, &decoded) != nil || decoded.Text != string(realScreen) {
+	decoded := decodedScreenFrame(t, wire)
+	if len(wire) > maxScreenFrameBytes || decoded.Text != string(realScreen) {
 		t.Fatalf("real screen frame bytes=%d", len(wire))
 	}
-	huge := strings.Repeat(string(realScreen), 20)
+	huge := strings.Repeat("\x1b[38;2;115;204;255mcolored row\x1b[0m\n", 10_000)
 	wire, err = encodeScreenEvent("w1:p1", screenFrame{PaneID: "w1:p1", Status: "available", Text: huge})
-	if err != nil || len(wire) > maxScreenFrameBytes || !bytes.Contains(wire, []byte(`"truncated":true`)) || !json.Valid(bytes.TrimSuffix(bytes.TrimPrefix(bytes.SplitN(wire, []byte("\n"), 2)[1], []byte("data: ")), []byte("\n\n"))) {
+	decoded = decodedScreenFrame(t, wire)
+	if err != nil || len(wire) > maxScreenFrameBytes || !decoded.Truncated || !strings.HasSuffix(decoded.Text, "\n") || !ansiPrefixIsGround(decoded.Text) {
 		t.Fatalf("budgeted frame bytes=%d err=%v", len(wire), err)
+	}
+}
+
+func TestScreenFrameTruncationNeverSplitsANSIOrLinesProperty(t *testing.T) {
+	property := func(seed uint16) bool {
+		payload := fmt.Sprintf("\x1b]8;;https://example.test/%d\x1b\\linked-%d\x1b]8;;\x1b\\\n\x1b[3%dmcolor-%d\x1b[0m\n", seed, seed, seed%8, seed)
+		source := strings.Repeat(payload, 5000+int(seed%50))
+		wire, err := encodeScreenEvent("w1:p1", screenFrame{PaneID: "w1:p1", Status: "available", Text: source})
+		if err != nil || len(wire) > maxScreenFrameBytes {
+			return false
+		}
+		decoded := decodedScreenFrame(t, wire)
+		return decoded.Truncated && strings.HasPrefix(source, decoded.Text) && (decoded.Text == "" || strings.HasSuffix(decoded.Text, "\n")) && ansiPrefixIsGround(decoded.Text)
+	}
+	if err := quick.Check(property, &quick.Config{MaxCount: 100}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestScreenFrameOversizedSingleLineFallsBackToEmptyPrefix(t *testing.T) {
+	wire, err := encodeScreenEvent("w1:p1", screenFrame{PaneID: "w1:p1", Status: "available", Text: "\x1b[31m" + strings.Repeat("x", maxScreenFrameBytes*2) + "\x1b[0m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodedScreenFrame(t, wire)
+	if decoded.Text != "" || !decoded.Truncated {
+		t.Fatalf("single-line truncation=%#v", decoded)
+	}
+}
+
+func TestScreenFrameCarriesHerdrSnapshotGeometry(t *testing.T) {
+	snapshot, err := herdrcli.ParseSessionSnapshotResult([]byte(`{"protocol":19,"workspaces":[{"workspace_id":"w1"}],"tabs":[{"tab_id":"t1","workspace_id":"w1"}],"panes":[{"pane_id":"p1","workspace_id":"w1","tab_id":"t1"}],"layouts":[{"workspace_id":"w1","tab_id":"t1","panes":[{"pane_id":"p1","rect":{"width":103,"height":56,"x":0,"y":0}}]}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := fixtureDeps()
+	deps.snapshot = func() (herdrcli.Snapshot, error) { return snapshot, nil }
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?screens=p1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	readEvent(t, reader)
+	readEvent(t, reader)
+	if event, data := readEvent(t, reader); event != "screen:p1" || !strings.Contains(data, `"cols":103`) || !strings.Contains(data, `"rows":56`) {
+		t.Fatalf("geometry frame=%q %s", event, data)
+	}
+}
+
+func TestFocusedScreenMustNameARequestedScreen(t *testing.T) {
+	server := httptest.NewServer(newHandler(fixtureDeps()))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?screens=p1&focused_screen=missing")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("focused screen status=%d", response.StatusCode)
+	}
+}
+
+func TestPaneHistoryIsBoundedANSIAndHonest(t *testing.T) {
+	deps := fixtureDeps()
+	deps.now = func() time.Time { return time.Date(2026, 8, 29, 12, 34, 56, 731, time.UTC) }
+	deps.screens = func() (screenSource, error) {
+		return &fixtureScreenSource{history: "\x1b[31mold output\x1b[0m", historyTruncated: true}, nil
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/panes/p1/history", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"text":"\u001b[31mold output\u001b[0m"`) || !strings.Contains(response.Body.String(), `"truncated":true`) || !strings.Contains(response.Body.String(), `"fetched_at":"2026-08-29T12:34:56.000000731Z"`) {
+		t.Fatalf("history response=%d %s", response.Code, response.Body.String())
 	}
 }
 

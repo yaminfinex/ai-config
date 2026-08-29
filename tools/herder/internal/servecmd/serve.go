@@ -1,4 +1,4 @@
-// Package servecmd exposes the read-only fleet web API.
+// Package servecmd exposes the live fleet web API.
 package servecmd
 
 import (
@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -73,6 +75,8 @@ type dependencies struct {
 	fileWatcherDelta     func(int)
 	repoContext          func(context.Context, string) (repoctx.Context, error)
 	now                  func() time.Time
+	audit                func(string, ...any)
+	inputSerial          *paneInputSerial
 }
 
 var liveDependencies = dependencies{
@@ -101,6 +105,17 @@ var liveDependencies = dependencies{
 	fileWatcher:  fsnotify.NewWatcher,
 	repoContext:  repoctx.Read,
 	now:          time.Now,
+	audit:        log.Printf,
+	inputSerial:  &paneInputSerial{},
+}
+
+type paneInputSerial struct{ locks sync.Map }
+
+func (s *paneInputSerial) lock(paneID string) func() {
+	value, _ := s.locks.LoadOrStore(paneID, &sync.Mutex{})
+	mutex := value.(*sync.Mutex)
+	mutex.Lock()
+	return mutex.Unlock
 }
 
 type refusal struct {
@@ -184,6 +199,17 @@ type viewerResponse struct {
 	Viewer string `json:"viewer"`
 }
 
+type paneInputRequest struct {
+	Text *string   `json:"text"`
+	Keys *[]string `json:"keys"`
+}
+
+type paneInputResponse struct {
+	Sent   bool   `json:"sent"`
+	PaneID string `json:"pane_id"`
+	Viewer string `json:"viewer"`
+}
+
 type spawnRequest struct {
 	FromPane *string `json:"from_pane"`
 	Shape    *string `json:"shape"`
@@ -213,7 +239,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	var rootArgs rootFlags
 	fs.Var(&rootArgs, "root", "additional readable root (repeatable; order controls resolve preference)")
 	fs.Usage = func() {
-		fmt.Fprint(fs.Output(), "herder serve — expose the read-only live fleet API.\n\nUsage:\n  herder serve [--port PORT] [--watch] [--root PATH ...]\n")
+		fmt.Fprint(fs.Output(), "herder serve — expose the live fleet API.\n\nUsage:\n  herder serve [--port PORT] [--watch] [--root PATH ...]\n")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -380,6 +406,12 @@ func openListeners(addresses []string, port int) ([]net.Listener, []string, erro
 }
 
 func newHandler(deps dependencies) http.Handler {
+	if deps.audit == nil {
+		deps.audit = log.Printf
+	}
+	if deps.inputSerial == nil {
+		deps.inputSerial = &paneInputSerial{}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/fleet", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -488,6 +520,20 @@ func newHandler(deps dependencies) http.Handler {
 			return
 		}
 		serveMessage(w, r, deps, r.PathValue("busName"))
+	})
+	mux.HandleFunc("/api/panes/{paneID}/history", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		servePaneHistory(w, r, deps, r.PathValue("paneID"))
+	})
+	mux.HandleFunc("/api/panes/{paneID}/input", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		servePaneInput(w, r, deps, r.PathValue("paneID"))
 	})
 	mux.HandleFunc("/api/spawn", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -758,6 +804,117 @@ func serveViewer(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	writeJSON(w, http.StatusOK, viewerResponse{Viewer: sender})
 }
 
+func servePaneHistory(w http.ResponseWriter, r *http.Request, deps dependencies, paneID string) {
+	snapshot, err := deps.snapshot()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	found := false
+	for _, pane := range snapshot.Panes {
+		if pane.PaneID == paneID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		refuse(w, http.StatusNotFound, "unknown pane", fmt.Sprintf("pane %q is not reported by Herdr", paneID))
+		return
+	}
+	source, err := deps.screens()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	read, err := source.ReadHistory(paneID, maxHistoryLines)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	if read.PaneID != paneID {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", fmt.Sprintf("Herdr returned pane %q for requested pane %q", read.PaneID, paneID))
+		return
+	}
+	writeJSON(w, http.StatusOK, paneHistory{PaneID: paneID, Text: read.Text, Truncated: read.Truncated, FetchedAt: deps.now().UTC().Format(time.RFC3339Nano)})
+}
+
+func servePaneInput(w http.ResponseWriter, r *http.Request, deps dependencies, paneID string) {
+	var request paneInputRequest
+	if err := decodeWriteBodyLimit(w, r, &request, false, 8<<10); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error()+"; terminal input is limited to 8 KiB")
+		return
+	}
+	if (request.Text == nil) == (request.Keys == nil) {
+		refuse(w, http.StatusBadRequest, "bad request", "exactly one of text or keys is required")
+		return
+	}
+	if request.Text != nil && *request.Text == "" {
+		refuse(w, http.StatusBadRequest, "bad request", "text must not be empty")
+		return
+	}
+	if request.Keys != nil && len(*request.Keys) == 0 {
+		refuse(w, http.StatusBadRequest, "bad request", "keys must not be empty")
+		return
+	}
+	snapshot, err := deps.snapshot()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	found := false
+	for _, pane := range snapshot.Panes {
+		if pane.PaneID == paneID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		refuse(w, http.StatusNotFound, "unknown pane", fmt.Sprintf("pane %q is not reported by Herdr", paneID))
+		return
+	}
+	roster, err := deps.roster()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	viewer, err := attributedSender(r, deps, roster)
+	if err != nil {
+		serveAttributionError(w, err)
+		return
+	}
+	input := herdrcli.PaneInput{PaneID: paneID}
+	byteCount := 0
+	if request.Text != nil {
+		input.Text = *request.Text
+		byteCount = len([]byte(*request.Text))
+	}
+	if request.Keys != nil {
+		input.Keys = append([]string(nil), (*request.Keys)...)
+		for _, key := range input.Keys {
+			byteCount += len([]byte(key))
+		}
+	}
+	deps.audit("terminal_input time=%s viewer=%s pane=%s bytes=%d", deps.now().UTC().Format(time.RFC3339Nano), viewer, paneID, byteCount)
+	unlock := deps.inputSerial.lock(paneID)
+	err = func() error {
+		defer unlock()
+		source, sourceErr := deps.screens()
+		if sourceErr != nil {
+			return sourceErr
+		}
+		return source.SendInput(input)
+	}()
+	if errors.Is(err, herdrcli.ErrPaneGone) {
+		refuse(w, http.StatusConflict, "pane disappeared", err.Error())
+		return
+	}
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, paneInputResponse{Sent: true, PaneID: paneID, Viewer: viewer})
+}
+
 func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	var request spawnRequest
 	if err := decodeWriteBody(w, r, &request, false); err != nil {
@@ -876,7 +1033,11 @@ func serveAttributionError(w http.ResponseWriter, err error) {
 }
 
 func decodeWriteBody(w http.ResponseWriter, r *http.Request, target any, emptyOK bool) error {
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	return decodeWriteBodyLimit(w, r, target, emptyOK, 64<<10)
+}
+
+func decodeWriteBodyLimit(w http.ResponseWriter, r *http.Request, target any, emptyOK bool, limit int64) error {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	decoder := json.NewDecoder(r.Body)
 	var raw json.RawMessage
 	if err := decoder.Decode(&raw); err != nil {
@@ -947,6 +1108,24 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if err != nil {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
+	}
+	focusedScreen, err := optionalQuery(r, "focused_screen")
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	if focusedScreen != "" {
+		found := false
+		for _, paneID := range screens {
+			if paneID == focusedScreen {
+				found = true
+				break
+			}
+		}
+		if !found {
+			refuse(w, http.StatusBadRequest, "bad request", "focused_screen must name one of the requested screens")
+			return
+		}
 	}
 	watchesRaw, err := optionalQuery(r, "watches")
 	if err != nil {
@@ -1071,9 +1250,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		state.status, state.detail, state.text, state.truncated, state.dirty = "unavailable", detail, "", false, false
 		return emitScreen(paneID, screenFrame{PaneID: paneID, Status: "unavailable", Text: "", Detail: detail})
 	}
-	syncScreenRequests := func(panes map[string]uint64, force bool) bool {
+	syncScreenRequests := func(panes map[string]screenPaneFact, force bool) bool {
 		for _, paneID := range screens {
-			revision, visible := panes[paneID]
+			fact, visible := panes[paneID]
 			if !visible {
 				if state := screenStates[paneID]; state != nil {
 					state.visible = false
@@ -1095,23 +1274,31 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				screenStates[paneID] = state
 			}
 			state.visible = true
-			if force || state.status != "available" || state.revision != revision {
+			if force || state.status != "available" || state.revision != fact.revision || state.cols != fact.cols || state.rows != fact.rows {
 				state.dirty = true
 			}
-			state.revision = revision
+			state.revision, state.cols, state.rows = fact.revision, fact.cols, fact.rows
 		}
 		return true
 	}
-	flushScreens := func(now time.Time) bool {
+	flushScreens := func(now time.Time, onlyFocused bool) bool {
 		for _, paneID := range screens {
+			if onlyFocused != (paneID == focusedScreen) {
+				continue
+			}
 			state := screenStates[paneID]
 			if state == nil || !state.dirty || screenReader == nil {
 				continue
 			}
-			if state.lastEmitNS != 0 && now.UnixNano()-state.lastEmitNS < screenThrottleNanos {
+			cadence := backgroundScreenCadence
+			if paneID == focusedScreen {
+				cadence = focusedScreenCadence
+			}
+			if state.lastPollNS != 0 && now.UnixNano()-state.lastPollNS < cadence.Nanoseconds() {
 				continue
 			}
 			state.dirty = false
+			state.lastPollNS = now.UnixNano()
 			read, readErr := screenReader.ReadVisible(paneID)
 			if readErr != nil {
 				if !emitScreenUnavailable(paneID, readErr.Error()) {
@@ -1125,14 +1312,14 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				}
 				continue
 			}
-			if state.status == "available" && state.text == read.Text && state.truncated == read.Truncated {
+			if state.status == "available" && state.text == read.Text && state.truncated == read.Truncated && state.emittedCols == state.cols && state.emittedRows == state.rows {
 				continue
 			}
-			frame := screenFrame{PaneID: paneID, Revision: state.revision, Status: "available", Text: read.Text, Truncated: read.Truncated}
+			frame := screenFrame{PaneID: paneID, Revision: state.revision, Status: "available", Text: read.Text, Truncated: read.Truncated, Cols: state.cols, Rows: state.rows}
 			if !emitScreen(paneID, frame) {
 				return false
 			}
-			state.status, state.detail, state.text, state.truncated, state.lastEmitNS = "available", "", read.Text, read.Truncated, now.UnixNano()
+			state.status, state.detail, state.text, state.truncated, state.emittedCols, state.emittedRows = "available", "", read.Text, read.Truncated, state.cols, state.rows
 		}
 		return true
 	}
@@ -1262,13 +1449,13 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		return true
 	}
-	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, map[string]uint64, error) {
+	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, map[string]screenPaneFact, error) {
 		snapshot, roster, readErr := readFleetInputs(deps)
 		if readErr != nil {
 			return fleetview.Board{}, nil, nil, readErr
 		}
 		board, readErr := buildBoard(r.Context(), deps, snapshot, roster)
-		return board, roster, paneRevisions(snapshot), readErr
+		return board, roster, paneScreenFacts(snapshot), readErr
 	}
 	board, roster, panes, err := readEventBoard()
 	if err != nil {
@@ -1287,7 +1474,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		if !emit("fleet", board) {
 			return
 		}
-		if !syncScreenRequests(panes, true) || !flushScreens(time.Now()) {
+		if !syncScreenRequests(panes, true) || !flushScreens(time.Now(), false) || (focusedScreen != "" && !flushScreens(time.Now(), true)) {
 			return
 		}
 	}
@@ -1296,12 +1483,19 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	defer ticker.Stop()
 	heartbeat := time.NewTicker(deps.heartbeat)
 	defer heartbeat.Stop()
-	var screenTick <-chan time.Time
-	var screenTicker *time.Ticker
+	var backgroundScreenTick <-chan time.Time
+	var backgroundScreenTicker *time.Ticker
+	var focusedScreenTick <-chan time.Time
+	var focusedScreenTicker *time.Ticker
 	if len(screens) > 0 {
-		screenTicker = time.NewTicker(250 * time.Millisecond)
-		screenTick = screenTicker.C
-		defer screenTicker.Stop()
+		backgroundScreenTicker = time.NewTicker(backgroundScreenCadence)
+		backgroundScreenTick = backgroundScreenTicker.C
+		defer backgroundScreenTicker.Stop()
+	}
+	if focusedScreen != "" {
+		focusedScreenTicker = time.NewTicker(focusedScreenCadence)
+		focusedScreenTick = focusedScreenTicker.C
+		defer focusedScreenTicker.Stop()
 	}
 	for {
 		select {
@@ -1330,13 +1524,22 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					return
 				}
 			}
-		case now := <-screenTick:
+		case now := <-backgroundScreenTick:
 			for _, paneID := range screens {
-				if state := screenStates[paneID]; state != nil && state.visible {
-					state.dirty = true
+				if paneID != focusedScreen {
+					if state := screenStates[paneID]; state != nil && state.visible {
+						state.dirty = true
+					}
 				}
 			}
-			if !flushScreens(now) {
+			if !flushScreens(now, false) {
+				return
+			}
+		case now := <-focusedScreenTick:
+			if state := screenStates[focusedScreen]; state != nil && state.visible {
+				state.dirty = true
+			}
+			if !flushScreens(now, true) {
 				return
 			}
 		case <-heartbeat.C:
@@ -1387,7 +1590,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					screenReader = source
 				}
 			}
-			if !syncScreenRequests(panes, true) || !flushScreens(time.Now()) {
+			if !syncScreenRequests(panes, true) || !flushScreens(time.Now(), false) || (focusedScreen != "" && !flushScreens(time.Now(), true)) {
 				return
 			}
 		}
