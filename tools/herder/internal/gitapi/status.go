@@ -199,7 +199,17 @@ func proveBranchBase(ctx context.Context, cwd string) BranchBase {
 	if err != nil || len(strings.Fields(string(mergeOut))) != 1 {
 		return BranchBase{Status: "unavailable", Reason: "merge-base with origin/HEAD cannot be proved"}
 	}
-	return BranchBase{Status: "available", DefaultRef: ref, DefaultSHA: strings.TrimSpace(string(defaultOut)), MergeBase: strings.TrimSpace(string(mergeOut))}
+	mergeBase := strings.TrimSpace(string(mergeOut))
+	proof := BranchBase{Status: "available", DefaultRef: ref, DefaultSHA: strings.TrimSpace(string(defaultOut)), MergeBase: mergeBase}
+	countOut, err := gitOutput(ctx, cwd, "rev-list", "--count", mergeBase+"..HEAD")
+	if err != nil {
+		return proof
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(countOut)))
+	if err == nil && count >= 0 {
+		proof.CommitsAheadOfBase = &count
+	}
+	return proof
 }
 
 func attachStatusStats(ctx context.Context, loc location, entries []StatusEntry) {

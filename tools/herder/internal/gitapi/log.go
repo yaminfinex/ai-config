@@ -36,12 +36,12 @@ func ReadLog(ctx context.Context, root, requestedPath, cursor string, now func()
 	if err != nil {
 		return LogResult{}, err
 	}
-	format := "%H%x00%an%x00%aI%x00%s"
-	out, err := gitOutput(ctx, loc.repoTop, "log", "--follow", "--format="+format, "-z", "--max-count="+strconv.Itoa(LogPageSize+1), "--skip="+strconv.Itoa(skip), anchor, "--", loc.repoPath)
+	format := "%H%x00%an%x00%aI%x00%s%x00"
+	out, err := gitOutput(ctx, loc.repoTop, "log", "--follow", "--find-renames", "--name-status", "-z", "--format="+format, "--max-count="+strconv.Itoa(LogPageSize+1), "--skip="+strconv.Itoa(skip), anchor, "--", loc.repoPath)
 	if err != nil {
 		return LogResult{}, err
 	}
-	entries, err := parseLog(out)
+	entries, err := parseLog(loc, out)
 	if err != nil {
 		return LogResult{}, err
 	}
@@ -79,20 +79,48 @@ func logPosition(ctx context.Context, loc location, encoded string) (string, int
 	return cursor.Anchor, cursor.Skip, nil
 }
 
-func parseLog(output []byte) ([]LogEntry, error) {
+func parseLog(loc location, output []byte) ([]LogEntry, error) {
 	parts := bytes.Split(output, []byte{0})
 	for len(parts) > 0 && len(parts[len(parts)-1]) == 0 {
 		parts = parts[:len(parts)-1]
 	}
-	if len(parts)%4 != 0 {
-		return nil, fmt.Errorf("git log returned %d NUL fields, want a multiple of four", len(parts))
-	}
-	entries := make([]LogEntry, 0, len(parts)/4)
-	for index := 0; index < len(parts); index += 4 {
+	entries := make([]LogEntry, 0)
+	for index := 0; index < len(parts); {
+		if index+4 > len(parts) {
+			return nil, fmt.Errorf("git log metadata ended after %d NUL fields", len(parts))
+		}
 		entry := LogEntry{SHA: string(parts[index]), Author: string(parts[index+1]), Date: string(parts[index+2]), Subject: string(parts[index+3])}
+		index += 4
 		if !fullSHA(entry.SHA) {
 			return nil, fmt.Errorf("git log returned invalid commit id %q", entry.SHA)
 		}
+		for index < len(parts) && len(bytes.TrimSpace(parts[index])) == 0 {
+			index++
+		}
+		if index >= len(parts) {
+			return nil, fmt.Errorf("git log entry %s has no name-status record", entry.SHA)
+		}
+		status := strings.TrimSpace(string(parts[index]))
+		index++
+		if status == "" {
+			return nil, fmt.Errorf("git log entry %s has an empty name-status", entry.SHA)
+		}
+		if _, ok := rawKind(status[0]); !ok {
+			return nil, fmt.Errorf("git log entry %s has an unrecognized name-status %q", entry.SHA, status)
+		}
+		pathIndex := index
+		if status[0] == 'R' || status[0] == 'C' {
+			pathIndex++
+		}
+		if pathIndex >= len(parts) {
+			return nil, fmt.Errorf("git log entry %s has an incomplete %s name-status", entry.SHA, status)
+		}
+		path, ok := publicPath(loc, string(parts[pathIndex]))
+		if !ok {
+			return nil, fmt.Errorf("git log entry %s path %q is outside root", entry.SHA, parts[pathIndex])
+		}
+		entry.PathThen = path
+		index = pathIndex + 1
 		entries = append(entries, entry)
 	}
 	return entries, nil

@@ -47,9 +47,15 @@ func TestGitEndpointsServePinnedShapes(t *testing.T) {
 		t.Fatalf("diff=%d %s", diffResponse.Code, diffResponse.Body.String())
 	}
 
+	commitDiffResponse := httptest.NewRecorder()
+	handler.ServeHTTP(commitDiffResponse, httptest.NewRequest(http.MethodGet, "/api/git/diff?root="+rootQuery+"&path=history.txt&base=commit&sha="+sha, nil))
+	if commitDiffResponse.Code != http.StatusOK || commitDiffResponse.Header().Get("Cache-Control") != "public, max-age=31536000, immutable" || !strings.Contains(commitDiffResponse.Body.String(), `"kind":"commit"`) || !strings.Contains(commitDiffResponse.Body.String(), `"label":"root commit vs empty tree"`) || strings.Contains(commitDiffResponse.Body.String(), "fetched_at") {
+		t.Fatalf("commit diff=%d cache=%q %s", commitDiffResponse.Code, commitDiffResponse.Header().Get("Cache-Control"), commitDiffResponse.Body.String())
+	}
+
 	logResponse := httptest.NewRecorder()
 	handler.ServeHTTP(logResponse, httptest.NewRequest(http.MethodGet, "/api/git/log?root="+rootQuery+"&path=history.txt", nil))
-	if logResponse.Code != http.StatusOK || !strings.Contains(logResponse.Body.String(), `"entries":[{`) || !strings.Contains(logResponse.Body.String(), `"subject":"initial"`) {
+	if logResponse.Code != http.StatusOK || !strings.Contains(logResponse.Body.String(), `"entries":[{`) || !strings.Contains(logResponse.Body.String(), `"subject":"initial"`) || !strings.Contains(logResponse.Body.String(), `"path_then":"history.txt"`) {
 		t.Fatalf("log=%d %s", logResponse.Code, logResponse.Body.String())
 	}
 
@@ -85,6 +91,18 @@ func TestGitEndpointsPinUnavailableAndRefusalShapes(t *testing.T) {
 	handler.ServeHTTP(badBase, httptest.NewRequest(http.MethodGet, "/api/git/diff?root="+url.QueryEscape(repo)+"&path=tracked.txt&base=guess", nil))
 	if badBase.Code != http.StatusBadRequest || !strings.Contains(badBase.Body.String(), `"error":"bad request"`) {
 		t.Fatalf("bad base=%d %s", badBase.Code, badBase.Body.String())
+	}
+
+	mutableWithSHA := httptest.NewRecorder()
+	handler.ServeHTTP(mutableWithSHA, httptest.NewRequest(http.MethodGet, "/api/git/diff?root="+url.QueryEscape(repo)+"&path=tracked.txt&base=uncommitted&sha=0123456789012345678901234567890123456789", nil))
+	if mutableWithSHA.Code != http.StatusBadRequest || !strings.Contains(mutableWithSHA.Body.String(), `"error":"bad request"`) {
+		t.Fatalf("mutable sha=%d %s", mutableWithSHA.Code, mutableWithSHA.Body.String())
+	}
+
+	unknownCommit := httptest.NewRecorder()
+	handler.ServeHTTP(unknownCommit, httptest.NewRequest(http.MethodGet, "/api/git/diff?root="+url.QueryEscape(repo)+"&path=tracked.txt&base=commit&sha=0123456789012345678901234567890123456789", nil))
+	if unknownCommit.Code != http.StatusNotFound || !strings.Contains(unknownCommit.Body.String(), `"error":"not found"`) {
+		t.Fatalf("unknown commit=%d %s", unknownCommit.Code, unknownCommit.Body.String())
 	}
 
 	branchUnavailable := httptest.NewRecorder()

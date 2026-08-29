@@ -27,11 +27,12 @@ type Unavailable struct {
 }
 
 type BranchBase struct {
-	Status     string `json:"status"`
-	DefaultRef string `json:"default_ref,omitempty"`
-	DefaultSHA string `json:"default_sha,omitempty"`
-	MergeBase  string `json:"merge_base,omitempty"`
-	Reason     string `json:"reason,omitempty"`
+	Status             string `json:"status"`
+	DefaultRef         string `json:"default_ref,omitempty"`
+	DefaultSHA         string `json:"default_sha,omitempty"`
+	MergeBase          string `json:"merge_base,omitempty"`
+	CommitsAheadOfBase *int   `json:"commits_ahead_of_base,omitempty"`
+	Reason             string `json:"reason,omitempty"`
 }
 
 type Repository struct {
@@ -93,14 +94,15 @@ type DiffResult struct {
 	Patch      string     `json:"patch"`
 	PatchBytes int64      `json:"patch_bytes"`
 	Truncated  bool       `json:"truncated"`
-	FetchedAt  time.Time  `json:"fetched_at"`
+	FetchedAt  *time.Time `json:"fetched_at,omitempty"`
 }
 
 type LogEntry struct {
-	SHA     string `json:"sha"`
-	Author  string `json:"author"`
-	Date    string `json:"date"`
-	Subject string `json:"subject"`
+	SHA      string `json:"sha"`
+	Author   string `json:"author"`
+	Date     string `json:"date"`
+	Subject  string `json:"subject"`
+	PathThen string `json:"path_then"`
 }
 
 type LogResult struct {
