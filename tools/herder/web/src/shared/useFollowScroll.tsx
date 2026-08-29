@@ -66,8 +66,8 @@ export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, 
   return { viewportRef, following, onScroll, jumpToTop, jumpToBottom }
 }
 
-// Top navigation is shortcut-only (Alt+ArrowUp): a persistent button on every
-// panel was ruled out by the owner the day it shipped.
+// Top navigation is shortcut-only (Alt+ArrowUp). A dedicated button was tried
+// and removed: it floated over transcript content and was rarely useful.
 export function ScrollJumpButtons({ bottomVisible, onBottom }: { bottomVisible: boolean, onBottom: () => void }) {
   if (!bottomVisible) return null
   return <div className="scroll-jump-buttons">
