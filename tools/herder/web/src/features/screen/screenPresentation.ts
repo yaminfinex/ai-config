@@ -4,7 +4,7 @@ export const unattributedTerminalWarning = 'Herdr cannot attribute this terminal
 
 export function screenPanePresentation(pane: Pane) {
   if (pane.agent === '-') return {
-    label: 'Terminal',
+    label: pane.current_command?.trim() || pane.label || 'Terminal',
     warning: unattributedTerminalWarning,
   }
   return {

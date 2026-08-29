@@ -101,6 +101,18 @@ test('an Option-right split round-trips through browser persistence with preview
   assert.deepEqual(loaded, saved)
 })
 
+test('maximize is deliberately ephemeral across persistence and salvage', () => {
+  const maximized = { ...singleGroupDock, maximizedNode: { location: [0] } }
+  const saved = persistableDockLayout(maximized)
+  assert.ok(saved)
+  assert.equal('maximizedNode' in saved, false)
+
+  const restored = parseStoredLayout(JSON.stringify({ version: 2, dock: maximized, sidebarWidth: 250 }))
+  assert.ok(restored?.dock)
+  assert.equal('maximizedNode' in restored.dock, false)
+  assert.deepEqual(Object.keys(restored.dock.panels), Object.keys(singleGroupDock.panels))
+})
+
 test('dock restore failures are visible before the shell falls back', () => {
   const dock = persistableDockLayout(singleGroupDock)
   assert.ok(dock)

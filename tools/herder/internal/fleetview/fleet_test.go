@@ -14,7 +14,7 @@ func TestBuildPreservesHierarchyAndBothGapDirections(t *testing.T) {
 		Panes: []herdrcli.Pane{
 			{PaneID: "p1", WorkspaceID: "w1", TabID: "t1", Agent: "codex", AgentStatus: "working", AgentSession: "s1"},
 			{PaneID: "p2", WorkspaceID: "w1", TabID: "t1", Agent: "claude", AgentStatus: "idle", AgentSession: "s2"},
-			{PaneID: "p3", WorkspaceID: "w1", TabID: "t1"},
+			{PaneID: "p3", WorkspaceID: "w1", TabID: "t1", Label: "shell", CurrentCommand: "htop"},
 		},
 		Agents: []herdrcli.Agent{{PaneID: "p1", Name: "dore", Agent: "codex", Status: "working"}, {PaneID: "p2", Name: "kumo", Agent: "claude", Status: "idle"}},
 	}
@@ -35,6 +35,9 @@ func TestBuildPreservesHierarchyAndBothGapDirections(t *testing.T) {
 	}
 	if panes[2].PaneID != "p3" || panes[2].Agent != "-" || panes[2].Gap != "-" {
 		t.Fatalf("plain terminal pane was not preserved: %#v", panes[2])
+	}
+	if panes[2].CurrentCommand != "htop" || panes[2].Label != "shell" {
+		t.Fatalf("plain terminal process was not carried honestly: %#v", panes[2])
 	}
 	if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "vile" || board.Unplaced[0].Gap != "no visible pane" {
 		t.Fatalf("unplaced = %#v", board.Unplaced)

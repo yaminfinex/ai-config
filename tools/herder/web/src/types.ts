@@ -11,6 +11,7 @@ export interface Row {
 
 export interface Pane extends Row {
   label?: string
+  current_command?: string
   agent_session?: string
 }
 

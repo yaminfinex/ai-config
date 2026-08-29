@@ -1,35 +1,74 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { UIEventHandler } from 'react'
-import { isAtScrollBottom } from './followScroll'
+import { createFollowScrollState, recordFollowScroll, resizeFollowScroll, restoreFollowScroll } from './followScroll'
 
-export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, presentationVersion?: unknown) {
+export const followScrollCommandEvent = 'herder:follow-scroll-command'
+export type FollowScrollCommand = 'top' | 'bottom'
+
+export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, presentationVersion?: unknown, active = true) {
   const viewportRef = useRef<T>(null)
-  const followingRef = useRef(true)
+  const followingRef = useRef(createFollowScrollState())
   const [following, setFollowing] = useState(true)
 
   useLayoutEffect(() => {
-    if (!followingRef.current) return
+    if (!active || !followingRef.current.following) return
     const viewport = viewportRef.current
-    if (viewport) viewport.scrollTop = viewport.scrollHeight
-  }, [contentVersion, presentationVersion])
+    if (viewport) resizeFollowScroll(followingRef.current, viewport)
+  }, [active, contentVersion, presentationVersion])
+
+  useLayoutEffect(() => {
+    if (!active) return
+    const viewport = viewportRef.current
+    if (viewport) restoreFollowScroll(followingRef.current, viewport)
+  }, [active])
+
+  useLayoutEffect(() => {
+    if (!active || typeof ResizeObserver === 'undefined') return
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const observer = new ResizeObserver(() => resizeFollowScroll(followingRef.current, viewport))
+    observer.observe(viewport)
+    return () => observer.disconnect()
+  }, [active])
 
   const onScroll: UIEventHandler<T> = (event) => {
-    const atBottom = isAtScrollBottom(event.currentTarget)
-    followingRef.current = atBottom
-    setFollowing(atBottom)
+    recordFollowScroll(followingRef.current, event.currentTarget)
+    setFollowing(followingRef.current.following)
   }
 
   const jumpToBottom = () => {
     const viewport = viewportRef.current
     if (viewport) viewport.scrollTop = viewport.scrollHeight
-    followingRef.current = true
+    followingRef.current.following = true
     setFollowing(true)
   }
 
-  return { viewportRef, following, onScroll, jumpToBottom }
+  const jumpToTop = () => {
+    const viewport = viewportRef.current
+    if (viewport) viewport.scrollTop = 0
+    followingRef.current.scrollTop = 0
+    followingRef.current.following = false
+    setFollowing(false)
+  }
+
+  useEffect(() => {
+    if (!active) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const onCommand = (event: Event) => {
+      if ((event as CustomEvent<FollowScrollCommand>).detail === 'top') jumpToTop()
+      else if ((event as CustomEvent<FollowScrollCommand>).detail === 'bottom') jumpToBottom()
+    }
+    viewport.addEventListener(followScrollCommandEvent, onCommand)
+    return () => viewport.removeEventListener(followScrollCommandEvent, onCommand)
+  }, [active])
+
+  return { viewportRef, following, onScroll, jumpToTop, jumpToBottom }
 }
 
-export function JumpToBottomButton({ visible, onJump }: { visible: boolean, onJump: () => void }) {
-  if (!visible) return null
-  return <button type="button" className="jump-to-bottom" onClick={onJump}>↓ Jump to bottom</button>
+export function ScrollJumpButtons({ bottomVisible, onTop, onBottom }: { bottomVisible: boolean, onTop: () => void, onBottom: () => void }) {
+  return <div className="scroll-jump-buttons">
+    <button type="button" onClick={onTop}>↑ Go to top</button>
+    {bottomVisible && <button type="button" onClick={onBottom}>↓ Jump to bottom</button>}
+  </div>
 }

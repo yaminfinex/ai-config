@@ -10,6 +10,9 @@ export type ShellShortcutActions = {
   switchTab: (direction: TabDirection) => boolean | void
   focusFleet: () => boolean | void
   focusComposer: () => boolean | void
+  goToTop: () => boolean | void
+  goToBottom: () => boolean | void
+  toggleMaximize: () => boolean | void
 }
 
 export type ShortcutLabels = {
@@ -19,6 +22,10 @@ export type ShortcutLabels = {
   focusFleet: string
   focusComposer: string
   sendRequest: string
+  leaveComposer: string
+  goToTop: string
+  goToBottom: string
+  toggleMaximize: string
   browserClose: string
 }
 
@@ -34,6 +41,10 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     focusFleet: '⌥1',
     focusComposer: '⌥2',
     sendRequest: '⌘Enter',
+    leaveComposer: 'Esc',
+    goToTop: '⌥↑',
+    goToBottom: '⌥↓',
+    toggleMaximize: '⌥⏎',
     browserClose: '⌘W',
   } : {
     closePanel: 'Alt+W',
@@ -42,6 +53,10 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     focusFleet: 'Alt+1',
     focusComposer: 'Alt+2',
     sendRequest: 'Ctrl+Enter',
+    leaveComposer: 'Esc',
+    goToTop: 'Alt+Up',
+    goToBottom: 'Alt+Down',
+    toggleMaximize: 'Alt+Enter',
     browserClose: 'Ctrl+W',
   }
 }
@@ -68,6 +83,9 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     'Escape': claimed(actions.closeShortcutReference),
     'Alt+ArrowLeft': claimed(() => actions.switchTab('previous'), true),
     'Alt+ArrowRight': claimed(() => actions.switchTab('next'), true),
+    'Alt+ArrowUp': claimed(actions.goToTop, true),
+    'Alt+ArrowDown': claimed(actions.goToBottom, true),
+    'Alt+Enter': claimed(actions.toggleMaximize, true),
     '$mod+PageUp': claimed(() => actions.switchTab('previous')),
     '$mod+PageDown': claimed(() => actions.switchTab('next')),
     'Alt+Digit1': claimed(actions.focusFleet, true),

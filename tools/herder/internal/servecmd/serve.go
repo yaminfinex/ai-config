@@ -48,6 +48,7 @@ const (
 type dependencies struct {
 	buildIdentity        string
 	snapshot             func() (herdrcli.Snapshot, error)
+	paneProcessNames     func([]string) (map[string]string, error)
 	worktrees            func([]herdrcli.Workspace) (map[string]string, error)
 	roster               func() ([]hcomidentity.Row, error)
 	stopped              func(string) (hcomidentity.Row, error)
@@ -73,6 +74,7 @@ type dependencies struct {
 
 var liveDependencies = dependencies{
 	snapshot:             herdrcli.LiveSnapshot,
+	paneProcessNames:     herdrcli.PaneProcessNames,
 	worktrees:            herdrcli.WorktreeParents,
 	roster:               hcomidentity.List,
 	stopped:              hcomidentity.Stopped,
@@ -530,6 +532,20 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 	parents, err := deps.worktrees(snapshot.Workspaces)
 	if err != nil {
 		return fleetview.Board{}, sourceError{"herdr", err}
+	}
+	if deps.paneProcessNames != nil {
+		terminalPaneIDs := make([]string, 0, len(snapshot.Panes))
+		for _, pane := range snapshot.Panes {
+			if pane.Agent == "" && pane.AgentSession == "" {
+				terminalPaneIDs = append(terminalPaneIDs, pane.PaneID)
+			}
+		}
+		commands, processErr := deps.paneProcessNames(terminalPaneIDs)
+		if processErr == nil {
+			for index := range snapshot.Panes {
+				snapshot.Panes[index].CurrentCommand = commands[snapshot.Panes[index].PaneID]
+			}
+		}
 	}
 	board := fleetview.Build(snapshot, roster, parents)
 	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))

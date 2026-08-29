@@ -3,6 +3,7 @@ import test from 'node:test'
 import {
   composerFieldId,
   composerDraftKey,
+  blurComposerOnEscape,
   isComposerSendShortcut,
   persistComposerDraft,
   readComposerDraft,
@@ -54,4 +55,13 @@ test('only Ctrl+Enter and Cmd+Enter are send shortcuts', () => {
 test('each open agent composer gets a unique DOM id', () => {
   assert.equal(composerFieldId('agent one'), 'message-agent%20one')
   assert.notEqual(composerFieldId('agent one'), composerFieldId('agent two'))
+})
+
+test('Escape blurs the composer without claiming the event', () => {
+  let blurred = false
+  assert.equal(blurComposerOnEscape({ key: 'Escape', currentTarget: { blur: () => { blurred = true } } }), true)
+  assert.equal(blurred, true)
+  blurred = false
+  assert.equal(blurComposerOnEscape({ key: 'Enter', currentTarget: { blur: () => { blurred = true } } }), false)
+  assert.equal(blurred, false)
 })

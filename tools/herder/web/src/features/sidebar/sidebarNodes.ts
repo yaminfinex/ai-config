@@ -29,11 +29,13 @@ export function buildSidebarNodes(board: Board | undefined): Map<string, Sidebar
   board.workspaces.forEach((workspace) => {
     const id = `workspace:${workspace.workspace_id}`
     const children: string[] = []
-    workspace.tabs.forEach((tab) => tab.panes.forEach((pane) => {
+    const panes = workspace.tabs.flatMap((tab) => tab.panes.map((pane) => ({ pane, tab })))
+      .sort((left, right) => Number(left.pane.agent === '-') - Number(right.pane.agent === '-'))
+    panes.forEach(({ pane, tab }) => {
       const paneID = `pane:${pane.pane_id}`
       children.push(paneID)
       addAgentNode(result, paneID, pane, `tab ${tab.number}: ${tab.label || tab.tab_id}`)
-    }))
+    })
     children.push(...(workspaceChildren.get(workspace.workspace_id) ?? []))
     result.set(id, { id, kind: 'workspace', name: workspaceName(workspace.label, workspace.workspace_id), children, count: workspace.pane_count })
   })

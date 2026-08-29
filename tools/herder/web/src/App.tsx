@@ -33,6 +33,7 @@ import { changesPanelID } from './features/git/changesModel'
 import { ChangesPanel } from './features/git/ChangesPanel'
 import { ShortcutReference } from './features/layout/ShortcutReference'
 import { bindShellShortcuts, shortcutLabels } from './features/layout/shellShortcuts'
+import { followScrollCommandEvent, type FollowScrollCommand } from './shared/useFollowScroll'
 import { dockOpenTarget, placementInGroup, type OpenPlacement } from './features/layout/openPlacement'
 import { layoutRouteState, shouldReplayInitialRoute } from './features/layout/routeReplay'
 import { agentMentionMatcher, type AgentMentionMatcher } from './shared/agentMentions'
@@ -79,6 +80,18 @@ type InitialLayout = {
 
 function clampSidebarWidth(width: number) {
   return Math.min(440, Math.max(200, width))
+}
+
+function dockGroupFacts(api: DockviewApi) {
+  const active = api.activeGroup
+  return {
+    activeGroupID: active?.id,
+    firstGroupID: api.groups[0]?.id,
+    rightGroupID: active ? api.adjacentGroupInDirection(active, 'right')?.id : undefined,
+    leftGroupID: active ? api.adjacentGroupInDirection(active, 'left')?.id : undefined,
+    fallbackGroupID: api.groups.find((group) => group.id !== active?.id)?.id,
+    groupCount: api.groups.length,
+  }
 }
 
 function readInitialLayout(): InitialLayout {
@@ -203,13 +216,14 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
     identityReadOnly={workspace.identityReadOnly} onViewer={workspace.onViewer} onSend={() => workspace.pinPanel(api.id)} onStatus={workspace.onAgentStatus} />
 }
 
-function ScreenDockPanel({ params }: IDockviewPanelProps<ScreenPanelParams>) {
+function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>) {
   const workspace = useWorkspace()
+  const visible = usePanelVisibility(api)
   const identity = screenIdentityState(params, workspace.board)
   if (identity === 'checking') return <main className="panel-unavailable" role="status"><strong>Verifying screen identity…</strong><p>The live fleet must confirm this saved pane before it can be subscribed.</p></main>
   const pane = visiblePane(workspace.board, params)
   if (!pane) return <main className="panel-unavailable tombstone" role="status"><strong>Screen no longer matches</strong><p>The saved pane identity is gone or now belongs to different live evidence. No replacement pane was opened.</p></main>
-  return <ScreenPanel pane={pane} />
+  return <ScreenPanel pane={pane} active={visible} />
 }
 
 function FileDockPanel({ params, api }: IDockviewPanelProps<FilePanelParams>) {
@@ -250,13 +264,18 @@ function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelParams>) {
   </div>
 }
 
-function DockHeaderActions({ group, activePanel }: IDockviewHeaderActionsProps) {
-  const workspace = useWorkspace()
+function DockHeaderActions({ group, containerApi }: IDockviewHeaderActionsProps) {
+  const [maximized, setMaximized] = useState(group.api.isMaximized())
+  useEffect(() => {
+    setMaximized(group.api.isMaximized())
+    const disposable = containerApi.onDidMaximizedGroupChange(() => setMaximized(group.api.isMaximized()))
+    return () => disposable.dispose()
+  }, [containerApi, group])
   return <div className="dock-header-actions">
-    <button type="button" className="new-tab" title={`Quick open file or folder · ${shortcutLabels(navigator.userAgent).quickOpen}`} aria-label="Quick open file or folder in this group" onClick={() => {
-      activePanel?.api.setActive()
-      workspace.showQuickOpen(group.id)
-    }}>+</button>
+    <button type="button" className="dock-maximize" title={`${maximized ? 'Restore' : 'Maximize'} group · ${shortcutLabels(navigator.userAgent).toggleMaximize}`}
+      aria-label={maximized ? 'Restore group' : 'Maximize group'} onClick={() => maximized ? group.api.exitMaximized() : group.api.maximize()}>
+      <span aria-hidden="true">{maximized ? '⧉' : '□'}</span>
+    </button>
   </div>
 }
 
@@ -323,7 +342,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement) => {
     const api = apiRef.current
     if (!api) return
-    const target = dockOpenTarget(api.getPanel(agentTabID(name)), placement, { activeGroupID: api.activeGroup?.id, firstGroupID: api.groups[0]?.id })
+    const target = dockOpenTarget(api.getPanel(agentTabID(name)), placement, dockGroupFacts(api))
     if (target.kind === 'existing') {
       const existing = target.panel
       const current = panelParams(existing.params)
@@ -348,7 +367,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     const params = screenPanelParams(boardQuery.data, pane, preview)
     if (!params) return
     if (!api) return
-    const target = dockOpenTarget(api.getPanel(screenTabID(pane.pane_id)), placement, { activeGroupID: api.activeGroup?.id, firstGroupID: api.groups[0]?.id })
+    const target = dockOpenTarget(api.getPanel(screenTabID(pane.pane_id)), placement, dockGroupFacts(api))
     if (target.kind === 'existing') {
       const existing = target.panel
       const current = panelParams(existing.params)
@@ -371,7 +390,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     const api = apiRef.current
     if (!api) return
     const id = fileTabID(target.root, target.path)
-    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, { activeGroupID: api.activeGroup?.id, firstGroupID: api.groups[0]?.id })
+    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, dockGroupFacts(api))
     if (dockTarget.kind === 'existing') {
       const existing = dockTarget.panel
       if (existing.params.kind !== 'file') return
@@ -384,7 +403,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       return
     }
     const requestedPlacement = placement ?? (quickOpenGroup ? { direction: 'within' as const, groupID: quickOpenGroup } : undefined)
-    const newTarget = dockOpenTarget(undefined, requestedPlacement, { activeGroupID: api.activeGroup?.id, firstGroupID: api.groups[0]?.id })
+    const newTarget = dockOpenTarget(undefined, requestedPlacement, dockGroupFacts(api))
     const group = newTarget.groupID ? api.getGroup(newTarget.groupID) : undefined
     const replaced = group?.panels.find((panel) => {
       const current = panelParams(panel.params)
@@ -412,7 +431,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     const api = apiRef.current
     if (!api) return
     const id = changesPanelID(root)
-    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, { activeGroupID: api.activeGroup?.id, firstGroupID: api.groups[0]?.id })
+    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, dockGroupFacts(api))
     if (dockTarget.kind === 'existing' && dockTarget.panel.params.kind === 'changes') {
       const existing = dockTarget.panel
       existing.panel.api.setActive()
@@ -434,7 +453,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     const api = apiRef.current
     if (!api) return
     const id = folderTabID(target.root, target.path)
-    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, { activeGroupID: api.activeGroup?.id, firstGroupID: api.groups[0]?.id })
+    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, dockGroupFacts(api))
     if (dockTarget.kind === 'existing' && dockTarget.panel.params.kind === 'folder') {
       const existing = dockTarget.panel
       existing.panel.api.setActive()
@@ -444,7 +463,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       return
     }
     const requestedPlacement = placement ?? (quickOpenGroup ? { direction: 'within' as const, groupID: quickOpenGroup } : undefined)
-    const newTarget = dockOpenTarget(undefined, requestedPlacement, { activeGroupID: api.activeGroup?.id, firstGroupID: api.groups[0]?.id })
+    const newTarget = dockOpenTarget(undefined, requestedPlacement, dockGroupFacts(api))
     const group = newTarget.groupID ? api.getGroup(newTarget.groupID) : undefined
     const replaced = group?.panels.find((panel) => {
       const current = panelParams(panel.params)
@@ -648,6 +667,12 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   }, [syncDock])
 
   useEffect(() => {
+    const scrollActivePanel = (command: FollowScrollCommand) => {
+      const viewport = document.querySelector('.dv-active-group [data-follow-scroll]')
+      if (!viewport) return false
+      viewport.dispatchEvent(new CustomEvent(followScrollCommandEvent, { detail: command }))
+      return true
+    }
     const switchTab = (direction: 'previous' | 'next') => {
       const api = apiRef.current
       if (!api?.activeGroup || api.activeGroup.panels.length === 0) return false
@@ -681,6 +706,15 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         const composer = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
         if (!composer) return false
         composer.focus()
+        return true
+      },
+      goToTop: () => scrollActivePanel('top'),
+      goToBottom: () => scrollActivePanel('bottom'),
+      toggleMaximize: () => {
+        const group = apiRef.current?.activeGroup
+        if (!group) return false
+        if (group.api.isMaximized()) group.api.exitMaximized()
+        else group.api.maximize()
         return true
       },
     }, navigator.userAgent)

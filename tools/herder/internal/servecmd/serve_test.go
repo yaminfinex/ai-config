@@ -20,6 +20,7 @@ import (
 	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/fileindex"
 	"ai-config/tools/herder/internal/fileresolver"
+	"ai-config/tools/herder/internal/fleetview"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
@@ -40,7 +41,8 @@ func fixtureDeps() dependencies {
 				Agents:     []herdrcli.Agent{{PaneID: "p1", Name: "dore", Agent: "codex", Status: "working"}},
 			}, nil
 		},
-		worktrees: func([]herdrcli.Workspace) (map[string]string, error) { return map[string]string{}, nil },
+		worktrees:        func([]herdrcli.Workspace) (map[string]string, error) { return map[string]string{}, nil },
+		paneProcessNames: func([]string) (map[string]string, error) { return map[string]string{}, nil },
 		roster: func() ([]hcomidentity.Row, error) {
 			return []hcomidentity.Row{{Name: "dore", Tool: "codex", Status: "active", SessionID: "session-dore", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
 		},
@@ -232,6 +234,59 @@ func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
 	}
 	if unplaced, ok := body["unplaced"].([]any); !ok || len(unplaced) != 0 {
 		t.Fatalf("unplaced = %#v", body["unplaced"])
+	}
+}
+
+func TestFleetEndpointNamesPlainTerminalFromHerdrProcessWithLabelFallback(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		processName string
+		processErr  error
+		wantCommand bool
+	}{
+		{name: "foreground leader", processName: "htop", wantCommand: true},
+		{name: "lookup failure", processErr: errors.New("process info unavailable")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			deps := fixtureDeps()
+			deps.snapshot = func() (herdrcli.Snapshot, error) {
+				return herdrcli.Snapshot{
+					Workspaces: []herdrcli.Workspace{{WorkspaceID: "w1", Label: "repo", TabCount: 1, PaneCount: 1}},
+					Tabs:       []herdrcli.Tab{{TabID: "t1", WorkspaceID: "w1", Label: "terminals", PaneCount: 1}},
+					Panes:      []herdrcli.Pane{{PaneID: "p-shell", WorkspaceID: "w1", TabID: "t1", Label: "shell", AgentStatus: "unknown"}},
+				}, nil
+			}
+			deps.roster = func() ([]hcomidentity.Row, error) { return nil, nil }
+			deps.paneProcessNames = func(paneIDs []string) (map[string]string, error) {
+				if len(paneIDs) != 1 || paneIDs[0] != "p-shell" {
+					t.Fatalf("process lookup panes = %#v", paneIDs)
+				}
+				if test.processErr != nil {
+					return nil, test.processErr
+				}
+				return map[string]string{"p-shell": test.processName}, nil
+			}
+			request := httptest.NewRequest(http.MethodGet, "/api/fleet", nil)
+			response := httptest.NewRecorder()
+			newHandler(deps).ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
+			}
+			var body struct {
+				Workspaces []struct {
+					Tabs []struct {
+						Panes []fleetview.Pane `json:"panes"`
+					} `json:"tabs"`
+				} `json:"workspaces"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			pane := body.Workspaces[0].Tabs[0].Panes[0]
+			if pane.Label != "shell" || pane.CurrentCommand != test.processName || (pane.CurrentCommand != "") != test.wantCommand {
+				t.Fatalf("terminal pane = %#v", pane)
+			}
+		})
 	}
 }
 

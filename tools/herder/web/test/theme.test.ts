@@ -20,6 +20,22 @@ function memoryStorage(initial: Record<string, string> = {}) {
   }
 }
 
+function themeBlocks(css: string) {
+  return [...css.matchAll(/:root\[data-theme='(?:light|dark)'\] \{([\s\S]*?)\n\}/g)].map((match) => match[1])
+}
+
+function luminance(hex: string) {
+  const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255)
+    .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+}
+
+function contrast(foreground: string, background: string) {
+  const foregroundLuminance = luminance(foreground)
+  const backgroundLuminance = luminance(background)
+  return (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+}
+
 test('theme preference uses one global v1 key and defaults invalid or missing values to system', () => {
   assert.equal(themeStorageKey, 'herder.web.theme.v1')
   assert.equal(readThemePreference(memoryStorage()), 'system')
@@ -85,20 +101,12 @@ test('all concrete stylesheet colors live in the light/dark token declarations',
 
 test('compact pill text tokens meet WCAG AA contrast in both themes', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
-  const themeBlocks = [...css.matchAll(/:root\[data-theme='(?:light|dark)'\] \{([\s\S]*?)\n\}/g)].map((match) => match[1])
-  const luminance = (hex: string) => {
-    const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255)
-      .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
-    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
-  }
-  for (const block of themeBlocks) {
+  for (const block of themeBlocks(css)) {
     for (const tone of ['tool', 'thinking', 'message', 'other']) {
       const foreground = block.match(new RegExp(`--pill-${tone}-text: (#[\\da-f]{6})`, 'i'))?.[1]
       const background = block.match(new RegExp(`--pill-${tone}-bg: (#[\\da-f]{6})`, 'i'))?.[1]
       assert.ok(foreground && background, `${tone} pill tokens must be concrete theme declarations`)
-      const foregroundLuminance = luminance(foreground)
-      const backgroundLuminance = luminance(background)
-      const ratio = (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
+      const ratio = contrast(foreground, background)
       assert.ok(ratio >= 4.5, `${tone} pill contrast ${ratio.toFixed(2)} must meet WCAG AA`)
     }
   }
@@ -106,18 +114,12 @@ test('compact pill text tokens meet WCAG AA contrast in both themes', () => {
 
 test('dock tab text uses AA theme token pairs with no stock skin colors', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
-  const themeBlocks = [...css.matchAll(/:root\[data-theme='(?:light|dark)'\] \{([\s\S]*?)\n\}/g)].map((match) => match[1])
-  const luminance = (hex: string) => {
-    const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255)
-      .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4)
-    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
-  }
-  for (const block of themeBlocks) {
+  for (const block of themeBlocks(css)) {
     for (const [foregroundName, backgroundName] of [['text', 'bg'], ['dim', 'bg2']]) {
       const foreground = block.match(new RegExp(`--${foregroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
       const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
       assert.ok(foreground && background)
-      const ratio = (Math.max(luminance(foreground), luminance(background)) + 0.05) / (Math.min(luminance(foreground), luminance(background)) + 0.05)
+      const ratio = contrast(foreground, background)
       assert.ok(ratio >= 4.5, `${foregroundName} on ${backgroundName} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
     }
   }
@@ -125,4 +127,18 @@ test('dock tab text uses AA theme token pairs with no stock skin colors', () => 
   assert.match(dockTheme, /--dv-activegroup-visiblepanel-tab-color: var\(--text\)/)
   assert.match(dockTheme, /--dv-activegroup-hiddenpanel-tab-color: var\(--dim\)/)
   assert.equal(dockTheme.match(/#[\da-f]{3,8}\b|rgba?\(|hsla?\(/gi), null)
+})
+
+test('inline link text token meets WCAG AA across both theme surfaces', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  for (const block of themeBlocks(css)) {
+    const foreground = block.match(/--accent-text: (#[\da-f]{6})/i)?.[1]
+    assert.ok(foreground, 'inline links must use a concrete theme token')
+    for (const backgroundName of ['bg', 'bg2', 'human-bg', 'operator-bg']) {
+      const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+      assert.ok(background, `${backgroundName} must be a concrete theme declaration`)
+      const ratio = contrast(foreground, background)
+      assert.ok(ratio >= 4.5, `inline link on ${backgroundName} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
+    }
+  }
 })

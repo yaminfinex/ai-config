@@ -4,12 +4,13 @@ import remarkGfm from 'remark-gfm'
 import type { AgentMentionMatcher, AgentMentionOpen } from './agentMentions.ts'
 
 const externalHTTP = /^https?:\/\//iu
+const inlineLinkClass = (className?: string) => ['inline-link', className].filter(Boolean).join(' ')
 
 export const fileMarkdownComponents = {
-  a: ({ node, href = '', children, ...props }) => {
+  a: ({ node, href = '', children, className, ...props }) => {
     void node
     return externalHTTP.test(href)
-      ? createElement('a', { ...props, href, target: '_blank', rel: 'noopener noreferrer' }, children)
+      ? createElement('a', { ...props, className: inlineLinkClass(className), href, target: '_blank', rel: 'noopener noreferrer' }, children)
       : createElement('span', { className: 'markdown-relative-link', title: `Relative link: ${href}` }, children, ' ', createElement('code', null, href || 'target unavailable'))
   },
   img: ({ node, src = '', alt = '', ...props }) => {
@@ -85,9 +86,9 @@ export const Markdown = memo(function Markdown({ children, components, agentMent
     if (!agentMentions) return { remarkPlugins: [remarkGfm], components }
     const mentionComponents: Components = {
       ...components,
-      a: ({ node, href = '', children: linkChildren, ...props }) => {
+      a: ({ node, href = '', children: linkChildren, className, ...props }) => {
         void node
-        if (!href.startsWith(agentScheme)) return createElement('a', { ...props, href }, linkChildren)
+        if (!href.startsWith(agentScheme)) return createElement('a', { ...props, className: inlineLinkClass(className), href }, linkChildren)
         let decoded: string
         try {
           decoded = decodeURIComponent(href.slice(agentScheme.length))
@@ -99,7 +100,7 @@ export const Markdown = memo(function Markdown({ children, components, agentMent
         return createElement('button', {
           ...props,
           type: 'button',
-          className: 'agent-mention',
+          className: 'inline-link agent-mention',
           title: `Open ${name}${agentMentions.sideHint ? ` · ${agentMentions.sideHint}` : ''}`,
           onClick: (event) => agentMentions.onOpen(name, event),
         }, linkChildren)

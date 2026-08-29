@@ -105,7 +105,7 @@ export const AgentMentionText = memo(function AgentMentionText({ text, matcher, 
   const tokens = useMemo(() => matcher.tokenize(text), [matcher, text])
   return createElement(Fragment, null, ...tokens.map((token, index): ReactNode => typeof token === 'string' ? token : createElement('button', {
     type: 'button',
-    className: 'agent-mention',
+    className: 'inline-link agent-mention',
     title: `Open ${token.name}${sideHint ? ` · ${sideHint}` : ''}`,
     onClick: (event: MouseEvent<HTMLButtonElement>) => onOpen(token.name, event),
     key: `${index}:${token.text}:${token.name}`,

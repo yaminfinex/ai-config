@@ -24,14 +24,15 @@ type Agent struct {
 }
 
 type Pane struct {
-	PaneID       string `json:"pane_id"`
-	WorkspaceID  string `json:"workspace_id"`
-	TabID        string `json:"tab_id"`
-	Label        string `json:"label"`
-	Agent        string `json:"agent"`
-	AgentStatus  string `json:"agent_status"`
-	AgentSession string `json:"agent_session"`
-	Revision     uint64 `json:"revision"`
+	PaneID         string `json:"pane_id"`
+	WorkspaceID    string `json:"workspace_id"`
+	TabID          string `json:"tab_id"`
+	Label          string `json:"label"`
+	Agent          string `json:"agent"`
+	AgentStatus    string `json:"agent_status"`
+	AgentSession   string `json:"agent_session"`
+	CurrentCommand string `json:"current_command,omitempty"`
+	Revision       uint64 `json:"revision"`
 }
 
 type Tab struct {
@@ -116,6 +117,40 @@ func LiveSnapshot() (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return snapshotFromSocket(socket)
+}
+
+// PaneProcessName returns Herdr's foreground process-group leader name for a
+// pane. It preserves Herdr's reported name except for surrounding whitespace.
+func PaneProcessName(paneID string) (string, error) {
+	if strings.TrimSpace(paneID) == "" {
+		return "", fmt.Errorf("pane process info requires a pane ID")
+	}
+	socket, err := liveSocket()
+	if err != nil {
+		return "", err
+	}
+	return paneProcessNameFromSocket(socket, paneID)
+}
+
+// PaneProcessNames resolves the Herdr socket once for a roster refresh and
+// reads each requested pane independently. Individual lookup failures are
+// omitted so callers can retain their existing display labels.
+func PaneProcessNames(paneIDs []string) (map[string]string, error) {
+	result := make(map[string]string, len(paneIDs))
+	if len(paneIDs) == 0 {
+		return result, nil
+	}
+	socket, err := liveSocket()
+	if err != nil {
+		return result, err
+	}
+	for _, paneID := range paneIDs {
+		name, processErr := paneProcessNameFromSocket(socket, paneID)
+		if processErr == nil && name != "" {
+			result[paneID] = name
+		}
+	}
+	return result, nil
 }
 
 func liveSocket() (string, error) {
@@ -236,6 +271,56 @@ func snapshotFromSocket(socket string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("read herdr session.snapshot: %w", err)
 	}
 	return Snapshot{}, fmt.Errorf("herdr socket closed before session.snapshot response")
+}
+
+func paneProcessNameFromSocket(socket, paneID string) (string, error) {
+	conn, err := net.DialTimeout("unix", socket, 2*time.Second)
+	if err != nil {
+		return "", fmt.Errorf("connect herdr socket %s: %w", socket, err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	request := map[string]any{
+		"id":     "herder-pane-process-info",
+		"method": "pane.process_info",
+		"params": map[string]string{"pane_id": paneID},
+	}
+	if err := json.NewEncoder(conn).Encode(request); err != nil {
+		return "", fmt.Errorf("request herdr pane.process_info: %w", err)
+	}
+	var response struct {
+		ID     any             `json:"id"`
+		Result json.RawMessage `json:"result"`
+		Error  *struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(conn).Decode(&response); err != nil {
+		return "", fmt.Errorf("read herdr pane.process_info: %w", err)
+	}
+	if response.Error != nil {
+		return "", fmt.Errorf("herdr pane.process_info: %s: %s", response.Error.Code, response.Error.Message)
+	}
+	return ParsePaneProcessName(response.Result)
+}
+
+// ParsePaneProcessName decodes the real pane.process_info result shape.
+func ParsePaneProcessName(result []byte) (string, error) {
+	var payload struct {
+		ProcessInfo struct {
+			ForegroundProcesses []struct {
+				Name string `json:"name"`
+			} `json:"foreground_processes"`
+		} `json:"process_info"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return "", fmt.Errorf("decode herdr pane.process_info: %w", err)
+	}
+	if len(payload.ProcessInfo.ForegroundProcesses) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(payload.ProcessInfo.ForegroundProcesses[0].Name), nil
 }
 
 // ParseSessionSnapshotResult accepts the live nested snapshot result and the

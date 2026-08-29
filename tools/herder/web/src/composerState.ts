@@ -39,3 +39,9 @@ export function persistComposerDraft(agentName: string, text: string, storage: P
 export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey'> & { shiftKey?: boolean }) {
   return event.key === 'Enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)
 }
+
+export function blurComposerOnEscape(event: { key: string, currentTarget: Pick<HTMLElement, 'blur'> }) {
+  if (event.key !== 'Escape') return false
+  event.currentTarget.blur()
+  return true
+}

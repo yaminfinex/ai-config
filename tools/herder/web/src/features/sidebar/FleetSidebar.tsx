@@ -117,6 +117,7 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
             onClick={(event) => { event.stopPropagation(); if (item.isExpanded()) item.collapse(); else item.expand() }}
           ><span aria-hidden="true">›</span></button> : <span className="disclosure-spacer" />}
           {pane?.agent && pane.agent !== '-' && <AgentStatusDot status={pane.bus_status} />}
+          {pane?.agent === '-' && <span className="terminal-glyph" aria-hidden="true">›_</span>}
           <span className="tree-name">{node.name}</span>
           {folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
           {signal && <span className="bus-status">{signal}</span>}
