@@ -3,6 +3,7 @@ import { registerCustomTheme, type ThemeRegistration } from '@pierre/diffs'
 import { File, PatchDiff, type SelectedLineRange } from '@pierre/diffs/react'
 import themes from './pierre-themes.json'
 import { fileLanguage } from './gitViewModel'
+import { isLineCentered, MAX_LINE_SCROLL_ATTEMPTS } from './pierreScroll'
 
 const themePair = { light: themes.light.name, dark: themes.dark.name }
 
@@ -25,16 +26,30 @@ function useThemeType() {
 
 export function PierreFile({ path, content, selectedLines }: { path: string, content: string, selectedLines: SelectedLineRange | null }) {
   const themeType = useThemeType()
-  const scrolledSelection = useRef<{ path: string, content: string, line: number } | undefined>(undefined)
+  const scrollAttempts = useRef<{ path: string, content: string, line: number, attempts: number } | undefined>(undefined)
   const scrollSelectedLine = (node: HTMLElement) => {
     if (!selectedLines) return
-    const previous = scrolledSelection.current
-    if (previous?.path === path && previous.content === content && previous.line === selectedLines.start) return
     requestAnimationFrame(() => {
-      const line = node.querySelector<HTMLElement>(`[data-line="${selectedLines.start}"]`)
-      if (!line) return
+      const selection = { path, content, line: selectedLines.start }
+      const previousAttempts = scrollAttempts.current
+      const attempts = previousAttempts?.path === path && previousAttempts.content === content && previousAttempts.line === selectedLines.start
+        ? previousAttempts.attempts
+        : 0
+      if (attempts >= MAX_LINE_SCROLL_ATTEMPTS) return
+      const renderRoot = node.shadowRoot ?? node
+      const line = renderRoot.querySelector<HTMLElement>(`[data-line="${selectedLines.start}"]`)
+      const root = line?.getRootNode()
+      const host = root instanceof ShadowRoot ? root.host : line
+      const container = host?.closest<HTMLElement>('.file-content')
+      if (!line) {
+        scrollAttempts.current = { ...selection, attempts: attempts + 1 }
+        return
+      }
+      if (container && isLineCentered(line.getBoundingClientRect(), container.getBoundingClientRect())) {
+        return
+      }
       line.scrollIntoView({ block: 'center' })
-      scrolledSelection.current = { path, content, line: selectedLines.start }
+      scrollAttempts.current = { ...selection, attempts: attempts + 1 }
     })
   }
   return <File

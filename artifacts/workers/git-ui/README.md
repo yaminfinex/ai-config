@@ -10,12 +10,15 @@ Build identity from the SSE `hello` event:
 
 `executable:ed6d4dff979c737d584116140d197e40f82bd60a0791982ac55c6f8897d335ed`
 
+The corrected deep-line bounce evidence was captured from build identity
+`executable:98ec2fc951a3cdb1f8990f363126bf78d5fd594373ef3c4905c26a7aff477825`.
+
 Evidence map:
 
 - `diff-uncommitted-linked-worktree-light.png` — tracked uncommitted edit vs HEAD, light theme.
 - `diff-branch-linked-worktree-dark.png` — all branch work vs the proved `origin/main` merge-base, dark theme.
 - `current-markdown-rendered-light.png` and `current-markdown-source-light.png` — Markdown Rendered/Source views.
-- `current-line-73-highlight-light.png` — `:73` opens Current source and selects the requested line.
+- `current-line-200-centered-light.png` and `current-line-200-centered.json` — after a 3-second highlighting settle, `serve.go:200` is selected and centered 7.25 px from the container center (24 px tolerance) in a 1,354-line render.
 - `history-50-cap-note-light.png` — exactly 50 rows and the honest older-history-unavailable note; no load-more control.
 - `history-as-of-revision-light.png` — immutable historical blob at commit `6876e9f1ac61`.
 - `history-commit-diff-light.png` — commit-vs-parent patch labeled “What commit 6876e9f1ac61 changed”.
