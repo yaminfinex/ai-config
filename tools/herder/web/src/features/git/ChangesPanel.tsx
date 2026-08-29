@@ -19,7 +19,7 @@ export function ChangesPanel({ root, active, onOpenDiff }: { root: string, activ
     if (active && !wasActive.current) void status.refetch()
     wasActive.current = active
   }, [active])
-  const commits = available?.repo.branch_base.status === 'available' ? available.repo.branch_base.commits_since_merge_base : undefined
+  const commits = available?.repo.branch_base.status === 'available' ? available.repo.branch_base.commits_ahead_of_base : undefined
   return <main className="changes-panel">
     <header className="changes-header">
       <div><strong>Changes</strong><span title={root}>{rootLabel(root)}</span><span className="root-path" title={root}>{root}</span></div>

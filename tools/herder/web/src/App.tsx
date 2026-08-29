@@ -547,7 +547,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
 
   const setAgentStatus = useCallback((name: string, status: string) => setAgentStatuses((current) => current[name] === status ? current : { ...current, [name]: status }), [])
-  const setFileGitState = useCallback((id: string, state: GitFileState) => setFileGitStates((current) => current[id]?.mode === state.mode && current[id]?.base === state.base ? current : { ...current, [id]: state }), [])
+  const setFileGitState = useCallback((id: string, state: GitFileState) => setFileGitStates((current) => {
+    const previous = current[id]
+    const unchanged = previous?.mode === state.mode && previous.base === state.base &&
+      previous.revision?.sha === state.revision?.sha && previous.revision?.path === state.revision?.path &&
+      previous.commit?.sha === state.commit?.sha && previous.commit?.path === state.commit?.path
+    return unchanged ? current : { ...current, [id]: state }
+  }), [])
   const setAgentScreenPane = useCallback((name: string, paneID?: string) => setAgentScreenPanes((current) => {
     if (paneID) return current[name] === paneID ? current : { ...current, [name]: paneID }
     if (!(name in current)) return current

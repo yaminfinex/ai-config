@@ -5,6 +5,8 @@ import {
   initialGitFileState,
   repoChangeSummary,
   selectGitFileMode,
+  selectHistoricalDiff,
+  selectHistoricalFile,
   selectedCurrentLines,
 } from '../src/features/git/gitViewModel.ts'
 
@@ -21,6 +23,12 @@ test('git file mode state is ephemeral, base-aware, and line selection stays Cur
   const initial = initialGitFileState()
   assert.deepEqual(initial, { mode: 'current', base: 'uncommitted' })
   assert.deepEqual(selectGitFileMode(initial, 'diff', 'branch'), { mode: 'diff', base: 'branch' })
+  assert.deepEqual(selectHistoricalFile(initial, { sha: 'a'.repeat(40), path: 'old/name.ts' }), {
+    mode: 'current', base: 'uncommitted', revision: { sha: 'a'.repeat(40), path: 'old/name.ts' },
+  })
+  assert.deepEqual(selectHistoricalDiff(initial, { sha: 'b'.repeat(40), path: 'old/name.ts' }), {
+    mode: 'diff', base: 'uncommitted', commit: { sha: 'b'.repeat(40), path: 'old/name.ts' },
+  })
   assert.deepEqual(selectedCurrentLines(73), { start: 73, end: 73 })
   assert.equal(selectedCurrentLines(undefined), null)
 })

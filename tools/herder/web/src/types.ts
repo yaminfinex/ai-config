@@ -140,7 +140,7 @@ export type GitBranchBase = {
   default_ref: string
   default_sha: string
   merge_base: string
-  commits_since_merge_base?: number
+  commits_ahead_of_base?: number
 } | {
   status: 'unavailable'
   reason: string
@@ -200,7 +200,7 @@ export interface GitLogEntry {
   author: string
   date: string
   subject: string
-  path_then?: string
+  path_then: string
 }
 
 export interface GitLogRead {

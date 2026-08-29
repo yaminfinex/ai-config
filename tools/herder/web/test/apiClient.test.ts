@@ -49,11 +49,13 @@ test('git reads encode roots, paths, mutable bases, cursors, and immutable shas'
   }) as typeof fetch
   await getGitStatus('/repo with space', fetcher)
   await getGitDiff('/repo with space', 'src/App.tsx', 'branch', fetcher)
+  await getGitDiff('/repo with space', 'old App.tsx', 'commit', fetcher, undefined, '731'.repeat(13) + '7')
   await getGitLog('/repo with space', 'src/App.tsx', 'opaque+/=', fetcher)
   await getGitFile('/repo with space', 'old App.tsx', '731'.repeat(13) + '7', fetcher)
   assert.deepEqual(calls, [
     '/api/git/status?root=%2Frepo+with+space',
     '/api/git/diff?root=%2Frepo+with+space&path=src%2FApp.tsx&base=branch',
+    `/api/git/diff?root=%2Frepo+with+space&path=old+App.tsx&base=commit&sha=${'731'.repeat(13)}7`,
     '/api/git/log?root=%2Frepo+with+space&path=src%2FApp.tsx&cursor=opaque%2B%2F%3D',
     `/api/git/file?root=%2Frepo+with+space&path=old+App.tsx&sha=${'731'.repeat(13)}7`,
   ])

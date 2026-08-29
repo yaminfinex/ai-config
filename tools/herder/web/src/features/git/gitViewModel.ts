@@ -1,8 +1,9 @@
 import type { SelectedLineRange } from '@pierre/diffs/react'
 
 export type GitBase = 'uncommitted' | 'branch'
+export type GitRevision = { sha: string, path: string }
 export type GitFileMode = 'current' | 'diff' | 'history'
-export type GitFileState = { mode: GitFileMode, base: GitBase }
+export type GitFileState = { mode: GitFileMode, base: GitBase, revision?: GitRevision, commit?: GitRevision }
 
 const extensionLanguages: Record<string, string> = {
   go: 'go', ts: 'typescript', mts: 'typescript', cts: 'typescript', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
@@ -27,7 +28,15 @@ export function initialGitFileState(): GitFileState {
 }
 
 export function selectGitFileMode(state: GitFileState, mode: GitFileMode, base = state.base): GitFileState {
-  return state.mode === mode && state.base === base ? state : { mode, base }
+  return state.mode === mode && state.base === base && !state.revision && !state.commit ? state : { mode, base }
+}
+
+export function selectHistoricalFile(state: GitFileState, revision: GitRevision): GitFileState {
+  return { mode: 'current', base: state.base, revision }
+}
+
+export function selectHistoricalDiff(state: GitFileState, commit: GitRevision): GitFileState {
+  return { mode: 'diff', base: state.base, commit }
 }
 
 export function selectedCurrentLines(line?: number): SelectedLineRange | null {

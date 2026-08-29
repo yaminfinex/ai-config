@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { apiProblem, getFile, getGitDiff, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
-import type { FileTarget, FolderTarget, GitDiffRead } from '../../types'
+import { useInfiniteQuery, useQuery, type UseQueryResult } from '@tanstack/react-query'
+import { apiProblem, getFile, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
+import type { FileTarget, FolderTarget, GitDiffRead, GitLogEntry, GitLogRead } from '../../types'
 import { Banner } from '../../shared/presentation'
 import { fileMarkdownComponents, Markdown } from '../../shared/Markdown'
 import { FileResults } from './FileResults'
@@ -9,7 +9,7 @@ import { fileFailureKind, rootLabel } from './fileResolution'
 import { isMarkdownPath, type FileViewMode } from './fileTabs'
 import { candidateDestination, missionFacts, missionMarkdownBody } from '../folders/folderModel'
 import { PierreFile, PierrePatch } from '../git/PierreView'
-import { selectedCurrentLines, type GitBase, type GitFileState } from '../git/gitViewModel'
+import { selectGitFileMode, selectHistoricalDiff, selectHistoricalFile, selectedCurrentLines, type GitBase, type GitFileState } from '../git/gitViewModel'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -28,7 +28,14 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   const fileQuery = useQuery({
     queryKey: queryKeys.file(target.root, target.path),
     queryFn: ({ signal }) => getFile(target.root, target.path, fetch, signal),
-    enabled: gitState.mode === 'current',
+    enabled: gitState.mode === 'current' && !gitState.revision,
+    retry: false,
+  })
+  const revisionQuery = useQuery({
+    queryKey: gitState.revision ? queryKeys.gitFile(target.root, gitState.revision.path, gitState.revision.sha) : ['git-file', 'inactive'],
+    queryFn: ({ signal }) => getGitFile(target.root, gitState.revision!.path, gitState.revision!.sha, fetch, signal),
+    enabled: gitState.mode === 'current' && Boolean(gitState.revision),
+    staleTime: Infinity,
     retry: false,
   })
   const statusQuery = useQuery({
@@ -39,13 +46,25 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   const gitAvailable = Boolean(statusQuery.data && 'repo' in statusQuery.data)
   const branchAvailable = Boolean(statusQuery.data && 'repo' in statusQuery.data && statusQuery.data.repo.branch_base.status === 'available')
   const effectiveBase: GitBase = gitState.base === 'branch' && !branchAvailable ? 'uncommitted' : gitState.base
+  const diffPath = gitState.commit?.path ?? target.path
+  const diffBase = gitState.commit ? 'commit' : effectiveBase
   const diffQuery = useQuery({
-    queryKey: queryKeys.gitDiff(target.root, target.path, effectiveBase),
-    queryFn: ({ signal }) => getGitDiff(target.root, target.path, effectiveBase, fetch, signal),
+    queryKey: queryKeys.gitDiff(target.root, diffPath, diffBase, gitState.commit?.sha),
+    queryFn: ({ signal }) => getGitDiff(target.root, diffPath, diffBase, fetch, signal, gitState.commit?.sha),
     enabled: gitState.mode === 'diff' && gitAvailable,
+    staleTime: gitState.commit ? Infinity : 0,
     retry: false,
   })
-  const failure = fileQuery.error ? apiProblem(fileQuery.error) : null
+  const historyQuery = useInfiniteQuery({
+    queryKey: queryKeys.gitLog(target.root, target.path),
+    queryFn: ({ pageParam, signal }) => getGitLog(target.root, target.path, pageParam, fetch, signal),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
+    enabled: gitState.mode === 'history' && gitAvailable,
+    retry: false,
+  })
+  const currentError = gitState.revision ? revisionQuery.error : fileQuery.error
+  const failure = currentError ? apiProblem(currentError) : null
   const failureKind = fileFailureKind(failure?.response?.status, failure?.problem.error)
   const vanished = failureKind === 'vanished'
   const unknownRoot = failureKind === 'unknown-root'
@@ -60,9 +79,10 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
 
   useEffect(() => {
     if (active && !wasActive.current) {
-      if (gitState.mode === 'current') void fileQuery.refetch()
+      if (gitState.mode === 'current' && !gitState.revision) void fileQuery.refetch()
       void statusQuery.refetch()
       if (gitState.mode === 'diff' && gitAvailable) void diffQuery.refetch()
+      if (gitState.mode === 'history' && gitAvailable) void historyQuery.refetch()
     }
     wasActive.current = active
   }, [active])
@@ -71,7 +91,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     if (gitState.base === 'branch' && statusQuery.data && !branchAvailable) onGitState({ ...gitState, base: 'uncommitted' })
   }, [branchAvailable, gitState, onGitState, statusQuery.data])
 
-  const data = fileQuery.data
+  const data = gitState.revision ? revisionQuery.data : fileQuery.data
   const markdown = isMarkdownPath(target.path)
   const missionMarkdown = Boolean(data && !data.binary && /(?:^|\/)mission\.md$/iu.test(target.path))
   const facts = data && !data.binary && missionMarkdown ? missionFacts(data.content) : null
@@ -81,17 +101,18 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
       : statusQuery.data && 'git' in statusQuery.data ? statusQuery.data.git.reason : ''
   const refresh = () => {
     void statusQuery.refetch()
-    if (gitState.mode === 'current') void fileQuery.refetch()
+    if (gitState.mode === 'current' && !gitState.revision) void fileQuery.refetch()
     else if (gitState.mode === 'diff' && gitAvailable) void diffQuery.refetch()
+    else if (gitState.mode === 'history' && gitAvailable) void historyQuery.refetch()
   }
-  const refreshing = statusQuery.isFetching || gitState.mode === 'current' && fileQuery.isFetching || gitState.mode === 'diff' && diffQuery.isFetching
+  const refreshing = statusQuery.isFetching || gitState.mode === 'current' && !gitState.revision && fileQuery.isFetching || gitState.mode === 'diff' && diffQuery.isFetching || gitState.mode === 'history' && historyQuery.isFetching
   return <main className="file-panel">
     <header className="file-header">
       <div className="file-title"><strong>{rootLabel(target.path)}</strong><span>{target.path}</span><span className="root-path" title={target.root}>{target.root}</span></div>
       <div className="detail-toggle file-mode-toggle" aria-label="File mode">
         {(['current', 'diff', 'history'] as const).map((mode) => <button type="button" key={mode} className={gitState.mode === mode ? 'active' : ''} aria-pressed={gitState.mode === mode}
           disabled={mode !== 'current' && !gitAvailable} title={mode !== 'current' && gitReason ? gitReason : undefined}
-          onClick={() => onGitState({ ...gitState, mode })}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}
+          onClick={() => onGitState(selectGitFileMode(gitState, mode))}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}
       </div>
       {gitState.mode === 'current' && markdown && <div className="detail-toggle file-view-toggle" aria-label="Markdown view">
         <button type="button" className={viewMode === 'rendered' ? 'active' : ''} aria-pressed={viewMode === 'rendered'} onClick={() => onViewMode('rendered')}>Rendered</button>
@@ -99,7 +120,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
       </div>}
       <button type="button" onClick={refresh} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
     </header>
-    {gitState.mode === 'current' && fileQuery.isPending && <div className="file-state" role="status">Reading current file…</div>}
+    {gitState.mode === 'current' && (gitState.revision ? revisionQuery.isPending : fileQuery.isPending) && <div className="file-state" role="status">Reading {gitState.revision ? 'historical revision' : 'current file'}…</div>}
     {gitState.mode === 'current' && failure && !needsAlternatives && <Banner source="file" detail={`${failure.problem.error}: ${failure.problem.detail}`} />}
     {gitState.mode === 'current' && needsAlternatives && <section className="file-state vanished" role="status"><strong>{vanished ? 'File vanished' : 'Root no longer served'}</strong><p>{vanished ? 'This path no longer exists in its root.' : 'This file root is no longer in the live readable universe.'} Closest current matches:</p>
       {alternatives.isPending && <p>Resolving current files…</p>}
@@ -110,7 +131,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
       }} />}
     </section>}
     {gitState.mode === 'current' && data && !failure && <>
-      <div className="file-facts"><span>Fetched {new Date(data.fetched_at).toLocaleString()}</span><span>{formattedBytes(data.size)}</span>{target.line && <span>line {target.line}</span>}</div>
+      <div className="file-facts">{'fetched_at' in data ? <span>Fetched {new Date(data.fetched_at).toLocaleString()}</span> : <span>Revision {data.sha.slice(0, 12)} · immutable</span>}<span>{formattedBytes(data.size)}</span>{gitState.revision && <span>{gitState.revision.path}</span>}{target.line && !gitState.revision && <span>line {target.line}</span>}</div>
       {markdown && viewMode === 'rendered' && hasFacts && <section className="mission-fact-strip" aria-label="Mission facts">
         {facts.title && <span><small>title</small>{facts.title}</span>}
         {facts.status && <span><small>status</small>{facts.status}</span>}
@@ -121,28 +142,31 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
         : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`}>
           {data.truncated && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
           {markdown && viewMode === 'rendered' ? <div className="markdown file-markdown"><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
-            : <div className="file-source"><PierreFile path={data.path} content={data.content} selectedLines={selectedCurrentLines(target.line)} /></div>
+            : <div className="file-source"><PierreFile path={gitState.revision?.path ?? data.path} content={data.content} selectedLines={gitState.revision ? null : selectedCurrentLines(target.line)} /></div>
           }
         </div>}
     </>}
-    {gitState.mode === 'diff' && <DiffView query={diffQuery} base={effectiveBase} branchAvailable={branchAvailable} onBase={(base) => onGitState({ ...gitState, base })} />}
-    {gitState.mode === 'history' && <section className="file-state" role="status"><strong>Loading history support…</strong><p>Commit history will appear here when the server&apos;s revision-facts addendum is available.</p></section>}
+    {gitState.mode === 'diff' && <DiffView query={diffQuery} base={effectiveBase} commit={gitState.commit?.sha} branchAvailable={branchAvailable} onBase={(base) => onGitState({ mode: 'diff', base })} />}
+    {gitState.mode === 'history' && <HistoryView pages={historyQuery.data?.pages} pending={historyQuery.isPending} error={historyQuery.error} hasNext={historyQuery.hasNextPage} fetchingNext={historyQuery.isFetchingNextPage}
+      onNext={() => historyQuery.fetchNextPage()} onFile={(entry) => onGitState(selectHistoricalFile(gitState, { sha: entry.sha, path: entry.path_then }))}
+      onDiff={(entry) => onGitState(selectHistoricalDiff(gitState, { sha: entry.sha, path: entry.path_then }))} />}
   </main>
 }
 
-function DiffView({ query, base, branchAvailable, onBase }: {
+function DiffView({ query, base, commit, branchAvailable, onBase }: {
   query: UseQueryResult<GitDiffRead, Error>
   base: GitBase
+  commit?: string
   branchAvailable: boolean
   onBase: (base: GitBase) => void
 }) {
   const failure = query.error ? apiProblem(query.error) : null
   const data = query.data
   return <section className="git-mode-body" aria-label="Read-only Git diff">
-    <div className="git-base-bar"><label>Base <select value={base} onChange={(event) => onBase(event.target.value as GitBase)}>
+    <div className="git-base-bar">{commit ? <><span>Commit {commit.slice(0, 12)} vs first parent</span><button type="button" onClick={() => onBase(base)}>Return to working diff</button></> : <label>Base <select value={base} onChange={(event) => onBase(event.target.value as GitBase)}>
       <option value="uncommitted">Uncommitted (vs HEAD)</option>
       {branchAvailable && <option value="branch">All work on this branch (vs merge-base with origin/HEAD)</option>}
-    </select></label></div>
+    </select></label>}</div>
     {query.isPending && <div className="file-state" role="status">Reading diff…</div>}
     {failure && <Banner source="git diff" detail={`${failure.problem.error}: ${failure.problem.detail}`} />}
     {data && <>
@@ -152,6 +176,31 @@ function DiffView({ query, base, branchAvailable, onBase }: {
         : data.patch.length === 0 ? <section className="file-state" role="status"><strong>No changes vs this base</strong><p>The selected file has no patch against {data.base.label}.</p></section>
           : <div className="git-diff-content"><PierrePatch patch={data.patch} /></div>}
     </>}
+  </section>
+}
+
+function HistoryView({ pages, pending, error, hasNext, fetchingNext, onNext, onFile, onDiff }: {
+  pages?: GitLogRead[]
+  pending: boolean
+  error: Error | null
+  hasNext: boolean
+  fetchingNext: boolean
+  onNext: () => void
+  onFile: (entry: GitLogEntry) => void
+  onDiff: (entry: GitLogEntry) => void
+}) {
+  const entries = pages?.flatMap((page) => page.entries) ?? []
+  const failure = error ? apiProblem(error) : null
+  return <section className="git-mode-body" aria-label="File history">
+    {pending && <div className="file-state" role="status">Reading file history…</div>}
+    {failure && <Banner source="git log" detail={`${failure.problem.error}: ${failure.problem.detail}`} />}
+    {!pending && !failure && entries.length === 0 && <div className="file-state" role="status"><strong>No history</strong><p>Git has no commits for this path.</p></div>}
+    {entries.length > 0 && <div className="history-list" role="list">{entries.map((entry) => <article className="history-row" role="listitem" key={entry.sha}>
+      <div className="history-subject"><strong>{entry.subject}</strong><span>{entry.sha.slice(0, 12)}</span></div>
+      <div className="history-meta"><span>{entry.author}</span><time dateTime={entry.date}>{new Date(entry.date).toLocaleString()}</time><span title={entry.path_then}>{entry.path_then}</span></div>
+      <div className="history-actions"><button type="button" onClick={() => onFile(entry)}>View file at commit</button><button type="button" onClick={() => onDiff(entry)}>What this commit changed</button></div>
+    </article>)}</div>}
+    {hasNext && <button type="button" className="history-more" disabled={fetchingNext} onClick={onNext}>{fetchingNext ? 'Loading…' : 'Load older commits'}</button>}
   </section>
 }
 
