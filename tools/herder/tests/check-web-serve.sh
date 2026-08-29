@@ -265,7 +265,9 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF 'knownWorkspaceItems' "$ROOT/app.js" &&
   grep -qF 'No panels open' "$ROOT/app.js" &&
   grep -qF 'Keyboard shortcuts' "$ROOT/app.js" &&
-  grep -qF 'Ctrl/Cmd+W belongs to the browser' "$ROOT/app.js" &&
+  grep -qF 'Browser close:' "$ROOT/app.js" &&
+  grep -qF 'belongs to the browser' "$ROOT/app.js" &&
+  grep -qF '⌘W' "$ROOT/app.js" &&
   grep -qF 'dockview-react' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'Collapse' "$ROOT/app.js" &&
   grep -qF 'aria-level' "$ROOT/app.js" &&

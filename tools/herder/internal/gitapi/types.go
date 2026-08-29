@@ -58,11 +58,12 @@ type StatusEntry struct {
 }
 
 type StatusResult struct {
-	Root      string         `json:"root"`
-	Repo      *Repository    `json:"repo,omitempty"`
-	Entries   *[]StatusEntry `json:"entries,omitempty"`
-	Git       *Unavailable   `json:"git,omitempty"`
-	FetchedAt time.Time      `json:"fetched_at"`
+	Root        string         `json:"root"`
+	Repo        *Repository    `json:"repo,omitempty"`
+	Entries     *[]StatusEntry `json:"entries,omitempty"`
+	EntriesBase *DiffBase      `json:"entries_base,omitempty"`
+	Git         *Unavailable   `json:"git,omitempty"`
+	FetchedAt   time.Time      `json:"fetched_at"`
 }
 
 type DiffBase struct {

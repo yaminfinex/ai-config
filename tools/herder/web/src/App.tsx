@@ -25,7 +25,6 @@ import type { Board, FileTarget, FolderTarget, Pane } from './types'
 import { FilePanel } from './features/files/FilePanel'
 import { QuickOpen } from './features/files/QuickOpen'
 import { fileTabID, isMarkdownPath, type FileViewMode } from './features/files/fileTabs'
-import { isQuickOpenShortcut } from './features/files/fileShortcut'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
 import { folderTabID } from './features/folders/folderModel'
@@ -33,19 +32,21 @@ import { gitStateForFileOpen, initialGitFileState, type GitBase, type GitFileSta
 import { changesPanelID } from './features/git/changesModel'
 import { ChangesPanel } from './features/git/ChangesPanel'
 import { ShortcutReference } from './features/layout/ShortcutReference'
-import { isClosePanelShortcut, isEditableShortcutTarget, isShortcutReferenceShortcut } from './features/layout/shellShortcuts'
+import { bindShellShortcuts, shortcutLabels } from './features/layout/shellShortcuts'
+import { layoutRouteState, shouldReplayInitialRoute } from './features/layout/routeReplay'
 import {
+  layoutStorageBackupKey,
   layoutStorageKey,
   legacyLayoutStorageKey,
   panelParams,
   parseLegacyLayout,
-  parseStoredLayout,
   pinMovedPreview,
   persistableDockLayout,
+  readStoredLayout,
   restoreDockLayout,
   screenIdentityState,
   screenPanelParams,
-  shouldGuardBeforeUnload,
+  writeStoredLayout,
   type AgentPanelParams,
   type ChangesPanelParams,
   type DockPanelParams,
@@ -65,7 +66,10 @@ const herderTheme: DockviewTheme = {
 
 type InitialLayout = {
   stored: StoredLayout | null
+  backup: StoredLayout | null
   legacy: LegacyLayout | null
+  recovering: boolean
+  lastGoodRaw: string | null
   sidebarWidth: number
   expandedItems: string[] | null
   knownWorkspaceItems: string[] | null
@@ -77,14 +81,21 @@ function clampSidebarWidth(width: number) {
 
 function readInitialLayout(): InitialLayout {
   let stored: StoredLayout | null = null
+  let backup: StoredLayout | null = null
   let legacy: LegacyLayout | null = null
+  let recovering = false
+  let lastGoodRaw: string | null = null
   try {
-    stored = parseStoredLayout(localStorage.getItem(layoutStorageKey))
+    const layouts = readStoredLayout(localStorage)
+    stored = layouts.stored
+    backup = layouts.backup
+    recovering = layouts.recovering
+    lastGoodRaw = layouts.lastGoodRaw
     if (!stored) legacy = parseLegacyLayout(localStorage.getItem(legacyLayoutStorageKey))
   } catch { /* browser storage is best effort */ }
   const source = stored ?? legacy
   return {
-    stored, legacy,
+    stored, backup, legacy, recovering, lastGoodRaw,
     sidebarWidth: clampSidebarWidth(source?.sidebarWidth ?? defaultSidebarWidth),
     expandedItems: source?.expandedItems ?? null,
     knownWorkspaceItems: source?.knownWorkspaceItems ?? null,
@@ -109,10 +120,16 @@ function panelTitle(params: DockPanelParams) {
   return rootLabel(params.path)
 }
 
-function setPathForPanel(params: DockPanelParams, push = true) {
-  if (params.kind !== 'agent') return
-  const path = `/agents/${encodeURIComponent(params.name)}`
-  if (push && window.location.pathname !== path) window.history.pushState({}, '', path)
+function setPathForPanel(params: DockPanelParams | undefined, push = true) {
+  if (!push) return
+  if (params?.kind === 'agent') {
+    const path = `/agents/${encodeURIComponent(params.name)}`
+    if (window.location.pathname !== path) {
+      window.history.pushState(layoutRouteState, '', path)
+      return
+    }
+  }
+  window.history.replaceState(layoutRouteState, '', `${window.location.pathname}${window.location.search}${window.location.hash}`)
 }
 
 function panelFromAPI(api: DockviewApi, id: string) {
@@ -228,7 +245,7 @@ function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelParams>) {
 function DockHeaderActions({ group, activePanel }: IDockviewHeaderActionsProps) {
   const workspace = useWorkspace()
   return <div className="dock-header-actions">
-    <button type="button" className="new-tab" title="Quick open file or folder · Ctrl/Cmd+K" aria-label="Quick open file or folder in this group" onClick={() => {
+    <button type="button" className="new-tab" title={`Quick open file or folder · ${shortcutLabels(navigator.userAgent).quickOpen}`} aria-label="Quick open file or folder in this group" onClick={() => {
       activePanel?.api.setActive()
       workspace.showQuickOpen(group.id)
     }}>+</button>
@@ -261,11 +278,16 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [dockReady, setDockReady] = useState(false)
   const apiRef = useRef<DockviewApi | undefined>(undefined)
   const dockDisposables = useRef<Array<{ dispose: () => void }>>([])
+  const persistenceReady = useRef(false)
+  const layoutDirty = useRef(false)
+  const persistenceState = useRef({ recovering: initial.recovering, lastGoodRaw: initial.lastGoodRaw })
+  const preferenceSnapshot = useRef(JSON.stringify([initial.sidebarWidth, initial.expandedItems, initial.knownWorkspaceItems]))
   const queryClient = useQueryClient()
   const boardQuery = useQuery({ queryKey: queryKeys.fleet, queryFn: () => getFleet(), staleTime: Infinity, retry: false })
   const viewerQuery = useQuery(viewerQueryOptions())
 
   const syncDock = useCallback(() => {
+    if (persistenceReady.current) layoutDirty.current = true
     setActivePanelID(apiRef.current?.activePanel?.id ?? '')
     setRevision((value) => value + 1)
   }, [])
@@ -448,19 +470,29 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     dockDisposables.current = []
     apiRef.current = event.api
     let restored = false
+    let restoreFailed = false
+    let restoredLegacy = false
     if (initial.stored?.dock) {
       restored = restoreDockLayout(event.api, initial.stored.dock)
+      restoreFailed = !restored
+    }
+    if (!restored && initial.backup?.dock && initial.backup !== initial.stored) {
+      restored = restoreDockLayout(event.api, initial.backup.dock)
+      restoreFailed = !restored
+      if (restored) persistenceState.current.recovering = true
     }
     if (!restored && initial.legacy) {
       initial.legacy.openTabs.forEach((name) => openAgent(name, false))
       const active = initial.legacy.activeTab === 'board' ? event.api.panels[0] : event.api.getPanel(initial.legacy.activeTab)
       active?.api.setActive()
+      restoredLegacy = true
     }
-    applyRoute(initialRoute)
-    const onLayout = event.api.onDidLayoutChange(syncDock)
+    const replayedRoute = shouldReplayInitialRoute(initialRoute, window.history.state, restored)
+    if (replayedRoute) applyRoute(initialRoute)
+    const onLayout = event.api.onDidLayoutChange(() => syncDock())
     const onActive = event.api.onDidActivePanelChange(({ panel }) => {
       const params = panelParams(panel?.params)
-      if (params) setPathForPanel(params)
+      setPathForPanel(params ?? undefined)
       syncDock()
     })
     const onRemove = event.api.onDidRemovePanel((panel) => {
@@ -487,8 +519,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       if (pinMovedPreview(panel)) syncDock()
     })
     dockDisposables.current = [onLayout, onActive, onRemove, onMove]
+    persistenceReady.current = true
+    if ((replayedRoute && !restoreFailed) || restoredLegacy) layoutDirty.current = true
     setDockReady(true)
-    syncDock()
+    setActivePanelID(event.api.activePanel?.id ?? '')
+    setRevision((value) => value + 1)
   }, [applyRoute, initial, initialRoute, openAgent, syncDock])
 
   useEffect(() => () => dockDisposables.current.forEach((disposable) => disposable.dispose()), [])
@@ -502,28 +537,40 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     return () => window.removeEventListener('popstate', update)
   }, [applyRoute])
 
-  useEffect(() => {
-    if (!dockReady) return
-    const timer = window.setTimeout(() => {
-      const api = apiRef.current
-      if (!api) return
-      const value: StoredLayout = { version: 2, dock: persistableDockLayout(api.toJSON()), sidebarWidth }
-      if (expandedItems !== null) value.expandedItems = expandedItems
-      if (knownWorkspaceItems !== null) value.knownWorkspaceItems = knownWorkspaceItems
-      try { localStorage.setItem(layoutStorageKey, JSON.stringify(value)) } catch { /* best effort */ }
-    }, 120)
-    return () => window.clearTimeout(timer)
-  }, [dockReady, expandedItems, knownWorkspaceItems, revision, sidebarWidth])
+  const flushLayout = useCallback(() => {
+    if (!layoutDirty.current) return false
+    const api = apiRef.current
+    if (!api) return false
+    const dock = persistableDockLayout(api.toJSON())
+    if (!dock && api.panels.length > 0) return false
+    const value: StoredLayout = { version: 2, dock, sidebarWidth }
+    if (expandedItems !== null) value.expandedItems = expandedItems
+    if (knownWorkspaceItems !== null) value.knownWorkspaceItems = knownWorkspaceItems
+    const previous = persistenceState.current
+    const next = writeStoredLayout(localStorage, JSON.stringify(value), previous)
+    if (next === previous) return false
+    persistenceState.current = next
+    layoutDirty.current = false
+    return true
+  }, [expandedItems, knownWorkspaceItems, sidebarWidth])
 
   useEffect(() => {
-    const guard = (event: BeforeUnloadEvent) => {
-      if (!shouldGuardBeforeUnload(apiRef.current?.panels.map((panel) => panel.params) ?? [])) return
-      event.preventDefault()
-      event.returnValue = true
+    if (!dockReady) return
+    const nextPreferences = JSON.stringify([sidebarWidth, expandedItems, knownWorkspaceItems])
+    if (preferenceSnapshot.current !== nextPreferences) {
+      preferenceSnapshot.current = nextPreferences
+      layoutDirty.current = true
     }
-    window.addEventListener('beforeunload', guard)
-    return () => window.removeEventListener('beforeunload', guard)
-  }, [])
+    if (!layoutDirty.current) return
+    const timer = window.setTimeout(flushLayout, 120)
+    return () => window.clearTimeout(timer)
+  }, [dockReady, expandedItems, flushLayout, knownWorkspaceItems, revision, sidebarWidth])
+
+  useEffect(() => {
+    const flush = () => { flushLayout() }
+    window.addEventListener('pagehide', flush)
+    return () => window.removeEventListener('pagehide', flush)
+  }, [flushLayout])
 
   const restoredPanels = initial.stored?.dock ? Object.values(initial.stored.dock.panels).flatMap((panel) => {
     const params = panelParams(panel.params)
@@ -573,30 +620,52 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     const api = apiRef.current
     if (!api) return
     api.clear()
-    try { localStorage.removeItem(layoutStorageKey) } catch { /* best effort */ }
+    try {
+      localStorage.removeItem(layoutStorageKey)
+      localStorage.removeItem(layoutStorageBackupKey)
+    } catch { /* best effort */ }
+    persistenceState.current = { recovering: false, lastGoodRaw: null }
     setSidebarWidth(defaultSidebarWidth)
     syncDock()
   }, [syncDock])
 
   useEffect(() => {
-    const shortcut = (event: KeyboardEvent) => {
+    const switchTab = (direction: 'previous' | 'next') => {
       const api = apiRef.current
-      const command = event.ctrlKey || event.metaKey
-      if (isQuickOpenShortcut(event, navigator.userAgent)) showQuickOpen()
-      else if (isClosePanelShortcut(event) && !isEditableShortcutTarget(event.target) && api?.activePanel) api.activePanel.api.close()
-      else if (isShortcutReferenceShortcut(event) && !isEditableShortcutTarget(event.target)) setShortcutReference(true)
-      else if (event.key === 'Escape' && shortcutReference) setShortcutReference(false)
-      else if (command && (event.key === 'PageDown' || event.key === 'PageUp') && api?.activeGroup) {
-        const panels = api.activeGroup.panels
-        const index = panels.findIndex((panel) => panel.id === api.activeGroup?.activePanel?.id)
-        panels[(index + (event.key === 'PageDown' ? 1 : -1) + panels.length) % panels.length]?.api.setActive()
-      } else if (event.altKey && event.key === '1') document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')?.focus()
-      else if (event.altKey && event.key === '2') document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')?.focus()
-      else return
-      event.preventDefault()
+      if (!api?.activeGroup || api.activeGroup.panels.length === 0) return false
+      const panels = api.activeGroup.panels
+      const index = panels.findIndex((panel) => panel.id === api.activeGroup?.activePanel?.id)
+      panels[(index + (direction === 'next' ? 1 : -1) + panels.length) % panels.length]?.api.setActive()
+      return true
     }
-    window.addEventListener('keydown', shortcut)
-    return () => window.removeEventListener('keydown', shortcut)
+    return bindShellShortcuts(window, {
+      quickOpen: () => showQuickOpen(),
+      closePanel: () => {
+        const panel = apiRef.current?.activePanel
+        if (!panel) return false
+        panel.api.close()
+        return true
+      },
+      openShortcutReference: () => setShortcutReference(true),
+      closeShortcutReference: () => {
+        if (!shortcutReference) return false
+        setShortcutReference(false)
+        return true
+      },
+      switchTab,
+      focusFleet: () => {
+        const item = document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')
+        if (!item) return false
+        item.focus()
+        return true
+      },
+      focusComposer: () => {
+        const composer = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
+        if (!composer) return false
+        composer.focus()
+        return true
+      },
+    }, navigator.userAgent)
   }, [shortcutReference, showQuickOpen])
 
   const startResize = (event: React.PointerEvent) => {
@@ -627,7 +696,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onPointerDown={startResize} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { setSidebarWidth((width) => clampSidebarWidth(width + (event.key === 'ArrowRight' ? 10 : -10))); event.preventDefault() } }} />
     <section className="shell-main">
       <div className="shell-banners">
-        {stream.serverUpdated && <div className="banner server-update" role="alert"><strong>update</strong><span>Server updated — refresh to load the new version</span><button type="button" onClick={() => window.location.reload()}>Refresh</button></div>}
+        {stream.serverUpdated && <div className="banner server-update" role="alert"><strong>update</strong><span>Server updated — refresh to load the new version</span><button type="button" onClick={() => { flushLayout(); window.location.reload() }}>Refresh</button></div>}
         {viewerProblem && <Banner source="viewer" detail={viewerProblem} />}{Object.entries(streamProblems).map(([source, detail]) => <Banner source={source} detail={detail} tone={source === 'stream' && detail === 'Connecting to live fleet…' ? 'info' : 'error'} key={source} />)}
       </div>
       <div className="dock-host">

@@ -1,32 +1,130 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { isClosePanelShortcut, isEditableShortcutTarget, isShortcutReferenceShortcut } from '../src/features/layout/shellShortcuts.ts'
+import { bindShellShortcuts, isEditableShortcutTarget, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
 
-test('Alt+W is the pane-close shortcut and browser Ctrl/Cmd+W is never claimed', () => {
-  assert.equal(isClosePanelShortcut({ key: 'w', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false }), true)
-  assert.equal(isClosePanelShortcut({ key: 'W', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false }), true)
-  assert.equal(isClosePanelShortcut({ key: 'w', altKey: false, ctrlKey: true, metaKey: false, shiftKey: false }), false)
-  assert.equal(isClosePanelShortcut({ key: 'w', altKey: false, ctrlKey: false, metaKey: true, shiftKey: false }), false)
+type KeyboardInit = {
+  key: string
+  code: string
+  altKey?: boolean
+  ctrlKey?: boolean
+  metaKey?: boolean
+  shiftKey?: boolean
+  repeat?: boolean
+  isComposing?: boolean
+}
+
+class TestKeyboardEvent extends Event {
+  readonly key: string
+  readonly code: string
+  readonly altKey: boolean
+  readonly ctrlKey: boolean
+  readonly metaKey: boolean
+  readonly shiftKey: boolean
+  readonly repeat: boolean
+  readonly isComposing: boolean
+
+  constructor(type: string, init: KeyboardInit) {
+    super(type, { cancelable: true, bubbles: true })
+    this.key = init.key
+    this.code = init.code
+    this.altKey = init.altKey ?? false
+    this.ctrlKey = init.ctrlKey ?? false
+    this.metaKey = init.metaKey ?? false
+    this.shiftKey = init.shiftKey ?? false
+    this.repeat = init.repeat ?? false
+    this.isComposing = init.isComposing ?? false
+  }
+
+  getModifierState(modifier: string) {
+    if (modifier === 'Alt' || modifier === 'AltGraph') return this.altKey
+    if (modifier === 'Control') return this.ctrlKey
+    if (modifier === 'Meta') return this.metaKey
+    if (modifier === 'Shift') return this.shiftKey
+    return false
+  }
+}
+
+function actions(calls: string[]): ShellShortcutActions {
+  return {
+    quickOpen: () => { calls.push('quick-open') },
+    closePanel: () => { calls.push('close'); return true },
+    openShortcutReference: () => { calls.push('reference') },
+    closeShortcutReference: () => { calls.push('escape'); return true },
+    switchTab: (direction) => { calls.push(`tab:${direction}`); return true },
+    focusFleet: () => { calls.push('fleet'); return true },
+    focusComposer: () => { calls.push('composer'); return true },
+  }
+}
+
+function dispatch(target: EventTarget, init: KeyboardInit) {
+  const event = new TestKeyboardEvent('keydown', init)
+  target.dispatchEvent(event)
+  return event
+}
+
+test('tinykeys dispatches Mac Option character events by physical code', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    assert.equal(dispatch(target, { key: '∑', code: 'KeyW', altKey: true }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: '¡', code: 'Digit1', altKey: true }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: '™', code: 'Digit2', altKey: true }).defaultPrevented, true)
+    assert.deepEqual(calls, ['close', 'fleet', 'composer'])
+  } finally {
+    unsubscribe()
+  }
 })
 
-test('Alt+W with an editable target does not invoke panel close', () => {
+test('editable targets stay dead through the real tinykeys-bound handler', () => {
   const previousHTMLElement = globalThis.HTMLElement
-  class TestHTMLElement {
+  class TestHTMLElement extends EventTarget {
     isContentEditable = false
     closest() { return this }
   }
   globalThis.HTMLElement = TestHTMLElement as unknown as typeof HTMLElement
+  const target = new TestHTMLElement()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as HTMLElement, actions(calls), 'Macintosh')
   try {
-    const event = { key: 'w', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, target: new TestHTMLElement() as unknown as EventTarget }
-    let closeCalls = 0
-    if (isClosePanelShortcut(event) && !isEditableShortcutTarget(event.target)) closeCalls += 1
-    assert.equal(closeCalls, 0)
+    dispatch(target, { key: '∑', code: 'KeyW', altKey: true })
+    dispatch(target, { key: '¡', code: 'Digit1', altKey: true })
+    dispatch(target, { key: '™', code: 'Digit2', altKey: true })
+    dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true })
+    assert.deepEqual(calls, [])
+    assert.equal(isEditableShortcutTarget(target), true)
   } finally {
+    unsubscribe()
     globalThis.HTMLElement = previousHTMLElement
   }
 })
 
-test('? opens the reference only without browser modifiers', () => {
-  assert.equal(isShortcutReferenceShortcut({ key: '?', altKey: false, ctrlKey: false, metaKey: false }), true)
-  assert.equal(isShortcutReferenceShortcut({ key: '?', altKey: false, ctrlKey: true, metaKey: false }), false)
+test('Option arrows and legacy Control Page aliases switch tabs', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Linux')
+  try {
+    dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true })
+    dispatch(target, { key: 'ArrowRight', code: 'ArrowRight', altKey: true })
+    dispatch(target, { key: 'PageUp', code: 'PageUp', ctrlKey: true })
+    dispatch(target, { key: 'PageDown', code: 'PageDown', ctrlKey: true })
+    assert.deepEqual(calls, ['tab:previous', 'tab:next', 'tab:previous', 'tab:next'])
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('unclaimed actions do not prevent browser defaults', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const handlers = actions(calls)
+  handlers.closePanel = () => false
+  handlers.switchTab = () => false
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, handlers, 'Macintosh')
+  try {
+    assert.equal(dispatch(target, { key: '∑', code: 'KeyW', altKey: true }).defaultPrevented, false)
+    assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true }).defaultPrevented, false)
+  } finally {
+    unsubscribe()
+  }
 })

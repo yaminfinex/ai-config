@@ -14,7 +14,7 @@ export const queryKeys = {
   file: (root: string, path: string) => ['file', root, path] as const,
   fileTree: (root: string, path: string) => ['file-tree', root, path] as const,
   backlog: (root: string, path: string) => ['backlog', root, path] as const,
-  gitStatus: (root: string) => ['git-status', root] as const,
+  gitStatus: (root: string, base?: GitBase) => ['git-status', root, ...(base ? [base] : [])] as const,
   gitDiff: (root: string, path: string, base: GitBase | 'commit', sha?: string) => ['git-diff', root, path, base, sha] as const,
   gitLog: (root: string, path: string) => ['git-log', root, path] as const,
   gitFile: (root: string, path: string, sha: string) => ['git-file', root, path, sha] as const,
@@ -97,8 +97,9 @@ export function getBacklog(root: string, path: string, fetcher: Fetcher = fetch,
   return requestJSON<BacklogResponse>(`/api/backlog?${query}`, { signal }, fetcher)
 }
 
-export function getGitStatus(root: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+export function getGitStatus(root: string, fetcher: Fetcher = fetch, signal?: AbortSignal, base?: GitBase) {
   const query = new URLSearchParams({ root })
+  if (base) query.set('base', base)
   return requestJSON<GitStatusRead>(`/api/git/status?${query}`, { signal }, fetcher)
 }
 

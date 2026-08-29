@@ -159,6 +159,13 @@ export interface GitStatusEntry {
   binary?: boolean
 }
 
+export type GitStatusEntriesBase = {
+  kind: 'uncommitted' | 'branch'
+  sha: string
+  default_ref?: string
+  label: string
+}
+
 export type GitStatusRead = {
   root: string
   repo: {
@@ -170,6 +177,7 @@ export type GitStatusRead = {
     branch_base: GitBranchBase
   }
   entries: GitStatusEntry[]
+  entries_base?: GitStatusEntriesBase
   fetched_at: string
 } | {
   root: string
