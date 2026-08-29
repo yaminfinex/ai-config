@@ -58,15 +58,16 @@ type Tab struct {
 }
 
 type Pane struct {
-	PaneID       string `json:"pane_id"`
-	Label        string `json:"label,omitempty"`
-	AgentSession string `json:"agent_session,omitempty"`
-	Agent        string `json:"agent"`
-	Tool         string `json:"tool"`
-	HerdrStatus  string `json:"herdr_status"`
-	BusStatus    string `json:"bus_status"`
-	Gap          string `json:"gap"`
-	Subagents    []Row  `json:"subagents,omitempty"`
+	PaneID         string `json:"pane_id"`
+	Label          string `json:"label,omitempty"`
+	CurrentCommand string `json:"current_command,omitempty"`
+	AgentSession   string `json:"agent_session,omitempty"`
+	Agent          string `json:"agent"`
+	Tool           string `json:"tool"`
+	HerdrStatus    string `json:"herdr_status"`
+	BusStatus      string `json:"bus_status"`
+	Gap            string `json:"gap"`
+	Subagents      []Row  `json:"subagents,omitempty"`
 }
 
 type placement struct {
@@ -140,7 +141,7 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 	placements := make(map[string]placement)
 	for _, pane := range snapshot.Panes {
 		agent, hasAgent := agents[pane.PaneID]
-		if !hasAgent && pane.Agent == "" && pane.AgentSession == "" && pane.AgentStatus == "" {
+		if !hasAgent && pane.Agent == "" && pane.AgentSession == "" {
 			continue
 		}
 		placements[pane.PaneID] = placement{pane.PaneID, first(agent.Name, pane.Label), first(agent.Agent, pane.Agent), pane.AgentSession, first(agent.Status, pane.AgentStatus, "visible")}
@@ -289,7 +290,7 @@ func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row, worktreeParent
 	for _, source := range snapshot.Panes {
 		row, joined := byPane[source.PaneID]
 		if !joined {
-			if source.Agent == "" && source.AgentSession == "" && source.AgentStatus == "" {
+			if source.Agent == "" && source.AgentSession == "" {
 				// Plain terminal panes are part of herdr's structure but are not
 				// placement gaps: no agent is expected on the bus.
 				row = Row{Pane: source.PaneID, Agent: "-", Tool: "-", HerdrStatus: "-", BusStatus: "-", Gap: "-"}
@@ -298,7 +299,7 @@ func Build(snapshot herdrcli.Snapshot, roster []hcomidentity.Row, worktreeParent
 			}
 		}
 		panesByTab[source.TabID] = append(panesByTab[source.TabID], Pane{
-			PaneID: source.PaneID, Label: source.Label, AgentSession: source.AgentSession,
+			PaneID: source.PaneID, Label: source.Label, CurrentCommand: source.CurrentCommand, AgentSession: source.AgentSession,
 			Agent: row.Agent, Tool: row.Tool, HerdrStatus: row.HerdrStatus, BusStatus: row.BusStatus, Gap: row.Gap,
 			Subagents: rowsValue(row.Subagents),
 		})

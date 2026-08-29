@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bindShellShortcuts, isEditableShortcutTarget, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
+import { bindShellShortcuts, isEditableShortcutTarget, shortcutLabels, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
 
 type KeyboardInit = {
   key: string
@@ -53,6 +53,9 @@ function actions(calls: string[]): ShellShortcutActions {
     switchTab: (direction) => { calls.push(`tab:${direction}`); return true },
     focusFleet: () => { calls.push('fleet'); return true },
     focusComposer: () => { calls.push('composer'); return true },
+    goToTop: () => { calls.push('top'); return true },
+    goToBottom: () => { calls.push('bottom'); return true },
+    toggleMaximize: () => { calls.push('maximize'); return true },
   }
 }
 
@@ -91,6 +94,9 @@ test('editable targets stay dead through the real tinykeys-bound handler', () =>
     dispatch(target, { key: '¡', code: 'Digit1', altKey: true })
     dispatch(target, { key: '™', code: 'Digit2', altKey: true })
     dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true })
+    dispatch(target, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
+    dispatch(target, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
+    dispatch(target, { key: 'Enter', code: 'Enter', altKey: true })
     assert.deepEqual(calls, [])
     assert.equal(isEditableShortcutTarget(target), true)
   } finally {
@@ -112,6 +118,42 @@ test('Option arrows and legacy Control Page aliases switch tabs', () => {
   } finally {
     unsubscribe()
   }
+})
+
+test('Option up and down use physical arrow codes for transcript jumps', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    dispatch(target, { key: 'Dead', code: 'ArrowUp', altKey: true })
+    dispatch(target, { key: 'Dead', code: 'ArrowDown', altKey: true })
+    assert.deepEqual(calls, ['top', 'bottom'])
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('Option Enter uses its physical code for the maximize toggle', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    dispatch(target, { key: 'Dead', code: 'Enter', altKey: true })
+    assert.deepEqual(calls, ['maximize'])
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('shortcut reference labels are platform-aware and Escape stays neutral', () => {
+  assert.deepEqual(
+    { top: shortcutLabels('Macintosh').goToTop, bottom: shortcutLabels('Macintosh').goToBottom, maximize: shortcutLabels('Macintosh').toggleMaximize, leave: shortcutLabels('Macintosh').leaveComposer },
+    { top: '⌥↑', bottom: '⌥↓', maximize: '⌥⏎', leave: 'Esc' },
+  )
+  assert.deepEqual(
+    { top: shortcutLabels('Linux').goToTop, bottom: shortcutLabels('Linux').goToBottom, maximize: shortcutLabels('Linux').toggleMaximize, leave: shortcutLabels('Linux').leaveComposer },
+    { top: 'Alt+Up', bottom: 'Alt+Down', maximize: 'Alt+Enter', leave: 'Esc' },
+  )
 })
 
 test('unclaimed actions do not prevent browser defaults', () => {

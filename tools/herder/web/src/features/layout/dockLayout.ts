@@ -142,6 +142,9 @@ function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, 
   const activeGroup = typeof value.activeGroup === 'string' && ids.has(value.activeGroup) ? value.activeGroup : firstGroupID(root)
   if (activeGroup !== value.activeGroup) salvaged = true
   const dock: UnknownRecord = { ...value, panels, grid: { ...value.grid, root }, activeGroup }
+  // Maximize is intentionally session-only. A stale serialized group location
+  // can make Dockview throw during fromJSON, so every restore starts neutral.
+  delete dock.maximizedNode
   delete dock.floatingGroups
   delete dock.popoutGroups
   delete dock.edgeGroups
@@ -275,6 +278,7 @@ export function persistableDockLayout(value: unknown): SerializedDockview | null
   try {
     const cloned = JSON.parse(JSON.stringify(value)) as UnknownRecord
     if (!record(cloned.panels) || !record(cloned.grid)) return null
+    delete cloned.maximizedNode
     delete cloned.floatingGroups
     delete cloned.popoutGroups
     delete cloned.edgeGroups

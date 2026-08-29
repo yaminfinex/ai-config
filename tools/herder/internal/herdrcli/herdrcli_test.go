@@ -3,6 +3,7 @@ package herdrcli
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"net"
 	"path/filepath"
 	"testing"
@@ -137,5 +138,74 @@ func TestLiveSnapshotReadsFixtureFromFakeUnixSocket(t *testing.T) {
 	}
 	if len(snapshot.Workspaces) != 1 || len(snapshot.Tabs) != 1 || len(snapshot.Panes) != 1 || snapshot.Agents[0].Name != "dore" {
 		t.Fatalf("snapshot = %#v", snapshot)
+	}
+}
+
+func TestParsePaneProcessNameUsesReportedForegroundLeader(t *testing.T) {
+	fixture := []byte(`{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","foreground_processes":[{"pid":731,"name":"  htop  ","argv":["htop"]},{"pid":732,"name":"helper"}]}}`)
+	name, err := ParsePaneProcessName(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "htop" {
+		t.Fatalf("foreground leader name = %q", name)
+	}
+	empty, err := ParsePaneProcessName([]byte(`{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","foreground_processes":[]}}`))
+	if err != nil || empty != "" {
+		t.Fatalf("empty process result = %q, %v", empty, err)
+	}
+}
+
+func TestPaneProcessNameReadsRealSocketShape(t *testing.T) {
+	socket := filepath.Join(t.TempDir(), "herdr-process.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	done := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			done <- acceptErr
+			return
+		}
+		defer connection.Close()
+		var request struct {
+			ID     string `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				PaneID string `json:"pane_id"`
+			} `json:"params"`
+		}
+		if decodeErr := json.NewDecoder(connection).Decode(&request); decodeErr != nil {
+			done <- decodeErr
+			return
+		}
+		if request.Method != "pane.process_info" || request.Params.PaneID != "w1:p9" {
+			done <- fmt.Errorf("request = %#v", request)
+			return
+		}
+		done <- json.NewEncoder(connection).Encode(map[string]any{
+			"id": request.ID,
+			"result": map[string]any{
+				"type": "pane_process_info",
+				"process_info": map[string]any{
+					"pane_id":              "w1:p9",
+					"foreground_processes": []map[string]any{{"pid": 731, "name": "bash", "argv": []string{"bash"}}},
+				},
+			},
+		})
+	}()
+	t.Setenv("HERDER_HERDR_SOCKET", socket)
+	name, err := PaneProcessName("w1:p9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if name != "bash" {
+		t.Fatalf("process name = %q", name)
 	}
 }

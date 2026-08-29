@@ -11,7 +11,11 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
     [labels.focusFleet, 'Focus fleet sidebar'],
     [labels.focusComposer, 'Focus active composer'],
     [labels.sendRequest, 'Send request'],
-    [openInSideKeys(navigator.userAgent), 'Open in side split'],
+    [labels.leaveComposer, 'Leave text box'],
+    [labels.goToTop, 'Go to top'],
+    [labels.goToBottom, 'Go to bottom and resume follow'],
+    [labels.toggleMaximize, 'Maximize or restore active pane'],
+    [openInSideKeys(navigator.userAgent), 'Open in closest side group'],
     ['?', 'Open this reference'],
   ] as const
   return <div className="shortcut-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>

@@ -102,6 +102,7 @@ h2, h3, p { margin-top: 0; }
 .agent-row { cursor: pointer; }
 .agent-row[aria-selected='true'] { background: var(--accent-dim); }
 .shell-row { color: var(--dimmer); font-style: italic; }
+.terminal-glyph { flex: 0 0 auto; color: var(--terminal-dim); font: 10px var(--mono); font-style: normal; }
 .status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--status-unknown); }
 .status-dot.active { background: var(--accent); box-shadow: 0 0 5px var(--accent-glow); }
 .status-dot.listening { background: var(--green); }
@@ -148,7 +149,8 @@ h2, h3, p { margin-top: 0; }
 .dock-tab-close { width: 25px; height: 100%; margin-left: auto; padding: 0 7px 1px 0; border: 0; border-radius: 0; background: transparent; color: var(--dim); font-size: 15px; }
 .dock-tab-close:hover:not(:disabled) { background: var(--bg3); color: var(--text); }
 .dock-header-actions { display: flex; height: 32px; align-items: center; min-width: 0; }
-.new-tab { height: 100%; padding: 0 10px; border: 0; border-radius: 0; background: transparent; color: var(--dimmer); font-size: 16px; }
+.dock-maximize { height: 100%; min-width: 32px; padding: 0 9px; border: 0; border-radius: 0; background: transparent; color: var(--dimmer); font-size: 15px; }
+.dock-maximize:hover { background: var(--bg3); color: var(--text); }
 .status-spacer { flex: 1; }
 .theme-toggle { display: flex; height: 20px; align-items: center; gap: 5px; padding: 0 7px; border-color: var(--border); background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .theme-toggle:hover:not(:disabled) { color: var(--text); }
@@ -412,9 +414,11 @@ h2, h3, p { margin-top: 0; }
 .thread-chip { border: 1px solid var(--thread-border); background: var(--thread-bg); color: var(--purple); }
 .human-entry { max-width: 790px; margin-left: min(10%, 90px); border-right: 3px solid var(--green); background: var(--human-bg); }
 .assistant-entry { margin: 10px 0; padding: 3px 0 3px 12px; border-left: 3px solid var(--border2); }
-.agent-mention { display: inline; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--accent-text); font: inherit; line-height: inherit; text-align: inherit; text-decoration: underline dotted; text-underline-offset: 2px; vertical-align: baseline; }
-.agent-mention:hover:not(:disabled) { border-color: transparent; color: var(--accent); text-decoration-style: solid; }
-.agent-mention:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.inline-link { color: var(--accent-text); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
+.inline-link:hover { color: var(--accent); text-decoration-thickness: 2px; }
+.inline-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+button.inline-link { display: inline; padding: 0; border: 0; border-radius: 0; background: transparent; font: inherit; line-height: inherit; text-align: inherit; vertical-align: baseline; }
+button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .markdown { color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
 .markdown p { margin: 6px 0; }
 .markdown ul, .markdown ol { margin: 5px 0; padding-left: 22px; }
@@ -472,7 +476,8 @@ h2, h3, p { margin-top: 0; }
 .system-chip summary { list-style-position: inside; }
 .system-chip > div { padding: 6px; color: var(--dim); white-space: pre-wrap; }
 .unknown-entry { border-color: var(--warning-border); color: var(--amber); }
-.jump-to-bottom { position: absolute; z-index: 2; right: 12px; bottom: 10px; border-color: var(--accent); border-radius: 14px; background: var(--accent); color: var(--jump-text); box-shadow: 0 2px 8px var(--floating-shadow); }
+.scroll-jump-buttons { position: absolute; z-index: 2; left: 50%; bottom: 10px; display: flex; max-width: calc(100% - 36px); gap: 6px; transform: translateX(-50%); }
+.scroll-jump-buttons button { border-color: var(--accent); border-radius: 14px; background: var(--accent); color: var(--jump-text); box-shadow: 0 2px 8px var(--floating-shadow); white-space: nowrap; }
 .older { display: flex; height: 26px; align-items: center; justify-content: center; color: var(--dimmer); font-size: 10px; }
 .older button { padding: 2px 8px; border: 0; background: transparent; color: var(--dim); font-size: 10px; }
 .exchange { max-width: 900px; margin: 0 0 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg2); }

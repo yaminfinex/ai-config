@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
-import { composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
+import { blurComposerOnEscape, composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
 
 export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }: {
   name: string
@@ -64,6 +64,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
       disabled={Boolean(effectiveReadOnly) || mutation.isPending}
       onChange={(event) => setMessage(event.target.value)}
       onKeyDown={(event) => {
+        if (blurComposerOnEscape(event)) return
         if (!isComposerSendShortcut(event) || event.nativeEvent.isComposing) return
         event.preventDefault()
         event.currentTarget.form?.requestSubmit()

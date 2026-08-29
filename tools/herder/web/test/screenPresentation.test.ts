@@ -25,9 +25,10 @@ function agent(overrides: Partial<AgentDetail> = {}): AgentDetail {
 
 test('agent-less Herdr panes are described as unattributed, never agent-free', () => {
   assert.deepEqual(screenPanePresentation(pane), {
-    label: 'Terminal',
+    label: 'pjsafter-rava',
     warning: unattributedTerminalWarning,
   })
+  assert.equal(screenPanePresentation({ ...pane, current_command: ' htop ' }).label, 'htop')
   const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
   assert.match(sidebar, /unattributedTerminalWarning/)
   assert.doesNotMatch(sidebar, />shell</)

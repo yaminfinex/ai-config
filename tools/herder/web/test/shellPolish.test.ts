@@ -27,3 +27,16 @@ test('the physical Alt+W binding keeps the editable-target guard', () => {
   assert.match(app, /bindShellShortcuts\(window/)
   assert.match(shortcuts, /'Alt\+KeyW': claimed\(actions\.closePanel, true\)/)
 })
+
+test('group headers expose maximize without the retired per-group quick-open button', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(app, /Quick open file or folder in this group|className="new-tab"/)
+  assert.match(app, /aria-label=\{maximized \? 'Restore group' : 'Maximize group'\}/)
+})
+
+test('scroll shortcuts dispatch only to the active group viewport', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  assert.match(app, /const viewport = document\.querySelector\('\.dv-active-group \[data-follow-scroll\]'\)/)
+  assert.match(app, /viewport\.dispatchEvent\(new CustomEvent\(followScrollCommandEvent/)
+  assert.doesNotMatch(app, /window\.dispatchEvent\(new CustomEvent\(followScrollCommandEvent/)
+})

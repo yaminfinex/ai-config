@@ -4,7 +4,7 @@ import { getAgent, queryKeys } from '../../api/client'
 import { entriesQueryOptions } from '../../api/queries'
 import { Banner } from '../../shared/presentation'
 import { transcriptNotice } from '../../shared/loadingPresentation'
-import { JumpToBottomButton, useFollowScroll } from '../../shared/useFollowScroll'
+import { ScrollJumpButtons, useFollowScroll } from '../../shared/useFollowScroll'
 import { Composer } from '../composer/Composer'
 import { persistTranscriptViewMode, readTranscriptViewMode } from './cleanView'
 import { AgentContextStrip } from './AgentContextStrip'
@@ -26,11 +26,11 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
   const [now, setNow] = useState(Date.now())
   const [sendProblem, setSendProblem] = useState('')
   const entries = entriesQuery.data?.entries ?? []
-  const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode)
   const queued = visibleQueuedMessages(agentQuery.data?.queued ?? [], entries)
   const entriesNotice = transcriptNotice(entriesQuery.isPending, entriesQuery.error?.message ?? '')
   const screenChoice = agentScreenChoice(agentQuery.data, screenPaneID)
   const screenMode = screenChoice.active
+  const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode, active && !screenMode)
   const cleanView = viewMode === 'compact'
   const showSystem = viewMode === 'full'
   const sideHint = openInSideLabel(navigator.userAgent)
@@ -83,14 +83,14 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
     {agentQuery.error && <Banner source="agent" detail={agentQuery.error.message} />}
     {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
-    {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} /> : <div className="transcript-viewport">
-      <section className="transcript" aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick}>
+    {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} active={active} /> : <div className="transcript-viewport">
+      <section className="transcript" data-follow-scroll aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick}>
         <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
         {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
         <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} />
       </section>
       {fileResolver.element}
-      <JumpToBottomButton visible={!transcriptFollow.following} onJump={transcriptFollow.jumpToBottom} />
+      <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onTop={transcriptFollow.jumpToTop} onBottom={transcriptFollow.jumpToBottom} />
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />

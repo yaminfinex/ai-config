@@ -14,14 +14,21 @@ export function placementInGroup(placement: OpenPlacement | undefined, groupID: 
 }
 
 export function openInSideLabel(userAgent: string) {
-  return `${openInSideKeys(userAgent)}: open in side split`
+  return `${openInSideKeys(userAgent)}: open in closest side group`
 }
 
 export function openInSideKeys(userAgent: string) {
   return `${isMacPlatform(userAgent) ? '⌥' : 'Alt'}+click`
 }
 
-type DockGroups = { activeGroupID?: string, firstGroupID?: string }
+type DockGroups = {
+  activeGroupID?: string
+  firstGroupID?: string
+  rightGroupID?: string
+  leftGroupID?: string
+  fallbackGroupID?: string
+  groupCount?: number
+}
 type NewDockTarget = { kind: 'new', groupID: string | undefined, position?: { referenceGroup: string, direction: 'within' | 'right' } }
 
 export function dockOpenTarget(existing: undefined, placement: OpenPlacement | undefined, groups: DockGroups): NewDockTarget
@@ -29,9 +36,21 @@ export function dockOpenTarget<T>(existing: T | undefined, placement: OpenPlacem
 export function dockOpenTarget(existing: unknown, placement: OpenPlacement | undefined, groups: {
   activeGroupID?: string
   firstGroupID?: string
+  rightGroupID?: string
+  leftGroupID?: string
+  fallbackGroupID?: string
+  groupCount?: number
 }) {
   if (existing) return { kind: 'existing' as const, panel: existing }
   const direction = placement?.direction ?? 'within'
+  if (direction === 'right' && (groups.groupCount ?? 0) > 1) {
+    const siblingGroupID = groups.rightGroupID ?? groups.leftGroupID ?? groups.fallbackGroupID ?? groups.firstGroupID
+    return {
+      kind: 'new' as const,
+      groupID: siblingGroupID,
+      ...(siblingGroupID ? { position: { referenceGroup: siblingGroupID, direction: 'within' as const } } : {}),
+    }
+  }
   const groupID = direction === 'right'
     ? groups.activeGroupID ?? placement?.groupID ?? groups.firstGroupID
     : placement?.groupID ?? groups.activeGroupID ?? groups.firstGroupID
