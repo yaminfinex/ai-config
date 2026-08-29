@@ -22,6 +22,9 @@ test('one stream URL de-duplicates and sorts every open agent', () => {
   assert.equal(eventStreamURL(['zeta', 'alpha', 'zeta']), '/api/events?agents=alpha%2Czeta')
   assert.equal(eventStreamURL([]), '/api/events')
   assert.equal(eventStreamURL(['zeta'], ['w2:p9', 'w1:p1', 'w2:p9']), '/api/events?agents=zeta&screens=w1%3Ap1%2Cw2%3Ap9')
+  const watches = [{ kind: 'file' as const, root: '/repo', path: 'README.md' }, { kind: 'folder' as const, root: '/repo', path: 'docs' }]
+  const url = new URL(eventStreamURL([], [], watches), 'http://fixture')
+  assert.deepEqual(JSON.parse(url.searchParams.get('watches') ?? ''), watches)
 })
 
 test('closing the last screen consumer identifies only stale screen caches', () => {
@@ -61,9 +64,15 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   }
   await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ sessionId: 's', window: { mode: 'tail', from: 0, limit: 500 } }) })
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.file('/repo', 'README.md'), queryFn: async () => ({ content: 'old' }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.fileTree('/repo', 'docs'), queryFn: async () => ({ entries: [] }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.backlog('/repo', 'docs'), queryFn: async () => ({ tasks: [] }) })
   queryClient.setQueryData(queryKeys.screen('w1:p1'), { pane_id: 'w1:p1', status: 'available', text: 'stable previous frame', truncated: false })
   queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, messages: 0, lastEvent: null, loadedBuild: 'source:previous', serverUpdated: false })
-  const stop = subscribeToFleet(queryClient, ['vile', 'vile'], ['w1:p1'], () => {
+  const stop = subscribeToFleet(queryClient, ['vile', 'vile'], ['w1:p1'], [
+    { kind: 'file', root: '/repo', path: 'README.md' },
+    { kind: 'folder', root: '/repo', path: 'docs' },
+  ], () => {
     const source = new FakeEventSource()
     sources.push(source)
     return source
@@ -93,6 +102,12 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   assert.deepEqual(queryClient.getQueryData(queryKeys.screen('w1:p1')), { pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false })
   sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'unavailable', text: '', truncated: false, detail: 'pane closed' }))
   assert.equal(queryClient.getQueryData<{ text: string }>(queryKeys.screen('w1:p1'))?.text, '')
+  sources[0].emit('file-change', JSON.stringify({ kind: 'file', root: '/repo', path: 'README.md' }))
+  sources[0].emit('file-change', JSON.stringify({ kind: 'folder', root: '/repo', path: 'docs' }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.file('/repo', 'README.md'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.fileTree('/repo', 'docs'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.backlog('/repo', 'docs'))?.isInvalidated, true)
   stop()
   assert.equal(sources[0].closed, true)
 })

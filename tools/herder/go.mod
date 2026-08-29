@@ -3,6 +3,7 @@ module ai-config/tools/herder
 go 1.26.5
 
 require (
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/junegunn/fzf v0.74.3
 	gopkg.in/yaml.v3 v3.0.1
 )

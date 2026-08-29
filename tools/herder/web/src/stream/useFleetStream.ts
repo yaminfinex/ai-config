@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { queryKeys } from '../api/client.ts'
 import type { Board, ScreenFrame, SubstrateEvent } from '../types'
+import type { FileWatchTarget } from './fileWatchRegistry.ts'
 
 export type StreamState = {
   problems: Record<string, string>
@@ -46,12 +47,13 @@ export function withoutUnsubscribedTranscripts(problems: Record<string, string>,
   return Object.fromEntries(Object.entries(problems).filter(([source]) => !source.startsWith('transcript:') || subscribed.has(source)))
 }
 
-export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = []) {
+export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = []) {
   const agents = [...new Set(agentNames)].sort().join(',')
   const screens = [...new Set(screenPaneIDs)].sort().join(',')
   const query = new URLSearchParams()
   if (agents) query.set('agents', agents)
   if (screens) query.set('screens', screens)
+  if (fileWatches.length > 0) query.set('watches', JSON.stringify(fileWatches))
   return query.size ? `/api/events?${query}` : '/api/events'
 }
 
@@ -64,6 +66,7 @@ export function subscribeToFleet(
   queryClient: QueryClient,
   agentNames: string[],
   screenPaneIDs: string[] = [],
+  fileWatches: FileWatchTarget[] = [],
   createEventSource: (url: string) => EventSourceLike = (url) => new EventSource(url),
   timers: TimerHost = window,
 ) {
@@ -75,6 +78,14 @@ export function subscribeToFleet(
   let lastActivity = Date.now()
   const names = [...new Set(agentNames)].sort()
   const panes = [...new Set(screenPaneIDs)].sort()
+  const invalidateFileWatch = (fact: FileWatchTarget) => {
+    if (fact.kind === 'file') {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.file(fact.root, fact.path), exact: true })
+      return
+    }
+    void queryClient.invalidateQueries({ queryKey: queryKeys.fileTree(fact.root, fact.path), exact: true })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.backlog(fact.root, fact.path), exact: true })
+  }
   const update = (change: (current: StreamState) => StreamState) => {
     queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => change(current ?? initialStreamState))
   }
@@ -99,7 +110,7 @@ export function subscribeToFleet(
     lastActivity = Date.now()
     update((current) => current.loadedBuild ? current : { ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } })
     try {
-      events = createEventSource(eventStreamURL(names, panes))
+      events = createEventSource(eventStreamURL(names, panes, fileWatches))
     } catch {
       scheduleReconnect('Live stream disconnected; reconnecting…')
       return
@@ -112,6 +123,7 @@ export function subscribeToFleet(
         void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
         void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
       })
+      fileWatches.forEach(invalidateFileWatch)
     }
     events.onerror = () => scheduleReconnect('Live stream disconnected; reconnecting…')
     events.addEventListener('hello', (event) => {
@@ -163,6 +175,11 @@ export function subscribeToFleet(
       touch()
       queryClient.setQueryData<ScreenFrame>(queryKeys.screen(paneID), JSON.parse(event.data) as ScreenFrame)
     }))
+    events.addEventListener('file-change', (event) => {
+      touch()
+      const fact = JSON.parse(event.data) as FileWatchTarget
+      if (fact.kind === 'file' || fact.kind === 'folder') invalidateFileWatch(fact)
+    })
   }
 
   connect()
@@ -178,11 +195,12 @@ export function subscribeToFleet(
   }
 }
 
-export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = []) {
+export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = []) {
   const queryClient = useQueryClient()
   const previousScreenSubscription = useRef('')
   const subscription = [...new Set(agentNames)].sort().join(',')
   const screenSubscription = [...new Set(screenPaneIDs)].sort().join(',')
+  const fileWatchSubscription = JSON.stringify(fileWatches)
   const stream = useQuery({
     queryKey: queryKeys.stream,
     queryFn: async () => initialStreamState,
@@ -199,6 +217,11 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
     }
     previousScreenSubscription.current = screenSubscription
   }, [queryClient, screenSubscription])
-  useEffect(() => subscribeToFleet(queryClient, subscription ? subscription.split(',') : [], screenSubscription ? screenSubscription.split(',') : []), [queryClient, subscription, screenSubscription])
+  useEffect(() => subscribeToFleet(
+    queryClient,
+    subscription ? subscription.split(',') : [],
+    screenSubscription ? screenSubscription.split(',') : [],
+    JSON.parse(fileWatchSubscription) as FileWatchTarget[],
+  ), [fileWatchSubscription, queryClient, subscription, screenSubscription])
   return stream
 }

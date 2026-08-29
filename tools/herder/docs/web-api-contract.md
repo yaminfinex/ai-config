@@ -14,6 +14,10 @@ owner ruling.
   nothing starts it until the owner turns it on.
 - The API wraps live substrate (herdr socket, hcom CLI, tools/fleet
   spawn path). It holds NO state of its own — restart loses nothing.
+  The narrow file/folder watch exception below is ephemeral request state:
+  each watch set belongs solely to one `/api/events` connection, is derived
+  from that request, and is discarded in full when the connection closes or
+  the server restarts. It is never persisted or shared as authority.
 - Every substrate failure is a loud structured error, never partial
   truth. Refusal body shape everywhere:
   `{"error": "<short>", "detail": "<substrate text>"}` with an
@@ -639,7 +643,7 @@ endpoint plus multiplexed entry wake frames. Both legacy paths now receive the
 standard structured 404 unknown-endpoint refusal. This amendment records the
 conductor-authorized TASK-12 owner ruling of 2026-08-27.
 
-GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-herdr-pane-ids}` (SSE)
+GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-herdr-pane-ids}&watches={JSON-array}` (SSE)
   The web shell's ONE multiplexed stream per page. `agents` is the
   de-duplicated set of open agent tabs (at most 100); changing the set
   rebuilds this one stream. An absent set subscribes only to fleet and
@@ -662,6 +666,11 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   - `rewindow`: `{"agent":"<bus-name>"}` when that subscribed agent's
     session or transcript position resets; the shell discards the old
     window and fetches the current one;
+  - `file-change`: a file or folder change fact shaped as
+    `{"kind":"file|folder","root":"<opaque-root-id>","path":"<root-relative-path>"}`.
+    It carries no content. The shell invalidates the exact current-file query
+    for a file fact, or the exact one-level tree and Backlog queries for a
+    folder fact; those read endpoints remain truth;
   - `substrate`: a named source went unreachable/recovered (the UI
     must render this as a banner, not an empty board — the honesty
     rule in stream form);
@@ -674,6 +683,36 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   rebuilds if neither data nor heartbeat arrives for 45s. Its
   `reconnecting` indicator is present only while a rebuild is scheduled
   or in flight.
+
+  ### AMENDMENT (owner priority, conductor-acked, 2026-08-29) — live open-file/folder freshness
+
+  `watches` is an optional JSON array ordered oldest-to-newest. Each item is
+  `{"kind":"file|folder","root":"<exact-current-root-id>","path":"<root-relative-path>"}`.
+  The client derives it only from mounted mutable file reads and explicitly
+  open folder listings, coalescing layout-restore registration bursts before
+  rebuilding this same EventSource. Hidden dock tabs remain open; unmounted or
+  replaced views are removed. Expanded folder nodes are individual opt-in
+  watches and never authorize or create a recursive tree watch.
+
+  One real fsnotify watcher is owned by each SSE request. File targets watch
+  their resolved parent directory and filter to the exact filename. Folder
+  targets watch the resolved directory itself for direct entry changes. Equal
+  directories are de-duplicated within that connection. Two viewers have
+  independent connection state and never mutate one another's watch set.
+
+  A connection retains at most 64 distinct watched directories. Declaration
+  order is eviction order: when more are requested, the newest 64 directories
+  remain watched and older views retain manual refresh. The decoded declaration
+  is capped at 64 KiB and 256 logical targets. Create, write, rename, remove,
+  and chmod bursts are coalesced per logical target with a trailing 120ms quiet
+  window before one `file-change` fact is emitted.
+
+  Resolution, registration, runtime, cap, and teardown failures are silent UI
+  degradations to the existing manual Refresh behavior: they never produce a
+  watch error banner or replace an otherwise healthy fleet stream. Closing the
+  request context closes its fsnotify watcher and drops the complete ephemeral
+  set. Changes/Git panels, transcript panels, recursive tree freshness, editing,
+  and file writes remain outside this amendment.
 
   ### AMENDMENT (owner-rescoped 2026-08-27, expanded 2026-08-28) — read-only terminal screens
 
@@ -926,9 +965,10 @@ creation. No auth beyond the tailnet boundary. No server-side state.
 No screen is interactive and no agent screen is selected by default. The
 opt-in read-only agent viewport and unattributed-terminal screen are only the
 narrow exceptions defined by the 2026-08-28 expansion above.
-There are no file writes, file watch/EventSource, content grep/search endpoint,
+There are no file writes, content grep/search endpoint,
 archive/download surface, arbitrary-path read, mission-aware root behavior,
-whole-repository history browser, or persistent file state. The short-lived candidate index is
+whole-repository history browser, or persistent file state. File/folder change
+facts exist only through the bounded ephemeral `/api/events` exception above. The short-lived candidate index is
 derived and rebuildable; restart loses no source of truth.
 
 ## Former candidate now ratified (2026-08-27)

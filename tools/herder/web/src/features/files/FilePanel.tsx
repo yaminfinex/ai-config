@@ -11,6 +11,7 @@ import { candidateDestination, missionFacts, missionMarkdownBody } from '../fold
 import { PierreFile, PierrePatch } from '../git/PierreView'
 import { selectGitFileMode, selectHistoricalDiff, selectHistoricalFile, selectedCurrentLines, type GitBase, type GitFileState } from '../git/gitViewModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { useFileWatch } from '../../stream/fileWatchRegistry'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -26,6 +27,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
   onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void
 }) {
+  useFileWatch({ kind: 'file', root: target.root, path: target.path }, gitState.mode === 'current' && !gitState.revision)
   const fileQuery = useQuery({
     queryKey: queryKeys.file(target.root, target.path),
     queryFn: ({ signal }) => getFile(target.root, target.path, fetch, signal),
