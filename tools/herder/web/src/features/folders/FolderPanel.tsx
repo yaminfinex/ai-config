@@ -9,6 +9,7 @@ import { rootLabel } from '../files/fileResolution'
 import { boardColumns, taskFileTarget } from './folderModel'
 import { initialGitFileState } from '../git/gitViewModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { useFileWatch } from '../../stream/fileWatchRegistry'
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -29,6 +30,7 @@ function DirectoryTree({ root, path, depth, currentDir, onDirectory, onSelect, o
   onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void
 }) {
   const [expanded, setExpanded] = useState(depth === 0)
+  useFileWatch({ kind: 'folder', root, path }, expanded)
   const tree = useQuery({
     queryKey: queryKeys.fileTree(root, path),
     queryFn: ({ signal }) => getFileTree(root, path, fetch, signal),

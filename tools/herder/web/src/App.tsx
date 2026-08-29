@@ -21,6 +21,7 @@ import { agentBusStatus } from './shared/agentStatus'
 import { AgentStatusDot, Banner } from './shared/presentation'
 import { ThemeToggle } from './shared/ThemeToggle'
 import { useFleetStream, type StreamState } from './stream/useFleetStream'
+import { createFileWatchRegistry, FileWatchContext, type FileWatchTarget } from './stream/fileWatchRegistry'
 import { agentTabID } from './previewTabs'
 import type { Board, FileTarget, FolderTarget, Pane } from './types'
 import { FilePanel } from './features/files/FilePanel'
@@ -301,6 +302,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [agentStatuses, setAgentStatuses] = useState<Record<string, string>>({})
   const [agentScreenPanes, setAgentScreenPanes] = useState<Record<string, string>>({})
   const [fileGitStates, setFileGitStates] = useState<Record<string, GitFileState>>({})
+  const [fileWatchTargets, setFileWatchTargets] = useState<FileWatchTarget[]>([])
   const [activePanelID, setActivePanelID] = useState('')
   const [revision, setRevision] = useState(0)
   const [dockReady, setDockReady] = useState(false)
@@ -314,6 +316,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const boardQuery = useQuery({ queryKey: queryKeys.fleet, queryFn: () => getFleet(), staleTime: Infinity, retry: false })
   const viewerQuery = useQuery(viewerQueryOptions())
   const mentionMatcher = useMemo(() => agentMentionMatcher(boardQuery.data), [boardQuery.data])
+  const fileWatchRegistry = useMemo(() => createFileWatchRegistry(setFileWatchTargets), [])
+
+  useEffect(() => () => fileWatchRegistry.dispose(), [fileWatchRegistry])
 
   const syncDock = useCallback(() => {
     if (persistenceReady.current) layoutDirty.current = true
@@ -623,7 +628,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const agentNames = [...new Set(openPanels.flatMap((params) => params.kind === 'agent' ? [params.name] : []))]
   const provenScreenPaneIDs = openPanels.flatMap((params) => params.kind === 'screen' && screenIdentityState(params, boardQuery.data) === 'ready' ? [params.identity.paneID] : [])
   const screenPaneIDs = [...new Set([...provenScreenPaneIDs, ...agentNames.flatMap((name) => agentScreenPanes[name] ? [agentScreenPanes[name]] : [])])]
-  const stream = useFleetStream(agentNames, screenPaneIDs)
+  const stream = useFleetStream(agentNames, screenPaneIDs, fileWatchTargets)
   const activeParams = openPanels.find((params) => {
     return dockPanelID(params) === activePanelID
   })
@@ -739,7 +744,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     onAgentStatus: setAgentStatus, agentStatuses, resetLayout, showQuickOpen, stream, streamProblems,
   }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, mentionMatcher, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, queryClient, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen, stream, streamProblems, viewerReadOnly])
 
-  return <WorkspaceContext.Provider value={workspace}><div className="app-shell">
+  return <WorkspaceContext.Provider value={workspace}><FileWatchContext.Provider value={fileWatchRegistry.register}><div className="app-shell">
     <QuickOpen open={quickOpen} agent={quickOpenAgent} groupID={quickOpenGroup} onClose={() => { setQuickOpen(false); setQuickOpenGroup(undefined) }} onOpenFile={openFile} onOpenFolder={openFolder} />
     <ShortcutReference open={shortcutReference} onClose={() => setShortcutReference(false)} />
     <div className="sidebar-region" style={{ width: sidebarWidth }}>
@@ -770,7 +775,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         <ThemeToggle />
       </footer>
     </section>
-  </div></WorkspaceContext.Provider>
+  </div></FileWatchContext.Provider></WorkspaceContext.Provider>
 }
 
 export default function App() {

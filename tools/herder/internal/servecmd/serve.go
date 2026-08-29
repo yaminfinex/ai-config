@@ -35,6 +35,7 @@ import (
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 	"ai-config/tools/herder/internal/webui"
+	"github.com/fsnotify/fsnotify"
 )
 
 const (
@@ -68,6 +69,8 @@ type dependencies struct {
 	configuredRoots      []string
 	roots                func(context.Context, []string, []hcomidentity.Row) (fileroots.Set, error)
 	fileResolver         fileresolver.Resolver
+	fileWatcher          func() (*fsnotify.Watcher, error)
+	fileWatcherDelta     func(int)
 	repoContext          func(context.Context, string) (repoctx.Context, error)
 	now                  func() time.Time
 }
@@ -95,6 +98,7 @@ var liveDependencies = dependencies{
 	},
 	roots:        buildRootSet,
 	fileResolver: fileresolver.New(fileindex.New(fileindex.Options{})),
+	fileWatcher:  fsnotify.NewWatcher,
 	repoContext:  repoctx.Read,
 	now:          time.Now,
 }
@@ -944,6 +948,16 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
+	watchesRaw, err := optionalQuery(r, "watches")
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	watches, err := parseFileWatchRequests(watchesRaw)
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		refuse(w, http.StatusInternalServerError, "stream unavailable", "response writer does not support flushing")
@@ -966,6 +980,14 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	hcomState := make(chan error, 1)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	fileWatches := startFileWatches(ctx, deps, watches)
+	if fileWatches != nil {
+		defer fileWatches.Close()
+	}
+	var fileChangeCh <-chan fileChangeFact
+	if fileWatches != nil {
+		fileChangeCh = fileWatches.Facts
+	}
 	var screenReader screenSource
 	go func() {
 		cursor := &hcomevents.Cursor{}
@@ -1287,6 +1309,10 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		case message := <-messageCh:
 			if !emit("message", message) {
+				return
+			}
+		case fact := <-fileChangeCh:
+			if !emit("file-change", fact) {
 				return
 			}
 		case <-hcomHealthy:
