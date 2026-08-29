@@ -7,6 +7,7 @@ import { FilePanel } from '../files/FilePanel'
 import { isMarkdownPath, type FileViewMode } from '../files/fileTabs'
 import { rootLabel } from '../files/fileResolution'
 import { boardColumns, taskFileTarget } from './folderModel'
+import { initialGitFileState } from '../git/gitViewModel'
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -96,8 +97,9 @@ function BacklogBoard({ backlog, onOpenFile }: { backlog: BacklogRead, onOpenFil
   </section>
 }
 
-export function FolderPanel({ target, onOpenFile, onOpenFolder }: {
+export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
   target: FolderTarget
+  active: boolean
   onOpenFile: (target: FileTarget) => void
   onOpenFolder: (target: FolderTarget) => void
 }) {
@@ -105,6 +107,7 @@ export function FolderPanel({ target, onOpenFile, onOpenFolder }: {
   const [currentDir, setCurrentDir] = useState(target.path)
   const [selected, setSelected] = useState<FileTarget | null>(null)
   const [viewMode, setViewMode] = useState<FileViewMode>('source')
+  const [gitState, setGitState] = useState(initialGitFileState)
   const [boardView, setBoardView] = useState(true)
   const currentTree = useQuery({
     queryKey: queryKeys.fileTree(target.root, currentDir),
@@ -142,6 +145,7 @@ export function FolderPanel({ target, onOpenFile, onOpenFolder }: {
   const chooseFile = (file: FileTarget) => {
     setSelected(file)
     setViewMode(isMarkdownPath(file.path) && !file.line ? 'rendered' : 'source')
+    setGitState(initialGitFileState())
     setBoardView(false)
   }
   const backlogFailure = backlog.error ? apiProblem(backlog.error) : null
@@ -162,7 +166,7 @@ export function FolderPanel({ target, onOpenFile, onOpenFolder }: {
         {showBoard && backlog.data && boardAvailable(backlog.data) ? <>
           <div className="backlog-facts"><span>Fetched {new Date(backlog.data.fetched_at).toLocaleString()}</span><span>{backlog.data.tasks.length} parsed tasks</span></div>
           <BacklogBoard backlog={backlog.data} onOpenFile={onOpenFile} />
-        </> : selected ? <FilePanel target={selected} viewMode={viewMode} onViewMode={setViewMode} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} />
+        </> : selected ? <FilePanel target={selected} viewMode={viewMode} gitState={gitState} active={active} onViewMode={setViewMode} onGitState={setGitState} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} />
           : <div className="folder-empty" role="status"><strong>Select a file</strong><p>A single click previews it here. Double-click or use Open tab to create a dock preview.</p></div>}
       </section>
     </div>

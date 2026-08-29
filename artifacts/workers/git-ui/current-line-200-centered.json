@@ -1,0 +1,14 @@
+{
+  "pass": true,
+  "afterHighlightSettleMs": 3000,
+  "target": "tools/herder/internal/servecmd/serve.go:200",
+  "renderedLines": 1354,
+  "selected": "single",
+  "scrollTop": 3624,
+  "containerCenterPx": 486.75,
+  "lineCenterPx": 479.5,
+  "centerDeltaPx": 7.25,
+  "tolerancePx": 24,
+  "inViewport": true,
+  "buildIdentity": "executable:98ec2fc951a3cdb1f8990f363126bf78d5fd594373ef3c4905c26a7aff477825"
+}
