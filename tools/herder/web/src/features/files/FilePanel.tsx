@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { useInfiniteQuery, useQuery, type UseQueryResult } from '@tanstack/react-query'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { apiProblem, getFile, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
 import type { FileTarget, FolderTarget, GitDiffRead, GitLogEntry, GitLogRead } from '../../types'
 import { Banner } from '../../shared/presentation'
@@ -55,11 +55,9 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     staleTime: gitState.commit ? Infinity : 0,
     retry: false,
   })
-  const historyQuery = useInfiniteQuery({
+  const historyQuery = useQuery({
     queryKey: queryKeys.gitLog(target.root, target.path),
-    queryFn: ({ pageParam, signal }) => getGitLog(target.root, target.path, pageParam, fetch, signal),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.next_cursor,
+    queryFn: ({ signal }) => getGitLog(target.root, target.path, undefined, fetch, signal),
     enabled: gitState.mode === 'history' && gitAvailable,
     retry: false,
   })
@@ -149,8 +147,8 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     </>}
     {gitState.mode !== 'current' && !gitAvailable && <section className="file-state" role="status"><strong>Git unavailable</strong><p>{gitReason || 'This root cannot currently provide Git facts.'}</p></section>}
     {gitState.mode === 'diff' && gitAvailable && <DiffView query={diffQuery} base={effectiveBase} commit={gitState.commit?.sha} branchAvailable={branchAvailable} onBase={(base) => onGitState({ mode: 'diff', base })} />}
-    {gitState.mode === 'history' && gitAvailable && <HistoryView pages={historyQuery.data?.pages} pending={historyQuery.isPending} error={historyQuery.error} hasNext={historyQuery.hasNextPage} fetchingNext={historyQuery.isFetchingNextPage}
-      onNext={() => historyQuery.fetchNextPage()} onFile={(entry) => onGitState(selectHistoricalFile(gitState, { sha: entry.sha, path: entry.path_then }))}
+    {gitState.mode === 'history' && gitAvailable && <HistoryView page={historyQuery.data} pending={historyQuery.isPending} error={historyQuery.error}
+      onFile={(entry) => onGitState(selectHistoricalFile(gitState, { sha: entry.sha, path: entry.path_then }))}
       onDiff={(entry) => onGitState(selectHistoricalDiff(gitState, { sha: entry.sha, path: entry.path_then }))} />}
   </main>
 }
@@ -181,17 +179,14 @@ function DiffView({ query, base, commit, branchAvailable, onBase }: {
   </section>
 }
 
-function HistoryView({ pages, pending, error, hasNext, fetchingNext, onNext, onFile, onDiff }: {
-  pages?: GitLogRead[]
+function HistoryView({ page, pending, error, onFile, onDiff }: {
+  page?: GitLogRead
   pending: boolean
   error: Error | null
-  hasNext: boolean
-  fetchingNext: boolean
-  onNext: () => void
   onFile: (entry: GitLogEntry) => void
   onDiff: (entry: GitLogEntry) => void
 }) {
-  const entries = pages?.flatMap((page) => page.entries) ?? []
+  const entries = page?.entries ?? []
   const failure = error ? apiProblem(error) : null
   return <section className="git-mode-body" aria-label="File history">
     {pending && <div className="file-state" role="status">Reading file history…</div>}
@@ -202,7 +197,7 @@ function HistoryView({ pages, pending, error, hasNext, fetchingNext, onNext, onF
       <div className="history-meta"><span>{entry.author}</span><time dateTime={entry.date}>{new Date(entry.date).toLocaleString()}</time><span title={entry.path_then}>{entry.path_then}</span></div>
       <div className="history-actions"><button type="button" onClick={() => onFile(entry)}>View file at commit</button><button type="button" onClick={() => onDiff(entry)}>What this commit changed</button></div>
     </article>)}</div>}
-    {hasNext && <button type="button" className="history-more" disabled={fetchingNext} onClick={onNext}>{fetchingNext ? 'Loading…' : 'Load older commits'}</button>}
+    {page?.next_cursor && <p className="history-more" role="note">Showing the 50 most recent commits; older history is not yet available.</p>}
   </section>
 }
 

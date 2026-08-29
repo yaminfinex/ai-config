@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   fileLanguage,
@@ -41,4 +42,10 @@ test('change summaries use proved merge-base counts and never upstream ahead', (
   assert.equal(repoChangeSummary(3, 4), '3 commits + 4 uncommitted files')
   assert.equal(repoChangeSummary(0, 0), 'no unmerged commits; nothing uncommitted')
   assert.equal(repoChangeSummary(undefined, 4), '4 uncommitted files')
+})
+
+test('History stops honestly at the first follow page until deep pagination is fixed', () => {
+  const panel = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /Showing the 50 most recent commits; older history is not yet available\./)
+  assert.doesNotMatch(panel, /fetchNextPage|Load older commits/)
 })
