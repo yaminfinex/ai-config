@@ -451,7 +451,7 @@ so the record does not claim byte-for-byte repository immutability.
 GET `/api/git/status?root={root-id}`
   Returns the root-scoped changed-file list from
   `git status --porcelain=v2 -z --branch`. Success is:
-  `{"root":"/opaque/root","repo":{"branch":"feature/x","head":"<full-sha>","upstream":"origin/feature/x","ahead":3,"behind":1,"branch_base":{"status":"available","default_ref":"origin/main","default_sha":"<full-sha>","merge_base":"<full-sha>"}},"entries":[{"path":"new/name.md","kind":"renamed","old_path":"old/name.md","staged":true,"unstaged":false,"index_kind":"renamed","additions":12,"deletions":3,"binary":false}],"fetched_at":"2026-08-28T15:00:00.000000731Z"}`.
+  `{"root":"/opaque/root","repo":{"branch":"feature/x","head":"<full-sha>","upstream":"origin/feature/x","ahead":3,"behind":1,"branch_base":{"status":"available","default_ref":"origin/main","default_sha":"<full-sha>","merge_base":"<full-sha>","commits_ahead_of_base":5}},"entries":[{"path":"new/name.md","kind":"renamed","old_path":"old/name.md","staged":true,"unstaged":false,"index_kind":"renamed","additions":12,"deletions":3,"binary":false}],"fetched_at":"2026-08-28T15:00:00.000000731Z"}`.
 
   `kind` is `modified`, `added`, `deleted`, `renamed`, `copied`,
   `untracked`, `conflicted`, or `type_changed`; conflicted takes precedence.
@@ -471,12 +471,18 @@ GET `/api/git/status?root={root-id}`
   commit, and `merge-base HEAD refs/remotes/origin/HEAD`. Missing or
   unprovable evidence is explicit, for example
   `{"status":"unavailable","reason":"origin/HEAD is not configured"}`.
+  When that proof is available, optional `commits_ahead_of_base` is the
+  non-negative result of `git rev-list --count <merge_base>..HEAD`. It is the
+  commit count since the proved default-branch merge-base and is deliberately
+  distinct from top-level `ahead`, which remains porcelain's count against the
+  configured upstream. Either may exist without the other and clients must not
+  conflate them. If the count cannot be proved, it is omitted.
   Detached HEAD omits branch/upstream/ahead/behind but may carry `head`. A root
   that is not a Git repository, or whose essential porcelain status cannot be
   read, is an honest HTTP 200 rather than a page-breaking error:
   `{"root":"/opaque/root","git":{"status":"unavailable","reason":"not a git repository"},"fetched_at":"..."}`.
 
-GET `/api/git/diff?root={root-id}&path={relative-file}&base={uncommitted|branch}`
+GET `/api/git/diff?root={root-id}&path={relative-file}&base={uncommitted|branch|commit}&sha={required-for-commit}`
   Returns one capped raw Git patch plus separately parsed header facts. Success
   is:
   `{"root":"/opaque/root","path":"new/name.md","base":{"kind":"branch","sha":"<merge-base-full-sha>","default_ref":"origin/main","label":"merge-base with origin/main; includes committed and uncommitted work"},"facts":{"kind":"renamed","old_path":"old/name.md","binary":false,"old_mode":"100644","new_mode":"100755"},"stats":{"additions":12,"deletions":3},"patch":"diff --git ...\n","patch_bytes":731,"truncated":false,"fetched_at":"..."}`.
@@ -488,6 +494,20 @@ GET `/api/git/diff?root={root-id}&path={relative-file}&base={uncommitted|branch}
   work, with the proved merge-base of its own HEAD and symbolic `origin/HEAD`.
   Every proof and diff command runs with `git -C` set to that linked checkout;
   the main checkout and guessed branch names are never consulted.
+
+  `commit` compares one exact commit with what immediately preceded it: an
+  ordinary commit with its sole parent, a merge commit with its first parent,
+  and a root commit with Git's empty tree. It requires `sha` to be a full SHA
+  that peels to a commit; invalid, abbreviated, unknown, and non-commit values
+  are 404s exactly as for `/api/git/file`. The response base is respectively
+  `{"kind":"commit","sha":"<peeled-full-commit-sha>","label":"commit vs parent"}`,
+  `{"kind":"commit","sha":"<peeled-full-commit-sha>","label":"merge commit vs first parent"}`,
+  or `{"kind":"commit","sha":"<peeled-full-commit-sha>","label":"root commit vs empty tree"}`.
+  Commit mode uses the same `--find-renames --find-copies-harder` copy
+  detection, structured facts, patch caps, and refusal behavior as mutable
+  diff. A successful commit response omits `fetched_at` and sets
+  `Cache-Control: public, max-age=31536000, immutable`; the `sha` parameter is
+  refused on mutable `uncommitted` and `branch` requests.
 
   `facts.kind` is `unchanged`, `modified`, `added`, `deleted`, `renamed`,
   `copied`, or `type_changed`. `old_path` appears for a proved rename/copy;
@@ -526,16 +546,22 @@ GET `/api/git/diff?root={root-id}&path={relative-file}&base={uncommitted|branch}
 
 GET `/api/git/log?root={root-id}&path={relative-file}&cursor={optional}`
   Returns single-file history, newest first, following renames:
-  `{"root":"/opaque/root","path":"new/name.md","entries":[{"sha":"<full-sha>","author":"Fixture","date":"2026-08-28T12:34:56Z","subject":"rename file"}],"next_cursor":"<opaque>","fetched_at":"..."}`.
+  `{"root":"/opaque/root","path":"new/name.md","entries":[{"sha":"<full-sha>","author":"Fixture","date":"2026-08-28T12:34:56Z","subject":"rename file","path_then":"new/name.md"}],"next_cursor":"<opaque>","fetched_at":"..."}`.
   The page size is fixed at 50; `entries` is explicit and each entry contains
-  exactly sha/author/date/subject. `next_cursor` is absent at end, and an
+  exactly sha/author/date/subject/path_then. `path_then` is the root-relative
+  historical path reported by the same rename-following log traversal for that
+  commit (the rename/copy destination at its commit); clients use it when
+  requesting `/api/git/file` or the immutable commit diff across a rename
+  boundary. `next_cursor` is absent at end, and an
   untracked/no-history file is an honest 200 with `entries:[]`.
 
   The cursor is an opaque, versioned, base64url token containing the first
   page's fixed HEAD anchor, next skip offset, and a SHA-256 binding to the
   repository, opaque root, and root-relative path. Its fields, version, SHA,
   bounded skip, and binding are validated. Each page reruns one anchored
-  `git log --follow` traversal with `--skip`; using `cursor^` is forbidden
+  `git log --follow --find-renames --name-status -z` traversal with `--skip`;
+  the machine name-status record supplies `path_then` without changing cursor
+  anchoring or binding. Using `cursor^` is forbidden
   because it can lose the rename boundary and historical path. The server has
   no cursor store.
 

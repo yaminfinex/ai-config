@@ -132,6 +132,71 @@ func TestDiffBasesInsideRealLinkedWorktree(t *testing.T) {
 	}
 }
 
+func TestCommitDiffReportsOrdinaryRenameBinaryRootAndFirstParentMerge(t *testing.T) {
+	repo := newRepo(t)
+	write(t, repo, "root.txt", "root\n")
+	write(t, repo, "old.txt", "old\n")
+	writeBytes(t, repo, "image.bin", []byte{0, 1, 2})
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "root")
+	rootSHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+
+	rootDiff, err := ReadCommitDiff(context.Background(), repo, "root.txt", rootSHA)
+	if err != nil || rootDiff.Base.Kind != "commit" || rootDiff.Base.SHA != rootSHA || rootDiff.Base.Label != "root commit vs empty tree" || rootDiff.Facts.Kind != "added" || !strings.Contains(rootDiff.Patch, "+root") {
+		t.Fatalf("root diff = %#v err=%v", rootDiff, err)
+	}
+
+	write(t, repo, "root.txt", "root\nordinary\n")
+	git(t, repo, "commit", "-am", "ordinary")
+	ordinarySHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	ordinary, err := ReadCommitDiff(context.Background(), repo, "root.txt", ordinarySHA)
+	if err != nil || ordinary.Base.Label != "commit vs parent" || ordinary.Facts.Kind != "modified" || ordinary.Stats == nil || ordinary.Stats.Additions != 1 || !strings.Contains(ordinary.Patch, "+ordinary") {
+		t.Fatalf("ordinary diff = %#v err=%v", ordinary, err)
+	}
+	unchanged, err := ReadCommitDiff(context.Background(), repo, "old.txt", ordinarySHA)
+	if err != nil || unchanged.Facts.Kind != "unchanged" || unchanged.Stats == nil || unchanged.Stats.Additions != 0 || unchanged.Patch != "" {
+		t.Fatalf("unchanged diff = %#v err=%v", unchanged, err)
+	}
+
+	git(t, repo, "mv", "old.txt", "new.txt")
+	git(t, repo, "commit", "-m", "rename")
+	renameSHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	rename, err := ReadCommitDiff(context.Background(), repo, "new.txt", renameSHA)
+	if err != nil || rename.Facts.Kind != "renamed" || rename.Facts.OldPath != "old.txt" {
+		t.Fatalf("rename diff = %#v err=%v", rename, err)
+	}
+
+	writeBytes(t, repo, "image.bin", []byte{0, 1, 3})
+	git(t, repo, "commit", "-am", "binary")
+	binarySHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	binary, err := ReadCommitDiff(context.Background(), repo, "image.bin", binarySHA)
+	if err != nil || !binary.Facts.Binary || binary.Stats != nil {
+		t.Fatalf("binary diff = %#v err=%v", binary, err)
+	}
+
+	git(t, repo, "switch", "-c", "feature")
+	write(t, repo, "feature.txt", "feature\n")
+	git(t, repo, "add", "feature.txt")
+	git(t, repo, "commit", "-m", "feature")
+	git(t, repo, "switch", "main")
+	write(t, repo, "main.txt", "main\n")
+	git(t, repo, "add", "main.txt")
+	git(t, repo, "commit", "-m", "main")
+	git(t, repo, "merge", "--no-ff", "feature", "-m", "merge")
+	mergeSHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	merge, err := ReadCommitDiff(context.Background(), repo, "feature.txt", mergeSHA)
+	if err != nil || merge.Base.Label != "merge commit vs first parent" || merge.Facts.Kind != "added" || !strings.Contains(merge.Patch, "+feature") {
+		t.Fatalf("merge diff = %#v err=%v", merge, err)
+	}
+
+	if _, err := ReadCommitDiff(context.Background(), repo, "feature.txt", "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("invalid commit error = %v", err)
+	}
+	if _, err := ReadCommitDiff(context.Background(), repo, "missing.txt", mergeSHA); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing path error = %v", err)
+	}
+}
+
 func TestDiffReportsRenameBinaryModeAndCaps(t *testing.T) {
 	repo := newRepo(t)
 	write(t, repo, "old.txt", "old\n")
@@ -203,18 +268,26 @@ func TestDiffDoesNotRunRepositoryTextconv(t *testing.T) {
 	if err := os.WriteFile(filter, []byte("#!/bin/sh\ntouch \""+marker+"\"\ncat \"$1\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	git(t, repo, "config", "diff.fixture.textconv", filter)
 	git(t, repo, "add", ".")
 	git(t, repo, "commit", "-m", "base")
-	write(t, repo, "file.txt", "changed\n")
+	write(t, repo, "file.txt", "committed\n")
+	git(t, repo, "commit", "-am", "changed")
+	commitSHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	git(t, repo, "config", "diff.fixture.textconv", filter)
+	write(t, repo, "file.txt", "working\n")
 
 	result, err := ReadDiff(context.Background(), repo, "file.txt", "uncommitted", time.Now)
-	if err != nil || !strings.Contains(result.Patch, "+changed") {
+	if err != nil || !strings.Contains(result.Patch, "+working") {
 		t.Fatalf("diff = %#v err=%v", result, err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("repository textconv ran; marker stat error = %v", err)
 	}
+	commitDiff, err := ReadCommitDiff(context.Background(), repo, "file.txt", commitSHA)
+	if err != nil || !strings.Contains(commitDiff.Patch, "+committed") {
+		t.Fatalf("commit diff = %#v err=%v", commitDiff, err)
+	}
+	assertMarkerAbsent(t, marker)
 }
 
 func TestGitReadsDoNotRunRepositoryHooksOrFSMonitor(t *testing.T) {
@@ -222,6 +295,9 @@ func TestGitReadsDoNotRunRepositoryHooksOrFSMonitor(t *testing.T) {
 	write(t, repo, "file.txt", "base\n")
 	git(t, repo, "add", ".")
 	git(t, repo, "commit", "-m", "base")
+	write(t, repo, "file.txt", "committed\n")
+	git(t, repo, "commit", "-am", "changed")
+	commitSHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
 
 	markers := t.TempDir()
 	hookMarker := filepath.Join(markers, "hook-ran")
@@ -235,7 +311,7 @@ func TestGitReadsDoNotRunRepositoryHooksOrFSMonitor(t *testing.T) {
 	writeExecutable(t, monitor, "#!/bin/sh\ntouch \""+monitorMarker+"\"\n")
 	git(t, repo, "config", "core.hooksPath", hooks)
 	git(t, repo, "config", "core.fsmonitor", monitor)
-	write(t, repo, "file.txt", "changed\n")
+	write(t, repo, "file.txt", "working\n")
 
 	status, err := ReadStatus(context.Background(), repo, time.Now)
 	if err != nil || status.Entries == nil || len(*status.Entries) != 1 {
@@ -245,8 +321,15 @@ func TestGitReadsDoNotRunRepositoryHooksOrFSMonitor(t *testing.T) {
 	assertMarkerAbsent(t, monitorMarker)
 
 	diff, err := ReadDiff(context.Background(), repo, "file.txt", "uncommitted", time.Now)
-	if err != nil || !strings.Contains(diff.Patch, "+changed") {
+	if err != nil || !strings.Contains(diff.Patch, "+working") {
 		t.Fatalf("diff = %#v err=%v", diff, err)
+	}
+	assertMarkerAbsent(t, hookMarker)
+	assertMarkerAbsent(t, monitorMarker)
+
+	commitDiff, err := ReadCommitDiff(context.Background(), repo, "file.txt", commitSHA)
+	if err != nil || !strings.Contains(commitDiff.Patch, "+committed") {
+		t.Fatalf("commit diff = %#v err=%v", commitDiff, err)
 	}
 	assertMarkerAbsent(t, hookMarker)
 	assertMarkerAbsent(t, monitorMarker)
@@ -278,11 +361,65 @@ func TestLogFollowsRenameAndPaginatesWithOpaqueCursor(t *testing.T) {
 	if len(second.Entries) != 2 || second.Entries[len(second.Entries)-1].Subject != "original" || second.NextCursor != "" {
 		t.Fatalf("second page = %#v", second)
 	}
+	if first.Entries[0].PathThen != "new.txt" || second.Entries[0].PathThen != "new.txt" || second.Entries[1].PathThen != "old.txt" {
+		t.Fatalf("paths across rename: first=%#v second=%#v", first.Entries[0], second.Entries)
+	}
 	if _, err := ReadLog(context.Background(), repo, "other.txt", first.NextCursor, time.Now); !errors.Is(err, ErrRefused) {
 		t.Fatalf("rebound cursor error = %v", err)
 	}
 	if _, err := ReadLog(context.Background(), repo, "new.txt", "not-a-cursor", time.Now); !errors.Is(err, ErrBadRequest) {
 		t.Fatalf("malformed cursor error = %v", err)
+	}
+	loc, err := discover(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badStatus := []byte(first.Entries[0].SHA + "\x00Fixture\x002026-08-28T12:34:56Z\x00bad\x00\x00\nZ\x00new.txt\x00")
+	if _, err := parseLog(loc, badStatus); err == nil || !strings.Contains(err.Error(), "unrecognized name-status") {
+		t.Fatalf("bad name-status error = %v", err)
+	}
+}
+
+func TestStatusProvesCommitsAheadOfBaseIndependentlyFromUpstream(t *testing.T) {
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	run(t, "", "git", "init", "--bare", "-q", origin)
+	repo := newRepo(t)
+	write(t, repo, "base.txt", "base\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "base")
+	git(t, repo, "remote", "add", "origin", origin)
+	git(t, repo, "push", "-u", "origin", "main")
+	git(t, origin, "symbolic-ref", "HEAD", "refs/heads/main")
+	git(t, repo, "remote", "set-head", "origin", "-a")
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	git(t, repo, "worktree", "add", "-b", "feature/count", linked, "main")
+	write(t, linked, "one.txt", "one\n")
+	git(t, linked, "add", ".")
+	git(t, linked, "commit", "-m", "one")
+	firstFeatureSHA := strings.TrimSpace(git(t, linked, "rev-parse", "HEAD"))
+	write(t, linked, "two.txt", "two\n")
+	git(t, linked, "add", ".")
+	git(t, linked, "commit", "-m", "two")
+
+	withoutUpstream, err := ReadStatus(context.Background(), linked, time.Now)
+	if err != nil || withoutUpstream.Repo == nil || withoutUpstream.Repo.Ahead != nil || withoutUpstream.Repo.BranchBase.CommitsAheadOfBase == nil || *withoutUpstream.Repo.BranchBase.CommitsAheadOfBase != 2 {
+		t.Fatalf("no-upstream status = %#v err=%v", withoutUpstream, err)
+	}
+
+	git(t, linked, "push", "origin", firstFeatureSHA+":refs/heads/tracking")
+	git(t, linked, "fetch", "origin", "tracking")
+	git(t, linked, "branch", "--set-upstream-to=origin/tracking")
+	withUpstream, err := ReadStatus(context.Background(), linked, time.Now)
+	if err != nil || withUpstream.Repo == nil || withUpstream.Repo.Ahead == nil || *withUpstream.Repo.Ahead != 1 || withUpstream.Repo.BranchBase.CommitsAheadOfBase == nil || *withUpstream.Repo.BranchBase.CommitsAheadOfBase != 2 {
+		t.Fatalf("upstream status = %#v err=%v", withUpstream, err)
+	}
+
+	merged := filepath.Join(t.TempDir(), "merged")
+	git(t, repo, "worktree", "add", "-b", "feature/merged", merged, "main")
+	zero, err := ReadStatus(context.Background(), merged, time.Now)
+	if err != nil || zero.Repo == nil || zero.Repo.BranchBase.CommitsAheadOfBase == nil || *zero.Repo.BranchBase.CommitsAheadOfBase != 0 {
+		t.Fatalf("merged status = %#v err=%v", zero, err)
 	}
 }
 

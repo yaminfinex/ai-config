@@ -27,17 +27,34 @@ func serveGitDiff(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		return
 	}
 	base, err := requiredQuery(r, "base")
-	if err != nil || base != "uncommitted" && base != "branch" {
+	if err != nil || base != "uncommitted" && base != "branch" && base != "commit" {
 		if err == nil {
-			err = fmt.Errorf("query parameter %q must be exactly uncommitted or branch", "base")
+			err = fmt.Errorf("query parameter %q must be exactly uncommitted, branch, or commit", "base")
 		}
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
-	result, err := gitapi.ReadDiff(r.Context(), root, path, base, deps.now)
+	shaValues, shaPresent := r.URL.Query()["sha"]
+	if base != "commit" && shaPresent {
+		refuse(w, http.StatusBadRequest, "bad request", "query parameter \"sha\" is valid only when base=commit")
+		return
+	}
+	var result gitapi.DiffResult
+	if base == "commit" {
+		if len(shaValues) != 1 || shaValues[0] == "" {
+			refuse(w, http.StatusBadRequest, "bad request", "query parameter \"sha\" is required exactly once when base=commit")
+			return
+		}
+		result, err = gitapi.ReadCommitDiff(r.Context(), root, path, shaValues[0])
+	} else {
+		result, err = gitapi.ReadDiff(r.Context(), root, path, base, deps.now)
+	}
 	if err != nil {
 		serveGitError(w, err, "base unavailable")
 		return
+	}
+	if base == "commit" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	}
 	writeJSON(w, http.StatusOK, result)
 }

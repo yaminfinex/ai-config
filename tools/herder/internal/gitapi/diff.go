@@ -109,10 +109,160 @@ func ReadDiff(ctx context.Context, root, requestedPath, baseKind string, now fun
 	if err != nil {
 		return DiffResult{}, err
 	}
+	fetched := now()
 	return DiffResult{
 		Root: loc.root, Path: loc.path, Base: base, Facts: facts, Stats: stats,
-		Patch: patch, PatchBytes: total, Truncated: truncated, FetchedAt: now(),
+		Patch: patch, PatchBytes: total, Truncated: truncated, FetchedAt: &fetched,
 	}, nil
+}
+
+// ReadCommitDiff returns the immutable change introduced by one exact commit.
+// Ordinary commits compare with their sole parent, merges with their first
+// parent, and root commits with Git's empty tree.
+func ReadCommitDiff(ctx context.Context, root, requestedPath, sha string) (DiffResult, error) {
+	ctx, cancel := withTimeout(ctx)
+	defer cancel()
+	loc, err := locatePath(ctx, root, requestedPath)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	if !fullSHA(sha) {
+		return DiffResult{}, fmt.Errorf("%w: invalid commit sha %q", ErrNotFound, sha)
+	}
+	commitOut, err := gitOutput(ctx, loc.repoTop, "rev-parse", "--verify", "--end-of-options", sha+"^{commit}")
+	if err != nil {
+		return DiffResult{}, fmt.Errorf("%w: unknown commit %q", ErrNotFound, sha)
+	}
+	commit := strings.TrimSpace(string(commitOut))
+	parentsOut, err := gitOutput(ctx, loc.repoTop, "rev-list", "--parents", "--max-count=1", "--end-of-options", commit)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	parents := strings.Fields(string(parentsOut))
+	if len(parents) == 0 || parents[0] != commit {
+		return DiffResult{}, fmt.Errorf("git rev-list returned invalid parents for commit %s", commit)
+	}
+	rootCommit := len(parents) == 1
+	parent := ""
+	label := "root commit vs empty tree"
+	if !rootCommit {
+		parent = parents[1]
+		label = "commit vs parent"
+		if len(parents) > 2 {
+			label = "merge commit vs first parent"
+		}
+	}
+	base := DiffBase{Kind: "commit", SHA: commit, Label: label}
+
+	rawOut, err := commitDiffOutput(ctx, loc, rootCommit, parent, commit, "--raw", "-z")
+	if err != nil {
+		return DiffResult{}, err
+	}
+	raw, err := parseRaw(loc, rawOut)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	record := raw[loc.path]
+	if record == nil {
+		atCommit, err := blobAtCommit(ctx, loc, commit)
+		if err != nil {
+			return DiffResult{}, err
+		}
+		atParent := false
+		if !rootCommit {
+			atParent, err = blobAtCommit(ctx, loc, parent)
+			if err != nil {
+				return DiffResult{}, err
+			}
+		}
+		if !atCommit && !atParent {
+			return DiffResult{}, fmt.Errorf("%w: path %q is absent at commit %s and its first parent", ErrNotFound, requestedPath, commit)
+		}
+	}
+	facts := DiffFacts{Kind: "unchanged"}
+	patchPaths := []string{loc.repoPath}
+	if record != nil {
+		facts.Kind, facts.OldPath = record.kind, record.oldPath
+		if record.oldMode != record.newMode {
+			facts.OldMode, facts.NewMode = record.oldMode, record.newMode
+		}
+		if record.oldPath != "" {
+			oldRepoPath := record.oldPath
+			if loc.rootPrefix != "." {
+				oldRepoPath = strings.TrimSuffix(filepath.ToSlash(loc.rootPrefix), "/") + "/" + record.oldPath
+			}
+			patchPaths = []string{oldRepoPath, loc.repoPath}
+		}
+	}
+
+	numOut, err := commitDiffOutput(ctx, loc, rootCommit, parent, commit, "--numstat", "-z")
+	if err != nil {
+		return DiffResult{}, err
+	}
+	numstats, err := parseNumstat(loc, numOut)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	var stats *DiffStats
+	if stat, ok := numstats[loc.path]; ok {
+		facts.Binary = stat.Binary
+		if !stat.Binary {
+			stats = &DiffStats{Additions: stat.Additions, Deletions: stat.Deletions}
+		}
+	} else if facts.Kind == "unchanged" {
+		stats = &DiffStats{}
+	}
+
+	args := commitDiffArgs(rootCommit, parent, commit, "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/")
+	args = append(args, "--")
+	args = append(args, patchPaths...)
+	patch, total, truncated, err := cappedGitOutput(ctx, loc.repoTop, false, args...)
+	if err != nil {
+		return DiffResult{}, err
+	}
+	return DiffResult{
+		Root: loc.root, Path: loc.path, Base: base, Facts: facts, Stats: stats,
+		Patch: patch, PatchBytes: total, Truncated: truncated,
+	}, nil
+}
+
+func blobAtCommit(ctx context.Context, loc location, commit string) (bool, error) {
+	typeOut, err := gitOutput(ctx, loc.repoTop, "cat-file", "-t", commit+":"+loc.repoPath)
+	if err != nil {
+		if ctx.Err() != nil || !missingPathError(err) {
+			return false, err
+		}
+		return false, nil
+	}
+	if strings.TrimSpace(string(typeOut)) != "blob" {
+		return false, fmt.Errorf("%w: path %q is not a file at commit %s", ErrRefused, loc.path, commit)
+	}
+	return true, nil
+}
+
+func commitDiffOutput(ctx context.Context, loc location, rootCommit bool, parent, commit string, formatArgs ...string) ([]byte, error) {
+	args := commitDiffArgs(rootCommit, parent, commit, formatArgs...)
+	args = append(args, "--", pathspec(loc))
+	return gitOutput(ctx, loc.repoTop, args...)
+}
+
+func commitDiffArgs(rootCommit bool, parent, commit string, formatArgs ...string) []string {
+	command := "diff"
+	args := make([]string, 0, len(formatArgs)+8)
+	if rootCommit {
+		command = "show"
+		args = append(args, command, "--format=", "--root")
+	} else {
+		args = append(args, command)
+	}
+	args = append(args, formatArgs...)
+	args = append(args, "--find-renames", "--find-copies-harder")
+	if rootCommit {
+		args = append(args, commit)
+	} else {
+		args = append(args, parent, commit)
+	}
+	return args
 }
 
 func resolveDiffBase(ctx context.Context, loc location, kind string) (DiffBase, error) {
