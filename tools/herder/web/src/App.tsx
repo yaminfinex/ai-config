@@ -27,6 +27,7 @@ import type { Board, FileTarget, FolderTarget, Pane } from './types'
 import { FilePanel } from './features/files/FilePanel'
 import { QuickOpen } from './features/files/QuickOpen'
 import { usePanelRecords } from './features/workspace/usePanelRecords'
+import { PanelState } from './shared/PanelState'
 import { fileTabID, isMarkdownPath, type FileViewMode } from './features/files/fileTabs'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
@@ -225,9 +226,9 @@ function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>
   const workspace = useWorkspace()
   const visible = usePanelVisibility(api)
   const identity = screenIdentityState(params, workspace.board)
-  if (identity === 'checking') return <main className="panel-unavailable" role="status"><strong>Verifying screen identity…</strong><p>The live fleet must confirm this saved pane before it can be subscribed.</p></main>
+  if (identity === 'checking') return <PanelState as="main" className="panel-unavailable" title="Verifying screen identity…" detail="The live fleet must confirm this saved pane before it can be subscribed." />
   const pane = visiblePane(workspace.board, params)
-  if (!pane) return <main className="panel-unavailable tombstone" role="status"><strong>Screen no longer matches</strong><p>The saved pane identity is gone or now belongs to different live evidence. No replacement pane was opened.</p></main>
+  if (!pane) return <PanelState as="main" className="panel-unavailable tombstone" title="Screen no longer matches" detail="The saved pane identity is gone or now belongs to different live evidence. No replacement pane was opened." />
   return <ScreenPanel pane={pane} active={visible} onFocus={workspace.onTerminalFocus} onBlur={() => workspace.onTerminalFocus(undefined)} />
 }
 
@@ -286,10 +287,10 @@ function DockHeaderActions({ group, containerApi }: IDockviewHeaderActionsProps)
 
 function DockWatermark({ containerApi }: IWatermarkPanelProps) {
   const workspace = useWorkspace()
-  return <section className="dock-watermark" role="status"><strong>No panels open</strong><p>Open an agent from the fleet sidebar or find a file or folder. Your sidebar and shortcuts are still available.</p><div>
+  return <PanelState className="dock-watermark" title="No panels open" detail="Open an agent from the fleet sidebar or find a file or folder. Your sidebar and shortcuts are still available."><div>
     <button type="button" onClick={() => workspace.showQuickOpen(containerApi.activeGroup?.id)}>Quick Open</button>
     <button type="button" onClick={workspace.resetLayout}>Reset layout</button>
-  </div></section>
+  </div></PanelState>
 }
 
 const dockComponents = { agent: AgentDockPanel, screen: ScreenDockPanel, file: FileDockPanel, folder: FolderDockPanel, changes: ChangesDockPanel }

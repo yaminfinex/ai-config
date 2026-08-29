@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { apiProblem, getBacklog, getFileTree, queryKeys } from '../../api/client'
+import { getBacklog, getFileTree, queryKeys } from '../../api/client'
 import type { BacklogRead, FileTarget, FileTreeEntry, FolderTarget } from '../../types'
 import { Banner } from '../../shared/presentation'
 import { FilePanel } from '../files/FilePanel'
@@ -10,6 +10,7 @@ import { boardColumns, taskFileTarget } from './folderModel'
 import { initialGitFileState } from '../git/gitViewModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useFileWatch } from '../../stream/fileWatchRegistry'
+import { failureBanner, PanelState } from '../../shared/PanelState'
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -159,7 +160,7 @@ export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
     setGitState(initialGitFileState())
     setBoardView(false)
   }
-  const backlogFailure = backlog.error ? apiProblem(backlog.error) : null
+  const backlogFailure = backlog.error ? failureBanner('backlog', backlog.error) : null
   return <main className="folder-panel">
     <header className="folder-header">
       <div className="folder-title"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong><span>{currentDir || '.'}</span><span className="root-path" title={target.root}>{target.root}</span></div>
@@ -170,7 +171,7 @@ export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
       </div>}
       <button type="button" onClick={() => { currentTree.refetch(); backlog.refetch() }} disabled={currentTree.isFetching || backlog.isFetching}>{currentTree.isFetching || backlog.isFetching ? 'Refreshing…' : 'Refresh'}</button>
     </header>
-    {backlogFailure && <Banner source="backlog" detail={`${backlogFailure.problem.error}: ${backlogFailure.problem.detail}`} />}
+    {backlogFailure && <Banner source={backlogFailure.source} detail={backlogFailure.detail} />}
     <div className={`folder-workspace${treeHidden ? ' tree-hidden' : ''}`}>
       {!treeHidden && <aside className="folder-tree" aria-label="Folder tree"><DirectoryTree root={target.root} path={target.path} depth={0} currentDir={currentDir} onDirectory={chooseDirectory} onSelect={chooseFile} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} /></aside>}
       <section className="folder-detail">
@@ -178,7 +179,7 @@ export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
           <div className="backlog-facts"><span>Fetched {new Date(backlog.data.fetched_at).toLocaleString()}</span><span>{backlog.data.tasks.length} parsed tasks</span></div>
           <BacklogBoard backlog={backlog.data} onOpenFile={onOpenFile} />
         </> : selected ? <FilePanel target={selected} viewMode={viewMode} gitState={gitState} active={active} onViewMode={setViewMode} onGitState={setGitState} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} />
-          : <div className="folder-empty" role="status"><strong>Select a file</strong><p>A single click previews it here. Double-click or use Open tab to create a dock preview.</p></div>}
+          : <PanelState as="div" className="folder-empty" title="Select a file" detail="A single click previews it here. Double-click or use Open tab to create a dock preview." />}
       </section>
     </div>
   </main>
