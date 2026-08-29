@@ -90,7 +90,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
         <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} />
       </section>
       {fileResolver.element}
-      <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onTop={transcriptFollow.jumpToTop} onBottom={transcriptFollow.jumpToBottom} />
+      <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onBottom={transcriptFollow.jumpToBottom} />
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />

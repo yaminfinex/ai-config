@@ -45,13 +45,15 @@ test('viewport resize re-pins only while following', () => {
   assert.equal(viewport.scrollTop, 275)
 })
 
-test('transcript and screen use centered top and bottom jump controls', () => {
+test('transcript and screen use the centered jump-to-bottom control (top is shortcut-only)', () => {
   const agentPanel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
   const screenPanel = readFileSync(new URL('../src/features/screen/ScreenPanel.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
 
+  const jumpControls = readFileSync(new URL('../src/shared/useFollowScroll.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(agentPanel, /follow-chip/)
   assert.match(agentPanel, /<ScrollJumpButtons/)
   assert.match(screenPanel, /<ScrollJumpButtons/)
+  assert.doesNotMatch(jumpControls, /Go to top/)
   assert.match(css, /\.scroll-jump-buttons \{[^}]*position: absolute;[^}]*left: 50%;[^}]*translateX\(-50%\)/s)
 })

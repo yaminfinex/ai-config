@@ -66,9 +66,11 @@ export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, 
   return { viewportRef, following, onScroll, jumpToTop, jumpToBottom }
 }
 
-export function ScrollJumpButtons({ bottomVisible, onTop, onBottom }: { bottomVisible: boolean, onTop: () => void, onBottom: () => void }) {
+// Top navigation is shortcut-only (Alt+ArrowUp): a persistent button on every
+// panel was ruled out by the owner the day it shipped.
+export function ScrollJumpButtons({ bottomVisible, onBottom }: { bottomVisible: boolean, onBottom: () => void }) {
+  if (!bottomVisible) return null
   return <div className="scroll-jump-buttons">
-    <button type="button" onClick={onTop}>↑ Go to top</button>
-    {bottomVisible && <button type="button" onClick={onBottom}>↓ Jump to bottom</button>}
+    <button type="button" onClick={onBottom}>↓ Jump to bottom</button>
   </div>
 }

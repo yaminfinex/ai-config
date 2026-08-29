@@ -17,7 +17,7 @@ export function ScreenViewport({ paneID, active = true }: { paneID: string, acti
   return <section className="screen-viewport" aria-busy={!frame}>
     <div className="screen-notice">{notice && <Banner source="screen" detail={notice.detail} tone={notice.tone} />}</div>
     <pre className={`terminal-screen${frame?.status === 'unavailable' ? ' unavailable' : ''}`} data-follow-scroll aria-label="Live terminal screen" ref={screenFollow.viewportRef} onScroll={screenFollow.onScroll}>{frame?.status === 'available' ? frame.text : ''}</pre>
-    <ScrollJumpButtons bottomVisible={!screenFollow.following} onTop={screenFollow.jumpToTop} onBottom={screenFollow.jumpToBottom} />
+    <ScrollJumpButtons bottomVisible={!screenFollow.following} onBottom={screenFollow.jumpToBottom} />
   </section>
 }
 

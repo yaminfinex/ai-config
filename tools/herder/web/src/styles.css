@@ -417,6 +417,9 @@ h2, h3, p { margin-top: 0; }
 .inline-link { color: var(--accent-text); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .inline-link:hover { color: var(--accent); text-decoration-thickness: 2px; }
 .inline-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* Agent mentions read quieter than real web links: dotted underline, solid on hover (owner-ruled). */
+.inline-link.agent-mention { text-decoration-style: dotted; }
+.inline-link.agent-mention:hover { text-decoration-style: solid; }
 button.inline-link { display: inline; padding: 0; border: 0; border-radius: 0; background: transparent; font: inherit; line-height: inherit; text-align: inherit; vertical-align: baseline; }
 button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .markdown { color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
