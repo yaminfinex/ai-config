@@ -33,12 +33,21 @@ func TestGitEndpointsServePinnedShapes(t *testing.T) {
 	if statusResponse.Code != http.StatusOK {
 		t.Fatalf("status=%d %s", statusResponse.Code, statusResponse.Body.String())
 	}
+	if strings.Contains(statusResponse.Body.String(), `"entries_base"`) {
+		t.Fatalf("legacy status shape changed: %s", statusResponse.Body.String())
+	}
 	var status gitapi.StatusResult
 	if err := json.Unmarshal(statusResponse.Body.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
 	if status.Root != root || status.Repo == nil || status.Repo.Branch != "main" || status.Entries == nil || len(*status.Entries) != 1 || (*status.Entries)[0].Additions == nil || *(*status.Entries)[0].Additions != 2 || !status.FetchedAt.Equal(fetched) {
 		t.Fatalf("status body=%#v", status)
+	}
+
+	baseStatusResponse := httptest.NewRecorder()
+	handler.ServeHTTP(baseStatusResponse, httptest.NewRequest(http.MethodGet, "/api/git/status?root="+rootQuery+"&base=uncommitted", nil))
+	if baseStatusResponse.Code != http.StatusOK || !strings.Contains(baseStatusResponse.Body.String(), `"entries_base":{"kind":"uncommitted","sha":"`+sha+`","label":"HEAD"}`) {
+		t.Fatalf("base status=%d %s", baseStatusResponse.Code, baseStatusResponse.Body.String())
 	}
 
 	diffResponse := httptest.NewRecorder()
@@ -88,6 +97,24 @@ func TestGitEndpointsPinUnavailableAndRefusalShapes(t *testing.T) {
 	}
 
 	badBase := httptest.NewRecorder()
+	handler.ServeHTTP(badBase, httptest.NewRequest(http.MethodGet, "/api/git/status?root="+url.QueryEscape(repo)+"&base=guess", nil))
+	if badBase.Code != http.StatusBadRequest || !strings.Contains(badBase.Body.String(), `"error":"bad request"`) {
+		t.Fatalf("bad status base=%d %s", badBase.Code, badBase.Body.String())
+	}
+
+	duplicateBase := httptest.NewRecorder()
+	handler.ServeHTTP(duplicateBase, httptest.NewRequest(http.MethodGet, "/api/git/status?root="+url.QueryEscape(repo)+"&base=branch&base=uncommitted", nil))
+	if duplicateBase.Code != http.StatusBadRequest || !strings.Contains(duplicateBase.Body.String(), `"error":"bad request"`) {
+		t.Fatalf("duplicate status base=%d %s", duplicateBase.Code, duplicateBase.Body.String())
+	}
+
+	branchStatusFallback := httptest.NewRecorder()
+	handler.ServeHTTP(branchStatusFallback, httptest.NewRequest(http.MethodGet, "/api/git/status?root="+url.QueryEscape(repo)+"&base=branch", nil))
+	if branchStatusFallback.Code != http.StatusOK || !strings.Contains(branchStatusFallback.Body.String(), `"entries_base":{"kind":"uncommitted"`) || !strings.Contains(branchStatusFallback.Body.String(), `"branch_base":{"status":"unavailable"`) {
+		t.Fatalf("branch status fallback=%d %s", branchStatusFallback.Code, branchStatusFallback.Body.String())
+	}
+
+	badBase = httptest.NewRecorder()
 	handler.ServeHTTP(badBase, httptest.NewRequest(http.MethodGet, "/api/git/diff?root="+url.QueryEscape(repo)+"&path=tracked.txt&base=guess", nil))
 	if badBase.Code != http.StatusBadRequest || !strings.Contains(badBase.Body.String(), `"error":"bad request"`) {
 		t.Fatalf("bad base=%d %s", badBase.Code, badBase.Body.String())

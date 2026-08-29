@@ -11,6 +11,17 @@ import (
 )
 
 func ReadStatus(ctx context.Context, root string, now func() time.Time) (StatusResult, error) {
+	return readStatus(ctx, root, "", false, now)
+}
+
+func ReadStatusAtBase(ctx context.Context, root, requestedBase string, now func() time.Time) (StatusResult, error) {
+	if requestedBase != "uncommitted" && requestedBase != "branch" {
+		return StatusResult{}, fmt.Errorf("%w: base must be exactly uncommitted or branch", ErrBadRequest)
+	}
+	return readStatus(ctx, root, requestedBase, true, now)
+}
+
+func readStatus(ctx context.Context, root, requestedBase string, includeEntriesBase bool, now func() time.Time) (StatusResult, error) {
 	ctx, cancel := withTimeout(ctx)
 	defer cancel()
 	fetched := now()
@@ -27,9 +38,80 @@ func ReadStatus(ctx context.Context, root string, now func() time.Time) (StatusR
 		return StatusResult{Root: loc.root, Git: &Unavailable{Status: "unavailable", Reason: err.Error()}, FetchedAt: fetched}, nil
 	}
 	repo.BranchBase = proveBranchBase(ctx, loc.repoTop)
-	attachStatusStats(ctx, loc, entries)
+	effectiveBase := "uncommitted"
+	if requestedBase == "branch" && repo.BranchBase.Status == "available" {
+		entries, err = branchStatusEntries(ctx, loc, repo.BranchBase.MergeBase, entries)
+		if err != nil {
+			return StatusResult{Root: loc.root, Git: &Unavailable{Status: "unavailable", Reason: compactReason(err)}, FetchedAt: fetched}, nil
+		}
+		effectiveBase = "branch"
+	} else {
+		attachStatusStats(ctx, loc, entries)
+	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
-	return StatusResult{Root: loc.root, Repo: &repo, Entries: &entries, FetchedAt: fetched}, nil
+	result := StatusResult{Root: loc.root, Repo: &repo, Entries: &entries, FetchedAt: fetched}
+	if includeEntriesBase {
+		if effectiveBase == "branch" {
+			result.EntriesBase = &DiffBase{Kind: "branch", SHA: repo.BranchBase.MergeBase, DefaultRef: repo.BranchBase.DefaultRef, Label: "merge-base with " + repo.BranchBase.DefaultRef}
+		} else {
+			result.EntriesBase = &DiffBase{Kind: "uncommitted", SHA: repo.Head, Label: "HEAD"}
+		}
+	}
+	return result, nil
+}
+
+func branchStatusEntries(ctx context.Context, loc location, mergeBase string, worktreeEntries []StatusEntry) ([]StatusEntry, error) {
+	rawOut, err := gitOutput(ctx, loc.repoTop, "diff", "--raw", "-z", "--no-ext-diff", "--no-textconv", "--find-renames", "--find-copies-harder", mergeBase, "--", pathspec(loc))
+	if err != nil {
+		return nil, err
+	}
+	raw, err := parseRaw(loc, rawOut)
+	if err != nil {
+		return nil, err
+	}
+	numOut, err := gitOutput(ctx, loc.repoTop, "diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--find-renames", "--find-copies-harder", mergeBase, "--", pathspec(loc))
+	if err != nil {
+		return nil, err
+	}
+	stats, err := parseNumstat(loc, numOut)
+	if err != nil {
+		return nil, err
+	}
+	worktreeByPath := indexStatusEntries(worktreeEntries)
+	entries := make([]StatusEntry, 0, len(raw)+len(worktreeEntries))
+	for path, record := range raw {
+		entry := StatusEntry{Path: path, Kind: record.kind, OldPath: record.oldPath}
+		if worktree, ok := worktreeByPath[path]; ok {
+			entry.Staged = worktree.Staged
+			entry.Unstaged = worktree.Unstaged
+			entry.IndexKind = worktree.IndexKind
+			entry.WorktreeKind = worktree.WorktreeKind
+			if worktree.Kind == "conflicted" {
+				entry.Kind = "conflicted"
+			}
+		}
+		if stat, ok := stats[path]; ok {
+			entry.Additions = &stat.Additions
+			entry.Deletions = &stat.Deletions
+			binary := stat.Binary
+			entry.Binary = &binary
+		}
+		entries = append(entries, entry)
+	}
+	for _, entry := range worktreeEntries {
+		if entry.Kind == "untracked" {
+			entries = append(entries, entry)
+		}
+	}
+	return entries, nil
+}
+
+func indexStatusEntries(entries []StatusEntry) map[string]StatusEntry {
+	result := make(map[string]StatusEntry, len(entries))
+	for _, entry := range entries {
+		result[entry.Path] = entry
+	}
+	return result
 }
 
 func parseStatus(loc location, output []byte) (Repository, []StatusEntry, error) {
@@ -213,7 +295,7 @@ func proveBranchBase(ctx context.Context, cwd string) BranchBase {
 }
 
 func attachStatusStats(ctx context.Context, loc location, entries []StatusEntry) {
-	out, err := gitOutput(ctx, loc.repoTop, "diff", "--numstat", "-z", "--find-renames", "--find-copies-harder", "HEAD", "--", pathspec(loc))
+	out, err := gitOutput(ctx, loc.repoTop, "diff", "--numstat", "-z", "--no-ext-diff", "--no-textconv", "--find-renames", "--find-copies-harder", "HEAD", "--", pathspec(loc))
 	if err != nil {
 		return
 	}

@@ -448,7 +448,7 @@ the staged set. Git status may still refresh and write the index stat cache as
 benign repository metadata; `--no-optional-locks` does not prevent that write,
 so the record does not claim byte-for-byte repository immutability.
 
-GET `/api/git/status?root={root-id}`
+GET `/api/git/status?root={root-id}&base={optional-uncommitted|branch}`
   Returns the root-scoped changed-file list from
   `git status --porcelain=v2 -z --branch`. Success is:
   `{"root":"/opaque/root","repo":{"branch":"feature/x","head":"<full-sha>","upstream":"origin/feature/x","ahead":3,"behind":1,"branch_base":{"status":"available","default_ref":"origin/main","default_sha":"<full-sha>","merge_base":"<full-sha>","commits_ahead_of_base":5}},"entries":[{"path":"new/name.md","kind":"renamed","old_path":"old/name.md","staged":true,"unstaged":false,"index_kind":"renamed","additions":12,"deletions":3,"binary":false}],"fetched_at":"2026-08-28T15:00:00.000000731Z"}`.
@@ -460,12 +460,36 @@ GET `/api/git/status?root={root-id}`
   collapsed. `entries` is an explicit array. Optional repository and entry
   facts are omitted when Git cannot prove them.
 
-  Per-entry `additions`, `deletions`, and `binary` are computed against
-  **HEAD**, using root-scoped `git diff --numstat -z --find-renames
-  --find-copies-harder HEAD`. They therefore describe the combined staged and
-  unstaged tracked change versus the current commit; untracked files have no
-  fabricated counts. Failure of this optional numstat probe omits only those
-  three facts and does not discard the porcelain status truth.
+  Omitting `base` preserves the original response byte shape and the original
+  uncommitted-only `entries`. When `base` is explicit, success also carries an
+  `entries_base` object. `base=uncommitted` returns
+  `{"kind":"uncommitted","sha":"<HEAD-full-sha>","label":"HEAD"}`.
+  `base=branch` returns
+  `{"kind":"branch","sha":"<merge-base-full-sha>","default_ref":"origin/main","label":"merge-base with origin/main"}`
+  and enumerates the working tree against that merge-base. If `branch_base` is
+  unavailable, the response stays HTTP 200, preserves its explicit unavailable
+  reason, and falls back to uncommitted entries with an uncommitted
+  `entries_base`. Missing-base compatibility is deliberate; an empty, duplicate,
+  or unrecognized explicit base is 400.
+
+  Branch entries union tracked `git diff --raw -z --find-renames
+  --find-copies-harder <merge-base>` facts with porcelain's untracked paths.
+  Their `kind` describes the whole working-tree change relative to the
+  merge-base. For a committed-only row, `staged` and `unstaged` are both false
+  and `index_kind`/`worktree_kind` are omitted: those fields describe only the
+  checkout's current porcelain state and are never overloaded to mean
+  "committed." Renames and copies retain an honest `old_path`. A dirty tracked
+  row combines its merge-base-relative `kind` with its actual staged/unstaged
+  flags, so branch entries cover committed, staged, unstaged, and untracked
+  work without conflating those states.
+
+  Per-entry `additions`, `deletions`, and `binary` use the effective entries
+  base: **HEAD** for uncommitted entries and the proved merge-base for branch
+  entries. Both probes are root-scoped `git diff --numstat -z --find-renames
+  --find-copies-harder <base>`. Untracked files have no fabricated counts.
+  Failure of the optional HEAD numstat probe omits only those three facts and
+  does not discard porcelain status truth; a failed branch enumeration is an
+  honest Git-unavailable status rather than a partial branch list.
 
   `branch_base` is proved only from the symbolic `origin/HEAD`, its resolved
   commit, and `merge-base HEAD refs/remotes/origin/HEAD`. Missing or

@@ -47,6 +47,78 @@ func TestStatusParsesMixedChangesAndCountsAgainstHEAD(t *testing.T) {
 	}
 }
 
+func TestBranchStatusEnumeratesCommittedRenameAndDirtyWorktree(t *testing.T) {
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	run(t, "", "git", "init", "--bare", "-q", origin)
+	repo := newRepo(t)
+	write(t, repo, "old.txt", "old\n")
+	write(t, repo, "work.txt", "base\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "base")
+	git(t, repo, "remote", "add", "origin", origin)
+	git(t, repo, "push", "-u", "origin", "main")
+	git(t, origin, "symbolic-ref", "HEAD", "refs/heads/main")
+	git(t, repo, "remote", "set-head", "origin", "-a")
+
+	linked := filepath.Join(t.TempDir(), "linked")
+	git(t, repo, "worktree", "add", "-b", "feature/status", linked, "main")
+	git(t, linked, "mv", "old.txt", "new.txt")
+	write(t, linked, "work.txt", "base\ncommitted\n")
+	git(t, linked, "commit", "-am", "branch work")
+	marker := filepath.Join(t.TempDir(), "external-diff-ran")
+	externalDiff := filepath.Join(t.TempDir(), "external-diff.sh")
+	writeExecutable(t, externalDiff, "#!/bin/sh\ntouch \""+marker+"\"\n")
+	git(t, linked, "config", "diff.external", externalDiff)
+
+	clean, err := ReadStatusAtBase(context.Background(), linked, "branch", func() time.Time { return fixtureNow })
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMarkerAbsent(t, marker)
+	if clean.EntriesBase == nil || clean.EntriesBase.Kind != "branch" || clean.EntriesBase.Label != "merge-base with origin/main" || clean.Entries == nil || len(*clean.Entries) != 2 {
+		t.Fatalf("clean branch status = %#v", clean)
+	}
+	cleanEntries := statusByPath(*clean.Entries)
+	rename := cleanEntries["new.txt"]
+	if rename.Kind != "renamed" || rename.OldPath != "old.txt" || rename.Staged || rename.Unstaged || rename.IndexKind != "" || rename.WorktreeKind != "" {
+		t.Fatalf("committed rename = %#v", rename)
+	}
+	if committed := cleanEntries["work.txt"]; committed.Kind != "modified" || committed.Additions == nil || *committed.Additions != 1 || committed.Staged || committed.Unstaged {
+		t.Fatalf("committed work = %#v", committed)
+	}
+
+	write(t, linked, "work.txt", "base\ncommitted\nuncommitted\n")
+	write(t, linked, "untracked.txt", "new\n")
+	dirty, err := ReadStatusAtBase(context.Background(), linked, "branch", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMarkerAbsent(t, marker)
+	dirtyEntries := statusByPath(*dirty.Entries)
+	if len(dirtyEntries) != 3 || dirtyEntries["work.txt"].Additions == nil || *dirtyEntries["work.txt"].Additions != 2 || !dirtyEntries["work.txt"].Unstaged {
+		t.Fatalf("dirty branch status = %#v", dirty)
+	}
+	if untracked := dirtyEntries["untracked.txt"]; untracked.Kind != "untracked" || untracked.Staged || !untracked.Unstaged {
+		t.Fatalf("branch untracked = %#v", untracked)
+	}
+}
+
+func TestBranchStatusFallsBackWhenBranchBaseIsUnavailable(t *testing.T) {
+	repo := newRepo(t)
+	write(t, repo, "file.txt", "base\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "base")
+	write(t, repo, "file.txt", "dirty\n")
+
+	got, err := ReadStatusAtBase(context.Background(), repo, "branch", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo == nil || got.Repo.BranchBase.Status != "unavailable" || got.EntriesBase == nil || got.EntriesBase.Kind != "uncommitted" || got.Entries == nil || len(*got.Entries) != 1 {
+		t.Fatalf("fallback status = %#v", got)
+	}
+}
+
 func TestStatusScopesMidRepoRootAndReportsConflictAndUnavailable(t *testing.T) {
 	repo := newRepo(t)
 	write(t, repo, "inside/file.txt", "base\n")

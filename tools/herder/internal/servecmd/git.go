@@ -13,7 +13,20 @@ func serveGitStatus(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if !ok {
 		return
 	}
-	result, err := gitapi.ReadStatus(r.Context(), root, deps.now)
+	base, err := optionalQuery(r, "base")
+	if err != nil || r.URL.Query().Has("base") && base != "uncommitted" && base != "branch" {
+		if err == nil {
+			err = fmt.Errorf("query parameter %q must be exactly uncommitted or branch", "base")
+		}
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	var result gitapi.StatusResult
+	if base == "" {
+		result, err = gitapi.ReadStatus(r.Context(), root, deps.now)
+	} else {
+		result, err = gitapi.ReadStatusAtBase(r.Context(), root, base, deps.now)
+	}
 	if err != nil {
 		serveGitError(w, err, "git unavailable")
 		return
