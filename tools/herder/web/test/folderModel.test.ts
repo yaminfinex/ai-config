@@ -4,6 +4,7 @@ import {
   boardColumns,
   candidateDestination,
   cwdFolderTarget,
+  exactRootChangesTarget,
   missionFacts,
   missionMarkdownBody,
   taskFileTarget,
@@ -37,6 +38,9 @@ test('cwd folder target uses boundary-safe served-root containment', () => {
   assert.deepEqual(cwdFolderTarget('/work/repo/packages/web', roots), { root: '/work/repo', path: 'packages/web' })
   assert.deepEqual(cwdFolderTarget('/work/repo', roots), { root: '/work/repo', path: '' })
   assert.equal(cwdFolderTarget('/workspace/repo', roots), null)
+  assert.equal(exactRootChangesTarget({ root: '/work/repo', path: '' }), '/work/repo')
+  assert.equal(exactRootChangesTarget({ root: '/work/repo', path: 'packages/web' }), undefined)
+  assert.equal(exactRootChangesTarget(null), undefined)
 })
 
 test('board columns preserve configured order and surface unconfigured statuses', () => {

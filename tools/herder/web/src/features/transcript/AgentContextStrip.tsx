@@ -5,7 +5,7 @@ import type { AgentDetail } from '../../types'
 import type { FolderTarget } from '../../types'
 import { useQuery } from '@tanstack/react-query'
 import { queryKeys, resolveFiles } from '../../api/client'
-import { cwdFolderTarget } from '../folders/folderModel'
+import { cwdFolderTarget, exactRootChangesTarget } from '../folders/folderModel'
 
 export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChanges }: { agent?: AgentDetail, liveStatus: string, onOpenFolder: (target: FolderTarget) => void, onOpenChanges: (root: string) => void }) {
   const context = agent ? agentContextPresentation(agent, liveStatus) : undefined
@@ -17,9 +17,11 @@ export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChang
     retry: false,
   })
   const cwdTarget = cwd && cwdResolution.data ? cwdFolderTarget(cwd, cwdResolution.data.roots) : null
+  const changesRoot = exactRootChangesTarget(cwdTarget)
   const cwdReason = cwdResolution.isPending ? 'Verifying this working directory against served roots…'
     : cwdResolution.error ? `Working folder unavailable: ${cwdResolution.error.message}`
       : !cwdTarget ? 'This working directory is not under any served root.' : `Open ${cwd}`
+  const changesReason = changesRoot ? `Open changes for ${changesRoot}` : cwdTarget ? 'Changes requires the agent working directory to be an exact served root.' : cwdReason
   const innerRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   useEffect(() => {
@@ -37,7 +39,7 @@ export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChang
     {context && <div className="agent-context-strip-inner" ref={innerRef}>
       {context.cwd && <span className="context-cwd-wrap" title={cwdReason}><button type="button" className="context-fact context-cwd" disabled={!cwdTarget} onClick={() => { if (cwdTarget) onOpenFolder(cwdTarget) }}><span>cwd</span>{context.cwd.display}<span aria-hidden="true">↗</span></button></span>}
       {context.repository && <span className="context-fact context-repository" title={context.repository.remote}><span>repo</span>{context.repository.display}</span>}
-      {context.repository && <span title={cwdReason}><button type="button" className="context-fact context-changes" disabled={!cwdTarget} onClick={() => { if (cwdTarget) onOpenChanges(cwdTarget.root) }}><span aria-hidden="true">±</span>changes</button></span>}
+      {context.repository && <span title={changesReason}><button type="button" className="context-fact context-changes" disabled={!changesRoot} onClick={() => { if (changesRoot) onOpenChanges(changesRoot) }}><span aria-hidden="true">±</span>changes</button></span>}
       <span className="context-status" title={`Bus status: ${context.status !== '-' ? context.status : 'unknown'}`}><AgentStatusDot status={context.status} /></span>
       {context.details.map((detail, index) => <span className="context-detail" key={`${index}:${detail}`}>{detail}</span>)}
       {context.vitals.map((vital, index) => <span className="context-vital" key={`${index}:${vital}`}>{vital}</span>)}

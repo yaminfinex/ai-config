@@ -29,7 +29,7 @@ import { isQuickOpenShortcut } from './features/files/fileShortcut'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
 import { folderTabID } from './features/folders/folderModel'
-import { initialGitFileState, type GitBase, type GitFileState } from './features/git/gitViewModel'
+import { gitStateForFileOpen, initialGitFileState, type GitBase, type GitFileState } from './features/git/gitViewModel'
 import { changesPanelID } from './features/git/changesModel'
 import { ChangesPanel } from './features/git/ChangesPanel'
 import { ShortcutReference } from './features/layout/ShortcutReference'
@@ -342,6 +342,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       const params: FilePanelParams = { ...existing.params, ...target, viewMode: target.line ? 'source' : existing.params.viewMode }
       existing.panel.api.updateParameters(params)
       existing.panel.api.setActive()
+      if (target.line) setFileGitStates((current) => ({ ...current, [id]: gitStateForFileOpen(current[id], target.line) }))
       queryClient.invalidateQueries({ queryKey: queryKeys.file(target.root, target.path) })
       syncDock()
       return

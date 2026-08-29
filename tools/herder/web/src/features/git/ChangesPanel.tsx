@@ -30,15 +30,15 @@ export function ChangesPanel({ root, active, onOpenDiff }: { root: string, activ
     {status.data && 'git' in status.data && <section className="file-state" role="status"><strong>Git unavailable</strong><p>{status.data.git.reason}</p></section>}
     {available && <>
       <div className="changes-toolbar">
-        <label>Base <select value={effectiveBase} onChange={(event) => setBase(event.target.value as GitBase)}>
+        <label>Diff base for opened files <select value={effectiveBase} onChange={(event) => setBase(event.target.value as GitBase)}>
           <option value="uncommitted">Uncommitted (vs HEAD)</option>
           {branchAvailable && <option value="branch">All work on this branch (vs merge-base with origin/HEAD)</option>}
         </select></label>
         <span>{repoChangeSummary(commits, available.entries.length)}</span>
         <span>Fetched {new Date(available.fetched_at).toLocaleString()}</span>
       </div>
-      {available.entries.length === 0 ? <section className="file-state" role="status"><strong>Nothing uncommitted</strong><p>No changed files are visible for this root.</p></section>
-        : <div className="changes-list" role="list">{available.entries.map((entry) => <ChangeRow key={`${entry.path}:${entry.old_path ?? ''}`} entry={entry} onOpen={() => onOpenDiff({ root, path: entry.path }, effectiveBase)} />)}</div>}
+      {available.entries.length === 0 ? <section className="file-state" role="status"><strong>Nothing uncommitted</strong><p>This list shows uncommitted files; committed branch work is available from each file&apos;s History.</p></section>
+        : <><h2 className="changes-list-title">Uncommitted files</h2><div className="changes-list" role="list">{available.entries.map((entry) => <ChangeRow key={`${entry.path}:${entry.old_path ?? ''}`} entry={entry} onOpen={() => onOpenDiff({ root, path: entry.path }, effectiveBase)} />)}</div></>}
     </>}
   </main>
 }

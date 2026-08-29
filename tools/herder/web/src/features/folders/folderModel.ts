@@ -19,6 +19,10 @@ export function cwdFolderTarget(cwd: string, roots: RootOutcome[]): FolderTarget
   return { root, path: cwd === root ? '' : cwd.slice(root.endsWith('/') ? root.length : root.length + 1) }
 }
 
+export function exactRootChangesTarget(target: FolderTarget | null) {
+  return target && !target.path ? target.root : undefined
+}
+
 export type BoardColumn = { status: string, tasks: BacklogTask[], overflow?: true }
 
 export function boardColumns(backlog: BacklogRead): BoardColumn[] {

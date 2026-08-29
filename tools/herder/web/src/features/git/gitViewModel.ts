@@ -27,6 +27,10 @@ export function initialGitFileState(): GitFileState {
   return { mode: 'current', base: 'uncommitted' }
 }
 
+export function gitStateForFileOpen(state: GitFileState | undefined, line?: number) {
+  return line ? initialGitFileState() : state ?? initialGitFileState()
+}
+
 export function selectGitFileMode(state: GitFileState, mode: GitFileMode, base = state.base): GitFileState {
   return state.mode === mode && state.base === base && !state.revision && !state.commit ? state : { mode, base }
 }
