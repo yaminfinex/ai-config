@@ -1,4 +1,5 @@
 import { shortcutLabels } from './shellShortcuts'
+import { openInSideKeys } from './openPlacement'
 
 export function ShortcutReference({ open, onClose }: { open: boolean, onClose: () => void }) {
   if (!open) return null
@@ -10,6 +11,7 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
     [labels.focusFleet, 'Focus fleet sidebar'],
     [labels.focusComposer, 'Focus active composer'],
     [labels.sendRequest, 'Send request'],
+    [openInSideKeys(navigator.userAgent), 'Open in side split'],
     ['?', 'Open this reference'],
   ] as const
   return <div className="shortcut-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>

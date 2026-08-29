@@ -10,6 +10,7 @@ import { isMarkdownPath, type FileViewMode } from './fileTabs'
 import { candidateDestination, missionFacts, missionMarkdownBody } from '../folders/folderModel'
 import { PierreFile, PierrePatch } from '../git/PierreView'
 import { selectGitFileMode, selectHistoricalDiff, selectHistoricalFile, selectedCurrentLines, type GitBase, type GitFileState } from '../git/gitViewModel'
+import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -22,8 +23,8 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   active: boolean
   onViewMode: (mode: FileViewMode) => void
   onGitState: (state: GitFileState) => void
-  onOpenFile: (target: FileTarget) => void
-  onOpenFolder: (target: FolderTarget) => void
+  onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
+  onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void
 }) {
   const fileQuery = useQuery({
     queryKey: queryKeys.file(target.root, target.path),
@@ -124,9 +125,10 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     {gitState.mode === 'current' && needsAlternatives && <section className="file-state vanished" role="status"><strong>{vanished ? 'File vanished' : 'Root no longer served'}</strong><p>{vanished ? 'This path no longer exists in its root.' : 'This file root is no longer in the live readable universe.'} Closest current matches:</p>
       {alternatives.isPending && <p>Resolving current files…</p>}
       {alternatives.error && <Banner source="resolve" detail={alternatives.error.message} />}
-      {!alternatives.isFetching && !alternatives.error && <FileResults resolution={alternatives.data} limit={8} onSelect={(candidate) => {
-        if (candidateDestination(candidate) === 'folder') onOpenFolder({ root: candidate.root, path: candidate.path })
-        else onOpenFile({ root: candidate.root, path: candidate.path, line: target.line })
+      {!alternatives.isFetching && !alternatives.error && <FileResults resolution={alternatives.data} limit={8} onSelect={(candidate, event) => {
+        const placement = placementFromModifiers(event)
+        if (candidateDestination(candidate) === 'folder') onOpenFolder({ root: candidate.root, path: candidate.path }, placement)
+        else onOpenFile({ root: candidate.root, path: candidate.path, line: target.line }, placement)
       }} />}
     </section>}
     {gitState.mode === 'current' && data && !failure && <>

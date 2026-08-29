@@ -4,6 +4,7 @@ import type { FileCandidate, FileTarget, FolderTarget, ResolveResponse } from '.
 import { autoOpenCandidate, hasPathSignal, isConfidentResolution, isRenderedInlineCode, mentionLine, pathTokenSpanAt } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
+import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 
 type PopoverState = { left: number, top: number, mention: string, resolution: ResolveResponse }
 
@@ -23,7 +24,7 @@ function textPoint(event: React.MouseEvent<HTMLElement>) {
   return selection?.anchorNode?.nodeType === Node.TEXT_NODE ? { node: selection.anchorNode, offset: selection.anchorOffset } : null
 }
 
-export function useTranscriptFileResolver(agent: string, enabled: boolean, onOpenFile: (target: FileTarget) => void, onOpenFolder: (target: FolderTarget) => void) {
+export function useTranscriptFileResolver(agent: string, enabled: boolean, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void) {
   const [popover, setPopover] = useState<PopoverState | null>(null)
   const request = useRef<AbortController | null>(null)
 
@@ -56,6 +57,7 @@ export function useTranscriptFileResolver(agent: string, enabled: boolean, onOpe
     const renderedCode = isRenderedInlineCode(target)
     const token = pathTokenSpanAt(text, point.offset, renderedCode)
     const mention = token.text
+    const placement = placementFromModifiers(event)
     const codeOrQuoted = Boolean(target.closest('code, pre')) || /^[`"']/.test(mention)
     if (!mention || !hasPathSignal(mention, codeOrQuoted)) return
     const range = document.createRange()
@@ -72,8 +74,8 @@ export function useTranscriptFileResolver(agent: string, enabled: boolean, onOpe
       if (controller.signal.aborted || !enabled || !isConfidentResolution(resolution, mention)) return
       const certain = autoOpenCandidate(resolution)
       if (certain) {
-        if (candidateDestination(certain) === 'folder') onOpenFolder({ root: certain.root, path: certain.path })
-        else onOpenFile({ root: certain.root, path: certain.path, line: mentionLine(mention).line })
+        if (candidateDestination(certain) === 'folder') onOpenFolder({ root: certain.root, path: certain.path }, placement)
+        else onOpenFile({ root: certain.root, path: certain.path, line: mentionLine(mention).line }, placement)
         return
       }
       setPopover({
@@ -89,10 +91,11 @@ export function useTranscriptFileResolver(agent: string, enabled: boolean, onOpe
     }
   }, [agent, close, enabled, onOpenFile, onOpenFolder])
 
-  const choose = (candidate: FileCandidate) => {
+  const choose = (candidate: FileCandidate, event: React.MouseEvent<HTMLButtonElement>) => {
     if (!popover) return
-    if (candidateDestination(candidate) === 'folder') onOpenFolder({ root: candidate.root, path: candidate.path })
-    else onOpenFile({ root: candidate.root, path: candidate.path, line: mentionLine(popover.mention).line })
+    const placement = placementFromModifiers(event)
+    if (candidateDestination(candidate) === 'folder') onOpenFolder({ root: candidate.root, path: candidate.path }, placement)
+    else onOpenFile({ root: candidate.root, path: candidate.path, line: mentionLine(popover.mention).line }, placement)
     close()
   }
   const element = popover ? <aside className="selection-file-popover" role="dialog" aria-label={`Files matching ${popover.mention}`} style={{ left: popover.left, top: popover.top }}>

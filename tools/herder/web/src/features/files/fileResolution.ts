@@ -38,7 +38,8 @@ export function mentionLine(mention: string): { line?: number } {
   const value = unwrappedMention(mention)
   const withoutTrailing = value.replace(/[),.;!?]+$/u, '')
   const match = withoutTrailing.match(/:(\d+)$/u)
-  return match ? { line: Number(match[1]) } : {}
+  const line = Number(match?.[1])
+  return Number.isInteger(line) && line >= 1 ? { line } : {}
 }
 
 export function hasPathSignal(mention: string, codeOrQuoted: boolean) {

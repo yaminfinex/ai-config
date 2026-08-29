@@ -6,6 +6,7 @@ import { buildSidebarNodes } from './sidebarNodes'
 import type { SidebarNode } from './sidebarNodes'
 import type { Board, Pane } from '../../types'
 import { unattributedTerminalWarning } from '../screen/screenPresentation'
+import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 
 const emptyExpandedItems: string[] = []
 
@@ -13,10 +14,10 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
   board: Board | undefined
   activeAgent?: string
   activePane?: string
-  onPreviewAgent: (name: string) => void
-  onPinAgent: (name: string) => void
-  onPreviewPane: (pane: Pane) => void
-  onPinPane: (pane: Pane) => void
+  onPreviewAgent: (name: string, placement?: OpenPlacement) => void
+  onPinAgent: (name: string, placement?: OpenPlacement) => void
+  onPreviewPane: (pane: Pane, placement?: OpenPlacement) => void
+  onPinPane: (pane: Pane, placement?: OpenPlacement) => void
   expandedItems: string[] | null
   onExpandedItems: (items: string[]) => void
   knownWorkspaceItems: string[] | null
@@ -24,6 +25,7 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
 }) {
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const nodes = useMemo(() => buildSidebarNodes(board), [board])
+  const sideHint = openInSideLabel(navigator.userAgent)
 
   useEffect(() => {
     if (!board) return
@@ -91,9 +93,21 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
           key={item.getId()}
           className={`tree-row ${node.kind === 'pane' || node.kind === 'subagent' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${item.isFocused() ? ' tree-focused' : ''}${item.isSelected() ? ' selected' : ''}`}
           style={{ paddingLeft: `${item.getItemMeta().level * 16 + 5}px` }}
-          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning}` : `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}` : node.name}
+          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''} · ${sideHint}` : node.name}
           onFocus={() => item.setFocused()}
-          onDoubleClick={() => { if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent); else if (node.kind === 'pane' && pane?.agent === '-') onPinPane(pane as Pane) }}
+          onClickCapture={(event) => {
+            if (!event.altKey || (event.target as Element).closest('.disclosure')) return
+            event.preventDefault()
+            event.stopPropagation()
+            const placement = placementFromModifiers(event)
+            if (pane?.agent && pane.agent !== '-') onPreviewAgent(pane.agent, placement)
+            else if (node.kind === 'pane' && pane?.agent === '-') onPreviewPane(pane as Pane, placement)
+          }}
+          onDoubleClick={(event) => {
+            const placement = placementFromModifiers(event)
+            if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent, placement)
+            else if (node.kind === 'pane' && pane?.agent === '-') onPinPane(pane as Pane, placement)
+          }}
         >
           {folder ? <button
             className={`disclosure${item.isExpanded() ? ' expanded' : ''}`}

@@ -29,6 +29,7 @@ test('path token expansion fences slash, dot, line, and fused punctuation', () =
   const text = 'Open tools/herder/web/src/App.tsx:44, then continue.'
   assert.equal(pathTokenSpanAt(text, text.indexOf('herder')).text, 'tools/herder/web/src/App.tsx:44,')
   assert.deepEqual(mentionLine('tools/herder/web/src/App.tsx:44,'), { line: 44 })
+  assert.deepEqual(mentionLine('tools/herder/web/src/App.tsx:0'), {})
 })
 
 test('quoted and backticked paths retain literal spaces as one token', () => {
