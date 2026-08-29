@@ -95,9 +95,13 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
 
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ sessionId: 's', window: { mode: 'tail', from: 0, limit: 500 } }) })
   sources[0].emit('message', JSON.stringify({ id: 731, from: 'web-owner', to: ['vile'], text: 'operator question' }))
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  // A bus message to an open agent refreshes its transcript immediately —
+  // the sub-second path that beats the 2s transcript poll.
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
   sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false }))
   assert.deepEqual(queryClient.getQueryData(queryKeys.screen('w1:p1')), { pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false })
   sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'unavailable', text: '', truncated: false, detail: 'pane closed' }))

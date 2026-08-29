@@ -11,6 +11,7 @@ import {
   type IWatermarkPanelProps,
 } from 'dockview-react'
 import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from './api/client'
+import { focusComposerWhenReady } from './composerState'
 import { viewerQueryOptions } from './api/queries'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { AgentPanel } from './features/transcript/AgentPanel'
@@ -168,7 +169,7 @@ type WorkspaceContextValue = {
   board?: Board
   mentionMatcher: AgentMentionMatcher
   identityReadOnly: string
-  openAgent: (name: string, preview: boolean, placement?: OpenPlacement) => void
+  openAgent: (name: string, preview: boolean, placement?: OpenPlacement, focus?: boolean) => void
   openFile: (target: FileTarget, placement?: OpenPlacement) => void
   openFileInDiff: (target: FileTarget, base: GitBase, placement?: OpenPlacement) => void
   openChanges: (root: string, placement?: OpenPlacement) => void
@@ -210,7 +211,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const workspace = useWorkspace()
   const visible = usePanelVisibility(api)
   return <AgentPanel name={params.name} active={visible} liveStatus={agentBusStatus(workspace.board, params.name)} screenPaneID={workspace.agentScreenPanes[params.name]}
-    mentionMatcher={workspace.mentionMatcher} onOpenAgent={(name, placement) => workspace.openAgent(name, true, placementInGroup(placement, api.group.id))}
+    mentionMatcher={workspace.mentionMatcher} onOpenAgent={(name, placement) => workspace.openAgent(name, true, placementInGroup(placement, api.group.id), true)}
     onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
     onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))}
     onOpenChanges={(root, placement) => workspace.openChanges(root, placementInGroup(placement, api.group.id))}
@@ -344,7 +345,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     return added
   }, [syncDock])
 
-  const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement) => {
+  const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement, focus = false) => {
     const api = apiRef.current
     if (!api) return
     const target = dockOpenTarget(api.getPanel(agentTabID(name)), placement, dockGroupFacts(api))
@@ -354,6 +355,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       existing.api.updateParameters(current?.kind === 'agent' ? { ...current, preview: current.preview && preview } : { kind: 'agent', name, preview })
       existing.api.setActive()
       syncDock()
+      if (focus) focusComposerWhenReady(() => document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]'), requestAnimationFrame)
       return
     }
     const group = target.groupID ? api.getGroup(target.groupID) : undefined
@@ -364,6 +366,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     addPanel({ kind: 'agent', name, preview }, target.position)
     if (replaced) api.removePanel(replaced)
     syncDock()
+    if (focus) focusComposerWhenReady(() => document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]'), requestAnimationFrame)
   }, [addPanel, syncDock])
 
   const openScreen = useCallback((pane: Pane, preview: boolean, placement?: OpenPlacement) => {
@@ -746,7 +749,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     <ShortcutReference open={shortcutReference} onClose={() => setShortcutReference(false)} />
     <div className="sidebar-region" style={{ width: sidebarWidth }}>
       <FleetSidebar board={boardQuery.data} activeAgent={activeParams?.kind === 'agent' ? activeParams.name : undefined} activePane={activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined}
-        onPreviewAgent={(name, placement) => openAgent(name, true, placement)} onPinAgent={(name, placement) => openAgent(name, false, placement)} onPreviewPane={(pane, placement) => openScreen(pane, true, placement)} onPinPane={(pane, placement) => openScreen(pane, false, placement)}
+        onPreviewAgent={(name, placement) => openAgent(name, true, placement, true)} onPinAgent={(name, placement) => openAgent(name, false, placement, true)} onPreviewPane={(pane, placement) => openScreen(pane, true, placement)} onPinPane={(pane, placement) => openScreen(pane, false, placement)}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
     </div>
     <div className="sidebar-resizer" role="separator" aria-label="Resize fleet sidebar" aria-orientation="vertical" aria-valuemin={200} aria-valuemax={440} aria-valuenow={sidebarWidth} tabIndex={0}

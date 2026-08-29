@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  focusComposerWhenReady,
   composerFieldId,
   composerDraftKey,
   blurComposerOnEscape,
@@ -64,4 +66,43 @@ test('Escape blurs the composer without claiming the event', () => {
   blurred = false
   assert.equal(blurComposerOnEscape({ key: 'Enter', currentTarget: { blur: () => { blurred = true } } }), false)
   assert.equal(blurred, false)
+})
+
+test('send success refetches the transcript immediately, not just agent status', () => {
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  const success = composer.slice(composer.indexOf('setSendNotice'), composer.indexOf('} catch'))
+  assert.match(success, /queryKeys\.agent\(name\)/)
+  assert.match(success, /queryKeys\.entries\(name\)/)
+})
+
+test('focusComposerWhenReady retries until the composer mounts, then stops quietly', () => {
+  let focused = 0
+  const pending: Array<() => void> = []
+  const schedule = (callback: () => void) => { pending.push(callback) }
+  let composer: { focus: () => void } | null = null
+  focusComposerWhenReady(() => composer, schedule, 5)
+  assert.equal(focused, 0)
+  assert.equal(pending.length, 1)
+  pending.shift()?.()
+  composer = { focus: () => { focused += 1 } }
+  pending.shift()?.()
+  assert.equal(focused, 1)
+  assert.equal(pending.length, 0)
+
+  composer = null
+  focusComposerWhenReady(() => composer, schedule, 2)
+  pending.shift()?.()
+  pending.shift()?.()
+  assert.equal(pending.length, 0)
+  assert.equal(focused, 1)
+})
+
+test('selecting an agent focuses its composer only on user-driven opens', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  assert.match(app, /onPreviewAgent=\{\(name, placement\) => openAgent\(name, true, placement, true\)\}/)
+  assert.match(app, /onPinAgent=\{\(name, placement\) => openAgent\(name, false, placement, true\)\}/)
+  assert.match(app, /onOpenAgent=\{\(name, placement\) => workspace\.openAgent\(name, true, placementInGroup\(placement, api\.group\.id\), true\)\}/)
+  const applyRoute = app.slice(app.indexOf('const applyRoute'), app.indexOf('const onDockReady'))
+  assert.match(applyRoute, /openAgent\(route\.name, true\)/)
+  assert.doesNotMatch(applyRoute, /openAgent\(route\.name, true, [^)]*true\)/)
 })

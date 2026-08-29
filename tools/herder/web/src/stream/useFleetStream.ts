@@ -157,6 +157,7 @@ export function subscribeToFleet(
       const { to } = JSON.parse(event.data) as { to?: string[] }
       to?.filter((name) => names.includes(name)).forEach((name) => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+        void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
       })
     })
     events.addEventListener('rewindow', (event) => {
