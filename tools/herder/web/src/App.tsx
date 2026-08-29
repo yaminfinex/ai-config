@@ -26,6 +26,7 @@ import { agentTabID } from './previewTabs'
 import type { Board, FileTarget, FolderTarget, Pane } from './types'
 import { FilePanel } from './features/files/FilePanel'
 import { QuickOpen } from './features/files/QuickOpen'
+import { usePanelRecords } from './features/workspace/usePanelRecords'
 import { fileTabID, isMarkdownPath, type FileViewMode } from './features/files/fileTabs'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
@@ -293,6 +294,12 @@ function DockWatermark({ containerApi }: IWatermarkPanelProps) {
 
 const dockComponents = { agent: AgentDockPanel, screen: ScreenDockPanel, file: FileDockPanel, folder: FolderDockPanel, changes: ChangesDockPanel }
 
+function sameGitFileState(left: GitFileState, right: GitFileState) {
+  return left.mode === right.mode && left.base === right.base &&
+    left.revision?.sha === right.revision?.sha && left.revision?.path === right.revision?.path &&
+    left.commit?.sha === right.commit?.sha && left.commit?.path === right.commit?.path
+}
+
 function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
   const [initial] = useState(readInitialLayout)
   const [quickOpen, setQuickOpen] = useState(false)
@@ -301,10 +308,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
-  const [agentStatuses, setAgentStatuses] = useState<Record<string, string>>({})
-  const [agentScreenPanes, setAgentScreenPanes] = useState<Record<string, string>>({})
+  const { records: agentStatuses, set: setAgentStatusRecord, prune: pruneAgentStatus } = usePanelRecords<string>()
+  const { records: agentScreenPanes, set: setAgentScreenPaneRecord, prune: pruneAgentScreenPane } = usePanelRecords<string>()
   const [focusedScreenPaneID, setFocusedScreenPaneID] = useState<string>()
-  const [fileGitStates, setFileGitStates] = useState<Record<string, GitFileState>>({})
+  const { records: fileGitStates, set: setFileGitStateRecord, prune: pruneFileGitState } = usePanelRecords<GitFileState>(sameGitFileState)
   const [fileWatchTargets, setFileWatchTargets] = useState<FileWatchTarget[]>([])
   const [activePanelID, setActivePanelID] = useState('')
   const [revision, setRevision] = useState(0)
@@ -408,7 +415,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       const params: FilePanelParams = { ...existing.params, ...target, viewMode: target.line ? 'source' : existing.params.viewMode }
       existing.panel.api.updateParameters(params)
       existing.panel.api.setActive()
-      if (target.line) setFileGitStates((current) => ({ ...current, [id]: gitStateForFileOpen(current[id], target.line) }))
+      if (target.line) setFileGitStateRecord(id, (current) => gitStateForFileOpen(current, target.line))
       queryClient.invalidateQueries({ queryKey: queryKeys.file(target.root, target.path) })
       syncDock()
       return
@@ -430,13 +437,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     queryClient.invalidateQueries({ queryKey: queryKeys.file(target.root, target.path) })
     setQuickOpenGroup(undefined)
     syncDock()
-  }, [addPanel, queryClient, quickOpenGroup, syncDock])
+  }, [addPanel, queryClient, quickOpenGroup, setFileGitStateRecord, syncDock])
 
   const openFileInDiff = useCallback((target: FileTarget, base: GitBase, placement?: OpenPlacement) => {
     openFile(target, placement)
     const id = fileTabID(target.root, target.path)
-    setFileGitStates((current) => ({ ...current, [id]: { mode: 'diff', base } }))
-  }, [openFile])
+    setFileGitStateRecord(id, { mode: 'diff', base })
+  }, [openFile, setFileGitStateRecord])
 
   const openChanges = useCallback((root: string, placement?: OpenPlacement) => {
     const api = apiRef.current
@@ -546,22 +553,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     const onRemove = event.api.onDidRemovePanel((panel) => {
       const params = panelParams(panel.params)
       if (params?.kind === 'file') {
-        setFileGitStates((current) => {
-          if (!(panel.id in current)) return current
-          const next = { ...current }
-          delete next[panel.id]
-          return next
-        })
+        pruneFileGitState(panel.id)
       }
       if (params?.kind !== 'agent') return
-      setAgentStatuses((current) => {
-        if (!(params.name in current)) return current
-        const next = { ...current }; delete next[params.name]; return next
-      })
-      setAgentScreenPanes((current) => {
-        if (!(params.name in current)) return current
-        const next = { ...current }; delete next[params.name]; return next
-      })
+      pruneAgentStatus(params.name)
+      pruneAgentScreenPane(params.name)
     })
     const onMove = event.api.onDidMovePanel(({ panel }) => {
       if (pinMovedPreview(panel)) syncDock()
@@ -572,7 +568,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     setDockReady(true)
     setActivePanelID(event.api.activePanel?.id ?? '')
     setRevision((value) => value + 1)
-  }, [applyRoute, initial, initialRoute, openAgent, syncDock])
+  }, [applyRoute, initial, initialRoute, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, syncDock])
 
   useEffect(() => () => dockDisposables.current.forEach((disposable) => disposable.dispose()), [])
 
@@ -643,19 +639,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const viewerReadOnly = viewerQuery.isPending ? 'Resolving viewer identity…' : viewerQuery.data ? ''
     : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
 
-  const setAgentStatus = useCallback((name: string, status: string) => setAgentStatuses((current) => current[name] === status ? current : { ...current, [name]: status }), [])
-  const setFileGitState = useCallback((id: string, state: GitFileState) => setFileGitStates((current) => {
-    const previous = current[id]
-    const unchanged = previous?.mode === state.mode && previous.base === state.base &&
-      previous.revision?.sha === state.revision?.sha && previous.revision?.path === state.revision?.path &&
-      previous.commit?.sha === state.commit?.sha && previous.commit?.path === state.commit?.path
-    return unchanged ? current : { ...current, [id]: state }
-  }), [])
-  const setAgentScreenPane = useCallback((name: string, paneID?: string) => setAgentScreenPanes((current) => {
-    if (paneID) return current[name] === paneID ? current : { ...current, [name]: paneID }
-    if (!(name in current)) return current
-    const next = { ...current }; delete next[name]; return next
-  }), [])
+  const setAgentStatus = useCallback((name: string, status: string) => setAgentStatusRecord(name, status), [setAgentStatusRecord])
+  const setFileGitState = useCallback((id: string, state: GitFileState) => setFileGitStateRecord(id, state), [setFileGitStateRecord])
+  const setAgentScreenPane = useCallback((name: string, paneID?: string) => setAgentScreenPaneRecord(name, paneID), [setAgentScreenPaneRecord])
   const streamProblems = useMemo<Record<string, string>>(() => ({
     ...stream.problems,
     ...(boardQuery.error ? { fleet: boardQuery.error.message } : {}),
