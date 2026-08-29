@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, lifecycleProblem, resolveFiles, sendMessage, spawnAgent, viewerReadOnlyMessage } from '../src/api/client.ts'
+import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, lifecycleProblem, resolveFiles, sendMessage, sendPaneInput, spawnAgent, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
@@ -73,9 +73,13 @@ test('mutations use pinned JSON request shapes', async () => {
   }) as typeof fetch
 
   await sendMessage('vile', 'hello', fetcher)
+  await sendPaneInput('w1:p/1', { text: '\x03\x1b[A' }, fetcher)
+  await sendPaneInput('w1:p/1', { keys: ['ctrl+c', 'up'] }, fetcher)
   await spawnAgent({ from_pane: 'w1:p1', shape: 'pane', tool: 'codex', tag: 'new', prompt: 'work' }, fetcher)
   assert.deepEqual(requests.map(({ path, init }) => [path, init?.method, init?.body]), [
     ['/api/agents/vile/message', 'POST', JSON.stringify({ text: 'hello' })],
+    ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ text: '\x03\x1b[A' })],
+    ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ keys: ['ctrl+c', 'up'] })],
     ['/api/spawn', 'POST', JSON.stringify({ from_pane: 'w1:p1', shape: 'pane', tool: 'codex', tag: 'new', prompt: 'work' })],
   ])
 })

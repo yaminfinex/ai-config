@@ -11,6 +11,6 @@ export function transcriptNotice(pending: boolean, errorDetail: string): Loading
 export function screenNotice(frame: ScreenFrame | undefined): LoadingNotice | null {
   if (!frame) return { tone: 'info', detail: 'Connecting to live pane…' }
   if (frame.status === 'unavailable') return { tone: 'error', detail: frame.detail || 'Pane screen is unavailable' }
-  if (frame.truncated) return { tone: 'info', detail: 'Screen exceeds the 16 KiB live-frame budget; this snapshot is truncated.' }
+  if (frame.truncated) return { tone: 'info', detail: 'Screen exceeds the 64 KiB live-frame budget; this snapshot is truncated.' }
   return null
 }

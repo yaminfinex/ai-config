@@ -56,6 +56,15 @@ export interface ScreenFrame {
   text: string
   truncated: boolean
   detail?: string
+  cols?: number
+  rows?: number
+}
+
+export interface PaneHistory {
+  pane_id: string
+  text: string
+  truncated: boolean
+  fetched_at: string
 }
 
 export interface Refusal {

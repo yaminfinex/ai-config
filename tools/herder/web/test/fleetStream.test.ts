@@ -25,6 +25,9 @@ test('one stream URL de-duplicates and sorts every open agent', () => {
   const watches = [{ kind: 'file' as const, root: '/repo', path: 'README.md' }, { kind: 'folder' as const, root: '/repo', path: 'docs' }]
   const url = new URL(eventStreamURL([], [], watches), 'http://fixture')
   assert.deepEqual(JSON.parse(url.searchParams.get('watches') ?? ''), watches)
+  const focused = new URL(eventStreamURL([], ['w1:p1'], watches, 'w1:p1'), 'http://fixture')
+  assert.equal(focused.searchParams.get('focused_screen'), 'w1:p1')
+  assert.deepEqual(JSON.parse(focused.searchParams.get('watches') ?? ''), watches)
 })
 
 test('closing the last screen consumer identifies only stale screen caches', () => {
@@ -72,7 +75,7 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   const stop = subscribeToFleet(queryClient, ['vile', 'vile'], ['w1:p1'], [
     { kind: 'file', root: '/repo', path: 'README.md' },
     { kind: 'folder', root: '/repo', path: 'docs' },
-  ], () => {
+  ], undefined, () => {
     const source = new FakeEventSource()
     sources.push(source)
     return source

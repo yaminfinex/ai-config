@@ -643,7 +643,7 @@ endpoint plus multiplexed entry wake frames. Both legacy paths now receive the
 standard structured 404 unknown-endpoint refusal. This amendment records the
 conductor-authorized TASK-12 owner ruling of 2026-08-27.
 
-GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-herdr-pane-ids}&watches={JSON-array}` (SSE)
+GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-herdr-pane-ids}&watches={JSON-array}&focused_screen={one-requested-pane-id}` (SSE)
   The web shell's ONE multiplexed stream per page. `agents` is the
   de-duplicated set of open agent tabs (at most 100); changing the set
   rebuilds this one stream. An absent set subscribes only to fleet and
@@ -714,7 +714,7 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   set. Changes/Git panels, transcript panels, recursive tree freshness, editing,
   and file writes remain outside this amendment.
 
-  ### AMENDMENT (owner-rescoped 2026-08-27, expanded 2026-08-28) — read-only terminal screens
+  ### AMENDMENT (owner-rescoped 2026-08-27, expanded 2026-08-28) — read-only terminal screens (superseded for terminal surfaces by TASK-73 below)
 
   Screen view is permitted as a read-only convenience for panes currently
   reported by Herdr. Standalone screen tabs remain offered for panes without
@@ -773,6 +773,56 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   reads use only `pane.read` as pinned above. The server must not connect to or
   expose hcom's per-agent inject port. The composer/bus remains the only web
   typing path.
+
+  ### AMENDMENT (owner-ruled, 2026-08-29) — first-class ANSI read/write terminals (TASK-73)
+
+  This amendment supersedes the terminal-specific read-only, plain-text,
+  16 KiB, and no-input constraints immediately above. It does not widen any
+  other mutation surface. Terminal reads and writes use Herdr's own Unix
+  socket only; the server still must never connect to, proxy, or expose hcom's
+  per-agent PTY inject port.
+
+  Available `screen:{pane-id}` frames are full ANSI snapshots from
+  `pane.read` with `source=visible`, `format=ansi`, and `strip_ansi=false`.
+  They additionally carry `cols` and `rows` from Herdr's current layout. The
+  final serialized SSE wire frame is capped at 65,536 bytes. Oversized text is
+  truncated only at an ANSI-ground-state line boundary, with
+  `truncated:true`; an oversized single line may honestly become an empty
+  prefix. The browser renders snapshots by resetting and repainting a
+  zero-scrollback xterm. It never invents local echo, cursor position, or pane
+  geometry, and it never resizes the shared Herdr pane. Fit measurement may
+  adjust browser font size, but xterm's rows and columns remain the real Herdr
+  grid.
+
+  `focused_screen` is an optional scalar in the existing `/api/events` query.
+  When present it must name one of the de-duplicated `screens` values or the
+  request is refused with 400. The focused pane polls at 100 ms; all other
+  watched panes remain at 250 ms. Agent, screen, file-watch, and focus facts
+  continue to share one EventSource, rebuilt on focus transitions.
+
+  `GET /api/panes/{pane-id}/history` validates the target against the current
+  Herdr snapshot and reads at most 2,000 recent ANSI lines. It returns
+  `pane_id`, `text`, `truncated`, and an RFC3339 `fetched_at`. History is a
+  separate, static, refreshable xterm surface with bounded scrollback; live
+  snapshot repaints never accumulate into it.
+
+  `POST /api/panes/{pane-id}/input` accepts exactly one of `{"text":"..."}`
+  or `{"keys":["..."]}` in a JSON body capped at 8 KiB. Empty input,
+  undocumented fields, and both/neither forms are 400. A target absent from
+  the current Herdr snapshot is 404; a pane that disappears before
+  `pane.send_input` accepts the request is 409; attribution and substrate
+  failures use the existing pinned 409/502 refusal serializer. The browser
+  serializes requests per pane. Exact, live-proven single-key xterm chunks map
+  through one encoder table: CR→`enter`, DEL→`backspace`, Tab→`tab`,
+  Ctrl-C→`ctrl+c`, Ctrl-D→`ctrl+d`, Esc→`escape`, CSI A/B/C/D→the four arrows,
+  and Esc-b/Esc-f→Alt-B/Alt-F. Herdr currently refuses `home`, `end`, and
+  `delete` with `502 invalid_key`; those xterm chunks are intentionally left
+  unmapped rather than approximated with readline-only control chords. All
+  other chunks are one unchanged `text` request. In particular, content
+  containing an embedded CR and bracketed/multiline paste is never split into
+  key presses. Each attributed request produces one audit record containing
+  only time, viewer, pane, and byte count—never terminal content. Success returns
+  `{"sent":true,"pane_id":"...","viewer":"..."}`.
 
 ### AMENDMENT (owner-asked, 2026-08-27) — build identity handshake and manual refresh
 
@@ -866,7 +916,8 @@ POST `/api/agents/{bus-name}/message`
   peers (their identity is transient; observed live 2026-08-25 when
   agent replies to a web sender bounced): the agent's answer
   arrives on the web viewer's transcript tail, not as a bus
-  message. No pane injection, ever.
+  message. This message endpoint never injects pane input; TASK-73's separately
+  attributed and bounded terminal endpoint is the only pane-input exception.
 
   **2026-08-26 operator-note amendment.** New deliveries fence that
   agent-facing instruction block with stable, line-delimited markers; the
@@ -958,13 +1009,14 @@ outside this web API are unchanged.
 
 ## Explicitly absent (ruled)
 
-No WebSocket. No pane injection. No interactive screen input. No cull/kill. No resume or fork, no
+No WebSocket. No pane injection other than the attributed, bounded Herdr
+`pane.send_input` terminal endpoint defined by TASK-73 above. No cull/kill. No resume or fork, no
 retired-session lifecycle controls beyond the retained read-only transcript
 amendment, no sesh. No blank-form/global spawn, no new-workspace
 creation. No auth beyond the tailnet boundary. No server-side state.
-No screen is interactive and no agent screen is selected by default. The
-opt-in read-only agent viewport and unattributed-terminal screen are only the
-narrow exceptions defined by the 2026-08-28 expansion above.
+No agent screen is selected by default. The opt-in interactive agent terminal
+viewport and unattributed-terminal surface are only the narrow exceptions
+defined by the 2026-08-28 expansion and TASK-73 amendment above.
 There are no file writes, content grep/search endpoint,
 archive/download surface, arbitrary-path read, mission-aware root behavior,
 whole-repository history browser, or persistent file state. File/folder change
@@ -973,9 +1025,10 @@ derived and rebuildable; restart loses no source of truth.
 
 ## Former candidate now ratified (2026-08-27)
 
-The former non-agent terminal-pane candidate is now the narrowly ratified
-read-only screen amendment above. It remains snapshot mirroring, never live PTY
-transport and never input.
+The former non-agent terminal-pane candidate was first ratified as the narrow
+read-only screen amendment, then superseded by TASK-73's ANSI snapshot mirror,
+bounded history read, and attributed Herdr input endpoint. It remains polling
+snapshot transport rather than a raw PTY stream or WebSocket.
 
 ## Build order inside the lane (ruled: existing sessions first)
 

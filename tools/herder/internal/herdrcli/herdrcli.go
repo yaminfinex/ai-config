@@ -63,6 +63,24 @@ type WorkspaceWorktree struct {
 	IsLinkedWorktree bool   `json:"is_linked_worktree"`
 }
 
+type PaneRect struct {
+	Width  int `json:"width"`
+	Height int `json:"height"`
+	X      int `json:"x"`
+	Y      int `json:"y"`
+}
+
+type LayoutPane struct {
+	PaneID string   `json:"pane_id"`
+	Rect   PaneRect `json:"rect"`
+}
+
+type Layout struct {
+	WorkspaceID string       `json:"workspace_id"`
+	TabID       string       `json:"tab_id"`
+	Panes       []LayoutPane `json:"panes"`
+}
+
 // UnmarshalJSON accepts both herdr agent_session shapes: a bare session ID or
 // an object whose value member carries that ID.
 func (p *Pane) UnmarshalJSON(data []byte) error {
@@ -106,6 +124,20 @@ type Snapshot struct {
 	Tabs       []Tab       `json:"tabs"`
 	Agents     []Agent     `json:"agents"`
 	Panes      []Pane      `json:"panes"`
+	Layouts    []Layout    `json:"layouts"`
+}
+
+// PaneSize returns Herdr's terminal geometry in character cells. Layout facts
+// are authoritative; callers must never derive pane dimensions from pixels.
+func (s Snapshot) PaneSize(paneID string) (cols, rows int, ok bool) {
+	for _, layout := range s.Layouts {
+		for _, pane := range layout.Panes {
+			if pane.PaneID == paneID && pane.Rect.Width > 0 && pane.Rect.Height > 0 {
+				return pane.Rect.Width, pane.Rect.Height, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 // LiveSnapshot reads one session.snapshot directly from the herdr Unix

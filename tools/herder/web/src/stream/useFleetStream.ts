@@ -47,13 +47,14 @@ export function withoutUnsubscribedTranscripts(problems: Record<string, string>,
   return Object.fromEntries(Object.entries(problems).filter(([source]) => !source.startsWith('transcript:') || subscribed.has(source)))
 }
 
-export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = []) {
+export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string) {
   const agents = [...new Set(agentNames)].sort().join(',')
   const screens = [...new Set(screenPaneIDs)].sort().join(',')
   const query = new URLSearchParams()
   if (agents) query.set('agents', agents)
   if (screens) query.set('screens', screens)
   if (fileWatches.length > 0) query.set('watches', JSON.stringify(fileWatches))
+  if (focusedScreenPaneID) query.set('focused_screen', focusedScreenPaneID)
   return query.size ? `/api/events?${query}` : '/api/events'
 }
 
@@ -67,6 +68,7 @@ export function subscribeToFleet(
   agentNames: string[],
   screenPaneIDs: string[] = [],
   fileWatches: FileWatchTarget[] = [],
+  focusedScreenPaneID?: string,
   createEventSource: (url: string) => EventSourceLike = (url) => new EventSource(url),
   timers: TimerHost = window,
 ) {
@@ -110,7 +112,7 @@ export function subscribeToFleet(
     lastActivity = Date.now()
     update((current) => current.loadedBuild ? current : { ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } })
     try {
-      events = createEventSource(eventStreamURL(names, panes, fileWatches))
+      events = createEventSource(eventStreamURL(names, panes, fileWatches, focusedScreenPaneID))
     } catch {
       scheduleReconnect('Live stream disconnected; reconnecting…')
       return
@@ -196,7 +198,7 @@ export function subscribeToFleet(
   }
 }
 
-export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = []) {
+export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string) {
   const queryClient = useQueryClient()
   const previousScreenSubscription = useRef('')
   const subscription = [...new Set(agentNames)].sort().join(',')
@@ -223,6 +225,7 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
     subscription ? subscription.split(',') : [],
     screenSubscription ? screenSubscription.split(',') : [],
     JSON.parse(fileWatchSubscription) as FileWatchTarget[],
-  ), [fileWatchSubscription, queryClient, subscription, screenSubscription])
+    focusedScreenPaneID,
+  ), [fileWatchSubscription, focusedScreenPaneID, queryClient, subscription, screenSubscription])
   return stream
 }
