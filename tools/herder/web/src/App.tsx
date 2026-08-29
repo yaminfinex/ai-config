@@ -25,7 +25,6 @@ import type { Board, FileTarget, FolderTarget, Pane } from './types'
 import { FilePanel } from './features/files/FilePanel'
 import { QuickOpen } from './features/files/QuickOpen'
 import { fileTabID, isMarkdownPath, type FileViewMode } from './features/files/fileTabs'
-import { isQuickOpenShortcut } from './features/files/fileShortcut'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
 import { folderTabID } from './features/folders/folderModel'
@@ -33,7 +32,7 @@ import { gitStateForFileOpen, initialGitFileState, type GitBase, type GitFileSta
 import { changesPanelID } from './features/git/changesModel'
 import { ChangesPanel } from './features/git/ChangesPanel'
 import { ShortcutReference } from './features/layout/ShortcutReference'
-import { isClosePanelShortcut, isEditableShortcutTarget, isShortcutReferenceShortcut } from './features/layout/shellShortcuts'
+import { bindShellShortcuts, shortcutLabels } from './features/layout/shellShortcuts'
 import {
   layoutStorageKey,
   legacyLayoutStorageKey,
@@ -228,7 +227,7 @@ function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelParams>) {
 function DockHeaderActions({ group, activePanel }: IDockviewHeaderActionsProps) {
   const workspace = useWorkspace()
   return <div className="dock-header-actions">
-    <button type="button" className="new-tab" title="Quick open file or folder · Ctrl/Cmd+K" aria-label="Quick open file or folder in this group" onClick={() => {
+    <button type="button" className="new-tab" title={`Quick open file or folder · ${shortcutLabels(navigator.userAgent).quickOpen}`} aria-label="Quick open file or folder in this group" onClick={() => {
       activePanel?.api.setActive()
       workspace.showQuickOpen(group.id)
     }}>+</button>
@@ -579,24 +578,42 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   }, [syncDock])
 
   useEffect(() => {
-    const shortcut = (event: KeyboardEvent) => {
+    const switchTab = (direction: 'previous' | 'next') => {
       const api = apiRef.current
-      const command = event.ctrlKey || event.metaKey
-      if (isQuickOpenShortcut(event, navigator.userAgent)) showQuickOpen()
-      else if (isClosePanelShortcut(event) && !isEditableShortcutTarget(event.target) && api?.activePanel) api.activePanel.api.close()
-      else if (isShortcutReferenceShortcut(event) && !isEditableShortcutTarget(event.target)) setShortcutReference(true)
-      else if (event.key === 'Escape' && shortcutReference) setShortcutReference(false)
-      else if (command && (event.key === 'PageDown' || event.key === 'PageUp') && api?.activeGroup) {
-        const panels = api.activeGroup.panels
-        const index = panels.findIndex((panel) => panel.id === api.activeGroup?.activePanel?.id)
-        panels[(index + (event.key === 'PageDown' ? 1 : -1) + panels.length) % panels.length]?.api.setActive()
-      } else if (event.altKey && event.key === '1') document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')?.focus()
-      else if (event.altKey && event.key === '2') document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')?.focus()
-      else return
-      event.preventDefault()
+      if (!api?.activeGroup || api.activeGroup.panels.length === 0) return false
+      const panels = api.activeGroup.panels
+      const index = panels.findIndex((panel) => panel.id === api.activeGroup?.activePanel?.id)
+      panels[(index + (direction === 'next' ? 1 : -1) + panels.length) % panels.length]?.api.setActive()
+      return true
     }
-    window.addEventListener('keydown', shortcut)
-    return () => window.removeEventListener('keydown', shortcut)
+    return bindShellShortcuts(window, {
+      quickOpen: () => showQuickOpen(),
+      closePanel: () => {
+        const panel = apiRef.current?.activePanel
+        if (!panel) return false
+        panel.api.close()
+        return true
+      },
+      openShortcutReference: () => setShortcutReference(true),
+      closeShortcutReference: () => {
+        if (!shortcutReference) return false
+        setShortcutReference(false)
+        return true
+      },
+      switchTab,
+      focusFleet: () => {
+        const item = document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')
+        if (!item) return false
+        item.focus()
+        return true
+      },
+      focusComposer: () => {
+        const composer = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
+        if (!composer) return false
+        composer.focus()
+        return true
+      },
+    }, navigator.userAgent)
   }, [shortcutReference, showQuickOpen])
 
   const startResize = (event: React.PointerEvent) => {
