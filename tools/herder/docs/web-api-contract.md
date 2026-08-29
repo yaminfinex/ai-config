@@ -546,7 +546,7 @@ GET `/api/git/diff?root={root-id}&path={relative-file}&base={uncommitted|branch|
 
 GET `/api/git/log?root={root-id}&path={relative-file}&cursor={optional}`
   Returns single-file history, newest first, following renames:
-  `{"root":"/opaque/root","path":"new/name.md","entries":[{"sha":"<full-sha>","author":"Fixture","date":"2026-08-28T12:34:56Z","subject":"rename file","path_then":"new/name.md"}],"next_cursor":"<opaque>","fetched_at":"..."}`.
+  `{"root":"/opaque/root","path":"new/name.md","entries":[{"sha":"<full-sha>","author":"Fixture","date":"2026-08-28T12:34:56Z","subject":"rename file","path_then":"new/name.md"}],"next_cursor":"<opaque>","history_truncated":true,"fetched_at":"..."}`.
   The page size is fixed at 50; `entries` is explicit and each entry contains
   exactly sha/author/date/subject/path_then. `path_then` is the root-relative
   historical path reported by the same rename-following log traversal for that
@@ -558,12 +558,31 @@ GET `/api/git/log?root={root-id}&path={relative-file}&cursor={optional}`
   The cursor is an opaque, versioned, base64url token containing the first
   page's fixed HEAD anchor, next skip offset, and a SHA-256 binding to the
   repository, opaque root, and root-relative path. Its fields, version, SHA,
-  bounded skip, and binding are validated. Each page reruns one anchored
-  `git log --follow --find-renames --name-status -z` traversal with `--skip`;
-  the machine name-status record supplies `path_then` without changing cursor
-  anchoring or binding. Using `cursor^` is forbidden
+  page-aligned bounded skip, and binding are validated; offsets the server
+  could not have issued for that anchored history are refused. Each page reruns
+  one anchored `git log --follow --find-renames --name-status -z --no-ext-diff
+  --no-textconv --max-count=1001` traversal **without `--skip`**, parses the
+  continuous rename-following stream, and slices it in memory at the cursor
+  offset. Git therefore carries rename state across page boundaries, and the
+  same machine name-status record supplies `path_then` before pagination
+  without changing cursor anchoring or binding. Using `cursor^` is forbidden
   because it can lose the rename boundary and historical path. The server has
   no cursor store.
+
+  At most 1000 history entries are served for one anchored path. The 1001st
+  record is a probe proving that older history exists; it is never returned.
+  When the probe exists, every page includes `history_truncated:true`, the
+  cursor advances normally through the page beginning at offset 950, and that
+  terminal capped page deliberately omits `next_cursor`. Thus a cursor never
+  claims that entries beyond the cap are available. `history_truncated` is
+  omitted for histories of 1000 entries or fewer, preserving the existing wire
+  shape for ordinary and short first-page consumers.
+
+  The complete machine-format log stream also has a 4 MiB hard cap. Crossing
+  it kills Git, discards the partial stream, and returns a 409 refusal; partial
+  entries and cursors are never fabricated. This bounds repository-controlled
+  author, subject, and historical-path metadata independently of the 1001-entry
+  walk limit.
 
 GET `/api/git/file?root={root-id}&path={relative-file}&sha={full-commit-sha}`
   Reads a blob at an exact commit without changing `/api/files`' as-of-now

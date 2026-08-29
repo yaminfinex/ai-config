@@ -106,11 +106,12 @@ type LogEntry struct {
 }
 
 type LogResult struct {
-	Root       string     `json:"root"`
-	Path       string     `json:"path"`
-	Entries    []LogEntry `json:"entries"`
-	NextCursor string     `json:"next_cursor,omitempty"`
-	FetchedAt  time.Time  `json:"fetched_at"`
+	Root             string     `json:"root"`
+	Path             string     `json:"path"`
+	Entries          []LogEntry `json:"entries"`
+	NextCursor       string     `json:"next_cursor,omitempty"`
+	HistoryTruncated bool       `json:"history_truncated,omitempty"`
+	FetchedAt        time.Time  `json:"fetched_at"`
 }
 
 type FileResult struct {
