@@ -6,8 +6,9 @@ import { Banner } from '../../shared/presentation'
 import { rootLabel } from '../files/fileResolution'
 import { branchBaseAvailable, branchChangeSummary, changeSideLabel, effectiveChangesBase, entryChangeCount, requestedChangesBase } from './changesModel'
 import { repoChangeSummary, type GitBase } from './gitViewModel'
+import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 
-export function ChangesPanel({ root, active, onOpenDiff }: { root: string, active: boolean, onOpenDiff: (target: FileTarget, base: GitBase) => void }) {
+export function ChangesPanel({ root, active, onOpenDiff }: { root: string, active: boolean, onOpenDiff: (target: FileTarget, base: GitBase, placement?: OpenPlacement) => void }) {
   const [baseChoice, setBaseChoice] = useState<GitBase | null>(null)
   const requestedBase = requestedChangesBase(baseChoice)
   const status = useQuery({ queryKey: queryKeys.gitStatus(root, requestedBase), queryFn: ({ signal }) => getGitStatus(root, fetch, signal, requestedBase), retry: false })
@@ -39,14 +40,14 @@ export function ChangesPanel({ root, active, onOpenDiff }: { root: string, activ
         <span>Fetched {new Date(available.fetched_at).toLocaleString()}</span>
       </div>
       {available.entries.length === 0 ? <section className="file-state" role="status"><strong>{effectiveBase === 'branch' ? 'No branch changes' : 'Nothing uncommitted'}</strong><p>{effectiveBase === 'branch' ? `The working tree matches ${available.entries_base?.label ?? 'the branch merge-base'}.` : 'The working tree matches HEAD.'}</p></section>
-        : <><h2 className="changes-list-title">{effectiveBase === 'branch' ? 'All work on this branch' : 'Uncommitted files'}</h2><div className="changes-list" role="list">{available.entries.map((entry) => <ChangeRow key={`${entry.path}:${entry.old_path ?? ''}`} entry={entry} base={effectiveBase} onOpen={() => onOpenDiff({ root, path: entry.path }, effectiveBase)} />)}</div></>}
+        : <><h2 className="changes-list-title">{effectiveBase === 'branch' ? 'All work on this branch' : 'Uncommitted files'}</h2><div className="changes-list" role="list">{available.entries.map((entry) => <ChangeRow key={`${entry.path}:${entry.old_path ?? ''}`} entry={entry} base={effectiveBase} onOpen={(placement) => onOpenDiff({ root, path: entry.path }, effectiveBase, placement)} />)}</div></>}
     </>}
   </main>
 }
 
-function ChangeRow({ entry, base, onOpen }: { entry: GitStatusEntry, base: GitBase, onOpen: () => void }) {
+function ChangeRow({ entry, base, onOpen }: { entry: GitStatusEntry, base: GitBase, onOpen: (placement: OpenPlacement) => void }) {
   const sides = changeSideLabel(entry, base)
-  return <button type="button" className="change-row" role="listitem" onClick={onOpen}>
+  return <button type="button" className="change-row" role="listitem" title={`Open diff · ${openInSideLabel(navigator.userAgent)}`} onClick={(event) => onOpen(placementFromModifiers(event))}>
     <span className={`change-kind ${entry.kind}`}>{entry.kind.replace('_', ' ')}</span>
     <span className="change-path">{entry.old_path && <small>{entry.old_path} →</small>}{entry.path}</span>
     {entry.binary && <span className="change-binary">binary</span>}

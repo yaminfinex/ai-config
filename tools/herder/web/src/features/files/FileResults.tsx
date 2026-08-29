@@ -1,5 +1,7 @@
+import type { MouseEvent } from 'react'
 import type { FileCandidate, ResolveResponse } from '../../types'
 import { rootLabel } from './fileResolution'
+import { openInSideLabel } from '../layout/openPlacement'
 
 export function RootOutcomes({ resolution }: { resolution?: ResolveResponse }) {
   const incomplete = resolution?.roots.filter((root) => root.status !== 'complete') ?? []
@@ -12,7 +14,7 @@ export function RootOutcomes({ resolution }: { resolution?: ResolveResponse }) {
 export function FileResults({ resolution, activeIndex = -1, onSelect, empty = 'No current matches.', limit = 100 }: {
   resolution?: ResolveResponse
   activeIndex?: number
-  onSelect: (candidate: FileCandidate) => void
+  onSelect: (candidate: FileCandidate, event: MouseEvent<HTMLButtonElement>) => void
   empty?: string
   limit?: number
 }) {
@@ -21,7 +23,7 @@ export function FileResults({ resolution, activeIndex = -1, onSelect, empty = 'N
   return <><RootOutcomes resolution={resolution} />
     {resolution.candidates.length === 0 ? <p className="file-results-empty">{empty}</p> : <div className="file-results" role="listbox" aria-label="Resolved files and folders">
       {visible.map((candidate, index) => <button type="button" role="option" aria-selected={index === activeIndex} className={index === activeIndex ? 'active' : ''}
-        key={`${candidate.root}\0${candidate.kind}\0${candidate.path}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onSelect(candidate)}>
+        title={`${candidate.path} · ${openInSideLabel(navigator.userAgent)}`} key={`${candidate.root}\0${candidate.kind}\0${candidate.path}`} onMouseDown={(event) => event.preventDefault()} onClick={(event) => onSelect(candidate, event)}>
         <span className={`file-result-path ${candidate.kind}`}><span aria-hidden="true">{candidate.kind === 'dir' ? '▰' : '◇'}</span>{candidate.path}</span>
         <span className="root-tag" title={candidate.root}>{rootLabel(candidate.root)}</span>
         <span className={`tier-tag ${candidate.tier}`}>{candidate.kind === 'dir' ? 'folder · ' : ''}{candidate.tier}</span>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getAgent, queryKeys } from '../../api/client'
 import { entriesQueryOptions } from '../../api/queries'
@@ -15,8 +15,10 @@ import { ScreenViewport } from '../screen/ScreenPanel'
 import { agentScreenChoice } from '../screen/screenPresentation'
 import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
 import type { FileTarget, FolderTarget } from '../../types'
+import type { AgentMentionMatcher } from '../../shared/agentMentions'
+import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 
-export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget) => void, onOpenFolder: (target: FolderTarget) => void, onOpenChanges: (root: string) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
+export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -31,6 +33,8 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPan
   const screenMode = screenChoice.active
   const cleanView = viewMode === 'compact'
   const showSystem = viewMode === 'full'
+  const sideHint = openInSideLabel(navigator.userAgent)
+  const openMention = useCallback((agentName: string, event: MouseEvent<HTMLElement>) => onOpenAgent(agentName, placementFromModifiers(event.nativeEvent)), [onOpenAgent])
   const selectViewMode = (mode: typeof viewMode) => {
     setViewMode(mode)
     persistTranscriptViewMode(name, mode)
@@ -83,7 +87,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPan
       <section className="transcript" aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick}>
         <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
         {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
-        <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} />
+        <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} />
       </section>
       {fileResolver.element}
       <JumpToBottomButton visible={!transcriptFollow.following} onJump={transcriptFollow.jumpToBottom} />

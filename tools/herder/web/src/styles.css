@@ -412,6 +412,9 @@ h2, h3, p { margin-top: 0; }
 .thread-chip { border: 1px solid var(--thread-border); background: var(--thread-bg); color: var(--purple); }
 .human-entry { max-width: 790px; margin-left: min(10%, 90px); border-right: 3px solid var(--green); background: var(--human-bg); }
 .assistant-entry { margin: 10px 0; padding: 3px 0 3px 12px; border-left: 3px solid var(--border2); }
+.agent-mention { display: inline; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--accent-text); font: inherit; line-height: inherit; text-align: inherit; text-decoration: underline dotted; text-underline-offset: 2px; vertical-align: baseline; }
+.agent-mention:hover:not(:disabled) { border-color: transparent; color: var(--accent); text-decoration-style: solid; }
+.agent-mention:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .markdown { color: var(--text); line-height: 1.55; overflow-wrap: anywhere; }
 .markdown p { margin: 6px 0; }
 .markdown ul, .markdown ol { margin: 5px 0; padding-left: 22px; }

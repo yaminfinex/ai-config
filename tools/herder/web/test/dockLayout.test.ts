@@ -66,6 +66,41 @@ test('single-group pinned agent, file, and folder panels round-trip with a branc
   assert.deepEqual(loaded, saved)
 })
 
+test('an Option-right split round-trips through browser persistence with previews intact', () => {
+  const splitDock = {
+    grid: { width: 1200, height: 700, orientation: 0, root: { type: 'branch', data: [
+      { type: 'leaf', size: 600, data: { id: 'group-agent', views: ['agent:mavu'], activeView: 'agent:mavu' } },
+      { type: 'leaf', size: 600, data: { id: 'group-side', views: ['file:%2Frepo:README.md'], activeView: 'file:%2Frepo:README.md' } },
+    ] } },
+    panels: {
+      'agent:mavu': singleGroupDock.panels['agent:mavu'],
+      'file:%2Frepo:README.md': {
+        ...singleGroupDock.panels['file:%2Frepo:README.md'],
+        params: { ...singleGroupDock.panels['file:%2Frepo:README.md'].params, preview: true },
+      },
+    },
+    activeGroup: 'group-side',
+  }
+  const saved = persistableDockLayout(splitDock)
+  assert.ok(saved)
+  const values = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  const raw = JSON.stringify({ version: 2, dock: saved, sidebarWidth: 250 })
+  writeStoredLayout(storage, raw, { recovering: false, lastGoodRaw: null })
+  const restored = readStoredLayout(storage).stored?.dock
+  assert.ok(restored)
+  assert.equal(restored.grid.orientation, 0)
+  assert.deepEqual(restored.grid.root.data.map((node: { data: { id: string } }) => node.data.id), ['group-agent', 'group-side'])
+  assert.equal(restored.activeGroup, 'group-side')
+  assert.equal(restored.panels['file:%2Frepo:README.md'].params.preview, true)
+  let loaded: unknown
+  assert.equal(restoreDockLayout({ fromJSON: (value) => { loaded = value } }, restored), true)
+  assert.deepEqual(loaded, saved)
+})
+
 test('dock restore failures are visible before the shell falls back', () => {
   const dock = persistableDockLayout(singleGroupDock)
   assert.ok(dock)

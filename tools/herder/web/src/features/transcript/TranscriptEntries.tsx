@@ -1,12 +1,32 @@
-import { useMemo, useState } from 'react'
+import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react'
 import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
-import { Markdown } from '../../shared/Markdown'
+import { agentMarkdownOptions, Markdown } from '../../shared/Markdown'
+import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMentions'
 import type { TranscriptEntry } from '../../types'
 import { activityPillTone, aggregateActivityPills, cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
 
 type ObjectValue = Record<string, unknown>
 const objectValue = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
 const valueText = (value: unknown) => typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''
+
+type MentionContextValue = {
+  matcher: AgentMentionMatcher
+  onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void
+  sideHint: string
+}
+
+const MentionContext = createContext<MentionContextValue | null>(null)
+
+function MentionText({ children }: { children: string }) {
+  const mentions = useContext(MentionContext)
+  return mentions ? <AgentMentionText text={children} matcher={mentions.matcher} onOpen={mentions.onOpenAgent} sideHint={mentions.sideHint} /> : children
+}
+
+function MentionMarkdown({ children }: { children: string }) {
+  const mentions = useContext(MentionContext)
+  const options = useMemo(() => mentions ? agentMarkdownOptions(mentions.matcher, mentions.onOpenAgent, mentions.sideHint) : {}, [mentions])
+  return <Markdown {...options}>{children}</Markdown>
+}
 
 function messageText(payload: unknown): string {
   const content = objectValue(objectValue(payload).message).content
@@ -156,7 +176,7 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
         {valueText(delivery.message_id) && <span className="message-id">#{valueText(delivery.message_id)}</span>}
         {valueText(delivery.thread) && <span className="thread-chip">{valueText(delivery.thread)}</span>}
         <Timestamp timestamp={entry.timestamp} now={now} />
-      </header><div>{polishHcomDeliveryText(text) || '(delivery body unavailable)'}</div>
+      </header><div><MentionText>{polishHcomDeliveryText(text) || '(delivery body unavailable)'}</MentionText></div>
     </article>
   })}</>
 }
@@ -260,13 +280,13 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} />
   if (entry.kind === 'tool_use') return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
   if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><pre>{resultText(payload.content)}</pre></div></details>
-  if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><Markdown>{content}</Markdown></div></article>
+  if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><MentionMarkdown>{content}</MentionMarkdown></div></article>
   if (entry.kind === 'thinking') {
     const nextTime = relationships.nextTimestamps.get(index)
     const duration = nextTime && entry.timestamp ? formatDuration(Date.parse(nextTime) - Date.parse(entry.timestamp)) : 'duration unknown'
-    return <details className="entry-expander thinking-entry"><summary>thinking · {duration}<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail">{content || 'Thinking content unavailable.'}</div></details>
+    return <details className="entry-expander thinking-entry"><summary>thinking · {duration}<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><MentionText>{content || 'Thinking content unavailable.'}</MentionText></div></details>
   }
-  if (entry.kind === 'human_prompt') return <article className="entry-card human-entry"><header><strong>owner (terminal)</strong><Timestamp timestamp={entry.timestamp} now={now} absolute /></header><div>{content || 'Prompt body unavailable.'}</div></article>
+  if (entry.kind === 'human_prompt') return <article className="entry-card human-entry"><header><strong>owner (terminal)</strong><Timestamp timestamp={entry.timestamp} now={now} absolute /></header><div><MentionText>{content || 'Prompt body unavailable.'}</MentionText></div></article>
   if (entry.kind === 'command_stdout') {
     const command = content.match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1] ?? 'slash command'
     const args = content.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1] ?? ''
@@ -277,22 +297,23 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (entry.kind === 'compact_divider') {
     const metadata = objectValue(payload.compactMetadata)
     if (Object.keys(metadata).length > 0) return <div className="compaction-divider"><span>context compacted ({valueText(metadata.trigger) || 'unknown'}, {Number(metadata.preTokens).toLocaleString()} → {Number(metadata.postTokens).toLocaleString()} tokens)</span><Timestamp timestamp={entry.timestamp} now={now} /></div>
-    return <details className="entry-expander compact-summary"><summary>compaction summary<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail markdown"><Markdown>{content || valueText(payload.content)}</Markdown></div></details>
+    return <details className="entry-expander compact-summary"><summary>compaction summary<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail markdown"><MentionMarkdown>{content || valueText(payload.content)}</MentionMarkdown></div></details>
   }
   if (entry.kind === 'turn_duration') return <div className="turn-footer">turn · {formatDuration(Number(payload.durationMs))}{payload.messageCount != null ? ` · ${Number(payload.messageCount)} messages` : ''} · <Timestamp timestamp={entry.timestamp} now={now} /></div>
-  if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div>{content || JSON.stringify(payload)}</div></details>
+  if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div><MentionText>{content || JSON.stringify(payload)}</MentionText></div></details>
   if (entry.kind === 'system_chip') return !showSystem && payload.subtype !== 'scheduled_task_fire' ? null : <details className="system-chip"><summary>{valueText(payload.subtype) || 'system entry'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>
   if (!showSystem) return null
   return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : `unknown entry · ${entry.kind}`} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(entry.payload, null, 2)}</pre></details>
 }
 
-export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean }) {
+export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView, mentionMatcher, onOpenAgent, sideHint }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void, sideHint: string }) {
   const relationships = useMemo(() => relateEntries(entries), [entries])
   const rows = useMemo(() => cleanView ? cleanRows(entries, relationships) : [], [cleanView, entries, relationships])
-  if (cleanView) return <>{rows.map((row) => row.type === 'run'
+  const mentionContext = useMemo(() => ({ matcher: mentionMatcher, onOpenAgent, sideHint }), [mentionMatcher, onOpenAgent, sideHint])
+  if (cleanView) return <MentionContext.Provider value={mentionContext}>{rows.map((row) => row.type === 'run'
     ? <ActivityStrip activities={row.activities} entries={entries} relationships={relationships} agentName={agentName} now={now} key={row.key} />
     : row.deliveryIndex == null
       ? <EntryView entry={row.entry} index={row.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView key={row.key} />
-      : <HcomCards entry={row.entry} entryIndex={row.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={row.deliveryIndex} key={row.key} />)}</>
-  return <>{entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}</>
+      : <HcomCards entry={row.entry} entryIndex={row.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={row.deliveryIndex} key={row.key} />)}</MentionContext.Provider>
+  return <MentionContext.Provider value={mentionContext}>{entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}</MentionContext.Provider>
 }

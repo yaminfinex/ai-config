@@ -5,6 +5,7 @@ import type { FileCandidate, FileTarget, FolderTarget } from '../../types'
 import { keyboardCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
+import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 
 const QUICK_OPEN_RESULT_LIMIT = 100
 
@@ -17,7 +18,7 @@ function useDebounced(value: string, delay = 120) {
   return debounced
 }
 
-export function QuickOpen({ open, agent, onClose, onOpenFile, onOpenFolder }: { open: boolean, agent?: string, onClose: () => void, onOpenFile: (target: FileTarget) => void, onOpenFolder: (target: FolderTarget) => void }) {
+export function QuickOpen({ open, agent, groupID, onClose, onOpenFile, onOpenFolder }: { open: boolean, agent?: string, groupID?: string, onClose: () => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void }) {
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -42,9 +43,9 @@ export function QuickOpen({ open, agent, onClose, onOpenFile, onOpenFolder }: { 
   useEffect(() => setActiveIndex(-1), [debounced])
 
   if (!open) return null
-  const choose = (candidate: FileCandidate) => {
-    if (candidateDestination(candidate) === 'folder') onOpenFolder({ root: candidate.root, path: candidate.path })
-    else onOpenFile({ root: candidate.root, path: candidate.path, line: mentionLine(query).line })
+  const choose = (candidate: FileCandidate, placement: OpenPlacement) => {
+    if (candidateDestination(candidate) === 'folder') onOpenFolder({ root: candidate.root, path: candidate.path }, placement)
+    else onOpenFile({ root: candidate.root, path: candidate.path, line: mentionLine(query).line }, placement)
     onClose()
   }
   const settled = query.trim() === debounced
@@ -63,7 +64,7 @@ export function QuickOpen({ open, agent, onClose, onOpenFile, onOpenFolder }: { 
             })
           } else if (event.key === 'Enter' && settledResolution) {
             const candidate = keyboardCandidate(settledResolution, candidates, activeIndex)
-            if (candidate) choose(candidate)
+            if (candidate) choose(candidate, placementFromModifiers(event, groupID))
           } else return
           event.preventDefault()
         }} />
@@ -71,7 +72,7 @@ export function QuickOpen({ open, agent, onClose, onOpenFile, onOpenFolder }: { 
         {query.trim() && !settled && <p className="file-results-empty">Searching…</p>}
         {settled && resolution.isPending && debounced && <p className="file-results-empty">Searching current roots…</p>}
         {settled && resolution.error && <p className="file-results-error" role="alert">{resolution.error.message}</p>}
-        <FileResults resolution={settledResolution} activeIndex={activeIndex} onSelect={choose} limit={QUICK_OPEN_RESULT_LIMIT} />
+        <FileResults resolution={settledResolution} activeIndex={activeIndex} onSelect={(candidate, event) => choose(candidate, placementFromModifiers(event, groupID))} limit={QUICK_OPEN_RESULT_LIMIT} />
       </div>
       <footer><span>↑↓ choose</span><span>Enter open</span><span>Results are ranked by the server</span></footer>
     </section>
