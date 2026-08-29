@@ -4,7 +4,7 @@ import { apiProblem, getGitStatus, queryKeys } from '../../api/client'
 import type { FileTarget, GitStatusEntry } from '../../types'
 import { Banner } from '../../shared/presentation'
 import { rootLabel } from '../files/fileResolution'
-import { branchBaseAvailable, changeSideLabel, effectiveChangesBase, entryChangeCount, requestedChangesBase } from './changesModel'
+import { branchBaseAvailable, branchChangeSummary, changeSideLabel, effectiveChangesBase, entryChangeCount, requestedChangesBase } from './changesModel'
 import { repoChangeSummary, type GitBase } from './gitViewModel'
 
 export function ChangesPanel({ root, active, onOpenDiff }: { root: string, active: boolean, onOpenDiff: (target: FileTarget, base: GitBase) => void }) {
@@ -35,7 +35,7 @@ export function ChangesPanel({ root, active, onOpenDiff }: { root: string, activ
           <option value="uncommitted">Uncommitted (vs HEAD)</option>
           {branchAvailable && <option value="branch">All work on this branch (vs merge-base with origin/HEAD)</option>}
         </select></label>
-        <span>{repoChangeSummary(commits, available.entries.length)}</span>
+        <span>{effectiveBase === 'branch' ? branchChangeSummary(commits, available.entries.length) : repoChangeSummary(commits, available.entries.length)}</span>
         <span>Fetched {new Date(available.fetched_at).toLocaleString()}</span>
       </div>
       {available.entries.length === 0 ? <section className="file-state" role="status"><strong>{effectiveBase === 'branch' ? 'No branch changes' : 'Nothing uncommitted'}</strong><p>{effectiveBase === 'branch' ? `The working tree matches ${available.entries_base?.label ?? 'the branch merge-base'}.` : 'The working tree matches HEAD.'}</p></section>

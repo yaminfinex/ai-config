@@ -23,6 +23,11 @@ export function changeSideLabel(entry: Pick<GitStatusEntry, 'kind' | 'staged' | 
   return base === 'branch' && entry.kind !== 'untracked' ? 'committed' : ''
 }
 
+export function branchChangeSummary(commits: number | undefined, files: number) {
+  const fileLabel = `${files} changed ${files === 1 ? 'file' : 'files'} vs merge-base`
+  return commits === undefined ? fileLabel : `${commits} ${commits === 1 ? 'commit' : 'commits'} ahead; ${fileLabel}`
+}
+
 export function entryChangeCount(entry: { additions?: number, deletions?: number }) {
   return entry.additions === undefined || entry.deletions === undefined ? '' : `+${entry.additions} / −${entry.deletions}`
 }

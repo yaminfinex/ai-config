@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { branchBaseAvailable, changeSideLabel, changesPanelID, effectiveChangesBase, entryChangeCount, requestedChangesBase } from '../src/features/git/changesModel.ts'
+import { branchBaseAvailable, branchChangeSummary, changeSideLabel, changesPanelID, effectiveChangesBase, entryChangeCount, requestedChangesBase } from '../src/features/git/changesModel.ts'
 
 test('changes panels are stable per opaque root', () => {
   assert.equal(changesPanelID('/repo with space'), 'changes:%2Frepo%20with%20space')
@@ -30,4 +30,10 @@ test('branch-only rows are presented as committed without overloading porcelain 
   assert.equal(changeSideLabel({ kind: 'modified', staged: true, unstaged: true }, 'branch'), 'staged + unstaged')
   assert.equal(changeSideLabel({ kind: 'untracked', staged: false, unstaged: true }, 'branch'), 'unstaged')
   assert.equal(changeSideLabel({ kind: 'modified', staged: false, unstaged: false }, 'uncommitted'), '')
+})
+
+test('branch summaries describe changed files without calling them uncommitted', () => {
+  assert.equal(branchChangeSummary(5, 27), '5 commits ahead; 27 changed files vs merge-base')
+  assert.equal(branchChangeSummary(1, 1), '1 commit ahead; 1 changed file vs merge-base')
+  assert.equal(branchChangeSummary(undefined, 0), '0 changed files vs merge-base')
 })
