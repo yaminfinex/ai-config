@@ -135,6 +135,98 @@ export type FileRead = {
   fetched_at: string
 }
 
+export type GitBranchBase = {
+  status: 'available'
+  default_ref: string
+  default_sha: string
+  merge_base: string
+  commits_since_merge_base?: number
+} | {
+  status: 'unavailable'
+  reason: string
+}
+
+export interface GitStatusEntry {
+  path: string
+  kind: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'conflicted' | 'type_changed'
+  old_path?: string
+  staged: boolean
+  unstaged: boolean
+  index_kind?: string
+  worktree_kind?: string
+  additions?: number
+  deletions?: number
+  binary?: boolean
+}
+
+export type GitStatusRead = {
+  root: string
+  repo: {
+    branch?: string
+    head?: string
+    upstream?: string
+    ahead?: number
+    behind?: number
+    branch_base: GitBranchBase
+  }
+  entries: GitStatusEntry[]
+  fetched_at: string
+} | {
+  root: string
+  git: { status: 'unavailable', reason: string }
+  fetched_at: string
+}
+
+export interface GitDiffRead {
+  root: string
+  path: string
+  base: { kind: 'uncommitted' | 'branch' | 'commit', sha: string, default_ref?: string, label: string }
+  facts: {
+    kind: 'unchanged' | 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'type_changed'
+    old_path?: string
+    binary: boolean
+    old_mode?: string
+    new_mode?: string
+  }
+  stats?: { additions: number, deletions: number }
+  patch: string
+  patch_bytes: number
+  truncated: boolean
+  fetched_at?: string
+}
+
+export interface GitLogEntry {
+  sha: string
+  author: string
+  date: string
+  subject: string
+  path_then?: string
+}
+
+export interface GitLogRead {
+  root: string
+  path: string
+  entries: GitLogEntry[]
+  next_cursor?: string
+  fetched_at: string
+}
+
+export type GitFileRead = {
+  root: string
+  path: string
+  sha: string
+  binary: true
+  size: number
+} | {
+  root: string
+  path: string
+  sha: string
+  content: string
+  binary: false
+  size: number
+  truncated: boolean
+}
+
 export interface FileTarget {
   root: string
   path: string

@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { queryKeys, resolveFiles } from '../../api/client'
 import { cwdFolderTarget } from '../folders/folderModel'
 
-export function AgentContextStrip({ agent, liveStatus, onOpenFolder }: { agent?: AgentDetail, liveStatus: string, onOpenFolder: (target: FolderTarget) => void }) {
+export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChanges }: { agent?: AgentDetail, liveStatus: string, onOpenFolder: (target: FolderTarget) => void, onOpenChanges: (root: string) => void }) {
   const context = agent ? agentContextPresentation(agent, liveStatus) : undefined
   const cwd = agent?.cwd
   const cwdResolution = useQuery({
@@ -37,6 +37,7 @@ export function AgentContextStrip({ agent, liveStatus, onOpenFolder }: { agent?:
     {context && <div className="agent-context-strip-inner" ref={innerRef}>
       {context.cwd && <span className="context-cwd-wrap" title={cwdReason}><button type="button" className="context-fact context-cwd" disabled={!cwdTarget} onClick={() => { if (cwdTarget) onOpenFolder(cwdTarget) }}><span>cwd</span>{context.cwd.display}<span aria-hidden="true">↗</span></button></span>}
       {context.repository && <span className="context-fact context-repository" title={context.repository.remote}><span>repo</span>{context.repository.display}</span>}
+      {context.repository && <span title={cwdReason}><button type="button" className="context-fact context-changes" disabled={!cwdTarget} onClick={() => { if (cwdTarget) onOpenChanges(cwdTarget.root) }}><span aria-hidden="true">±</span>changes</button></span>}
       <span className="context-status" title={`Bus status: ${context.status !== '-' ? context.status : 'unknown'}`}><AgentStatusDot status={context.status} /></span>
       {context.details.map((detail, index) => <span className="context-detail" key={`${index}:${detail}`}>{detail}</span>)}
       {context.vitals.map((vital, index) => <span className="context-vital" key={`${index}:${vital}`}>{vital}</span>)}

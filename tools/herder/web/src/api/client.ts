@@ -1,4 +1,5 @@
-import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTreeRead, LifecycleResult, Refusal, ResolveResponse } from '../types'
+import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTreeRead, GitDiffRead, GitFileRead, GitLogRead, GitStatusRead, LifecycleResult, Refusal, ResolveResponse } from '../types'
+import type { GitBase } from '../features/git/gitViewModel'
 
 export type Fetcher = typeof fetch
 
@@ -13,6 +14,10 @@ export const queryKeys = {
   file: (root: string, path: string) => ['file', root, path] as const,
   fileTree: (root: string, path: string) => ['file-tree', root, path] as const,
   backlog: (root: string, path: string) => ['backlog', root, path] as const,
+  gitStatus: (root: string) => ['git-status', root] as const,
+  gitDiff: (root: string, path: string, base: GitBase) => ['git-diff', root, path, base] as const,
+  gitLog: (root: string, path: string) => ['git-log', root, path] as const,
+  gitFile: (root: string, path: string, sha: string) => ['git-file', root, path, sha] as const,
 }
 
 export type LifecycleProblem = {
@@ -90,6 +95,27 @@ export function getFileTree(root: string, path: string, fetcher: Fetcher = fetch
 export function getBacklog(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
   const query = new URLSearchParams({ root, path })
   return requestJSON<BacklogResponse>(`/api/backlog?${query}`, { signal }, fetcher)
+}
+
+export function getGitStatus(root: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root })
+  return requestJSON<GitStatusRead>(`/api/git/status?${query}`, { signal }, fetcher)
+}
+
+export function getGitDiff(root: string, path: string, base: GitBase, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root, path, base })
+  return requestJSON<GitDiffRead>(`/api/git/diff?${query}`, { signal }, fetcher)
+}
+
+export function getGitLog(root: string, path: string, cursor?: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root, path })
+  if (cursor) query.set('cursor', cursor)
+  return requestJSON<GitLogRead>(`/api/git/log?${query}`, { signal }, fetcher)
+}
+
+export function getGitFile(root: string, path: string, sha: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root, path, sha })
+  return requestJSON<GitFileRead>(`/api/git/file?${query}`, { signal }, fetcher)
 }
 
 export function sendMessage(name: string, text: string, fetcher?: Fetcher) {

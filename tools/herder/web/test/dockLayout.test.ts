@@ -143,3 +143,15 @@ test('unload guard is limited to multi-panel layouts with an ephemeral preview',
   assert.equal(shouldGuardBeforeUnload([pinned, pinned]), false)
   assert.equal(shouldGuardBeforeUnload([pinned, preview]), true)
 })
+
+test('a pinned Changes panel validates and persists by opaque root', () => {
+  const id = 'changes:%2Frepo'
+  const dock = {
+    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'group-changes', views: [id], activeView: id } }] } },
+    panels: { [id]: { id, contentComponent: 'changes', params: { kind: 'changes', root: '/repo', preview: false } } },
+    activeGroup: 'group-changes',
+  }
+  const saved = persistableDockLayout(dock)
+  assert.ok(saved)
+  assert.ok(parseStoredLayout(JSON.stringify({ version: 2, dock: saved, sidebarWidth: 250 }))?.dock)
+})

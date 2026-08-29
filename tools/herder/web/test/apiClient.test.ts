@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getAgent, getBacklog, getEntries, getFile, getFileTree, lifecycleProblem, resolveFiles, sendMessage, spawnAgent, viewerReadOnlyMessage } from '../src/api/client.ts'
+import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, lifecycleProblem, resolveFiles, sendMessage, spawnAgent, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
@@ -38,6 +38,24 @@ test('file reads encode opaque roots, paths, queries, and optional agent context
     '/api/files?root=%2Frepo+with+space&path=src%2FApp.tsx',
     '/api/files/tree?root=%2Frepo+with+space&path=src%2Fcomponents',
     '/api/backlog?root=%2Frepo+with+space&path=backlog',
+  ])
+})
+
+test('git reads encode roots, paths, mutable bases, cursors, and immutable shas', async () => {
+  const calls: string[] = []
+  const fetcher = (async (input: RequestInfo | URL) => {
+    calls.push(String(input))
+    return jsonResponse({})
+  }) as typeof fetch
+  await getGitStatus('/repo with space', fetcher)
+  await getGitDiff('/repo with space', 'src/App.tsx', 'branch', fetcher)
+  await getGitLog('/repo with space', 'src/App.tsx', 'opaque+/=', fetcher)
+  await getGitFile('/repo with space', 'old App.tsx', '731'.repeat(13) + '7', fetcher)
+  assert.deepEqual(calls, [
+    '/api/git/status?root=%2Frepo+with+space',
+    '/api/git/diff?root=%2Frepo+with+space&path=src%2FApp.tsx&base=branch',
+    '/api/git/log?root=%2Frepo+with+space&path=src%2FApp.tsx&cursor=opaque%2B%2F%3D',
+    `/api/git/file?root=%2Frepo+with+space&path=old+App.tsx&sha=${'731'.repeat(13)}7`,
   ])
 })
 

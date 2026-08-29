@@ -29,6 +29,9 @@ import { isQuickOpenShortcut } from './features/files/fileShortcut'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
 import { folderTabID } from './features/folders/folderModel'
+import { initialGitFileState, type GitBase, type GitFileState } from './features/git/gitViewModel'
+import { changesPanelID } from './features/git/changesModel'
+import { ChangesPanel } from './features/git/ChangesPanel'
 import { ShortcutReference } from './features/layout/ShortcutReference'
 import { isClosePanelShortcut, isEditableShortcutTarget, isShortcutReferenceShortcut } from './features/layout/shellShortcuts'
 import {
@@ -44,6 +47,7 @@ import {
   screenPanelParams,
   shouldGuardBeforeUnload,
   type AgentPanelParams,
+  type ChangesPanelParams,
   type DockPanelParams,
   type FilePanelParams,
   type FolderPanelParams,
@@ -93,6 +97,7 @@ function dockPanelID(params: DockPanelParams) {
   if (params.kind === 'agent') return agentTabID(params.name)
   if (params.kind === 'screen') return screenTabID(params.pane.pane_id)
   if (params.kind === 'folder') return folderTabID(params.root, params.path)
+  if (params.kind === 'changes') return changesPanelID(params.root)
   return fileTabID(params.root, params.path)
 }
 
@@ -100,6 +105,7 @@ function panelTitle(params: DockPanelParams) {
   if (params.kind === 'agent') return params.name
   if (params.kind === 'screen') return params.pane.label || params.pane.pane_id
   if (params.kind === 'folder') return rootLabel(params.path) || rootLabel(params.root)
+  if (params.kind === 'changes') return `Changes · ${rootLabel(params.root)}`
   return rootLabel(params.path)
 }
 
@@ -129,9 +135,13 @@ type WorkspaceContextValue = {
   board?: Board
   identityReadOnly: string
   openFile: (target: FileTarget, groupID?: string) => void
+  openFileInDiff: (target: FileTarget, base: GitBase, groupID?: string) => void
+  openChanges: (root: string, groupID?: string) => void
   openFolder: (target: FolderTarget, groupID?: string) => void
   pinPanel: (id: string) => void
   setFileViewMode: (id: string, mode: FileViewMode) => void
+  fileGitStates: Record<string, GitFileState>
+  setFileGitState: (id: string, state: GitFileState) => void
   agentScreenPanes: Record<string, string>
   setAgentScreenPane: (name: string, paneID?: string) => void
   onViewer: (viewer: string) => void
@@ -166,6 +176,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const visible = usePanelVisibility(api)
   return <AgentPanel name={params.name} active={visible} liveStatus={agentBusStatus(workspace.board, params.name)} screenPaneID={workspace.agentScreenPanes[params.name]}
     onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onOpenFile={workspace.openFile} onOpenFolder={workspace.openFolder}
+    onOpenChanges={workspace.openChanges}
     identityReadOnly={workspace.identityReadOnly} onViewer={workspace.onViewer} onSend={() => workspace.pinPanel(api.id)} onStatus={workspace.onAgentStatus} />
 }
 
@@ -180,25 +191,35 @@ function ScreenDockPanel({ params }: IDockviewPanelProps<ScreenPanelParams>) {
 
 function FileDockPanel({ params, api }: IDockviewPanelProps<FilePanelParams>) {
   const workspace = useWorkspace()
+  const visible = usePanelVisibility(api)
   return <FilePanel target={{ root: params.root, path: params.path, ...(params.line ? { line: params.line } : {}) }} viewMode={params.viewMode}
-    onViewMode={(mode) => workspace.setFileViewMode(api.id, mode)} onOpenFile={workspace.openFile} onOpenFolder={workspace.openFolder} />
+    gitState={workspace.fileGitStates[api.id] ?? initialGitFileState()} active={visible}
+    onViewMode={(mode) => workspace.setFileViewMode(api.id, mode)} onGitState={(state) => workspace.setFileGitState(api.id, state)}
+    onOpenFile={workspace.openFile} onOpenFolder={workspace.openFolder} />
 }
 
 function FolderDockPanel({ params, api }: IDockviewPanelProps<FolderPanelParams>) {
   const workspace = useWorkspace()
-  return <FolderPanel target={{ root: params.root, path: params.path }} onOpenFile={(target) => workspace.openFile(target, api.group.id)}
+  const visible = usePanelVisibility(api)
+  return <FolderPanel target={{ root: params.root, path: params.path }} active={visible} onOpenFile={(target) => workspace.openFile(target, api.group.id)}
     onOpenFolder={(target) => workspace.openFolder(target, api.group.id)} />
+}
+
+function ChangesDockPanel({ params, api }: IDockviewPanelProps<ChangesPanelParams>) {
+  const workspace = useWorkspace()
+  const visible = usePanelVisibility(api)
+  return <ChangesPanel root={params.root} active={visible} onOpenDiff={(target, base) => workspace.openFileInDiff(target, base, api.group.id)} />
 }
 
 function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelParams>) {
   const workspace = useWorkspace()
   const boardStatus = params.kind === 'agent' ? agentBusStatus(workspace.board, params.name) : '-'
   const status = params.kind === 'agent' && boardStatus === '-' ? workspace.agentStatuses[params.name] ?? '-' : boardStatus
-  const meta = params.kind === 'agent' ? status !== '-' ? status : 'unknown' : params.kind === 'screen' ? 'read-only' : params.kind === 'file' ? 'file · read-only' : params.kind === 'folder' ? 'folder · read-only' : ''
+  const meta = params.kind === 'agent' ? status !== '-' ? status : 'unknown' : params.kind === 'screen' ? 'read-only' : params.kind === 'file' ? 'file · read-only' : params.kind === 'folder' ? 'folder · read-only' : params.kind === 'changes' ? 'git · read-only' : ''
   return <div className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
     onDoubleClick={(event) => { if (params.preview) workspace.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) api.close() }}>
-    <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{params.kind === 'screen' ? '▣ ' : params.kind === 'file' ? '◇ ' : params.kind === 'folder' ? '▰ ' : ''}{panelTitle(params)}</span>
+    <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{params.kind === 'screen' ? '▣ ' : params.kind === 'file' ? '◇ ' : params.kind === 'folder' ? '▰ ' : params.kind === 'changes' ? '± ' : ''}{panelTitle(params)}</span>
     {meta && <span className="dock-tab-meta">{params.kind === 'agent' && <AgentStatusDot status={status} />}{meta}</span>}
     <button type="button" className="dock-tab-close" aria-label={`Close ${panelTitle(params)}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => api.close()}>×</button>
   </div>
@@ -222,7 +243,7 @@ function DockWatermark({ containerApi }: IWatermarkPanelProps) {
   </div></section>
 }
 
-const dockComponents = { agent: AgentDockPanel, screen: ScreenDockPanel, file: FileDockPanel, folder: FolderDockPanel }
+const dockComponents = { agent: AgentDockPanel, screen: ScreenDockPanel, file: FileDockPanel, folder: FolderDockPanel, changes: ChangesDockPanel }
 
 function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
   const [initial] = useState(readInitialLayout)
@@ -234,6 +255,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
   const [agentStatuses, setAgentStatuses] = useState<Record<string, string>>({})
   const [agentScreenPanes, setAgentScreenPanes] = useState<Record<string, string>>({})
+  const [fileGitStates, setFileGitStates] = useState<Record<string, GitFileState>>({})
   const [activePanelID, setActivePanelID] = useState('')
   const [revision, setRevision] = useState(0)
   const [dockReady, setDockReady] = useState(false)
@@ -342,6 +364,33 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     syncDock()
   }, [addPanel, queryClient, quickOpenGroup, syncDock])
 
+  const openFileInDiff = useCallback((target: FileTarget, base: GitBase, groupID?: string) => {
+    openFile(target, groupID)
+    const id = fileTabID(target.root, target.path)
+    setFileGitStates((current) => ({ ...current, [id]: { mode: 'diff', base } }))
+  }, [openFile])
+
+  const openChanges = useCallback((root: string, groupID?: string) => {
+    const api = apiRef.current
+    if (!api) return
+    const id = changesPanelID(root)
+    const existing = panelFromAPI(api, id)
+    if (existing?.params.kind === 'changes') {
+      existing.panel.api.setActive()
+      queryClient.invalidateQueries({ queryKey: queryKeys.gitStatus(root) })
+      syncDock()
+      return
+    }
+    const requestedGroup = groupID ? api.getGroup(groupID) : api.activeGroup ?? api.groups[0]
+    const replaced = requestedGroup?.panels.find((panel) => {
+      const params = panelParams(panel.params)
+      return params?.kind === 'changes' && params.preview
+    })
+    addPanel({ kind: 'changes', root, preview: true }, requestedGroup?.id)
+    if (replaced) api.removePanel(replaced)
+    queryClient.invalidateQueries({ queryKey: queryKeys.gitStatus(root) })
+  }, [addPanel, queryClient, syncDock])
+
   const openFolder = useCallback((target: FolderTarget, groupID?: string) => {
     const api = apiRef.current
     if (!api) return
@@ -415,6 +464,14 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     })
     const onRemove = event.api.onDidRemovePanel((panel) => {
       const params = panelParams(panel.params)
+      if (params?.kind === 'file') {
+        setFileGitStates((current) => {
+          if (!(panel.id in current)) return current
+          const next = { ...current }
+          delete next[panel.id]
+          return next
+        })
+      }
       if (params?.kind !== 'agent') return
       setAgentStatuses((current) => {
         if (!(params.name in current)) return current
@@ -490,6 +547,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
 
   const setAgentStatus = useCallback((name: string, status: string) => setAgentStatuses((current) => current[name] === status ? current : { ...current, [name]: status }), [])
+  const setFileGitState = useCallback((id: string, state: GitFileState) => setFileGitStates((current) => current[id]?.mode === state.mode && current[id]?.base === state.base ? current : { ...current, [id]: state }), [])
   const setAgentScreenPane = useCallback((name: string, paneID?: string) => setAgentScreenPanes((current) => {
     if (paneID) return current[name] === paneID ? current : { ...current, [name]: paneID }
     if (!(name in current)) return current
@@ -545,10 +603,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
   const workspace = useMemo<WorkspaceContextValue>(() => ({
-    board: boardQuery.data, identityReadOnly: viewerReadOnly, openFile, openFolder, pinPanel, setFileViewMode,
+    board: boardQuery.data, identityReadOnly: viewerReadOnly, openFile, openFileInDiff, openChanges, openFolder, pinPanel, setFileViewMode, fileGitStates, setFileGitState,
     agentScreenPanes, setAgentScreenPane, onViewer: (resolvedViewer) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer }),
     onAgentStatus: setAgentStatus, agentStatuses, resetLayout, showQuickOpen, stream, streamProblems,
-  }), [agentScreenPanes, agentStatuses, boardQuery.data, openFile, openFolder, pinPanel, queryClient, resetLayout, setAgentScreenPane, setAgentStatus, setFileViewMode, showQuickOpen, stream, streamProblems, viewerReadOnly])
+  }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, openChanges, openFile, openFileInDiff, openFolder, pinPanel, queryClient, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen, stream, streamProblems, viewerReadOnly])
 
   return <WorkspaceContext.Provider value={workspace}><div className="app-shell">
     <QuickOpen open={quickOpen} agent={quickOpenAgent} onClose={() => { setQuickOpen(false); setQuickOpenGroup(undefined) }} onOpenFile={openFile} onOpenFolder={openFolder} />

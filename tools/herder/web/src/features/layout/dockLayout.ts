@@ -3,6 +3,7 @@ import type { Board, Pane } from '../../types'
 import { fileTabID, type FileViewMode } from '../files/fileTabs.ts'
 import { agentTabID } from '../../previewTabs.ts'
 import { folderTabID } from '../folders/folderModel.ts'
+import { changesPanelID } from '../git/changesModel.ts'
 
 export const layoutStorageKey = 'herder.web.layout.v2'
 export const legacyLayoutStorageKey = 'herder.web.layout.v1'
@@ -21,7 +22,8 @@ export type FilePanelParams = {
   viewMode: FileViewMode
 }
 export type FolderPanelParams = { kind: 'folder', root: string, path: string, preview: boolean }
-export type DockPanelParams = AgentPanelParams | ScreenPanelParams | FilePanelParams | FolderPanelParams
+export type ChangesPanelParams = { kind: 'changes', root: string, preview: boolean }
+export type DockPanelParams = AgentPanelParams | ScreenPanelParams | FilePanelParams | FolderPanelParams | ChangesPanelParams
 
 export type StoredLayout = {
   version: 2
@@ -71,6 +73,9 @@ export function panelParams(value: unknown): DockPanelParams | null {
   if (value.kind === 'folder') return typeof value.root === 'string' && Boolean(value.root) && typeof value.path === 'string'
     ? { kind: 'folder', root: value.root, path: value.path, preview: value.preview }
     : null
+  if (value.kind === 'changes') return typeof value.root === 'string' && Boolean(value.root)
+    ? { kind: 'changes', root: value.root, preview: value.preview }
+    : null
   if (value.kind !== 'file' || typeof value.root !== 'string' || !value.root ||
     typeof value.path !== 'string' || (value.line !== undefined && (!Number.isInteger(value.line) || Number(value.line) < 1)) ||
     (value.viewMode !== 'rendered' && value.viewMode !== 'source')) return null
@@ -84,6 +89,7 @@ function expectedPanelID(params: DockPanelParams) {
   if (params.kind === 'agent') return agentTabID(params.name)
   if (params.kind === 'screen') return `screen:${params.pane.pane_id}`
   if (params.kind === 'folder') return folderTabID(params.root, params.path)
+  if (params.kind === 'changes') return changesPanelID(params.root)
   return fileTabID(params.root, params.path)
 }
 

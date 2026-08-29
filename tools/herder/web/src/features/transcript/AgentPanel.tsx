@@ -16,7 +16,7 @@ import { agentScreenChoice } from '../screen/screenPresentation'
 import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
 import type { FileTarget, FolderTarget } from '../../types'
 
-export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPane, onOpenFile, onOpenFolder, onViewer, identityReadOnly, onSend, onStatus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget) => void, onOpenFolder: (target: FolderTarget) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
+export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget) => void, onOpenFolder: (target: FolderTarget) => void, onOpenChanges: (root: string) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -89,7 +89,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, onScreenPan
       <JumpToBottomButton visible={!transcriptFollow.following} onJump={transcriptFollow.jumpToBottom} />
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
-    <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} />
+    <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />
     {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
   </main>
 }

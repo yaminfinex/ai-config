@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import {
+  fileLanguage,
+  initialGitFileState,
+  repoChangeSummary,
+  selectGitFileMode,
+  selectedCurrentLines,
+} from '../src/features/git/gitViewModel.ts'
+
+test('grammar detection is curated and unknown files stay plain text', () => {
+  assert.equal(fileLanguage('src/App.tsx'), 'tsx')
+  assert.equal(fileLanguage('cmd/main.go'), 'go')
+  assert.equal(fileLanguage('Dockerfile'), 'docker')
+  assert.equal(fileLanguage('GNUmakefile'), 'makefile')
+  assert.equal(fileLanguage('notes.unknown'), 'text')
+  assert.equal(fileLanguage('script'), 'text')
+})
+
+test('git file mode state is ephemeral, base-aware, and line selection stays Current-owned', () => {
+  const initial = initialGitFileState()
+  assert.deepEqual(initial, { mode: 'current', base: 'uncommitted' })
+  assert.deepEqual(selectGitFileMode(initial, 'diff', 'branch'), { mode: 'diff', base: 'branch' })
+  assert.deepEqual(selectedCurrentLines(73), { start: 73, end: 73 })
+  assert.equal(selectedCurrentLines(undefined), null)
+})
+
+test('change summaries use proved merge-base counts and never upstream ahead', () => {
+  assert.equal(repoChangeSummary(3, 4), '3 commits + 4 uncommitted files')
+  assert.equal(repoChangeSummary(0, 0), 'no unmerged commits; nothing uncommitted')
+  assert.equal(repoChangeSummary(undefined, 4), '4 uncommitted files')
+})
