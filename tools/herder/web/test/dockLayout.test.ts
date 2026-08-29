@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  layoutStorageBackupKey,
+  layoutStorageKey,
   parseLegacyLayout,
   parseStoredLayout,
   pinMovedPreview,
   persistableDockLayout,
+  readStoredLayout,
   restoreDockLayout,
   screenIdentityState,
-  shouldGuardBeforeUnload,
+  writeStoredLayout,
   type DockPanelParams,
   type ScreenPanelParams,
 } from '../src/features/layout/dockLayout.ts'
@@ -118,30 +121,34 @@ test('stored v2 layouts drop the retired Board panel and retain healthy neighbou
   assert.equal(parseStoredLayout(JSON.stringify({ version: 2, dock: boardOnly, sidebarWidth: 250 }))?.dock, null)
 })
 
-test('moved previews pin, persist, and restore while untouched previews remain ephemeral', () => {
+test('preview panels persist as previews with their active tab intact', () => {
   const preview = { kind: 'file', root: '/repo', path: 'README.md', preview: true, viewMode: 'rendered' } as const
-  let moved: DockPanelParams = preview
-  assert.equal(pinMovedPreview({ params: preview, api: { updateParameters: (params) => { moved = params } } }), true)
-  assert.equal(moved.preview, false)
-
   const dock = {
-    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'group-file', views: ['file:%2Frepo:README.md'], activeView: 'file:%2Frepo:README.md' } }] } },
-    panels: { 'file:%2Frepo:README.md': { id: 'file:%2Frepo:README.md', contentComponent: 'file', params: moved } },
+    grid: { width: 900, height: 600, orientation: 0, root: { type: 'branch', data: [{
+      type: 'leaf', data: {
+        id: 'group-file', views: ['agent:mavu', 'file:%2Frepo:README.md'], activeView: 'file:%2Frepo:README.md',
+        tabGroups: [{ id: 'tabs-main', panelIds: ['agent:mavu', 'file:%2Frepo:README.md'] }],
+      },
+    }] } },
+    panels: {
+      'agent:mavu': { id: 'agent:mavu', contentComponent: 'agent', params: { kind: 'agent', name: 'mavu', preview: false } },
+      'file:%2Frepo:README.md': { id: 'file:%2Frepo:README.md', contentComponent: 'file', params: preview },
+    },
     activeGroup: 'group-file',
   }
   const saved = persistableDockLayout(dock)
   assert.ok(saved)
-  assert.ok(parseStoredLayout(JSON.stringify({ version: 2, dock: saved, sidebarWidth: 250 }))?.dock)
-  assert.equal(persistableDockLayout({ ...dock, panels: { 'file:%2Frepo:README.md': { ...dock.panels['file:%2Frepo:README.md'], params: preview } } }), null)
+  const restored = parseStoredLayout(JSON.stringify({ version: 2, dock: saved, sidebarWidth: 250 }))?.dock
+  assert.deepEqual(restored, saved)
+  assert.equal(restored.panels['file:%2Frepo:README.md'].params.preview, true)
+  assert.equal(restored.grid.root.data[0].data.activeView, 'file:%2Frepo:README.md')
 })
 
-test('unload guard is limited to multi-panel layouts with an ephemeral preview', () => {
-  const pinned = { kind: 'agent', name: 'mavu', preview: false }
-  const preview = { kind: 'agent', name: 'zira', preview: true }
-  assert.equal(shouldGuardBeforeUnload([]), false)
-  assert.equal(shouldGuardBeforeUnload([preview]), false)
-  assert.equal(shouldGuardBeforeUnload([pinned, pinned]), false)
-  assert.equal(shouldGuardBeforeUnload([pinned, preview]), true)
+test('moved previews still pin without changing preview replacement semantics', () => {
+  const preview = { kind: 'file', root: '/repo', path: 'README.md', preview: true, viewMode: 'rendered' } as const
+  let moved: DockPanelParams = preview
+  assert.equal(pinMovedPreview({ params: preview, api: { updateParameters: (params) => { moved = params } } }), true)
+  assert.equal(moved.preview, false)
 })
 
 test('a pinned Changes panel validates and persists by opaque root', () => {
@@ -154,4 +161,62 @@ test('a pinned Changes panel validates and persists by opaque root', () => {
   const saved = persistableDockLayout(dock)
   assert.ok(saved)
   assert.ok(parseStoredLayout(JSON.stringify({ version: 2, dock: saved, sidebarWidth: 250 }))?.dock)
+})
+
+test('one poisoned panel is salvaged while healthy neighbours and backup stay intact', () => {
+  const poisoned = structuredClone(singleGroupDock)
+  delete (poisoned.panels['file:%2Frepo:README.md'].params as Partial<typeof poisoned.panels['file:%2Frepo:README.md']['params']>).viewMode
+  const backupRaw = JSON.stringify({ version: 2, dock: singleGroupDock, sidebarWidth: 275 })
+  const values = new Map<string, string>([
+    [layoutStorageKey, JSON.stringify({ version: 2, dock: poisoned, sidebarWidth: 250 })],
+    [layoutStorageBackupKey, backupRaw],
+  ])
+  const layouts = readStoredLayout({ getItem: (key) => values.get(key) ?? null })
+  assert.equal(layouts.recovering, true)
+  assert.deepEqual(Object.keys(layouts.stored?.dock?.panels ?? {}), ['agent:mavu', 'folder:%2Frepo:src'])
+  assert.deepEqual(layouts.stored?.dock?.grid.root.data[0].data.views, ['agent:mavu', 'folder:%2Frepo:src'])
+  assert.equal(layouts.stored?.dock?.grid.root.data[0].data.activeView, 'folder:%2Frepo:src')
+  assert.equal(values.get(layoutStorageBackupKey), backupRaw)
+})
+
+test('the first valid save after recovery cannot rotate a poisoned primary over the backup', () => {
+  const backupRaw = JSON.stringify({ version: 2, dock: singleGroupDock, sidebarWidth: 275 })
+  const values = new Map<string, string>([[layoutStorageBackupKey, backupRaw]])
+  const storage = { setItem: (key: string, value: string) => { values.set(key, value) } }
+  const recoveredRaw = JSON.stringify({ version: 2, dock: null, sidebarWidth: 250 })
+  const recovered = writeStoredLayout(storage, recoveredRaw, { recovering: true, lastGoodRaw: null })
+  assert.equal(values.get(layoutStorageKey), recoveredRaw)
+  assert.equal(values.get(layoutStorageBackupKey), backupRaw)
+
+  const nextRaw = JSON.stringify({ version: 2, dock: null, sidebarWidth: 260 })
+  writeStoredLayout(storage, nextRaw, recovered)
+  assert.equal(values.get(layoutStorageKey), nextRaw)
+  assert.equal(values.get(layoutStorageBackupKey), recoveredRaw)
+})
+
+test('pruning a nested group keeps branch depth and split orientation', () => {
+  const dock = {
+    grid: {
+      width: 1200, height: 700, orientation: 0,
+      root: { type: 'branch', size: 1200, data: [
+        { type: 'leaf', size: 300, data: { id: 'group-retired', views: ['board'], activeView: 'board' } },
+        { type: 'branch', size: 900, data: [
+          { type: 'leaf', size: 450, data: { id: 'group-agent', views: ['agent:mavu'], activeView: 'agent:mavu' } },
+          { type: 'leaf', size: 450, data: { id: 'group-folder', views: ['folder:%2Frepo:src'], activeView: 'folder:%2Frepo:src' } },
+        ] },
+      ] },
+    },
+    panels: {
+      board: { id: 'board', contentComponent: 'board', params: { kind: 'board', preview: false } },
+      'agent:mavu': singleGroupDock.panels['agent:mavu'],
+      'folder:%2Frepo:src': singleGroupDock.panels['folder:%2Frepo:src'],
+    },
+    activeGroup: 'group-folder',
+  }
+  const restored = parseStoredLayout(JSON.stringify({ version: 2, dock, sidebarWidth: 250 }))?.dock
+  assert.ok(restored)
+  assert.equal(restored.grid.orientation, 0)
+  assert.equal(restored.grid.root.data.length, 1)
+  assert.equal(restored.grid.root.data[0].type, 'branch')
+  assert.deepEqual(restored.grid.root.data[0].data.map((node: { data: { id: string } }) => node.data.id), ['group-agent', 'group-folder'])
 })

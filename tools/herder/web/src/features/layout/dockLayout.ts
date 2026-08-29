@@ -6,6 +6,7 @@ import { folderTabID } from '../folders/folderModel.ts'
 import { changesPanelID } from '../git/changesModel.ts'
 
 export const layoutStorageKey = 'herder.web.layout.v2'
+export const layoutStorageBackupKey = 'herder.web.layout.v2.last-good'
 export const legacyLayoutStorageKey = 'herder.web.layout.v1'
 
 export type AgentPanelParams = { kind: 'agent', name: string, preview: boolean }
@@ -115,22 +116,85 @@ function validDock(value: unknown): value is SerializedDockview {
   return validGridNode(value.grid.root, panelIDs)
 }
 
-export function parseStoredLayout(raw: string | null): StoredLayout | null {
+type ParsedStoredLayout = { layout: StoredLayout, salvaged: boolean }
+
+function validSerializedPanel(id: string, serialized: unknown) {
+  if (!record(serialized) || serialized.id !== id) return false
+  const params = panelParams(serialized.params)
+  return Boolean(params && serialized.contentComponent === params.kind && expectedPanelID(params) === id)
+}
+
+function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, salvaged: boolean } | null {
+  if (value === null) return { dock: null, salvaged: false }
+  if (!record(value) || !record(value.panels) || !record(value.grid) || !record(value.grid.root) || value.grid.root.type !== 'branch') return null
+  let salvaged = 'floatingGroups' in value || 'popoutGroups' in value || 'edgeGroups' in value
+  const panels = Object.fromEntries(Object.entries(value.panels).flatMap(([id, serialized]) => {
+    if (validSerializedPanel(id, serialized)) return [[id, serialized]]
+    salvaged = true
+    return []
+  }))
+  const keep = new Set(Object.keys(panels))
+  const prunedRoot = pruneGridNode(value.grid.root, keep)
+  if (!prunedRoot || keep.size === 0) return { dock: null, salvaged: true }
+  const root: GridNode = prunedRoot.type === 'branch' ? prunedRoot : { type: 'branch', data: [prunedRoot] }
+  if (JSON.stringify(root) !== JSON.stringify(value.grid.root)) salvaged = true
+  const ids = groupIDs(root)
+  const activeGroup = typeof value.activeGroup === 'string' && ids.has(value.activeGroup) ? value.activeGroup : firstGroupID(root)
+  if (activeGroup !== value.activeGroup) salvaged = true
+  const dock: UnknownRecord = { ...value, panels, grid: { ...value.grid, root }, activeGroup }
+  delete dock.floatingGroups
+  delete dock.popoutGroups
+  delete dock.edgeGroups
+  return validDock(dock) ? { dock, salvaged } : null
+}
+
+function parseStoredLayoutResult(raw: string | null): ParsedStoredLayout | null {
   try {
     const value: unknown = JSON.parse(raw ?? '')
     if (!record(value) || value.version !== 2 ||
       typeof value.sidebarWidth !== 'number' || !Number.isFinite(value.sidebarWidth) ||
       (value.expandedItems !== undefined && !strings(value.expandedItems)) ||
       (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems))) return null
-    const dock = dropRemovedBoardPanel(value.dock)
-    if (dock !== null && !validDock(dock)) return null
-    return {
-      version: 2, dock, sidebarWidth: value.sidebarWidth,
+    const result = sanitizeStoredDock(value.dock)
+    if (!result) return null
+    return { layout: {
+      version: 2, dock: result.dock, sidebarWidth: value.sidebarWidth,
       ...(value.expandedItems === undefined ? {} : { expandedItems: value.expandedItems }),
       ...(value.knownWorkspaceItems === undefined ? {} : { knownWorkspaceItems: value.knownWorkspaceItems }),
-    }
+    }, salvaged: result.salvaged }
   } catch {
     return null
+  }
+}
+
+export function parseStoredLayout(raw: string | null): StoredLayout | null {
+  return parseStoredLayoutResult(raw)?.layout ?? null
+}
+
+export function readStoredLayout(storage: Pick<Storage, 'getItem'>) {
+  const primaryRaw = storage.getItem(layoutStorageKey)
+  const backupRaw = storage.getItem(layoutStorageBackupKey)
+  const primary = parseStoredLayoutResult(primaryRaw)
+  const backup = parseStoredLayoutResult(backupRaw)
+  const primaryUsable = Boolean(primary && (primary.layout.dock !== null || !primary.salvaged))
+  const selected = primaryUsable ? primary : backup
+  return {
+    stored: selected?.layout ?? primary?.layout ?? null,
+    backup: backup?.layout ?? null,
+    recovering: Boolean((selected === backup && backup) || primary?.salvaged),
+    lastGoodRaw: primary && !primary.salvaged ? primaryRaw : null,
+  }
+}
+
+export type LayoutWriteState = { recovering: boolean, lastGoodRaw: string | null }
+
+export function writeStoredLayout(storage: Pick<Storage, 'setItem'>, raw: string, state: LayoutWriteState): LayoutWriteState {
+  try {
+    if (!state.recovering) storage.setItem(layoutStorageBackupKey, state.lastGoodRaw ?? raw)
+    storage.setItem(layoutStorageKey, raw)
+    return { recovering: false, lastGoodRaw: raw }
+  } catch {
+    return state
   }
 }
 
@@ -179,7 +243,11 @@ function pruneGridNode(value: unknown, keep: Set<string>): GridNode | null {
     return kept ? [kept] : []
   })
   if (children.length === 0) return null
-  if (children.length === 1) return { ...children[0], ...(typeof value.size === 'number' ? { size: value.size } : {}) }
+  if (children.length === 1 && children[0].type === 'leaf') return {
+    ...children[0],
+    ...(typeof value.size === 'number' ? { size: value.size } : {}),
+    ...(typeof value.visible === 'boolean' ? { visible: value.visible } : {}),
+  }
   return { type: 'branch', data: children, ...(typeof value.size === 'number' ? { size: value.size } : {}), ...(typeof value.visible === 'boolean' ? { visible: value.visible } : {}) }
 }
 
@@ -196,23 +264,6 @@ function groupIDs(node: GridNode): Set<string> {
   return new Set((node.data as GridNode[]).flatMap((child) => [...groupIDs(child)]))
 }
 
-// Board was a dock panel in layout v2. Retired panel kinds are removed before
-// strict validation so an otherwise healthy saved layout still restores.
-function dropRemovedBoardPanel(value: unknown): unknown | null {
-  if (value === null || !record(value) || !record(value.panels) || !record(value.grid)) return value
-  const panels = Object.fromEntries(Object.entries(value.panels).filter(([, serialized]) => {
-    return !record(serialized) || !record(serialized.params) || serialized.params.kind !== 'board'
-  }))
-  if (Object.keys(panels).length === Object.keys(value.panels).length) return value
-  const keep = new Set(Object.keys(panels))
-  const prunedRoot = pruneGridNode(value.grid.root, keep)
-  if (!prunedRoot || keep.size === 0) return null
-  const root: GridNode = prunedRoot.type === 'branch' ? prunedRoot : { type: 'branch', data: [prunedRoot] }
-  const ids = groupIDs(root)
-  const activeGroup = typeof value.activeGroup === 'string' && ids.has(value.activeGroup) ? value.activeGroup : firstGroupID(root)
-  return { ...value, panels, grid: { ...value.grid, root }, activeGroup }
-}
-
 export function pinMovedPreview(panel: { params: unknown, api: { updateParameters: (params: DockPanelParams) => void } }) {
   const params = panelParams(panel.params)
   if (!params?.preview) return false
@@ -220,28 +271,14 @@ export function pinMovedPreview(panel: { params: unknown, api: { updateParameter
   return true
 }
 
-export function shouldGuardBeforeUnload(values: unknown[]) {
-  return values.length >= 2 && values.some((value) => panelParams(value)?.preview === true)
-}
-
 export function persistableDockLayout(value: unknown): SerializedDockview | null {
   try {
     const cloned = JSON.parse(JSON.stringify(value)) as UnknownRecord
     if (!record(cloned.panels) || !record(cloned.grid)) return null
-    const panels = Object.fromEntries(Object.entries(cloned.panels).filter(([, serialized]) => {
-      return record(serialized) && panelParams(serialized.params)?.preview === false
-    }))
-    const keep = new Set(Object.keys(panels))
-    const prunedRoot = pruneGridNode(cloned.grid.root, keep)
-    if (!prunedRoot || keep.size === 0) return null
-    const root: GridNode = prunedRoot.type === 'branch' ? prunedRoot : { type: 'branch', data: [prunedRoot] }
-    const ids = groupIDs(root)
-    const activeGroup = typeof cloned.activeGroup === 'string' && ids.has(cloned.activeGroup) ? cloned.activeGroup : firstGroupID(root)
-    const dock: UnknownRecord = { ...cloned, panels, grid: { ...cloned.grid, root }, activeGroup }
-    delete dock.floatingGroups
-    delete dock.popoutGroups
-    delete dock.edgeGroups
-    return validDock(dock) ? dock : null
+    delete cloned.floatingGroups
+    delete cloned.popoutGroups
+    delete cloned.edgeGroups
+    return validDock(cloned) ? cloned : null
   } catch {
     return null
   }

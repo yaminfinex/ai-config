@@ -21,7 +21,9 @@ test('owner-ruled composer noise is removed without dropping accessibility or at
   assert.match(app, /Web sends are attributed to this viewer; web senders are not addressable bus peers\./)
 })
 
-test('Alt+W does not close a panel while an editable target has focus', () => {
+test('the physical Alt+W binding keeps the editable-target guard', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
-  assert.match(app, /isClosePanelShortcut\(event\) && !isEditableShortcutTarget\(event\.target\) && api\?\.activePanel/)
+  const shortcuts = readFileSync(new URL('../src/features/layout/shellShortcuts.ts', import.meta.url), 'utf8')
+  assert.match(app, /bindShellShortcuts\(window/)
+  assert.match(shortcuts, /'Alt\+KeyW': claimed\(actions\.closePanel, true\)/)
 })
