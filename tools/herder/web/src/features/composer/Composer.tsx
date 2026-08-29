@@ -43,6 +43,9 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
       setMessage('')
       setSendNotice(`Sent to ${result.to} as ${result.from}. Waiting for the live reply…`)
       void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+      // The sent message is usually on the bus before the 2s transcript poll
+      // notices; refetch entries now so it renders without waiting a tick.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
       onProblem('')
     } catch (error: unknown) {
       const { response, problem } = apiProblem(error)

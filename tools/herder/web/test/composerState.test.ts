@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   composerFieldId,
@@ -64,4 +65,11 @@ test('Escape blurs the composer without claiming the event', () => {
   blurred = false
   assert.equal(blurComposerOnEscape({ key: 'Enter', currentTarget: { blur: () => { blurred = true } } }), false)
   assert.equal(blurred, false)
+})
+
+test('send success refetches the transcript immediately, not just agent status', () => {
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  const success = composer.slice(composer.indexOf('setSendNotice'), composer.indexOf('} catch'))
+  assert.match(success, /queryKeys\.agent\(name\)/)
+  assert.match(success, /queryKeys\.entries\(name\)/)
 })
