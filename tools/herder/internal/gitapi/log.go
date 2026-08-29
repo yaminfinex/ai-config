@@ -16,7 +16,10 @@ import (
 	"time"
 )
 
-const maxCursorSkip = 1_000_000
+const (
+	maxLogEntries     = 1000
+	maxLogOutputBytes = 4 << 20
+)
 
 type logCursor struct {
 	Version int    `json:"v"`
@@ -37,9 +40,12 @@ func ReadLog(ctx context.Context, root, requestedPath, cursor string, now func()
 		return LogResult{}, err
 	}
 	format := "%H%x00%an%x00%aI%x00%s%x00"
-	out, err := gitOutput(ctx, loc.repoTop, "log", "--follow", "--find-renames", "--name-status", "-z", "--format="+format, "--max-count="+strconv.Itoa(LogPageSize+1), "--skip="+strconv.Itoa(skip), anchor, "--", loc.repoPath)
+	out, _, hard, err := gitStream(ctx, loc.repoTop, maxLogOutputBytes, maxLogOutputBytes, false, "log", "--follow", "--find-renames", "--name-status", "-z", "--no-ext-diff", "--no-textconv", "--format="+format, "--max-count="+strconv.Itoa(maxLogEntries+1), anchor, "--", ":(literal)"+loc.repoPath)
 	if err != nil {
 		return LogResult{}, err
+	}
+	if hard {
+		return LogResult{}, fmt.Errorf("%w: log output exceeds 4 MiB; histories above 4 MiB are not served", ErrRefused)
 	}
 	entries, err := parseLog(loc, out)
 	if err != nil {
@@ -50,10 +56,18 @@ func ReadLog(ctx context.Context, root, requestedPath, cursor string, now func()
 			return LogResult{}, fmt.Errorf("%w: path %q has no current file or history", ErrNotFound, requestedPath)
 		}
 	}
-	result := LogResult{Root: loc.root, Path: loc.path, Entries: entries, FetchedAt: now()}
-	if len(result.Entries) > LogPageSize {
-		result.Entries = result.Entries[:LogPageSize]
-		result.NextCursor, err = encodeCursor(logCursor{Version: 1, Anchor: anchor, Skip: skip + LogPageSize, Bind: cursorBinding(loc)})
+	historyTruncated := len(entries) > maxLogEntries
+	entries = entries[:min(len(entries), maxLogEntries)]
+	if skip > 0 && skip >= len(entries) {
+		return LogResult{}, fmt.Errorf("%w: log cursor offset was not issued for this history", ErrBadRequest)
+	}
+	end := min(skip+LogPageSize, len(entries))
+	result := LogResult{
+		Root: loc.root, Path: loc.path, Entries: entries[skip:end],
+		HistoryTruncated: historyTruncated, FetchedAt: now(),
+	}
+	if end < len(entries) {
+		result.NextCursor, err = encodeCursor(logCursor{Version: 1, Anchor: anchor, Skip: end, Bind: cursorBinding(loc)})
 		if err != nil {
 			return LogResult{}, err
 		}
@@ -147,7 +161,7 @@ func decodeCursor(value string) (logCursor, error) {
 	var cursor logCursor
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cursor); err != nil || cursor.Version != 1 || !fullSHA(cursor.Anchor) || cursor.Skip < 0 || cursor.Skip > maxCursorSkip || len(cursor.Bind) != 64 {
+	if err := decoder.Decode(&cursor); err != nil || cursor.Version != 1 || !fullSHA(cursor.Anchor) || cursor.Skip < LogPageSize || cursor.Skip%LogPageSize != 0 || cursor.Skip > maxLogEntries-LogPageSize || len(cursor.Bind) != 64 {
 		return logCursor{}, fmt.Errorf("%w: malformed log cursor", ErrBadRequest)
 	}
 	var extra any

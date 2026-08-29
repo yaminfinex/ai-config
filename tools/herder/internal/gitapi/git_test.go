@@ -2,7 +2,9 @@ package gitapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -274,6 +276,7 @@ func TestDiffDoesNotRunRepositoryTextconv(t *testing.T) {
 	git(t, repo, "commit", "-am", "changed")
 	commitSHA := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
 	git(t, repo, "config", "diff.fixture.textconv", filter)
+	git(t, repo, "config", "diff.fixture.command", filter)
 	write(t, repo, "file.txt", "working\n")
 
 	result, err := ReadDiff(context.Background(), repo, "file.txt", "uncommitted", time.Now)
@@ -286,6 +289,11 @@ func TestDiffDoesNotRunRepositoryTextconv(t *testing.T) {
 	commitDiff, err := ReadCommitDiff(context.Background(), repo, "file.txt", commitSHA)
 	if err != nil || !strings.Contains(commitDiff.Patch, "+committed") {
 		t.Fatalf("commit diff = %#v err=%v", commitDiff, err)
+	}
+	assertMarkerAbsent(t, marker)
+	logResult, err := ReadLog(context.Background(), repo, "file.txt", "", time.Now)
+	if err != nil || len(logResult.Entries) != 2 {
+		t.Fatalf("log = %#v err=%v", logResult, err)
 	}
 	assertMarkerAbsent(t, marker)
 }
@@ -333,50 +341,216 @@ func TestGitReadsDoNotRunRepositoryHooksOrFSMonitor(t *testing.T) {
 	}
 	assertMarkerAbsent(t, hookMarker)
 	assertMarkerAbsent(t, monitorMarker)
+
+	logResult, err := ReadLog(context.Background(), repo, "file.txt", "", time.Now)
+	if err != nil || len(logResult.Entries) != 2 {
+		t.Fatalf("log = %#v err=%v", logResult, err)
+	}
+	assertMarkerAbsent(t, hookMarker)
+	assertMarkerAbsent(t, monitorMarker)
 }
 
-func TestLogFollowsRenameAndPaginatesWithOpaqueCursor(t *testing.T) {
+func TestLogFollowsRenamesAndPaginatesAgainstFullAnchoredWalk(t *testing.T) {
 	repo := newRepo(t)
-	write(t, repo, "old.txt", "zero\n")
+	write(t, repo, "alpha.txt", "zero\n")
+	write(t, repo, "noise.txt", "zero\n")
 	git(t, repo, "add", ".")
 	git(t, repo, "commit", "-m", "original")
-	git(t, repo, "mv", "old.txt", "new.txt")
-	git(t, repo, "commit", "-m", "rename")
-	for index := 0; index < LogPageSize; index++ {
-		write(t, repo, "new.txt", strings.Repeat("x", index+1)+"\n")
-		git(t, repo, "commit", "-am", "change")
+	for index := 0; index < 55; index++ {
+		commitTrackedChange(t, repo, "alpha.txt", fmt.Sprintf("alpha change %03d", index), fmt.Sprintf("alpha %03d\n", index))
+		commitNoise(t, repo, index)
+	}
+	git(t, repo, "mv", "alpha.txt", "beta.txt")
+	git(t, repo, "commit", "-m", "rename to beta")
+	commitNoise(t, repo, 1000)
+	for index := 0; index < 35; index++ {
+		commitTrackedChange(t, repo, "beta.txt", fmt.Sprintf("beta change %03d", index), fmt.Sprintf("beta %03d\n", index))
+		commitNoise(t, repo, 1100+index)
+	}
+	git(t, repo, "mv", "beta.txt", "gamma.txt")
+	git(t, repo, "commit", "-m", "rename to gamma")
+	commitNoise(t, repo, 2000)
+	for index := 0; index < 30; index++ {
+		commitTrackedChange(t, repo, "gamma.txt", fmt.Sprintf("gamma change %03d", index), fmt.Sprintf("gamma %03d\n", index))
+		commitNoise(t, repo, 2100+index)
+	}
+	anchor := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	want := handRunFollowLog(t, repo, "gamma.txt", anchor)
+	if len(want) <= 2*LogPageSize {
+		t.Fatalf("full fixture history has %d entries, want more than two pages", len(want))
 	}
 
-	first, err := ReadLog(context.Background(), repo, "new.txt", "", func() time.Time { return fixtureNow })
+	first, err := ReadLog(context.Background(), repo, "gamma.txt", "", func() time.Time { return fixtureNow })
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first.Entries) != LogPageSize || first.NextCursor == "" || !first.FetchedAt.Equal(fixtureNow) {
 		t.Fatalf("first page = %#v", first)
 	}
-	second, err := ReadLog(context.Background(), repo, "new.txt", first.NextCursor, time.Now)
+	assertHistoryNotTruncated(t, first)
+	assertLogEntries(t, first.Entries, want[:LogPageSize])
+
+	commitTrackedChange(t, repo, "gamma.txt", "new commit after page one", "new head\n")
+	second, err := ReadLog(context.Background(), repo, "gamma.txt", first.NextCursor, time.Now)
+	if err != nil {
+		t.Fatalf("server-issued page-two cursor was rejected: %v", err)
+	}
+	if len(second.Entries) != LogPageSize || second.NextCursor == "" {
+		t.Fatalf("second page = %#v", second)
+	}
+	assertLogEntries(t, second.Entries, want[LogPageSize:2*LogPageSize])
+	third, err := ReadLog(context.Background(), repo, "gamma.txt", second.NextCursor, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second.Entries) != 2 || second.Entries[len(second.Entries)-1].Subject != "original" || second.NextCursor != "" {
-		t.Fatalf("second page = %#v", second)
+	if third.NextCursor != "" {
+		t.Fatalf("third page cursor = %q, want end of history", third.NextCursor)
 	}
-	if first.Entries[0].PathThen != "new.txt" || second.Entries[0].PathThen != "new.txt" || second.Entries[1].PathThen != "old.txt" {
-		t.Fatalf("paths across rename: first=%#v second=%#v", first.Entries[0], second.Entries)
+	assertLogEntries(t, third.Entries, want[2*LogPageSize:])
+	allEntries := make([]LogEntry, 0, len(first.Entries)+len(second.Entries)+len(third.Entries))
+	allEntries = append(allEntries, first.Entries...)
+	allEntries = append(allEntries, second.Entries...)
+	allEntries = append(allEntries, third.Entries...)
+	for _, entry := range allEntries {
+		wantPath := "alpha.txt"
+		switch {
+		case strings.HasPrefix(entry.Subject, "gamma ") || entry.Subject == "rename to gamma":
+			wantPath = "gamma.txt"
+		case strings.HasPrefix(entry.Subject, "beta ") || entry.Subject == "rename to beta":
+			wantPath = "beta.txt"
+		}
+		if entry.PathThen != wantPath {
+			t.Fatalf("commit %q path_then = %q, want %q", entry.Subject, entry.PathThen, wantPath)
+		}
 	}
 	if _, err := ReadLog(context.Background(), repo, "other.txt", first.NextCursor, time.Now); !errors.Is(err, ErrRefused) {
 		t.Fatalf("rebound cursor error = %v", err)
 	}
-	if _, err := ReadLog(context.Background(), repo, "new.txt", "not-a-cursor", time.Now); !errors.Is(err, ErrBadRequest) {
+	if _, err := ReadLog(context.Background(), repo, "gamma.txt", "not-a-cursor", time.Now); !errors.Is(err, ErrBadRequest) {
 		t.Fatalf("malformed cursor error = %v", err)
 	}
 	loc, err := discover(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	badStatus := []byte(first.Entries[0].SHA + "\x00Fixture\x002026-08-28T12:34:56Z\x00bad\x00\x00\nZ\x00new.txt\x00")
+	badStatus := []byte(first.Entries[0].SHA + "\x00Fixture\x002026-08-28T12:34:56Z\x00bad\x00\x00\nZ\x00gamma.txt\x00")
 	if _, err := parseLog(loc, badStatus); err == nil || !strings.Contains(err.Error(), "unrecognized name-status") {
 		t.Fatalf("bad name-status error = %v", err)
+	}
+}
+
+func TestLogReportsTruncationOnEveryPageAndStopsAtWalkCap(t *testing.T) {
+	repo := newRepo(t)
+	write(t, repo, "long.txt", "revision 0000\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "revision 0000")
+	for index := 1; index <= 1000; index++ {
+		commitTrackedChange(t, repo, "long.txt", fmt.Sprintf("revision %04d", index), fmt.Sprintf("revision %04d\n", index))
+	}
+
+	result, err := ReadLog(context.Background(), repo, "long.txt", "", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHistoryTruncated(t, result)
+	total := len(result.Entries)
+	page := 1
+	for result.NextCursor != "" {
+		result, err = ReadLog(context.Background(), repo, "long.txt", result.NextCursor, time.Now)
+		if err != nil {
+			t.Fatalf("page %d: %v", page+1, err)
+		}
+		page++
+		if page == 10 {
+			assertHistoryTruncated(t, result)
+		}
+		total += len(result.Entries)
+	}
+	if total != 1000 || page != 20 {
+		t.Fatalf("served %d entries across %d pages, want 1000 across 20", total, page)
+	}
+	assertHistoryTruncated(t, result)
+
+	loc, err := discover(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchor := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	for _, skip := range []int{51, 1000} {
+		forged, err := encodeCursor(logCursor{Version: 1, Anchor: anchor, Skip: skip, Bind: cursorBinding(loc)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadLog(context.Background(), repo, "long.txt", forged, time.Now); !errors.Is(err, ErrBadRequest) {
+			t.Fatalf("skip %d cursor error = %v, want bad request", skip, err)
+		}
+	}
+
+	git(t, repo, "reset", "--hard", "HEAD^")
+	result, err = ReadLog(context.Background(), repo, "long.txt", "", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertHistoryNotTruncated(t, result)
+	total = len(result.Entries)
+	page = 1
+	for result.NextCursor != "" {
+		result, err = ReadLog(context.Background(), repo, "long.txt", result.NextCursor, time.Now)
+		if err != nil {
+			t.Fatalf("exact-cap page %d: %v", page+1, err)
+		}
+		page++
+		total += len(result.Entries)
+	}
+	if total != 1000 || page != 20 {
+		t.Fatalf("exact-cap served %d entries across %d pages, want 1000 across 20", total, page)
+	}
+	assertHistoryNotTruncated(t, result)
+}
+
+func TestLogRefusesOversizedMetadataStream(t *testing.T) {
+	repo := newRepo(t)
+	write(t, repo, "large-subject.txt", "base\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "base")
+	parent := strings.TrimSpace(git(t, repo, "rev-parse", "HEAD"))
+	write(t, repo, "large-subject.txt", "changed\n")
+	git(t, repo, "add", "large-subject.txt")
+	tree := strings.TrimSpace(git(t, repo, "write-tree"))
+	commit := exec.Command("git", "commit-tree", tree, "-p", parent)
+	commit.Dir = repo
+	commit.Stdin = strings.NewReader(strings.Repeat("x", 4<<20+1024))
+	out, err := commit.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git commit-tree: %v\n%s", err, out)
+	}
+	git(t, repo, "update-ref", "HEAD", strings.TrimSpace(string(out)))
+
+	if _, err := ReadLog(context.Background(), repo, "large-subject.txt", "", time.Now); !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "4 MiB") {
+		t.Fatalf("oversized log error = %v", err)
+	}
+}
+
+func TestLogTreatsRequestedPathAsLiteral(t *testing.T) {
+	repo := newRepo(t)
+	write(t, repo, "notes[1].txt", "literal\n")
+	write(t, repo, "notes1.txt", "pattern match\n")
+	git(t, repo, "add", ".")
+	git(t, repo, "commit", "-m", "add both files")
+	commitTrackedChange(t, repo, "notes1.txt", "change pattern match", "changed\n")
+	commitTrackedChange(t, repo, "notes[1].txt", "change literal", "literal changed\n")
+
+	result, err := ReadLog(context.Background(), repo, "notes[1].txt", "", time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 2 {
+		t.Fatalf("literal path entries = %#v, want two commits", result.Entries)
+	}
+	for _, entry := range result.Entries {
+		if entry.Subject == "change pattern match" || entry.PathThen != "notes[1].txt" {
+			t.Fatalf("literal path entry = %#v", entry)
+		}
 	}
 }
 
@@ -512,6 +686,66 @@ func statusByPath(entries []StatusEntry) map[string]StatusEntry {
 		result[entry.Path] = entry
 	}
 	return result
+}
+
+func commitTrackedChange(t *testing.T, repo, path, subject, content string) {
+	t.Helper()
+	write(t, repo, path, content)
+	git(t, repo, "commit", "-am", subject)
+}
+
+func commitNoise(t *testing.T, repo string, index int) {
+	t.Helper()
+	commitTrackedChange(t, repo, "noise.txt", fmt.Sprintf("noise %04d", index), fmt.Sprintf("noise %04d\n", index))
+}
+
+func handRunFollowLog(t *testing.T, repo, path, anchor string) []LogEntry {
+	t.Helper()
+	loc, err := locatePath(context.Background(), repo, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	format := "%H%x00%an%x00%aI%x00%s%x00"
+	out := []byte(git(t, repo, "log", "--follow", "--find-renames", "--name-status", "-z", "--format="+format, anchor, "--", loc.repoPath))
+	entries, err := parseLog(loc, out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
+}
+
+func assertLogEntries(t *testing.T, got, want []LogEntry) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d log entries, want %d", len(got), len(want))
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("entry %d = %#v, want %#v", index, got[index], want[index])
+		}
+	}
+}
+
+func assertHistoryTruncated(t *testing.T, result LogResult) {
+	t.Helper()
+	if !result.HistoryTruncated {
+		t.Fatalf("log result does not report history truncation: %#v", result)
+	}
+}
+
+func assertHistoryNotTruncated(t *testing.T, result LogResult) {
+	t.Helper()
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &object); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := object["history_truncated"]; ok {
+		t.Fatalf("short log result changed its wire shape: %s", encoded)
+	}
 }
 
 func newRepo(t *testing.T) string {

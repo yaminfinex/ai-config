@@ -156,8 +156,8 @@ func gitStream(ctx context.Context, cwd string, retainLimit, hardLimit int64, al
 	if err := cmd.Start(); err != nil {
 		return nil, 0, false, fmt.Errorf("start git %s: %w", strings.Join(args, " "), err)
 	}
-	retained := make([]byte, 0, retainLimit)
 	buffer := make([]byte, 32*1024)
+	retained := make([]byte, 0, min(retainLimit, int64(len(buffer))))
 	var total int64
 	hard := false
 	for {
