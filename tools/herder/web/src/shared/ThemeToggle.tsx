@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { applyTheme, cycleThemePreference, persistThemePreference, readThemePreference, resolveTheme } from '../theme'
+import { useDOMEvent } from './lifecycle'
 
 const labels = { system: 'System', light: 'Light', dark: 'Dark' } as const
 
 export function ThemeToggle() {
   const [preference, setPreference] = useState(readThemePreference)
-  const [prefersDark, setPrefersDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const [media] = useState(() => window.matchMedia('(prefers-color-scheme: dark)'))
+  const [prefersDark, setPrefersDark] = useState(media.matches)
   const resolved = resolveTheme(preference, prefersDark)
   const next = cycleThemePreference(preference)
 
@@ -13,13 +15,7 @@ export function ThemeToggle() {
     applyTheme(resolved)
   }, [resolved])
 
-  useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)')
-    const update = (event: MediaQueryListEvent) => setPrefersDark(event.matches)
-    setPrefersDark(media.matches)
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
+  useDOMEvent<MediaQueryListEvent>(media, 'change', (event) => setPrefersDark(event.matches))
 
   return <button className="theme-toggle" type="button"
     aria-label={`Theme: ${labels[preference]}. Activate for ${labels[next]}.`}

@@ -49,11 +49,26 @@ export function blurComposerOnEscape(event: { key: string, currentTarget: Pick<H
 // Selecting an agent means "I want to talk": focus its composer once the
 // panel exists. New panels mount asynchronously, so retry a bounded number
 // of frames and give up quietly (e.g. the agent went read-only, no textarea).
-export function focusComposerWhenReady(query: () => { focus: () => void } | null, schedule: (callback: () => void) => void, attempts = 20) {
+export function focusComposerWhenReady<Handle>(
+  query: () => { focus: () => void } | null,
+  schedule: (callback: () => void) => Handle,
+  attempts = 20,
+  cancel?: (handle: Handle) => void,
+) {
+  let cancelled = false
+  let scheduled: Handle | undefined
   const attempt = (remaining: number) => {
+    if (cancelled) return
     const composer = query()
     if (composer) return composer.focus()
-    if (remaining > 0) schedule(() => attempt(remaining - 1))
+    if (remaining > 0) scheduled = schedule(() => {
+      scheduled = undefined
+      attempt(remaining - 1)
+    })
   }
   attempt(attempts)
+  return () => {
+    cancelled = true
+    if (cancel && scheduled !== undefined) cancel(scheduled)
+  }
 }

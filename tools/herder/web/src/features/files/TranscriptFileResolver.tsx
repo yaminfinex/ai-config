@@ -5,6 +5,7 @@ import { autoOpenCandidate, hasPathSignal, isConfidentResolution, isRenderedInli
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { useDOMEvent } from '../../shared/lifecycle'
 
 type PopoverState = { left: number, top: number, mention: string, resolution: ResolveResponse }
 
@@ -36,14 +37,10 @@ export function useTranscriptFileResolver(agent: string, enabled: boolean, onOpe
     request.current = null
     close()
   }, [close, enabled])
-  useEffect(() => {
-    if (!popover) return
-    const keydown = (event: KeyboardEvent) => { if (event.key === 'Escape') close() }
-    const pointer = (event: PointerEvent) => { if (!(event.target as Element).closest('.selection-file-popover')) close() }
-    window.addEventListener('keydown', keydown)
-    window.addEventListener('pointerdown', pointer)
-    return () => { window.removeEventListener('keydown', keydown); window.removeEventListener('pointerdown', pointer) }
-  }, [close, popover])
+  useDOMEvent<KeyboardEvent>(window, 'keydown', (event) => { if (event.key === 'Escape') close() }, undefined, Boolean(popover))
+  useDOMEvent<PointerEvent>(window, 'pointerdown', (event) => {
+    if (!(event.target as Element).closest('.selection-file-popover')) close()
+  }, undefined, Boolean(popover))
 
   const onDoubleClick = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
     request.current?.abort()

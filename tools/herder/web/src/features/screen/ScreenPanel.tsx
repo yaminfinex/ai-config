@@ -13,6 +13,7 @@ import { screenPanePresentation } from './screenPresentation'
 import { SnapshotPainter } from './terminalPainter'
 import { terminalTheme } from './terminalTheme'
 import { PaneInputQueue } from './paneInput'
+import { useSizeObserver } from '../../shared/lifecycle'
 
 type TerminalSurfaceProps = {
   frame?: ScreenFrame
@@ -27,9 +28,23 @@ type TerminalSurfaceProps = {
 function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: TerminalSurfaceProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
   const painterRef = useRef<SnapshotPainter | null>(null)
   const latestFrame = useRef(frame)
   latestFrame.current = frame
+  const measureAndResize = () => {
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    const current = latestFrame.current
+    if (!terminal || !fitAddon || !current?.cols || !current.rows) return
+    for (let fontSize = 14; fontSize >= 7; fontSize -= 1) {
+      terminal.options.fontSize = fontSize
+      const proposal = fitAddon.proposeDimensions()
+      if (proposal && proposal.cols >= current.cols && proposal.rows >= current.rows) break
+    }
+    terminal.resize(current.cols, current.rows)
+  }
+  useSizeObserver(hostRef, measureAndResize)
 
   useEffect(() => {
     const host = hostRef.current
@@ -50,6 +65,7 @@ function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: Te
     terminal.loadAddon(fitAddon)
     terminal.open(host)
     terminalRef.current = terminal
+    fitAddonRef.current = fitAddon
     painterRef.current = new SnapshotPainter((data, done) => terminal.write(data, done))
 
     let webgl: WebglAddon | null = null
@@ -65,25 +81,13 @@ function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: Te
       webgl = null
     }
 
-    const measureAndResize = () => {
-      const current = latestFrame.current
-      if (!current?.cols || !current.rows) return
-      for (let fontSize = 14; fontSize >= 7; fontSize -= 1) {
-        terminal.options.fontSize = fontSize
-        const proposal = fitAddon.proposeDimensions()
-        if (proposal && proposal.cols >= current.cols && proposal.rows >= current.rows) break
-      }
-      terminal.resize(current.cols, current.rows)
-    }
-    const observer = new ResizeObserver(measureAndResize)
-    observer.observe(host)
     measureAndResize()
     const input = onData ? terminal.onData(onData) : null
 
     return () => {
-      observer.disconnect()
       input?.dispose()
       painterRef.current = null
+      fitAddonRef.current = null
       terminalRef.current = null
       webgl?.dispose()
       terminal.dispose()

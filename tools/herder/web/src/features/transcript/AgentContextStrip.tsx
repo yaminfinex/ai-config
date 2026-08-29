@@ -7,6 +7,7 @@ import { useQuery } from '@tanstack/react-query'
 import { queryKeys, resolveFiles } from '../../api/client'
 import { cwdFolderTarget, exactRootChangesTarget } from '../folders/folderModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { useDOMEvent, useSizeObserver } from '../../shared/lifecycle'
 
 export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChanges }: { agent?: AgentDetail, liveStatus: string, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void }) {
   const context = agent ? agentContextPresentation(agent, liveStatus) : undefined
@@ -26,17 +27,10 @@ export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChang
   const changesReason = changesRoot ? `Open changes for ${changesRoot}` : cwdTarget ? 'Changes requires the agent working directory to be an exact served root.' : cwdReason
   const innerRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
-  useEffect(() => {
-    const inner = innerRef.current
-    if (!inner) { setOverflowing(false); return }
-    const update = () => setOverflowing(hasRightOverflow(inner.scrollWidth, inner.clientWidth, inner.scrollLeft))
-    update()
-    const resize = new ResizeObserver(update)
-    resize.observe(inner)
-    if (inner.parentElement) resize.observe(inner.parentElement)
-    inner.addEventListener('scroll', update, { passive: true })
-    return () => { resize.disconnect(); inner.removeEventListener('scroll', update) }
-  }, [agent, liveStatus])
+  const updateOverflow = (inner: HTMLDivElement) => setOverflowing(hasRightOverflow(inner.scrollWidth, inner.clientWidth, inner.scrollLeft))
+  useSizeObserver(innerRef, updateOverflow, Boolean(agent), agent, (inner) => inner.parentElement ? [inner.parentElement] : [])
+  useDOMEvent(innerRef, 'scroll', () => { if (innerRef.current) updateOverflow(innerRef.current) }, { passive: true }, Boolean(agent))
+  useEffect(() => { if (!agent) setOverflowing(false) }, [agent])
   return <section className="agent-context-strip" data-overflow-right={overflowing || undefined} aria-label="Agent context" aria-busy={!agent}>
     {context && <div className="agent-context-strip-inner" ref={innerRef}>
       {context.cwd && <span className="context-cwd-wrap" title={`${cwdReason} · ${sideHint}`}><button type="button" className="context-fact context-cwd" disabled={!cwdTarget} onClick={(event) => { if (cwdTarget) onOpenFolder(cwdTarget, placementFromModifiers(event)) }}><span>cwd</span>{context.cwd.display}<span aria-hidden="true">↗</span></button></span>}

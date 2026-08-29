@@ -27,7 +27,9 @@ import type { Board, FileTarget, FolderTarget, Pane } from './types'
 import { FilePanel } from './features/files/FilePanel'
 import { QuickOpen } from './features/files/QuickOpen'
 import { usePanelRecords } from './features/workspace/usePanelRecords'
+import { subscribeToDock } from './features/workspace/subscribeToDock'
 import { PanelState } from './shared/PanelState'
+import { subscribeDOMEvent, useDOMEvent } from './shared/lifecycle'
 import { fileTabID, isMarkdownPath, type FileViewMode } from './features/files/fileTabs'
 import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
 import { FolderPanel } from './features/folders/FolderPanel'
@@ -318,7 +320,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [revision, setRevision] = useState(0)
   const [dockReady, setDockReady] = useState(false)
   const apiRef = useRef<DockviewApi | undefined>(undefined)
-  const dockDisposables = useRef<Array<{ dispose: () => void }>>([])
+  const disposeDock = useRef<() => void>(() => undefined)
+  const composerFocusCancel = useRef<() => void>(() => undefined)
   const persistenceReady = useRef(false)
   const layoutDirty = useRef(false)
   const persistenceState = useRef({ recovering: initial.recovering, lastGoodRaw: initial.lastGoodRaw })
@@ -336,6 +339,18 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     setActivePanelID(apiRef.current?.activePanel?.id ?? '')
     setRevision((value) => value + 1)
   }, [])
+
+  const focusComposer = useCallback(() => {
+    composerFocusCancel.current()
+    composerFocusCancel.current = focusComposerWhenReady(
+      () => document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]'),
+      requestAnimationFrame,
+      20,
+      cancelAnimationFrame,
+    )
+  }, [])
+
+  useEffect(() => () => composerFocusCancel.current(), [])
 
   const addPanel = useCallback((params: DockPanelParams, position?: { referenceGroup: string, direction: 'within' | 'right' }) => {
     const api = apiRef.current
@@ -366,7 +381,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       existing.api.updateParameters(current?.kind === 'agent' ? { ...current, preview: current.preview && preview } : { kind: 'agent', name, preview })
       existing.api.setActive()
       syncDock()
-      if (focus) focusComposerWhenReady(() => document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]'), requestAnimationFrame)
+      if (focus) focusComposer()
       return
     }
     const group = target.groupID ? api.getGroup(target.groupID) : undefined
@@ -377,8 +392,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     addPanel({ kind: 'agent', name, preview }, target.position)
     if (replaced) api.removePanel(replaced)
     syncDock()
-    if (focus) focusComposerWhenReady(() => document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]'), requestAnimationFrame)
-  }, [addPanel, syncDock])
+    if (focus) focusComposer()
+  }, [addPanel, focusComposer, syncDock])
 
   const openScreen = useCallback((pane: Pane, preview: boolean, placement?: OpenPlacement) => {
     const api = apiRef.current
@@ -522,8 +537,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   }, [openAgent])
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
-    dockDisposables.current.forEach((disposable) => disposable.dispose())
-    dockDisposables.current = []
+    disposeDock.current()
     apiRef.current = event.api
     let restored = false
     let restoreFailed = false
@@ -545,25 +559,22 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     }
     const replayedRoute = shouldReplayInitialRoute(initialRoute, window.history.state, restored)
     if (replayedRoute) applyRoute(initialRoute)
-    const onLayout = event.api.onDidLayoutChange(() => syncDock())
-    const onActive = event.api.onDidActivePanelChange(({ panel }) => {
-      const params = panelParams(panel?.params)
-      setPathForPanel(params ?? undefined)
-      syncDock()
+    disposeDock.current = subscribeToDock(event.api, {
+      layout: () => syncDock(),
+      activePanel: ({ panel }) => {
+        const params = panelParams(panel?.params)
+        setPathForPanel(params ?? undefined)
+        syncDock()
+      },
+      removePanel: (panel) => {
+        const params = panelParams(panel.params)
+        if (params?.kind === 'file') pruneFileGitState(panel.id)
+        if (params?.kind !== 'agent') return
+        pruneAgentStatus(params.name)
+        pruneAgentScreenPane(params.name)
+      },
+      movePanel: ({ panel }) => { if (pinMovedPreview(panel)) syncDock() },
     })
-    const onRemove = event.api.onDidRemovePanel((panel) => {
-      const params = panelParams(panel.params)
-      if (params?.kind === 'file') {
-        pruneFileGitState(panel.id)
-      }
-      if (params?.kind !== 'agent') return
-      pruneAgentStatus(params.name)
-      pruneAgentScreenPane(params.name)
-    })
-    const onMove = event.api.onDidMovePanel(({ panel }) => {
-      if (pinMovedPreview(panel)) syncDock()
-    })
-    dockDisposables.current = [onLayout, onActive, onRemove, onMove]
     persistenceReady.current = true
     if ((replayedRoute && !restoreFailed) || restoredLegacy) layoutDirty.current = true
     setDockReady(true)
@@ -571,16 +582,15 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     setRevision((value) => value + 1)
   }, [applyRoute, initial, initialRoute, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, syncDock])
 
-  useEffect(() => () => dockDisposables.current.forEach((disposable) => disposable.dispose()), [])
+  useEffect(() => () => disposeDock.current(), [])
 
-  useEffect(() => {
+  useDOMEvent(window, 'popstate', () => {
     const update = () => {
       const route = currentRoute()
       if (route.page !== 'missing') applyRoute(route)
     }
-    window.addEventListener('popstate', update)
-    return () => window.removeEventListener('popstate', update)
-  }, [applyRoute])
+    update()
+  })
 
   const flushLayout = useCallback(() => {
     if (!layoutDirty.current) return false
@@ -611,11 +621,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     return () => window.clearTimeout(timer)
   }, [dockReady, expandedItems, flushLayout, knownWorkspaceItems, revision, sidebarWidth])
 
-  useEffect(() => {
-    const flush = () => { flushLayout() }
-    window.addEventListener('pagehide', flush)
-    return () => window.removeEventListener('pagehide', flush)
-  }, [flushLayout])
+  useDOMEvent(window, 'pagehide', () => { flushLayout() })
 
   const restoredPanels = initial.stored?.dock ? Object.values(initial.stored.dock.panels).flatMap((panel) => {
     const params = panelParams(panel.params)
@@ -723,8 +729,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     const startX = event.clientX
     const startWidth = sidebarWidth
     const move = (moveEvent: PointerEvent) => setSidebarWidth(clampSidebarWidth(startWidth + moveEvent.clientX - startX))
-    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop) }
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop)
+    let disposeUp: () => void = () => undefined
+    const disposeMove = subscribeDOMEvent<PointerEvent>(window, 'pointermove', move)
+    const stop = () => { disposeMove(); disposeUp() }
+    disposeUp = subscribeDOMEvent(window, 'pointerup', stop)
   }
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
