@@ -4,6 +4,7 @@ import { agentMarkdownOptions, Markdown } from '../../shared/Markdown'
 import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMentions'
 import type { TranscriptEntry } from '../../types'
 import { activityPillTone, aggregateActivityPills, cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
+import { parseAssistantFencing } from './fencingModel'
 
 type ObjectValue = Record<string, unknown>
 const objectValue = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
@@ -268,6 +269,20 @@ function ActivityStrip({ activities, entries, relationships, agentName, now }: {
   </div>}</details>
 }
 
+function AssistantText({ content, agentName, timestamp, now, showSystem }: { content: string, agentName: string, timestamp?: string, now: number, showSystem: boolean }) {
+  const fencing = parseAssistantFencing(content)
+  if (!fencing.fenced) return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={timestamp} now={now} /></header><div className="markdown"><MentionMarkdown>{content}</MentionMarkdown></div></article>
+
+  const segments = <div className="assistant-fenced-content">{fencing.segments.map((segment, index) => {
+    if (segment.kind === 'text') return segment.content.trim() && <div className="markdown" key={index}><MentionMarkdown>{segment.content}</MentionMarkdown></div>
+    if (segment.kind === 'internal') return <details className="internal-note" open={showSystem} onToggle={event => { if (showSystem) event.currentTarget.open = true }} key={index}><summary className="activity-pill thinking">internal note · {segment.wordCount} {segment.wordCount === 1 ? 'word' : 'words'}</summary><div className="entry-detail markdown"><MentionMarkdown>{segment.content}</MentionMarkdown></div></details>
+    return <span className="activity-pill assistant-status" key={index}><MentionText>{segment.content}</MentionText></span>
+  })}</div>
+
+  if (!fencing.hasVisibleText) return segments
+  return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={timestamp} now={now} /></header>{segments}</article>
+}
+
 function EntryView({ entry, index, entries, relationships, agentName, now, showSystem, cleanView }: { entry: TranscriptEntry, index: number, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number, showSystem: boolean, cleanView: boolean }) {
   const payload = objectValue(entry.payload)
   const content = messageText(entry.payload)
@@ -280,7 +295,7 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} />
   if (entry.kind === 'tool_use') return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
   if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><pre>{resultText(payload.content)}</pre></div></details>
-  if (entry.kind === 'assistant_text') return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={entry.timestamp} now={now} /></header><div className="markdown"><MentionMarkdown>{content}</MentionMarkdown></div></article>
+  if (entry.kind === 'assistant_text') return <AssistantText content={content} agentName={agentName} timestamp={entry.timestamp} now={now} showSystem={showSystem} />
   if (entry.kind === 'thinking') {
     const nextTime = relationships.nextTimestamps.get(index)
     const duration = nextTime && entry.timestamp ? formatDuration(Date.parse(nextTime) - Date.parse(entry.timestamp)) : 'duration unknown'
