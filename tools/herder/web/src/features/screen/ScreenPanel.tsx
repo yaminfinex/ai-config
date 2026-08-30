@@ -44,7 +44,7 @@ function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: Te
     }
     terminal.resize(current.cols, current.rows)
   }
-  useSizeObserver(hostRef, measureAndResize)
+  useSizeObserver(hostRef, measureAndResize, true, `${frame?.cols}x${frame?.rows}`)
 
   useEffect(() => {
     const host = hostRef.current

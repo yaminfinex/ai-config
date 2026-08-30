@@ -21,3 +21,8 @@ test('live terminal accepts direct keystrokes without fabricating local echo', (
   assert.match(source, /live — keystrokes go to the real pane/)
   assert.doesNotMatch(source, /onData[\s\S]{0,300}(?:terminal|term)\.write/)
 })
+
+test('font fit re-runs when the live frame grid first lands or changes', () => {
+  const source = readFileSync(new URL('../src/features/screen/ScreenPanel.tsx', import.meta.url), 'utf8')
+  assert.match(source, /useSizeObserver\(hostRef, measureAndResize, true, `\$\{frame\?\.cols\}x\$\{frame\?\.rows\}`\)/)
+})
