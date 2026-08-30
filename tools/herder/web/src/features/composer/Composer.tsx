@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
-import { blurComposerOnEscape, composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
+import { blurComposerOnEscape, composerFieldId, composerShouldRemeasureFromZero, isComposerSendShortcut, persistComposerDraft, readComposerDraft } from '../../composerState'
 
 export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }: {
   name: string
@@ -16,6 +16,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
   const [readOnly, setReadOnly] = useState('')
   const queryClient = useQueryClient()
   const composerRef = useRef<HTMLTextAreaElement>(null)
+  const measuredRef = useRef({ name, value: '' })
   const mutation = useMutation({ mutationFn: (text: string) => sendMessage(name, text) })
   const effectiveReadOnly = identityReadOnly || readOnly
   const fieldId = composerFieldId(name)
@@ -24,7 +25,12 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
     persistComposerDraft(name, message)
     const composer = composerRef.current
     if (!composer) return
-    composer.style.height = '0px'
+    // Collapse the field before measuring only when the draft may have gotten
+    // shorter; collapsing on every keystroke jitters the transcript scroll and
+    // trips the jump-to-bottom button (see composerShouldRemeasureFromZero).
+    const next = { name, value: message }
+    if (composerShouldRemeasureFromZero(measuredRef.current, next)) composer.style.height = '0px'
+    measuredRef.current = next
     const height = Math.min(composer.scrollHeight, 160)
     composer.style.height = `${height}px`
     composer.style.overflowY = composer.scrollHeight > 160 ? 'auto' : 'hidden'

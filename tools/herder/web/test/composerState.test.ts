@@ -5,6 +5,7 @@ import {
   focusComposerWhenReady,
   composerFieldId,
   composerDraftKey,
+  composerShouldRemeasureFromZero,
   blurComposerOnEscape,
   isComposerSendShortcut,
   persistComposerDraft,
@@ -131,4 +132,50 @@ test('selecting an agent focuses its composer only on user-driven opens', () => 
   assert.match(applyRoute, /openPanel\(\{ \.\.\.route\.params, preview: true \}, undefined, false\)/)
   assert.doesNotMatch(applyRoute, /openPanel\([^\n]*true\)/)
   assert.match(actions, /focusComposerWhenReady/)
+})
+
+test('the auto-resizing field skips the collapse only for an appended draft', () => {
+  // Typing or pasting at the end (a pure extension) never collapses: scrollHeight
+  // already reflects the taller content, so the transcript is not jittered off
+  // the bottom.
+  assert.equal(composerShouldRemeasureFromZero({ name: 'kera', value: 'abc' }, { name: 'kera', value: 'abcd' }), false)
+  assert.equal(composerShouldRemeasureFromZero({ name: 'kera', value: 'line1' }, { name: 'kera', value: 'line1\nline2' }), false)
+  assert.equal(composerShouldRemeasureFromZero({ name: 'kera', value: 'abc' }, { name: 'kera', value: 'abc' }), false)
+  // First measurement grows from the empty baseline.
+  assert.equal(composerShouldRemeasureFromZero({ name: 'kera', value: '' }, { name: 'kera', value: 'hello' }), false)
+  // Deleting or editing in the middle can shorten the field, so collapse.
+  assert.equal(composerShouldRemeasureFromZero({ name: 'kera', value: 'abcd' }, { name: 'kera', value: 'abc' }), true)
+  assert.equal(composerShouldRemeasureFromZero({ name: 'kera', value: 'aXbc' }, { name: 'kera', value: 'abc' }), true)
+  // Switching agents swaps the whole draft: always remeasure from zero.
+  assert.equal(composerShouldRemeasureFromZero({ name: 'kera', value: 'shared' }, { name: 'ziru', value: 'shared' }), true)
+})
+
+test('a selection-replacing paste that adds characters but removes lines still collapses', () => {
+  // Edge (a): a length-based check would see more characters and skip the
+  // collapse, leaving the field stuck too tall. The paste is not an append of
+  // the old draft, so the prefix check collapses and measures the shorter,
+  // single-line content honestly.
+  const previous = { name: 'kera', value: 'a\nb\nc' } // three rendered lines
+  const next = { name: 'kera', value: 'aaaaaaaaaaaaaaaaaaaa' } // more characters, one line
+  assert.ok(next.value.length > previous.value.length)
+  assert.equal(composerShouldRemeasureFromZero(previous, next), true)
+})
+
+test('a wrap-width change never jitters the transcript and self-heals on the next shrink', () => {
+  // Edge (b): a panel resize rewraps the same text to fewer lines. The auto-size
+  // effect keys on the draft, so identical text never collapses — there is no
+  // per-keystroke reflow, the transcript stays pinned, and the jump button never
+  // appears. At worst the field is left cosmetically too tall; the next deletion
+  // collapses and re-measures, restoring the correct height.
+  const draft = { name: 'kera', value: 'a wide line that rewraps when the panel narrows' }
+  assert.equal(composerShouldRemeasureFromZero(draft, draft), false) // width change alone: no jitter
+  const afterDeletion = { name: 'kera', value: 'a wide line that rewraps when the panel narrow' }
+  assert.equal(composerShouldRemeasureFromZero(draft, afterDeletion), true) // self-heals on next shrink
+})
+
+test('the composer uses the shared remeasure predicate rather than an inline height reset', () => {
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  assert.match(composer, /composerShouldRemeasureFromZero\(measuredRef\.current, next\)/)
+  // The collapse is guarded, never unconditional on every keystroke.
+  assert.doesNotMatch(composer, /^\s*composer\.style\.height = '0px'\s*$/m)
 })
