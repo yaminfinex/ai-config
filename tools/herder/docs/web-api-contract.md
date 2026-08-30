@@ -203,6 +203,29 @@ GET `/api/agents/{bus-name}`
   retain the same exact additional-context envelope path, producing one
   normalized card rather than duplicate attachment cards.
 
+  ### AMENDMENT (owner bug, conductor-acked, 2026-08-30) — bus delivery cursors clear queued input
+
+  The hcom bus's per-recipient delivery cursor is first-class queue-clearing
+  evidence; normalized transcript deliveries remain independent corroboration.
+  A candidate is first proven addressed to the resolved recipient instance or
+  its exact roster base name by the message event's `delivered_to` list. It is
+  not queued when that concrete recipient's newest `status` event with a
+  `deliver:*` context carries `position` greater than or equal to the candidate
+  message ID. The position is the recipient's consumed bus watermark, so this
+  rule is independent of whether Claude recorded delivery through
+  UserPromptSubmit, PostToolUse, Stop feedback, or another transcript shape.
+
+  A delivery status row's `msg_ts` identifies the final message in its delivery
+  batch and is corroboration only; it is not a per-message join key. One batch
+  may advance past several addressed messages. A message addressed to multiple
+  recipients clears independently from each recipient's own status watermark;
+  `delivered_to` alone remains addressing evidence, not consumption evidence.
+  Failure to read delivery statuses omits the optional `queued` fact rather
+  than guessing. A successful query with no delivery watermark retains the
+  transcript-only rules above. The existing message subscription, multiplexed
+  invalidations, client rendering, and operator-only candidate admission are
+  unchanged; no delivery stream is added.
+
   The web pins the operator-only queued block immediately above the composer,
   outside the scrolling transcript, so it remains visible during live follow.
   In clean view, consecutive machinery entries collapse into one expandable

@@ -17,12 +17,13 @@ import (
 const queuedPreviewRunes = 240
 
 type queueCandidate struct {
-	SentAt    string
-	Sender    string
-	Recipient string
-	Intent    string
-	Thread    string
-	Preview   string
+	SentAt        string
+	Sender        string
+	Recipient     string
+	RecipientBase string
+	Intent        string
+	Thread        string
+	Preview       string
 }
 
 func operatorQueueCandidates(agent, baseName string, messages []hcomevents.Message, roster []hcomidentity.Row) map[string]queueCandidate {
@@ -34,12 +35,29 @@ func operatorQueueCandidates(agent, baseName string, messages []hcomevents.Messa
 		preview, operator := queuedPresentation(message.Text)
 		if operator {
 			candidates[strconv.FormatInt(message.ID, 10)] = queueCandidate{
-				SentAt: message.SentAt, Sender: queueSenderName(message.From, roster), Recipient: agent,
+				SentAt: message.SentAt, Sender: queueSenderName(message.From, roster), Recipient: agent, RecipientBase: baseName,
 				Intent: message.Intent, Thread: message.Thread, Preview: preview,
 			}
 		}
 	}
 	return candidates
+}
+
+func excludeDeliveredCandidates(candidates map[string]queueCandidate, excluded map[string]bool, watermark hcomevents.DeliveryWatermark) map[string]bool {
+	if excluded == nil {
+		excluded = make(map[string]bool)
+	}
+	// Safe only because hcom advances a name-keyed cursor after successful injection, including mentions fallback; advancing past an undelivered mention would over-clear.
+	for id, candidate := range candidates {
+		if watermark.Recipient != candidate.Recipient && (candidate.RecipientBase == "" || watermark.Recipient != candidate.RecipientBase) {
+			continue
+		}
+		messageID, err := strconv.ParseInt(id, 10, 64)
+		if err == nil && messageID <= watermark.Position {
+			excluded[id] = true
+		}
+	}
+	return excluded
 }
 
 func queueSenderName(sender string, roster []hcomidentity.Row) string {
@@ -106,7 +124,8 @@ func (proof *queueProof) observe(entries []claudesession.Entry, candidates map[s
 			}
 			for _, delivery := range payload.Deliveries {
 				candidate, wanted := candidates[delivery.MessageID]
-				if wanted && delivery.Sender == candidate.Sender && delivery.Recipient == candidate.Recipient && delivery.Intent == candidate.Intent && delivery.Thread == candidate.Thread {
+				recipientMatches := delivery.Recipient == candidate.Recipient || candidate.RecipientBase != "" && delivery.Recipient == candidate.RecipientBase
+				if wanted && delivery.Sender == candidate.Sender && recipientMatches && delivery.Intent == candidate.Intent && delivery.Thread == candidate.Thread {
 					proof.excluded[delivery.MessageID] = true
 				}
 			}

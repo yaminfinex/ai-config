@@ -1,0 +1,2 @@
+{"isSidechain":false,"isMeta":true,"type":"user","message":{"role":"user","content":"Stop hook feedback:\n<hcom>[request #161525] web-operator → zuma: sanitized operator message</hcom>"},"uuid":"fixture-stop-user","timestamp":"2026-08-30T20:20:14.565Z"}
+{"isSidechain":false,"attachment":{"type":"hook_blocking_error","hookName":"Stop","hookEvent":"Stop","content":""},"type":"attachment","uuid":"fixture-stop-attachment","timestamp":"2026-08-30T20:20:14.565Z"}

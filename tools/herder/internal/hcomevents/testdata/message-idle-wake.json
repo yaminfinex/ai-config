@@ -1,0 +1,1 @@
+{"data":{"delivered_to":["zuma"],"from":"web-operator","intent":"request","mentions":["zuma"],"scope":"mentions","sender_kind":"external","text":"sanitized operator message 161525"},"id":161525,"instance":"ext_web-operator","ts":"2026-08-30T20:20:14.553415+00:00","type":"message"}
