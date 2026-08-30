@@ -346,6 +346,93 @@ func TestResolveRespectsRootPreferenceAndStableTies(t *testing.T) {
 	}
 }
 
+func TestResolveFileAnchorRanksContainingDirectoryThenAncestorsThenGlobal(t *testing.T) {
+	const root = "/repo"
+	const other = "/other"
+	resolver := New(staticSource{
+		root: fileCandidates(
+			"elsewhere/target.md",
+			"target.md",
+			"docs/target.md",
+			"docs/guides/target.md",
+			"docs/guides/deep/target.md",
+		),
+		other: fileCandidates("target.md"),
+	})
+	results, err := resolver.Resolve(context.Background(), Request{
+		Query: "target.md", Roots: []string{root, other}, Anchor: &Anchor{Root: root, Path: "docs/guides/deep/topic.md"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		root + ":docs/guides/deep/target.md",
+		root + ":docs/guides/target.md",
+		root + ":docs/target.md",
+		root + ":target.md",
+		other + ":target.md",
+		root + ":elsewhere/target.md",
+	}
+	got := make([]string, len(results))
+	for index, result := range results {
+		got[index] = result.Root + ":" + result.Path
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths=%#v want %#v", got, want)
+	}
+	for index, result := range results[:4] {
+		if result.Tier != TierExact {
+			t.Errorf("anchored result %d tier=%q want %q", index, result.Tier, TierExact)
+		}
+	}
+	if results[4].Tier != TierExact || results[5].Tier != TierSuffix {
+		t.Errorf("global tiers=(%q, %q) want (%q, %q)", results[4].Tier, results[5].Tier, TierExact, TierSuffix)
+	}
+}
+
+func TestResolveExplicitRelativeAnchorNeverFallsBack(t *testing.T) {
+	const root = "/repo"
+	resolver := New(staticSource{root: fileCandidates(
+		"target.md",
+		"docs/guides/target.md",
+		"docs/guides/deep/target.md",
+		"elsewhere/missing.md",
+	)})
+	anchor := &Anchor{Root: root, Path: "docs/guides/deep/topic.md"}
+	tests := []struct {
+		query string
+		want  []string
+	}{
+		{"./target.md", []string{"docs/guides/deep/target.md"}},
+		{"../target.md", []string{"docs/guides/target.md"}},
+		{"`../target.md`", []string{"docs/guides/target.md"}},
+		{"./missing.md", nil},
+		{"../../../../target.md", nil},
+	}
+	for _, test := range tests {
+		t.Run(test.query, func(t *testing.T) {
+			results, err := resolver.Resolve(context.Background(), Request{Query: test.query, Roots: []string{root}, Anchor: anchor})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := resultPaths(results); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("paths=%#v want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func resultPaths(results []Result) []string {
+	if len(results) == 0 {
+		return nil
+	}
+	paths := make([]string, len(results))
+	for index, result := range results {
+		paths[index] = result.Path
+	}
+	return paths
+}
+
 func TestResolvePropagatesCandidateSourceFailure(t *testing.T) {
 	sourceErr := errors.New("index unavailable")
 	source := sourceFunc(func(context.Context, string, bool) ([]filecandidate.Candidate, error) { return nil, sourceErr })

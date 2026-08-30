@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"ai-config/tools/herder/internal/backlogapi"
 	"ai-config/tools/herder/internal/fileapi"
@@ -56,6 +58,28 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
+	root, rootErr := optionalQuery(r, "root")
+	path, pathErr := optionalQuery(r, "path")
+	if rootErr != nil || pathErr != nil {
+		refuse(w, http.StatusBadRequest, "bad request", errors.Join(rootErr, pathErr).Error())
+		return
+	}
+	_, rootPresent := r.URL.Query()["root"]
+	_, pathPresent := r.URL.Query()["path"]
+	_, agentPresent := r.URL.Query()["agent"]
+	if rootPresent != pathPresent || rootPresent && (root == "" || path == "") {
+		refuse(w, http.StatusBadRequest, "bad request", "query parameters \"root\" and \"path\" must be non-empty and appear together")
+		return
+	}
+	if agentPresent && rootPresent {
+		refuse(w, http.StatusBadRequest, "bad request", "query parameter \"agent\" cannot be combined with \"root\" and \"path\"")
+		return
+	}
+	cleanPath := filepath.Clean(path)
+	if rootPresent && (filepath.IsAbs(path) || cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, ".."+string(filepath.Separator))) {
+		refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("query parameter \"path\" must stay relative to root: %q", path))
+		return
+	}
 	set, rows, err := liveRootSet(r.Context(), deps)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
@@ -74,8 +98,16 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		}
 	}
+	var anchor *fileresolver.Anchor
+	if rootPresent {
+		if !set.Contains(root) {
+			refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+			return
+		}
+		anchor = &fileresolver.Anchor{Root: root, Path: cleanPath}
+	}
 	resolution, err := deps.fileResolver.ResolveDetailed(r.Context(), fileresolver.Request{
-		Query: query, Roots: set.Roots, RootPreference: set.Preference(agent),
+		Query: query, Roots: set.Roots, RootPreference: set.Preference(agent), Anchor: anchor,
 	})
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())

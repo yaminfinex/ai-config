@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useInfiniteQuery, useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { getFile, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
 import type { FileTarget, FolderTarget, GitDiffRead, GitLogEntry, GitLogRead } from '../../types'
@@ -15,6 +15,7 @@ import { useFileWatch } from '../../stream/fileWatchRegistry'
 import { failureBanner, PanelState, useActivationRefetch } from '../../shared/PanelState'
 import { historyPagingState } from './historyPaging'
 import { PathCopyButton } from '../../shared/PathCopyButton'
+import { useTranscriptFileResolver } from './TranscriptFileResolver'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -30,6 +31,9 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
   onOpenFolder: (target: FolderTarget, placement?: OpenPlacement, selectionHint?: FileTarget) => void
 }) {
+  const viewedPath = gitState.revision?.path ?? target.path
+  const resolverContext = useMemo(() => ({ root: target.root, path: viewedPath }), [target.root, viewedPath])
+  const fileResolver = useTranscriptFileResolver(resolverContext, active && gitState.mode === 'current', onOpenFile, onOpenFolder)
   useFileWatch({ kind: 'file', root: target.root, path: target.path }, gitState.mode === 'current' && !gitState.revision)
   const fileQuery = useQuery({
     queryKey: queryKeys.file(target.root, target.path),
@@ -93,7 +97,6 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   }, [branchAvailable, gitState, onGitState, statusQuery.data])
 
   const data = gitState.revision ? revisionQuery.data : fileQuery.data
-  const viewedPath = gitState.revision?.path ?? target.path
   const markdown = isMarkdownPath(viewedPath)
   const missionMarkdown = Boolean(data && !data.binary && /(?:^|\/)mission\.md$/iu.test(viewedPath))
   const facts = data && !data.binary && missionMarkdown ? missionFacts(data.content) : null
@@ -150,7 +153,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
         {facts.updated && <span><small>updated</small>{facts.updated}</span>}
       </section>}
       {data.binary ? <PanelState className="file-state binary" title="Binary file" detail={<>No text content is available for this {formattedBytes(data.size)} file.</>} />
-        : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`}>
+        : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`} onDoubleClick={fileResolver.onDoubleClick}>
           {data.truncated && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
           {markdown && viewMode === 'rendered' ? <div className="markdown file-markdown"><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
             : <div className="file-source"><PierreFile path={gitState.revision?.path ?? data.path} content={data.content} selectedLines={gitState.revision ? null : selectedCurrentLines(target.line)} /></div>
@@ -164,6 +167,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
       loadingOlder={historyQuery.isFetchingNextPage} onLoadOlder={() => { void historyQuery.fetchNextPage() }}
       onFile={(entry) => onGitState(selectHistoricalFile(gitState, { sha: entry.sha, path: entry.path_then }))}
       onDiff={(entry) => onGitState(selectHistoricalDiff(gitState, { sha: entry.sha, path: entry.path_then }))} />}
+    {fileResolver.element}
   </main>
 }
 

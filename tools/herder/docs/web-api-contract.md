@@ -353,6 +353,7 @@ the resulting canonical absolute directory strings; a client-supplied absolute
 path that is not an exact current root ID never authorizes a read.
 
 GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
+or `/api/resolve?q={mention}&root={opaque-root}&path={viewed-file-relative-path}`
   Resolves a required, non-empty path-like query against the complete current
   root universe. Success is
   `{"candidates":[{"root":"/opaque/root","path":"relative/file.md","kind":"file|dir","tier":"exact|prefix|suffix|fuzzy","score":731}],"roots":[{"root":"/opaque/root","status":"complete|degraded|failed","detail":"honest bounded diagnostic when not complete"}]}`.
@@ -363,13 +364,26 @@ GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
   including a formerly mentioned path that has vanished, is an honest 200 with
   `candidates:[]`.
 
-  Hard ranking bands are exact, then prefix/suffix, then fuzzy. Within a band,
-  an optional agent context prefers that agent's mapped live root, then
+  A file context is the exact current opaque root plus the viewed file's
+  root-relative path. It adds hard bands ahead of global ranking: a mention
+  beside the viewed file, then the same mention beside each ancestor directory
+  through the root, nearest first. A candidate appears only in its earliest
+  band. After those bands, the ordinary global ranking below is unchanged.
+  An explicit `./` or `../` mention is stricter: it is cleaned exactly against
+  the viewed file's containing directory and never falls back to ancestors or
+  global matches. If that exact target is absent, or cleaning would escape the
+  root, success is an honest response with `candidates:[]`.
+
+  Hard global ranking bands are exact, then prefix/suffix, then fuzzy. Within a
+  band, an optional agent context prefers that agent's mapped live root, then
   configured roots in flag order, then remaining live agent roots. Without an
-  agent, configured roots lead. `q` and `agent` may each appear at most once;
-  malformed or empty input is 400 `bad request`, an unknown agent is 404
-  `unknown agent`. Each root reports its index outcome: `complete` means its
-  candidate set is whole; `degraded` means usable candidates are included but
+  agent, configured roots lead. `q`, `agent`, `root`, and `path` may each appear
+  at most once. `root` and `path` are a non-empty pair and cannot be combined
+  with `agent`; `path` must be relative and stay lexically inside the root.
+  Malformed or empty input is 400 `bad request`, an unknown agent is 404
+  `unknown agent`, and a file-context root outside the current readable
+  universe is 404 `unknown root`. Each root reports its index outcome:
+  `complete` means its candidate set is whole; `degraded` means usable candidates are included but
   an indexing diagnostic occurred; `failed` means that root contributed no
   candidates. Non-complete outcomes carry an honest diagnostic, bounded at
   4 KiB with an explicit truncation marker. Healthy roots remain ranked and
