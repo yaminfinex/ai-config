@@ -66,6 +66,18 @@ test('single-group pinned agent, file, and folder panels round-trip with a branc
   assert.deepEqual(loaded, saved)
 })
 
+test('saved and restored layouts cannot carry a transient folder selection hint', () => {
+  const hinted = structuredClone(singleGroupDock)
+  Object.assign(hinted.panels['folder:%2Frepo:src'].params, { selectionHint: { root: '/repo', path: 'src/App.tsx' } })
+  const saved = persistableDockLayout(hinted)
+  assert.ok(saved)
+  assert.equal('selectionHint' in saved.panels['folder:%2Frepo:src'].params, false)
+
+  const restored = parseStoredLayout(JSON.stringify({ version: 2, dock: hinted, sidebarWidth: 250 }))
+  assert.ok(restored?.dock)
+  assert.equal('selectionHint' in restored.dock.panels['folder:%2Frepo:src'].params, false)
+})
+
 test('an Option-right split round-trips through browser persistence with previews intact', () => {
   const splitDock = {
     grid: { width: 1200, height: 700, orientation: 0, root: { type: 'branch', data: [

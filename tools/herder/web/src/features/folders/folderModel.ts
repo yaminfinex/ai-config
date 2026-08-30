@@ -1,4 +1,4 @@
-import type { BacklogRead, BacklogTask, FileCandidate, FolderTarget, RootOutcome } from '../../types'
+import type { BacklogRead, BacklogTask, FileCandidate, FileTarget, FolderTarget, RootOutcome } from '../../types'
 
 export function candidateDestination(candidate: FileCandidate): 'file' | 'folder' {
   return candidate.kind === 'dir' ? 'folder' : 'file'
@@ -6,6 +6,24 @@ export function candidateDestination(candidate: FileCandidate): 'file' | 'folder
 
 export function folderTabID(root: string, path: string) {
   return `folder:${encodeURIComponent(root)}:${encodeURIComponent(path)}`
+}
+
+export function rootJoinedAbsolutePath(root: string, path: string) {
+  const cleanRoot = root === '/' ? '' : root.replace(/\/+$/u, '')
+  const cleanPath = path.replace(/^\/+|\/+$/gu, '')
+  return cleanPath ? `${cleanRoot}/${cleanPath}` : root === '/' ? '/' : cleanRoot
+}
+
+export function parentFolderPath(path: string): string | null {
+  const cleanPath = path.replace(/^\/+|\/+$/gu, '')
+  if (!cleanPath) return null
+  const separator = cleanPath.lastIndexOf('/')
+  return separator < 0 ? '' : cleanPath.slice(0, separator)
+}
+
+export function folderSelectionTarget(root: string, folderPath: string, hint: FileTarget | undefined): FileTarget | null {
+  if (!hint || hint.root !== root || parentFolderPath(hint.path) !== folderPath) return null
+  return { root, path: hint.path, ...(hint.line ? { line: hint.line } : {}) }
 }
 
 function insideRoot(path: string, root: string) {

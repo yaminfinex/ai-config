@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   boardColumns,
   candidateDestination,
   cwdFolderTarget,
   exactRootChangesTarget,
+  folderSelectionTarget,
+  parentFolderPath,
+  rootJoinedAbsolutePath,
   missionFacts,
   missionMarkdownBody,
   taskFileTarget,
@@ -41,6 +45,30 @@ test('cwd folder target uses boundary-safe served-root containment', () => {
   assert.equal(exactRootChangesTarget({ root: '/work/repo', path: '' }), '/work/repo')
   assert.equal(exactRootChangesTarget({ root: '/work/repo', path: 'packages/web' }), undefined)
   assert.equal(exactRootChangesTarget(null), undefined)
+})
+
+test('filesystem paths stay absolute and parent navigation stops honestly at the served root', () => {
+  assert.equal(rootJoinedAbsolutePath('/repo', 'src/App.tsx'), '/repo/src/App.tsx')
+  assert.equal(rootJoinedAbsolutePath('/repo/', '/src/App.tsx'), '/repo/src/App.tsx')
+  assert.equal(rootJoinedAbsolutePath('/', 'src/App.tsx'), '/src/App.tsx')
+  assert.equal(rootJoinedAbsolutePath('/repo', ''), '/repo')
+  assert.equal(parentFolderPath('src/components'), 'src')
+  assert.equal(parentFolderPath('src'), '')
+  assert.equal(parentFolderPath(''), null)
+})
+
+test('a folder selection hint accepts only a direct file child in the addressed root', () => {
+  assert.deepEqual(folderSelectionTarget('/repo', 'src', { root: '/repo', path: 'src/App.tsx' }), {
+    root: '/repo', path: 'src/App.tsx',
+  })
+  assert.equal(folderSelectionTarget('/repo', 'src', { root: '/other', path: 'src/App.tsx' }), null)
+  assert.equal(folderSelectionTarget('/repo', 'src', { root: '/repo', path: 'src/nested/App.tsx' }), null)
+  assert.equal(folderSelectionTarget('/repo', '', { root: '/repo', path: 'README.md' })?.path, 'README.md')
+})
+
+test('folder selection hints are consumed before an invalid hint can be ignored', () => {
+  const panel = readFileSync(new URL('../src/features/folders/FolderPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /if \(!selectionHint\) return\s+const hintedFile = folderSelectionTarget[\s\S]*onSelectionHintConsumed\?\.\(\)\s+if \(!hintedFile\) return/)
 })
 
 test('board columns preserve configured order and surface unconfigured statuses', () => {

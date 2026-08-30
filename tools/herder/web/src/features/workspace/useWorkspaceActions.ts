@@ -8,6 +8,7 @@ import { gitStateForFileOpen, type GitBase, type GitFileState } from '../git/git
 import { dockOpenTarget, type OpenPlacement } from '../layout/openPlacement'
 import { screenPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import type { PanelRecordUpdate } from './usePanelRecords'
+import { folderTabID } from '../folders/folderModel'
 import {
   invalidatePanel,
   mergePanelParams,
@@ -44,6 +45,7 @@ type WorkspaceActionOptions = {
   setQuickOpenGroup: (groupID?: string) => void
   syncDock: () => void
   setFileGitState: (id: string, update: PanelRecordUpdate<GitFileState>) => void
+  setFolderSelectionHint: (id: string, update: PanelRecordUpdate<FileTarget>) => void
   resetPersistedLayout: () => void
   withHistorySuppressed: <T>(operation: () => T) => T
   onActivePanelParamsChanged: (params: DockPanelParams) => void
@@ -57,6 +59,7 @@ export function useWorkspaceActions({
   setQuickOpenGroup,
   syncDock,
   setFileGitState,
+  setFolderSelectionHint,
   resetPersistedLayout,
   withHistorySuppressed,
   onActivePanelParamsChanged,
@@ -148,9 +151,10 @@ export function useWorkspaceActions({
     openPanel({ kind: 'changes', root, preview: true }, placement)
   }, [openPanel])
 
-  const openFolder = useCallback((target: FolderTarget, placement?: OpenPlacement) => {
+  const openFolder = useCallback((target: FolderTarget, placement?: OpenPlacement, selectionHint?: FileTarget) => {
+    setFolderSelectionHint(folderTabID(target.root, target.path), selectionHint)
     openPanel({ kind: 'folder', root: target.root, path: target.path, preview: true }, placement)
-  }, [openPanel])
+  }, [openPanel, setFolderSelectionHint])
 
   const pinPanel = useCallback((id: string) => {
     const api = apiRef.current
