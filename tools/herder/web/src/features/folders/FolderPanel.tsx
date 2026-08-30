@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type KeyboardEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getBacklog, getFileTree, queryKeys } from '../../api/client'
 import type { BacklogRead, FileTarget, FileTreeEntry, FolderTarget } from '../../types'
@@ -11,6 +11,8 @@ import { initialGitFileState } from '../git/gitViewModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useFileWatch } from '../../stream/fileWatchRegistry'
 import { failureBanner, PanelState } from '../../shared/PanelState'
+import { TreeRow, TreeState } from '../../shared/TreeRow'
+import { treeChildIndex, treeKeyIntent, treeParentIndex } from '../../shared/treeModel'
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -20,11 +22,41 @@ function boardAvailable(value: Awaited<ReturnType<typeof getBacklog>> | undefine
   return Boolean(value && 'statuses' in value)
 }
 
-function DirectoryTree({ root, path, depth, currentDir, onDirectory, onSelect, onOpenFile, onOpenFolder }: {
+function focusTreeRow(rows: HTMLElement[], index: number) {
+  const target = rows[index]
+  if (!target) return
+  rows.forEach((row) => { row.tabIndex = row === target ? 0 : -1 })
+  target.focus()
+}
+
+function handleTreeKeyDown(event: KeyboardEvent<HTMLElement>) {
+  if (event.altKey || event.ctrlKey || event.metaKey) return
+  const row = (event.target as Element).closest<HTMLElement>('[role="treeitem"]')
+  if (!row || !event.currentTarget.contains(row)) return
+  const expandable = row.hasAttribute('aria-expanded')
+  const expanded = row.getAttribute('aria-expanded') === 'true'
+  const intent = treeKeyIntent(event.key, expandable, expanded)
+  if (!intent || (intent === 'primary' && event.target !== row)) return
+  const rows = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+  const index = rows.indexOf(row)
+  const levels = rows.map((item) => Number(item.getAttribute('aria-level')) || 1)
+  event.preventDefault()
+  if (intent === 'first') focusTreeRow(rows, 0)
+  else if (intent === 'last') focusTreeRow(rows, rows.length - 1)
+  else if (intent === 'previous') focusTreeRow(rows, index - 1)
+  else if (intent === 'next') focusTreeRow(rows, index + 1)
+  else if (intent === 'child') focusTreeRow(rows, treeChildIndex(levels, index))
+  else if (intent === 'parent') focusTreeRow(rows, treeParentIndex(levels, index))
+  else if (intent === 'expand' || intent === 'collapse') row.querySelector<HTMLElement>('.tree-disclosure')?.click()
+  else row.querySelector<HTMLElement>('[data-tree-primary]')?.click()
+}
+
+function DirectoryTree({ root, path, depth, currentDir, selectedFile, onDirectory, onSelect, onOpenFile, onOpenFolder }: {
   root: string
   path: string
   depth: number
   currentDir: string
+  selectedFile: FileTarget | null
   onDirectory: (path: string) => void
   onSelect: (target: FileTarget) => void
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
@@ -43,44 +75,44 @@ function DirectoryTree({ root, path, depth, currentDir, onDirectory, onSelect, o
     entries.some((entry) => entry.kind === 'directory' && entry.name === 'tasks')
   const title = path ? rootLabel(path) : rootLabel(root)
   const sideHint = openInSideLabel(navigator.userAgent)
-  return <div className="folder-tree-node">
-    <div className={`folder-tree-row directory${currentDir === path ? ' current' : ''}`} style={{ paddingLeft: depth * 13 }}>
-      <button type="button" className={`folder-disclosure${expanded ? ' expanded' : ''}`} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${title}`} onClick={() => setExpanded((value) => !value)}>›</button>
-      <button type="button" className="folder-entry-name" title={`${path || root} · ${sideHint}`} onClick={(event) => {
+  return <div className="folder-tree-node" role="none">
+    <TreeRow depth={depth} name={title} expandable expanded={expanded} selected={currentDir === path} className="directory" icon={<span>▰</span>}
+      itemProps={{ role: 'treeitem', 'aria-level': depth + 1, tabIndex: depth === 0 ? 0 : -1 }}
+      onToggle={() => setExpanded((value) => !value)}
+      label={<button type="button" className="tree-primary folder-entry-name" data-tree-primary title={`${path || root} · ${sideHint}`} onClick={(event) => {
         if (event.altKey) onOpenFolder({ root, path }, placementFromModifiers(event))
         else { setExpanded(true); onDirectory(path) }
-      }}><span aria-hidden="true">▰</span>{title}</button>
-      {looksLikeBoard && <button type="button" className="folder-row-action" onClick={() => onDirectory(path)}>Board</button>}
-    </div>
-    {expanded && <div className="folder-tree-children">
-      {tree.isPending && <div className="folder-tree-state" style={{ paddingLeft: (depth + 1) * 13 }}>Loading…</div>}
-      {tree.error && <div className="folder-tree-error" role="alert" style={{ marginLeft: (depth + 1) * 13 }}>{tree.error.message}</div>}
-      {tree.data && entries.length === 0 && <div className="folder-tree-state" style={{ paddingLeft: (depth + 1) * 13 }}>Empty folder</div>}
+      }}>{title}</button>}
+      trailing={looksLikeBoard && <button type="button" className="folder-row-action" onClick={() => onDirectory(path)}>Board</button>} />
+    {expanded && <div className="folder-tree-children" role="group">
+      {tree.isPending && <TreeState depth={depth + 1} title="Loading…" />}
+      {tree.error && <TreeState depth={depth + 1} role="alert" title="Folder unavailable" detail={tree.error.message} />}
+      {tree.data && entries.length === 0 && <TreeState depth={depth + 1} title="Empty folder" />}
       {entries.map((entry) => entry.kind === 'directory'
-        ? <DirectoryTree root={root} path={childPath(path, entry.name)} depth={depth + 1} currentDir={currentDir} onDirectory={onDirectory} onSelect={onSelect} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} key={entry.name} />
-        : <TreeFile root={root} parent={path} entry={entry} depth={depth + 1} onSelect={onSelect} onOpenFile={onOpenFile} key={entry.name} />)}
+        ? <DirectoryTree root={root} path={childPath(path, entry.name)} depth={depth + 1} currentDir={currentDir} selectedFile={selectedFile} onDirectory={onDirectory} onSelect={onSelect} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} key={entry.name} />
+        : <TreeFile root={root} parent={path} entry={entry} depth={depth + 1} selected={selectedFile?.path === childPath(path, entry.name)} onSelect={onSelect} onOpenFile={onOpenFile} key={entry.name} />)}
     </div>}
   </div>
 }
 
-function TreeFile({ root, parent, entry, depth, onSelect, onOpenFile }: {
+function TreeFile({ root, parent, entry, depth, selected, onSelect, onOpenFile }: {
   root: string
   parent: string
   entry: FileTreeEntry
   depth: number
+  selected: boolean
   onSelect: (target: FileTarget) => void
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
 }) {
   const target = { root, path: childPath(parent, entry.name) }
-  if (entry.kind === 'symlink') return <div className="folder-tree-row symlink" style={{ paddingLeft: depth * 13 }} title="Symlink is not opened from the tree"><span className="folder-tree-spacer" /><span aria-hidden="true">↗</span><span className="folder-entry-static">{entry.name}</span></div>
-  return <div className="folder-tree-row file" style={{ paddingLeft: depth * 13 }}>
-    <span className="folder-tree-spacer" />
-    <button type="button" className="folder-entry-name" title={`Preview ${target.path} · ${openInSideLabel(navigator.userAgent)}`} onClick={(event) => {
+  if (entry.kind === 'symlink') return <TreeRow depth={depth} name={entry.name} className="symlink" icon={<span>↗</span>} label={<span className="folder-entry-static">{entry.name}</span>}
+    title="Symlink is not opened from the tree" itemProps={{ role: 'treeitem', 'aria-level': depth + 1, tabIndex: -1 }} />
+  return <TreeRow depth={depth} name={entry.name} selected={selected} className="file" icon={<span>◇</span>} itemProps={{ role: 'treeitem', 'aria-level': depth + 1, tabIndex: -1 }}
+    label={<button type="button" className="tree-primary folder-entry-name" data-tree-primary title={`Preview ${target.path} · ${openInSideLabel(navigator.userAgent)}`} onClick={(event) => {
       if (event.altKey) onOpenFile(target, placementFromModifiers(event))
       else onSelect(target)
-    }} onDoubleClick={(event) => onOpenFile(target, placementFromModifiers(event))}><span aria-hidden="true">◇</span>{entry.name}</button>
-    <button type="button" className="folder-row-action" title={`Open ${entry.name} as a dock tab · ${openInSideLabel(navigator.userAgent)}`} aria-label={`Open ${entry.name} as a tab`} onClick={(event) => onOpenFile(target, placementFromModifiers(event))}>Open tab</button>
-  </div>
+    }} onDoubleClick={(event) => onOpenFile(target, placementFromModifiers(event))}>{entry.name}</button>}
+    trailing={<button type="button" className="folder-row-action" title={`Open ${entry.name} as a dock tab · ${openInSideLabel(navigator.userAgent)}`} aria-label={`Open ${entry.name} as a tab`} onClick={(event) => onOpenFile(target, placementFromModifiers(event))}>Open tab</button>} />
 }
 
 function BacklogBoard({ backlog, onOpenFile }: { backlog: BacklogRead, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void }) {
@@ -173,7 +205,7 @@ export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
     </header>
     {backlogFailure && <Banner source={backlogFailure.source} detail={backlogFailure.detail} />}
     <div className={`folder-workspace${treeHidden ? ' tree-hidden' : ''}`}>
-      {!treeHidden && <aside className="folder-tree" aria-label="Folder tree"><DirectoryTree root={target.root} path={target.path} depth={0} currentDir={currentDir} onDirectory={chooseDirectory} onSelect={chooseFile} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} /></aside>}
+      {!treeHidden && <aside className="folder-tree panel-tree" role="tree" aria-label="Folder tree" onKeyDown={handleTreeKeyDown}><DirectoryTree root={target.root} path={target.path} depth={0} currentDir={currentDir} selectedFile={selected} onDirectory={chooseDirectory} onSelect={chooseFile} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} /></aside>}
       <section className="folder-detail">
         {showBoard && backlog.data && boardAvailable(backlog.data) ? <>
           <div className="backlog-facts"><span>Fetched {new Date(backlog.data.fetched_at).toLocaleString()}</span><span>{backlog.data.tasks.length} parsed tasks</span></div>

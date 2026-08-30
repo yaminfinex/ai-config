@@ -7,6 +7,7 @@ import type { SidebarNode } from './sidebarNodes'
 import type { Board, Pane } from '../../types'
 import { unattributedTerminalWarning } from '../screen/screenPresentation'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { TreeRow, TreeState } from '../../shared/TreeRow'
 
 const emptyExpandedItems: string[] = []
 
@@ -82,47 +83,49 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
 
   return <aside className="fleet-sidebar" aria-label="Fleet sidebar">
     <div className="sidebar-heading"><span className="status-dot listening" /><strong>Fleet</strong><span>herdr truth</span></div>
-    {!board ? <p className="sidebar-loading">Waiting for fleet…</p> : <div {...tree.getContainerProps('Workspaces and agents')} className="fleet-tree">
+    {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps('Workspaces and agents')} className="fleet-tree panel-tree">
       {tree.getItems().map((item) => {
         const node = item.getItemData()
         const pane = node.pane
         const signal = pane && pane.agent !== '-' && pane.bus_status !== '-' ? pane.bus_status : ''
         const folder = item.isFolder()
-        return <div
-          {...item.getProps()}
+        const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
+          : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
+            : <span>▰</span>
+        return <TreeRow
           key={item.getId()}
-          className={`tree-row ${node.kind === 'pane' || node.kind === 'subagent' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${item.isFocused() ? ' tree-focused' : ''}${item.isSelected() ? ' selected' : ''}`}
-          style={{ paddingLeft: `${item.getItemMeta().level * 16 + 5}px` }}
+          itemProps={{
+            ...item.getProps(),
+            onFocus: () => item.setFocused(),
+            onClickCapture: (event) => {
+              if (!event.altKey || (event.target as Element).closest('.tree-disclosure')) return
+              event.preventDefault()
+              event.stopPropagation()
+              const placement = placementFromModifiers(event)
+              if (pane?.agent && pane.agent !== '-') onPreviewAgent(pane.agent, placement)
+              else if (node.kind === 'pane' && pane?.agent === '-') onPreviewPane(pane as Pane, placement)
+            },
+            onDoubleClick: (event) => {
+              const placement = placementFromModifiers(event)
+              if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent, placement)
+              else if (node.kind === 'pane' && pane?.agent === '-') onPinPane(pane as Pane, placement)
+            },
+          }}
+          depth={item.getItemMeta().level}
+          name={node.name}
+          expandable={folder}
+          expanded={item.isExpanded()}
+          selected={item.isSelected()}
+          focused={item.isFocused()}
+          className={`${node.kind === 'pane' || node.kind === 'subagent' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}`}
+          icon={icon}
+          label={<span className="tree-label">{node.name}</span>}
+          trailing={<>{folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
+            {signal && <span className="bus-status">{signal}</span>}
+            {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
           title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''} · ${sideHint}` : node.name}
-          onFocus={() => item.setFocused()}
-          onClickCapture={(event) => {
-            if (!event.altKey || (event.target as Element).closest('.disclosure')) return
-            event.preventDefault()
-            event.stopPropagation()
-            const placement = placementFromModifiers(event)
-            if (pane?.agent && pane.agent !== '-') onPreviewAgent(pane.agent, placement)
-            else if (node.kind === 'pane' && pane?.agent === '-') onPreviewPane(pane as Pane, placement)
-          }}
-          onDoubleClick={(event) => {
-            const placement = placementFromModifiers(event)
-            if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent, placement)
-            else if (node.kind === 'pane' && pane?.agent === '-') onPinPane(pane as Pane, placement)
-          }}
-        >
-          {folder ? <button
-            className={`disclosure${item.isExpanded() ? ' expanded' : ''}`}
-            type="button"
-            aria-label={`${item.isExpanded() ? 'Collapse' : 'Expand'} ${node.name}`}
-            title={`${item.isExpanded() ? 'Collapse' : 'Expand'} ${node.name}`}
-            onClick={(event) => { event.stopPropagation(); if (item.isExpanded()) item.collapse(); else item.expand() }}
-          ><span aria-hidden="true">›</span></button> : <span className="disclosure-spacer" />}
-          {pane?.agent && pane.agent !== '-' && <AgentStatusDot status={pane.bus_status} />}
-          {pane?.agent === '-' && <span className="terminal-glyph" aria-hidden="true">›_</span>}
-          <span className="tree-name">{node.name}</span>
-          {folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
-          {signal && <span className="bus-status">{signal}</span>}
-          {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}
-        </div>
+          onToggle={() => { if (item.isExpanded()) item.collapse(); else item.expand() }}
+        />
       })}
     </div>}
   </aside>
