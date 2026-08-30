@@ -284,6 +284,9 @@ h2, h3, p { margin-top: 0; }
 .history-actions { display: flex; grid-column: 2; grid-row: 1 / 3; align-items: center; gap: 6px; }
 .history-actions button, .history-more { font: 9px var(--mono); }
 .history-more { align-self: center; margin: 8px; }
+.history-more-state { padding: 7px 10px; color: var(--dimmer); text-align: center; }
+.history-more-state[role="alert"] { border: 1px solid var(--error-border); border-radius: 5px; background: var(--error-bg); color: var(--error-text); }
+.history-more-state button { margin-top: 7px; }
 .file-state { margin: 12px; padding: 15px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg2); color: var(--dim); }
 .file-state strong { color: var(--text); }
 .file-state p { margin: 6px 0 0; }

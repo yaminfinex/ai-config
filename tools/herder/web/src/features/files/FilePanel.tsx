@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useQuery, type UseQueryResult } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { getFile, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
 import type { FileTarget, FolderTarget, GitDiffRead, GitLogEntry, GitLogRead } from '../../types'
 import { Banner } from '../../shared/presentation'
@@ -13,6 +13,7 @@ import { selectGitFileMode, selectHistoricalDiff, selectHistoricalFile, selected
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useFileWatch } from '../../stream/fileWatchRegistry'
 import { failureBanner, PanelState, useActivationRefetch } from '../../shared/PanelState'
+import { historyPagingState } from './historyPaging'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -59,9 +60,11 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     staleTime: gitState.commit ? Infinity : 0,
     retry: false,
   })
-  const historyQuery = useQuery({
+  const historyQuery = useInfiniteQuery({
     queryKey: queryKeys.gitLog(target.root, target.path),
-    queryFn: ({ signal }) => getGitLog(target.root, target.path, undefined, fetch, signal),
+    queryFn: ({ pageParam, signal }) => getGitLog(target.root, target.path, pageParam ?? undefined, fetch, signal),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
     enabled: gitState.mode === 'history' && gitAvailable,
     retry: false,
   })
@@ -147,7 +150,9 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     </>}
     {gitState.mode !== 'current' && !gitAvailable && <PanelState className="file-state" title="Git unavailable" detail={gitReason || 'This root cannot currently provide Git facts.'} />}
     {gitState.mode === 'diff' && gitAvailable && <DiffView query={diffQuery} base={effectiveBase} commit={gitState.commit?.sha} branchAvailable={branchAvailable} onBase={(base) => onGitState({ mode: 'diff', base })} />}
-    {gitState.mode === 'history' && gitAvailable && <HistoryView page={historyQuery.data} pending={historyQuery.isPending} error={historyQuery.error}
+    {gitState.mode === 'history' && gitAvailable && <HistoryView pages={historyQuery.data?.pages} pending={historyQuery.isPending}
+      initialError={historyQuery.data ? null : historyQuery.error} olderError={historyQuery.isFetchNextPageError ? historyQuery.error : null}
+      loadingOlder={historyQuery.isFetchingNextPage} onLoadOlder={() => { void historyQuery.fetchNextPage() }}
       onFile={(entry) => onGitState(selectHistoricalFile(gitState, { sha: entry.sha, path: entry.path_then }))}
       onDiff={(entry) => onGitState(selectHistoricalDiff(gitState, { sha: entry.sha, path: entry.path_then }))} />}
   </main>
@@ -179,25 +184,34 @@ function DiffView({ query, base, commit, branchAvailable, onBase }: {
   </section>
 }
 
-function HistoryView({ page, pending, error, onFile, onDiff }: {
-  page?: GitLogRead
+function HistoryView({ pages, pending, initialError, olderError, loadingOlder, onLoadOlder, onFile, onDiff }: {
+  pages?: GitLogRead[]
   pending: boolean
-  error: Error | null
+  initialError: Error | null
+  olderError: Error | null
+  loadingOlder: boolean
+  onLoadOlder: () => void
   onFile: (entry: GitLogEntry) => void
   onDiff: (entry: GitLogEntry) => void
 }) {
-  const entries = page?.entries ?? []
-  const failure = error ? failureBanner('git log', error) : null
+  const history = historyPagingState(pages)
+  const failure = initialError ? failureBanner('git log', initialError) : null
   return <section className="git-mode-body" aria-label="File history">
     {pending && <PanelState as="div" className="file-state">Reading file history…</PanelState>}
     {failure && <Banner source={failure.source} detail={failure.detail} />}
-    {!pending && !failure && entries.length === 0 && <PanelState as="div" className="file-state" title="No history" detail="Git has no commits for this path." />}
-    {entries.length > 0 && <div className="history-list" role="list">{entries.map((entry) => <article className="history-row" role="listitem" key={entry.sha}>
+    {!pending && !failure && history.entries.length === 0 && <PanelState as="div" className="file-state" title="No history" detail="Git has no commits for this path." />}
+    {history.entries.length > 0 && <div className="history-list" role="list">{history.entries.map((entry) => <article className="history-row" role="listitem" key={entry.sha}>
       <div className="history-subject"><strong>{entry.subject}</strong><span>{entry.sha.slice(0, 12)}</span></div>
       <div className="history-meta"><span>{entry.author}</span><time dateTime={entry.date}>{new Date(entry.date).toLocaleString()}</time><span title={entry.path_then}>{entry.path_then}</span></div>
       <div className="history-actions"><button type="button" onClick={() => onFile(entry)}>View file at commit</button><button type="button" onClick={() => onDiff(entry)}>What this commit changed</button></div>
     </article>)}</div>}
-    {page?.next_cursor && <p className="history-more" role="note">Showing the 50 most recent commits; older history is not yet available.</p>}
+    {history.entries.length > 0 && history.end === 'more' && !loadingOlder && !olderError && <button type="button" className="history-more" onClick={onLoadOlder}>Load 50 older commits</button>}
+    {loadingOlder && <PanelState as="div" className="history-more history-more-state">Loading older commits…</PanelState>}
+    {olderError && <PanelState as="div" className="history-more history-more-state" role="alert" title="Older commits could not be loaded" detail={olderError.message}>
+      <button type="button" onClick={onLoadOlder}>Try again</button>
+    </PanelState>}
+    {history.entries.length > 0 && history.end === 'beginning' && <PanelState as="div" className="history-more history-more-state" detail="Beginning of file history." />}
+    {history.end === 'truncated' && <PanelState as="div" className="history-more history-more-state" detail="Showing the first 1,000 commits. Older history exists but is not available." />}
   </section>
 }
 

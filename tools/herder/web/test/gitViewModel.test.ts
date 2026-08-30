@@ -44,8 +44,17 @@ test('change summaries use proved merge-base counts and never upstream ahead', (
   assert.equal(repoChangeSummary(undefined, 4), '4 uncommitted files')
 })
 
-test('History stops honestly at the first follow page until deep pagination is fixed', () => {
+test('History exposes anchored deep pagination without touching transcript follow-scroll', () => {
   const panel = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')
-  assert.match(panel, /Showing the 50 most recent commits; older history is not yet available\./)
-  assert.doesNotMatch(panel, /fetchNextPage|Load older commits/)
+  const followScroll = readFileSync(new URL('../src/shared/followScroll.ts', import.meta.url), 'utf8')
+  const fleetStream = readFileSync(new URL('../src/stream/useFleetStream.ts', import.meta.url), 'utf8')
+  const composerState = readFileSync(new URL('../src/composerState.ts', import.meta.url), 'utf8')
+  assert.match(panel, /fetchNextPage/)
+  assert.match(panel, /Load 50 older commits/)
+  assert.match(panel, /Beginning of file history\./)
+  assert.match(panel, /Showing the first 1,000 commits\. Older history exists but is not available\./)
+  assert.doesNotMatch(panel, /Showing the 50 most recent commits; older history is not yet available\./)
+  assert.match(followScroll, /export function restoreFollowScroll/)
+  assert.match(fleetStream, /events\.addEventListener\('rewindow'/)
+  assert.match(composerState, /export function persistComposerDraft/)
 })
