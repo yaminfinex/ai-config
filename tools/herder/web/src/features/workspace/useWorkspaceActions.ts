@@ -45,6 +45,8 @@ type WorkspaceActionOptions = {
   syncDock: () => void
   setFileGitState: (id: string, update: PanelRecordUpdate<GitFileState>) => void
   resetPersistedLayout: () => void
+  withHistorySuppressed: <T>(operation: () => T) => T
+  onActivePanelParamsChanged: (params: DockPanelParams) => void
 }
 
 export function useWorkspaceActions({
@@ -56,6 +58,8 @@ export function useWorkspaceActions({
   syncDock,
   setFileGitState,
   resetPersistedLayout,
+  withHistorySuppressed,
+  onActivePanelParamsChanged,
 }: WorkspaceActionOptions) {
   const composerFocusCancel = useRef<() => void>(() => undefined)
   const boardRef = useRef(board)
@@ -81,7 +85,9 @@ export function useWorkspaceActions({
     const target = dockOpenTarget(api.getPanel(id), placement, dockGroupFacts(api))
     if (target.kind === 'existing') {
       const current = panelParams(target.panel.params)
-      target.panel.api.updateParameters(current ? mergePanelParams(current, params) : params)
+      const merged = current ? mergePanelParams(current, params) : params
+      target.panel.api.updateParameters(merged)
+      if (api.activePanel?.id === id) onActivePanelParamsChanged(merged)
       target.panel.api.setActive()
       invalidatePanel(queryClient, params)
       syncDock()
@@ -105,13 +111,13 @@ export function useWorkspaceActions({
       params,
       ...(newTarget.position ? { position: newTarget.position } : {}),
     })
-    if (replaced) api.removePanel(replaced)
+    if (replaced) withHistorySuppressed(() => api.removePanel(replaced))
     invalidatePanel(queryClient, params)
     if (panelUsesQuickOpenGroup(params)) setQuickOpenGroup(undefined)
     syncDock()
     if (focus) focusComposer()
     return 'new' as const
-  }, [apiRef, focusComposer, queryClient, setQuickOpenGroup, syncDock])
+  }, [apiRef, focusComposer, onActivePanelParamsChanged, queryClient, setQuickOpenGroup, syncDock, withHistorySuppressed])
 
   const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement, focus = false) => {
     openPanel({ kind: 'agent', name, preview }, placement, focus)
@@ -150,25 +156,34 @@ export function useWorkspaceActions({
     const api = apiRef.current
     const current = api ? panelFromAPI(api, id) : null
     if (!current?.params.preview) return
-    current.panel.api.updateParameters({ ...current.params, preview: false })
+    const next = { ...current.params, preview: false } as DockPanelParams
+    current.panel.api.updateParameters(next)
+    if (api?.activePanel?.id === id) onActivePanelParamsChanged(next)
     syncDock()
-  }, [apiRef, syncDock])
+  }, [apiRef, onActivePanelParamsChanged, syncDock])
 
   const setFileViewMode = useCallback((id: string, viewMode: FileViewMode) => {
     const api = apiRef.current
     const current = api ? panelFromAPI(api, id) : null
     if (current?.params.kind !== 'file' || current.params.viewMode === viewMode) return
-    current.panel.api.updateParameters({ ...current.params, viewMode })
+    const next = { ...current.params, viewMode }
+    current.panel.api.updateParameters(next)
+    if (api?.activePanel?.id === id) onActivePanelParamsChanged(next)
     syncDock()
-  }, [apiRef, syncDock])
+  }, [apiRef, onActivePanelParamsChanged, syncDock])
+
+  const closePanel = useCallback((id: string) => {
+    const panel = apiRef.current?.getPanel(id)
+    if (panel) withHistorySuppressed(() => panel.api.close())
+  }, [apiRef, withHistorySuppressed])
 
   const resetLayout = useCallback(() => {
     const api = apiRef.current
     if (!api) return
-    api.clear()
+    withHistorySuppressed(() => api.clear())
     resetPersistedLayout()
     syncDock()
-  }, [apiRef, resetPersistedLayout, syncDock])
+  }, [apiRef, resetPersistedLayout, syncDock, withHistorySuppressed])
 
-  return { openPanel, openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, pinPanel, setFileViewMode, resetLayout }
+  return { openPanel, openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, resetLayout }
 }

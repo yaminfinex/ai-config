@@ -8,11 +8,13 @@ export function useWorkspaceShortcuts({
   shortcutReference,
   setShortcutReference,
   showQuickOpen,
+  closePanel,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   shortcutReference: boolean
   setShortcutReference: (open: boolean) => void
   showQuickOpen: () => void
+  closePanel: (id: string) => void
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
@@ -34,7 +36,7 @@ export function useWorkspaceShortcuts({
       closePanel: () => {
         const panel = apiRef.current?.activePanel
         if (!panel) return false
-        panel.api.close()
+        closePanel(panel.id)
         return true
       },
       openShortcutReference: () => setShortcutReference(true),
@@ -66,5 +68,5 @@ export function useWorkspaceShortcuts({
         return true
       },
     }, navigator.userAgent)
-  }, [apiRef, setShortcutReference, shortcutReference, showQuickOpen])
+  }, [apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen])
 }
