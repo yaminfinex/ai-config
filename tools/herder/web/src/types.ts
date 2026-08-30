@@ -226,6 +226,7 @@ export interface GitLogRead {
   path: string
   entries: GitLogEntry[]
   next_cursor?: string
+  history_truncated?: boolean
   fetched_at: string
 }
 
