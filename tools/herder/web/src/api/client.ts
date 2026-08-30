@@ -2,6 +2,7 @@ import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTr
 import type { GitBase } from '../features/git/gitViewModel'
 
 export type Fetcher = typeof fetch
+export type ResolveContext = string | { root: string, path: string }
 
 export const queryKeys = {
   fleet: ['fleet'] as const,
@@ -11,7 +12,9 @@ export const queryKeys = {
   stream: ['stream'] as const,
   screen: (paneID: string) => ['screen', paneID] as const,
   paneHistory: (paneID: string) => ['pane-history', paneID] as const,
-  resolve: (query: string, agent?: string) => ['resolve', query, agent ?? ''] as const,
+  resolve: (query: string, context?: ResolveContext) => typeof context === 'object'
+    ? ['resolve', query, 'file', context.root, context.path] as const
+    : ['resolve', query, context ?? ''] as const,
   file: (root: string, path: string) => ['file', root, path] as const,
   fileTree: (root: string, path: string) => ['file-tree', root, path] as const,
   backlog: (root: string, path: string) => ['backlog', root, path] as const,
@@ -89,9 +92,14 @@ export function getEntries(name: string, options: { from?: number, limit: number
   return requestJSON<EntriesPage>(`/api/agents/${encodeURIComponent(name)}/entries?${query}`, undefined, fetcher)
 }
 
-export function resolveFiles(queryText: string, agent?: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+export function resolveFiles(queryText: string, context?: ResolveContext, fetcher: Fetcher = fetch, signal?: AbortSignal) {
   const query = new URLSearchParams({ q: queryText })
-  if (agent) query.set('agent', agent)
+  if (typeof context === 'string') {
+    if (context) query.set('agent', context)
+  } else if (context) {
+    query.set('root', context.root)
+    query.set('path', context.path)
+  }
   return requestJSON<ResolveResponse>(`/api/resolve?${query}`, { signal }, fetcher)
 }
 

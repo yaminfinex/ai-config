@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +26,7 @@ import (
 	"ai-config/tools/herder/internal/repoctx"
 )
 
-func TestResolveEndpointUsesLiveAgentThenConfiguredRootPreference(t *testing.T) {
+func TestResolveEndpointKeepsLegacyAgentAndContextFreeRankingBytes(t *testing.T) {
 	agentRoot := newFileAPIGitRepo(t)
 	configuredRoot := newFileAPIGitRepo(t)
 	for _, root := range []string{agentRoot, configuredRoot} {
@@ -53,11 +55,79 @@ func TestResolveEndpointUsesLiveAgentThenConfiguredRootPreference(t *testing.T) 
 	if len(body.Roots) != 2 || body.Roots[0].Status != fileresolver.RootComplete || body.Roots[1].Status != fileresolver.RootComplete {
 		t.Fatalf("roots = %#v", body.Roots)
 	}
+	agentRanking, err := json.Marshal([]string{body.Candidates[0].Root, body.Candidates[1].Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAgentRanking := fmt.Sprintf(`[%q,%q]`, agentRoot, configuredRoot)
+	if string(agentRanking) != wantAgentRanking {
+		t.Fatalf("agent ranking bytes=%s want %s", agentRanking, wantAgentRanking)
+	}
+
+	response = httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q=README.md", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("context-free resolve = %d %s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	contextFreeRanking, err := json.Marshal([]string{body.Candidates[0].Root, body.Candidates[1].Root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantContextFreeRanking := fmt.Sprintf(`[%q,%q]`, configuredRoot, agentRoot)
+	if string(contextFreeRanking) != wantContextFreeRanking {
+		t.Fatalf("context-free ranking bytes=%s want %s", contextFreeRanking, wantContextFreeRanking)
+	}
 
 	response = httptest.NewRecorder()
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q=README.md&agent=missing", nil))
 	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown agent"`) {
 		t.Fatalf("unknown agent = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestResolveEndpointAnchorsToViewedFileDirectoryAndAncestors(t *testing.T) {
+	root := newFileAPIGitRepo(t)
+	for _, path := range []string{
+		"elsewhere/target.md",
+		"target.md",
+		"docs/target.md",
+		"docs/guides/target.md",
+		"docs/guides/deep/target.md",
+		"docs/guides/deep/topic.md",
+	} {
+		writeFileAPIFixture(t, root, path, "fixture\n")
+	}
+	fileAPIGit(t, root, "add", ".")
+	fileAPIGit(t, root, "commit", "-m", "anchor fixture")
+	deps := fileAPIDeps(t, []string{root}, nil)
+	requestURL := "/api/resolve?" + url.Values{
+		"q": {"target.md"}, "root": {root}, "path": {"docs/guides/deep/topic.md"},
+	}.Encode()
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, requestURL, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("resolve = %d %s", response.Code, response.Body.String())
+	}
+	var body resolveResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"docs/guides/deep/target.md",
+		"docs/guides/target.md",
+		"docs/target.md",
+		"target.md",
+		"elsewhere/target.md",
+	}
+	got := make([]string, len(body.Candidates))
+	for index, candidate := range body.Candidates {
+		got[index] = candidate.Path
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths=%#v want %#v", got, want)
 	}
 }
 
@@ -192,6 +262,14 @@ func TestFileEndpointsRejectMissingDuplicateAndWrongMethodParameters(t *testing.
 	tests := []string{
 		"/api/resolve",
 		"/api/resolve?q=a&q=b",
+		"/api/resolve?q=a&root=" + url.QueryEscape(root),
+		"/api/resolve?q=a&path=docs%2Freadme.md",
+		"/api/resolve?q=a&root=&path=docs%2Freadme.md",
+		"/api/resolve?q=a&agent=dore&root=" + url.QueryEscape(root) + "&path=docs%2Freadme.md",
+		"/api/resolve?q=a&agent=&root=" + url.QueryEscape(root) + "&path=docs%2Freadme.md",
+		"/api/resolve?q=a&root=" + url.QueryEscape(root) + "&root=" + url.QueryEscape(root) + "&path=docs%2Freadme.md",
+		"/api/resolve?q=a&root=" + url.QueryEscape(root) + "&path=%2Fabsolute.md",
+		"/api/resolve?q=a&root=" + url.QueryEscape(root) + "&path=..%2Fescape.md",
 		"/api/files?root=" + url.QueryEscape(root),
 		"/api/files/tree?root=" + url.QueryEscape(root) + "&root=" + url.QueryEscape(root),
 	}
@@ -201,6 +279,16 @@ func TestFileEndpointsRejectMissingDuplicateAndWrongMethodParameters(t *testing.
 		if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"error":"bad request"`) {
 			t.Errorf("%s = %d %s", path, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestResolveEndpointRejectsUnknownFileContextRoot(t *testing.T) {
+	root := newFileAPIGitRepo(t)
+	deps := fileAPIDeps(t, []string{root}, nil)
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q=a&root=%2Funknown&path=docs%2Freadme.md", nil))
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown root"`) {
+		t.Fatalf("unknown root = %d %s", response.Code, response.Body.String())
 	}
 }
 

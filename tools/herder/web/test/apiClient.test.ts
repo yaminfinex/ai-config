@@ -28,12 +28,14 @@ test('file reads encode opaque roots, paths, queries, and optional agent context
     return jsonResponse({})
   }) as typeof fetch
   await resolveFiles('src/App.tsx:14', 'agent one', fetcher)
+  await resolveFiles('../README.md', { root: '/repo with space', path: 'docs/guide.md' }, fetcher)
   await resolveFiles('README.md', undefined, fetcher)
   await getFile('/repo with space', 'src/App.tsx', fetcher)
   await getFileTree('/repo with space', 'src/components', fetcher)
   await getBacklog('/repo with space', 'backlog', fetcher)
   assert.deepEqual(calls, [
     '/api/resolve?q=src%2FApp.tsx%3A14&agent=agent+one',
+    '/api/resolve?q=..%2FREADME.md&root=%2Frepo+with+space&path=docs%2Fguide.md',
     '/api/resolve?q=README.md',
     '/api/files?root=%2Frepo+with+space&path=src%2FApp.tsx',
     '/api/files/tree?root=%2Frepo+with+space&path=src%2Fcomponents',

@@ -69,12 +69,20 @@ type Resolution struct {
 	Roots   []RootOutcome `json:"roots"`
 }
 
+// Anchor identifies the file whose containing directory gives relative
+// mentions their meaning. Path is relative to Root.
+type Anchor struct {
+	Root string
+	Path string
+}
+
 // Request describes one lookup. Roots is the complete candidate universe;
 // RootPreference is an optional ordered ranking boost over that universe.
 type Request struct {
 	Query          string
 	Roots          []string
 	RootPreference []string
+	Anchor         *Anchor
 	Refresh        bool
 }
 
@@ -124,11 +132,17 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 	roots := uniqueRoots(request.Roots)
 	rootRanks := rankRoots(roots, request.RootPreference)
 	pattern := []rune(strings.ToLower(query))
+	anchorPaths, strictAnchor := anchoredPaths(query, request.Anchor)
+	globalBand := len(anchorPaths)
 	// Absolute-path scoping follows the host path syntax. In particular,
 	// Windows-style backslashes are intentionally not interpreted on Unix.
 	absoluteQuery := filepath.IsAbs(query)
 	slab := util.MakeSlab(matchSlab16Size, matchSlab32Size)
-	results := make([]Result, 0)
+	type rankedResult struct {
+		result     Result
+		anchorBand int
+	}
+	ranked := make([]rankedResult, 0)
 	outcomes := make([]RootOutcome, 0, len(roots))
 	for _, root := range roots {
 		paths, err := r.source.Candidates(ctx, root, request.Refresh)
@@ -160,29 +174,99 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 			rootPattern = []rune(strings.ToLower(remainder))
 		}
 		for _, candidate := range paths {
+			if request.Anchor != nil && root == request.Anchor.Root {
+				anchored := false
+				for band, anchoredPath := range anchorPaths {
+					if candidate.Path != anchoredPath {
+						continue
+					}
+					tier, score, ok := match(candidate.Path, []rune(strings.ToLower(anchoredPath)), slab)
+					if ok {
+						ranked = append(ranked, rankedResult{
+							result:     Result{Root: root, Path: candidate.Path, Kind: candidate.Kind, Tier: tier, Score: score},
+							anchorBand: band,
+						})
+					}
+					anchored = true
+					break
+				}
+				if anchored {
+					continue
+				}
+			}
+			if strictAnchor {
+				continue
+			}
 			tier, score, ok := match(candidate.Path, rootPattern, slab)
 			if ok {
-				results = append(results, Result{Root: root, Path: candidate.Path, Kind: candidate.Kind, Tier: tier, Score: score})
+				ranked = append(ranked, rankedResult{
+					result:     Result{Root: root, Path: candidate.Path, Kind: candidate.Kind, Tier: tier, Score: score},
+					anchorBand: globalBand,
+				})
 			}
 		}
 	}
 
-	sort.SliceStable(results, func(left, right int) bool {
-		a, b := results[left], results[right]
-		aBand, bBand := tierBand(a.Tier), tierBand(b.Tier)
-		if aBand != bBand {
-			return aBand < bBand
+	sort.SliceStable(ranked, func(left, right int) bool {
+		a, b := ranked[left], ranked[right]
+		if a.anchorBand != b.anchorBand {
+			return a.anchorBand < b.anchorBand
 		}
-		if rootRanks[a.Root] != rootRanks[b.Root] {
-			return rootRanks[a.Root] < rootRanks[b.Root]
-		}
-		aScore, bScore := rankedScore(a), rankedScore(b)
-		if aScore != bScore {
-			return aScore > bScore
-		}
-		return false
+		return lessResult(a.result, b.result, rootRanks)
 	})
+	results := make([]Result, len(ranked))
+	for index, result := range ranked {
+		results[index] = result.result
+	}
 	return Resolution{Results: results, Roots: outcomes}, nil
+}
+
+func lessResult(a, b Result, rootRanks map[string]int) bool {
+	aBand, bBand := tierBand(a.Tier), tierBand(b.Tier)
+	if aBand != bBand {
+		return aBand < bBand
+	}
+	if rootRanks[a.Root] != rootRanks[b.Root] {
+		return rootRanks[a.Root] < rootRanks[b.Root]
+	}
+	aScore, bScore := rankedScore(a), rankedScore(b)
+	if aScore != bScore {
+		return aScore > bScore
+	}
+	return false
+}
+
+func anchoredPaths(query string, anchor *Anchor) ([]string, bool) {
+	if anchor == nil || filepath.IsAbs(query) {
+		return nil, false
+	}
+	filePath := filepath.Clean(anchor.Path)
+	directory := filepath.Dir(filePath)
+	explicit := strings.HasPrefix(query, "."+string(filepath.Separator)) || strings.HasPrefix(query, ".."+string(filepath.Separator))
+	if explicit {
+		candidate := filepath.Clean(filepath.Join(directory, query))
+		if escapesRelativeRoot(candidate) {
+			return nil, true
+		}
+		return []string{candidate}, true
+	}
+
+	paths := make([]string, 0)
+	for {
+		candidate := filepath.Clean(filepath.Join(directory, query))
+		if !escapesRelativeRoot(candidate) {
+			paths = append(paths, candidate)
+		}
+		if directory == "." {
+			break
+		}
+		directory = filepath.Dir(directory)
+	}
+	return paths, false
+}
+
+func escapesRelativeRoot(path string) bool {
+	return path == ".." || filepath.IsAbs(path) || strings.HasPrefix(path, ".."+string(filepath.Separator))
 }
 
 func rankedScore(result Result) int {
