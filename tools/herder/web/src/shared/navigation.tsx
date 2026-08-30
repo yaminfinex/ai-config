@@ -1,3 +1,5 @@
+import { routeFromLocation, type Route } from '../features/layout/historyModel'
+
 export function navigate(path: string) {
   window.history.pushState({}, '', path)
   window.dispatchEvent(new PopStateEvent('popstate'))
@@ -11,16 +13,8 @@ export function AppLink({ to, className, children }: { to: string, className?: s
   }}>{children}</a>
 }
 
-export type Route = { page: 'shell' } | { page: 'agent', name: string } | { page: 'missing' }
-
 export function currentRoute(): Route {
-  const match = window.location.pathname.match(/^\/agents\/([^/]+)\/?$/)
-  if (match) {
-    try {
-      return { page: 'agent', name: decodeURIComponent(match[1]) }
-    } catch {
-      return { page: 'missing' }
-    }
-  }
-  return window.location.pathname === '/' ? { page: 'shell' } : { page: 'missing' }
+  return routeFromLocation(window.location.pathname, window.location.search)
 }
+
+export type { Route }

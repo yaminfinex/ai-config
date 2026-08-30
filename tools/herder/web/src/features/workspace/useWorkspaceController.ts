@@ -3,17 +3,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DockviewApi, DockviewReadyEvent } from 'dockview-react'
 import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from '../../api/client'
 import { viewerQueryOptions } from '../../api/queries'
-import { agentTabID } from '../../previewTabs'
 import { agentBusStatus } from '../../shared/agentStatus'
 import { agentMentionMatcher } from '../../shared/agentMentions'
 import { subscribeDOMEvent, useDOMEvent } from '../../shared/lifecycle'
-import { currentRoute, type Route } from '../../shared/navigation'
+import { type Route } from '../../shared/navigation'
 import { createFileWatchRegistry, type FileWatchTarget } from '../../stream/fileWatchRegistry'
 import { useFleetStream } from '../../stream/useFleetStream'
 import { quickOpenAgentPreference } from '../files/fileResolution'
 import type { GitFileState } from '../git/gitViewModel'
 import { clampSidebarWidth, useLayoutPersistence } from '../layout/useLayoutPersistence'
-import { layoutRouteState, shouldReplayInitialRoute } from '../layout/routeReplay'
+import {
+  createHistorySuppressor,
+  decideHistoryUpdate,
+  routeFromHistory,
+  shouldReplayInitialRoute,
+  type HistoryCause,
+} from '../layout/historyModel'
 import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import { panelID } from './panelRegistry'
 import { panelFromAPI, useWorkspaceActions } from './useWorkspaceActions'
@@ -21,18 +26,6 @@ import { usePanelRecords } from './usePanelRecords'
 import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
-
-function setPathForPanel(params: DockPanelParams | undefined, push = true) {
-  if (!push) return
-  if (params?.kind === 'agent') {
-    const path = `/agents/${encodeURIComponent(params.name)}`
-    if (window.location.pathname !== path) {
-      window.history.pushState(layoutRouteState, '', path)
-      return
-    }
-  }
-  window.history.replaceState(layoutRouteState, '', `${window.location.pathname}${window.location.search}${window.location.hash}`)
-}
 
 function sameGitFileState(left: GitFileState, right: GitFileState) {
   return left.mode === right.mode && left.base === right.base &&
@@ -51,6 +44,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [fileWatchTargets, setFileWatchTargets] = useState<FileWatchTarget[]>([])
   const [activePanelID, setActivePanelID] = useState('')
   const [revision, setRevision] = useState(0)
+  const [historySuppressor] = useState(() => createHistorySuppressor(
+    (callback) => window.requestAnimationFrame(callback),
+    (handle) => window.cancelAnimationFrame(handle),
+  ))
   const apiRef = useRef<DockviewApi | undefined>(undefined)
   const disposeDock = useRef<() => void>(() => undefined)
   const queryClient = useQueryClient()
@@ -61,6 +58,16 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const layout = useLayoutPersistence(apiRef, revision)
 
   useEffect(() => () => fileWatchRegistry.dispose(), [fileWatchRegistry])
+  useEffect(() => () => historySuppressor.dispose(), [historySuppressor])
+
+  const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause) => {
+    const update = decideHistoryUpdate(window.history.state, params, cause, historySuppressor.active())
+    window.history[update.method === 'push' ? 'pushState' : 'replaceState'](update.entry.state, '', update.entry.path)
+  }, [historySuppressor])
+
+  const onActivePanelParamsChanged = useCallback((params: DockPanelParams) => {
+    updateHistory(params, 'merge')
+  }, [updateHistory])
 
   const syncDock = useCallback(() => {
     layout.markDirty()
@@ -77,16 +84,23 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     syncDock,
     setFileGitState: setFileGitStateRecord,
     resetPersistedLayout: layout.resetPersistedLayout,
+    withHistorySuppressed: historySuppressor.run,
+    onActivePanelParamsChanged,
   })
-  const { openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, pinPanel, setFileViewMode, resetLayout } = workspaceActions
+  const { openPanel, openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, resetLayout } = workspaceActions
 
-  const applyRoute = useCallback((route: Exclude<Route, { page: 'missing' }>, push = false) => {
-    if (route.page === 'shell') return
-    openAgent(route.name, true)
-    const api = apiRef.current
-    const current = api ? panelFromAPI(api, agentTabID(route.name)) : null
-    if (current) setPathForPanel(current.params, push)
-  }, [openAgent])
+  const applyRoute = useCallback((route: Exclude<Route, { page: 'missing' }>) => {
+    historySuppressor.run(() => {
+      if (route.page === 'shell') {
+        updateHistory(undefined, 'replay')
+        return
+      }
+      openPanel({ ...route.params, preview: true }, undefined, false)
+      const api = apiRef.current
+      const current = api ? panelFromAPI(api, panelID(route.params)) : null
+      updateHistory(current?.params, 'replay')
+    })
+  }, [historySuppressor, openPanel, updateHistory])
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     disposeDock.current()
@@ -94,27 +108,29 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     let restored = false
     let restoreFailed = false
     let restoredLegacy = false
-    if (layout.initial.stored?.dock) {
-      restored = restoreDockLayout(event.api, layout.initial.stored.dock)
-      restoreFailed = !restored
-    }
-    if (!restored && layout.initial.backup?.dock && layout.initial.backup !== layout.initial.stored) {
-      restored = restoreDockLayout(event.api, layout.initial.backup.dock)
-      restoreFailed = !restored
-      if (restored) layout.noteBackupRecovery()
-    }
-    if (!restored && layout.initial.legacy) {
-      layout.initial.legacy.openTabs.forEach((name) => openAgent(name, false))
-      const active = layout.initial.legacy.activeTab === 'board' ? event.api.panels[0] : event.api.getPanel(layout.initial.legacy.activeTab)
-      active?.api.setActive()
-      restoredLegacy = true
-    }
+    historySuppressor.run(() => {
+      if (layout.initial.stored?.dock) {
+        restored = restoreDockLayout(event.api, layout.initial.stored.dock)
+        restoreFailed = !restored
+      }
+      if (!restored && layout.initial.backup?.dock && layout.initial.backup !== layout.initial.stored) {
+        restored = restoreDockLayout(event.api, layout.initial.backup.dock)
+        restoreFailed = !restored
+        if (restored) layout.noteBackupRecovery()
+      }
+      if (!restored && layout.initial.legacy) {
+        layout.initial.legacy.openTabs.forEach((name) => openAgent(name, false))
+        const active = layout.initial.legacy.activeTab === 'board' ? event.api.panels[0] : event.api.getPanel(layout.initial.legacy.activeTab)
+        active?.api.setActive()
+        restoredLegacy = true
+      }
+    })
     const replayedRoute = shouldReplayInitialRoute(initialRoute, window.history.state, restored)
     if (replayedRoute) applyRoute(initialRoute)
     disposeDock.current = subscribeToDock(event.api, {
       layout: syncDock,
       activePanel: ({ panel }) => {
-        setPathForPanel(panelParams(panel?.params) ?? undefined)
+        updateHistory(panelParams(panel?.params) ?? undefined, 'activation')
         syncDock()
       },
       removePanel: (panel) => {
@@ -126,14 +142,15 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       },
       movePanel: ({ panel }) => { if (pinMovedPreview(panel)) syncDock() },
     })
+    updateHistory(panelParams(event.api.activePanel?.params) ?? undefined, 'stamp')
     layout.completeRestore((replayedRoute && !restoreFailed) || restoredLegacy)
     setActivePanelID(event.api.activePanel?.id ?? '')
     setRevision((value) => value + 1)
-  }, [applyRoute, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, syncDock])
+  }, [applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, syncDock, updateHistory])
 
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
-    const route = currentRoute()
+    const route = routeFromHistory(window.location.pathname, window.location.search, window.history.state)
     if (route.page !== 'missing') applyRoute(route)
   })
 
@@ -166,7 +183,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setQuickOpenGroup(groupID ?? apiRef.current?.activeGroup?.id)
     setQuickOpen(true)
   }, [])
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen })
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel })
 
   const startResize = (event: React.PointerEvent) => {
     const startX = event.clientX
@@ -186,10 +203,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const onViewer = useCallback((resolvedViewer: string) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer }), [queryClient])
 
   const actions = useMemo<WorkspaceActionsValue>(() => ({
-    openAgent, openFile, openFileInDiff, openChanges, openFolder, pinPanel, setFileViewMode, setFileGitState,
+    openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     setAgentScreenPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
     resetLayout, showQuickOpen,
-  }), [onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
+  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
     board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, agentScreenPanes, agentStatuses, stream, streamProblems,
   }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, mentionMatcher, stream, streamProblems, viewerReadOnly])

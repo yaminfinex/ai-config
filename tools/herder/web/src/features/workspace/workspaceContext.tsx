@@ -12,6 +12,7 @@ export type WorkspaceActionsValue = {
   openFileInDiff: (target: FileTarget, base: GitBase, placement?: OpenPlacement) => void
   openChanges: (root: string, placement?: OpenPlacement) => void
   openFolder: (target: FolderTarget, placement?: OpenPlacement) => void
+  closePanel: (id: string) => void
   pinPanel: (id: string) => void
   setFileViewMode: (id: string, mode: FileViewMode) => void
   setFileGitState: (id: string, state: GitFileState) => void
