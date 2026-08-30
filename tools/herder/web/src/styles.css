@@ -153,6 +153,8 @@ h2, h3, p { margin-top: 0; }
 .preview-dot { width: 7px; height: 7px; flex: 0 0 auto; border: 1px solid var(--accent); border-radius: 50%; }
 .dock-tab-meta { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; color: var(--dim); font-size: 9px; }
 .tool-badge { flex: 0 0 auto; padding: 0 3px; border: 1px solid var(--border2); border-radius: 3px; color: var(--dim); font: 600 8px var(--mono); letter-spacing: .5px; text-transform: uppercase; }
+.tool-badge.glyph { display: inline-flex; align-items: center; padding: 0; border: 0; }
+.tool-badge.glyph svg { display: block; }
 .dock-tab-close { width: 25px; height: 100%; margin-left: auto; padding: 0 7px 1px 0; border: 0; border-radius: 0; background: transparent; color: var(--dim); font-size: 15px; }
 .dock-tab-close:hover:not(:disabled) { background: var(--bg3); color: var(--text); }
 .dock-header-actions { display: flex; height: 32px; align-items: center; min-width: 0; }

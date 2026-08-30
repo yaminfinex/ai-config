@@ -2,8 +2,8 @@ import { useEffect, useState, type FunctionComponent } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import type { IDockviewPanelHeaderProps, IDockviewPanelProps } from 'dockview-react'
 import { queryKeys } from '../../api/client'
-import { AgentStatusDot } from '../../shared/presentation'
-import { agentBoardTool, agentBusStatus, agentToolBadge } from '../../shared/agentStatus'
+import { AgentStatusDot, ToolBadge } from '../../shared/presentation'
+import { agentBoardTool, agentBusStatus } from '../../shared/agentStatus'
 import { PanelState } from '../../shared/PanelState'
 import type { Board } from '../../types'
 import { AgentPanel } from '../transcript/AgentPanel'
@@ -130,13 +130,12 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
   const boardStatus = params.kind === 'agent' ? agentBusStatus(data.board, params.name) : '-'
   const status = params.kind === 'agent' && boardStatus === '-' ? data.agentStatuses[params.name] ?? '-' : boardStatus
   // Agent tabs stay terse: a status dot plus a tool badge, no status prose (owner ruling 2026-08-30).
-  const toolBadge = params.kind === 'agent' ? agentToolBadge(agentBoardTool(data.board, params.name)) : ''
   const meta = params.kind === 'agent' ? '' : presentation.meta
   return <div className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
     onDoubleClick={(event) => { if (params.preview) actions.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) actions.closePanel(api.id) }}>
     <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{presentation.icon}{presentation.title}</span>
-    {params.kind === 'agent' && <span className="dock-tab-meta"><AgentStatusDot status={status} />{toolBadge && <span className="tool-badge">{toolBadge}</span>}</span>}
+    {params.kind === 'agent' && <span className="dock-tab-meta"><AgentStatusDot status={status} /><ToolBadge tool={agentBoardTool(data.board, params.name)} /></span>}
     {params.kind !== 'agent' && meta && <span className="dock-tab-meta">{meta}</span>}
     <button type="button" className="dock-tab-close" aria-label={`Close ${presentation.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closePanel(api.id)}>×</button>
   </div>

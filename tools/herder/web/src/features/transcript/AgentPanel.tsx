@@ -2,8 +2,7 @@ import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getAgent, queryKeys } from '../../api/client'
 import { entriesQueryOptions } from '../../api/queries'
-import { Banner } from '../../shared/presentation'
-import { agentToolBadge } from '../../shared/agentStatus'
+import { Banner, ToolBadge } from '../../shared/presentation'
 import { transcriptNotice } from '../../shared/loadingPresentation'
 import { ScrollJumpButtons, useFollowScroll } from '../../shared/useFollowScroll'
 import { Composer } from '../composer/Composer'
@@ -69,7 +68,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
   return <main className="agent-page">
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
-      {agentToolBadge(agent?.tool) && <span className="tool-badge">{agentToolBadge(agent?.tool)}</span>}
+      <ToolBadge tool={agent?.tool} />
       <div className="agent-actions">
         <div className="detail-toggle agent-view-toggle" aria-label="Agent view">
           <button type="button" className={screenMode ? '' : 'active'} aria-pressed={!screenMode} onClick={() => onScreenPane(undefined)}>Transcript</button>
