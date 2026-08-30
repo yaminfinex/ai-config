@@ -1,9 +1,8 @@
 import type { DockviewApi, SerializedDockview } from 'dockview-react'
 import type { Board, Pane } from '../../types'
-import { fileTabID, type FileViewMode } from '../files/fileTabs.ts'
+import type { FileViewMode } from '../files/fileTabs.ts'
 import { agentTabID } from '../../previewTabs.ts'
-import { folderTabID } from '../folders/folderModel.ts'
-import { changesPanelID } from '../git/changesModel.ts'
+import { panelID, panelParams } from '../workspace/panelRegistryModel.ts'
 
 export const layoutStorageKey = 'herder.web.layout.v2'
 export const layoutStorageBackupKey = 'herder.web.layout.v2.last-good'
@@ -53,46 +52,7 @@ function strings(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
 }
 
-function validPane(value: unknown): value is Pane {
-  return record(value) && typeof value.pane_id === 'string' && typeof value.agent === 'string' &&
-    typeof value.tool === 'string' && typeof value.herdr_status === 'string' &&
-    typeof value.bus_status === 'string' && typeof value.gap === 'string'
-}
-
-function validIdentity(value: unknown): value is ScreenIdentity {
-  return record(value) && typeof value.paneID === 'string' && typeof value.workspaceID === 'string' &&
-    typeof value.tabID === 'string' && typeof value.agent === 'string' &&
-    (value.sessionID === undefined || typeof value.sessionID === 'string')
-}
-
-export function panelParams(value: unknown): DockPanelParams | null {
-  if (!record(value) || typeof value.kind !== 'string' || typeof value.preview !== 'boolean') return null
-  if (value.kind === 'agent') return typeof value.name === 'string' && value.name ? { kind: 'agent', name: value.name, preview: value.preview } : null
-  if (value.kind === 'screen') return validPane(value.pane) && validIdentity(value.identity)
-    ? { kind: 'screen', pane: value.pane, identity: value.identity, preview: value.preview }
-    : null
-  if (value.kind === 'folder') return typeof value.root === 'string' && Boolean(value.root) && typeof value.path === 'string'
-    ? { kind: 'folder', root: value.root, path: value.path, preview: value.preview }
-    : null
-  if (value.kind === 'changes') return typeof value.root === 'string' && Boolean(value.root)
-    ? { kind: 'changes', root: value.root, preview: value.preview }
-    : null
-  if (value.kind !== 'file' || typeof value.root !== 'string' || !value.root ||
-    typeof value.path !== 'string' || (value.line !== undefined && (!Number.isInteger(value.line) || Number(value.line) < 1)) ||
-    (value.viewMode !== 'rendered' && value.viewMode !== 'source')) return null
-  return {
-    kind: 'file', root: value.root, path: value.path,
-    ...(value.line === undefined ? {} : { line: Number(value.line) }), preview: value.preview, viewMode: value.viewMode,
-  }
-}
-
-function expectedPanelID(params: DockPanelParams) {
-  if (params.kind === 'agent') return agentTabID(params.name)
-  if (params.kind === 'screen') return `screen:${params.pane.pane_id}`
-  if (params.kind === 'folder') return folderTabID(params.root, params.path)
-  if (params.kind === 'changes') return changesPanelID(params.root)
-  return fileTabID(params.root, params.path)
-}
+export { panelParams } from '../workspace/panelRegistryModel.ts'
 
 function validGridNode(value: unknown, panelIDs: Set<string>): value is GridNode {
   if (!record(value) || (value.type !== 'leaf' && value.type !== 'branch')) return false
@@ -111,7 +71,7 @@ function validDock(value: unknown): value is SerializedDockview {
   for (const [id, serialized] of Object.entries(value.panels)) {
     if (!record(serialized) || serialized.id !== id) return false
     const params = panelParams(serialized.params)
-    if (!params || serialized.contentComponent !== params.kind || expectedPanelID(params) !== id) return false
+    if (!params || serialized.contentComponent !== params.kind || panelID(params) !== id) return false
   }
   return validGridNode(value.grid.root, panelIDs)
 }
@@ -121,7 +81,7 @@ type ParsedStoredLayout = { layout: StoredLayout, salvaged: boolean }
 function validSerializedPanel(id: string, serialized: unknown) {
   if (!record(serialized) || serialized.id !== id) return false
   const params = panelParams(serialized.params)
-  return Boolean(params && serialized.contentComponent === params.kind && expectedPanelID(params) === id)
+  return Boolean(params && serialized.contentComponent === params.kind && panelID(params) === id)
 }
 
 function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, salvaged: boolean } | null {

@@ -121,10 +121,13 @@ test('focusComposerWhenReady cancels its outstanding frame', () => {
 
 test('selecting an agent focuses its composer only on user-driven opens', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
+  const registry = readFileSync(new URL('../src/features/workspace/panelRegistry.tsx', import.meta.url), 'utf8')
   assert.match(app, /onPreviewAgent=\{\(name, placement\) => openAgent\(name, true, placement, true\)\}/)
   assert.match(app, /onPinAgent=\{\(name, placement\) => openAgent\(name, false, placement, true\)\}/)
-  assert.match(app, /onOpenAgent=\{\(name, placement\) => workspace\.openAgent\(name, true, placementInGroup\(placement, api\.group\.id\), true\)\}/)
+  assert.match(registry, /onOpenAgent=\{\(name, placement\) => workspace\.openAgent\(name, true, placementInGroup\(placement, api\.group\.id\), true\)\}/)
   const applyRoute = app.slice(app.indexOf('const applyRoute'), app.indexOf('const onDockReady'))
   assert.match(applyRoute, /openAgent\(route\.name, true\)/)
   assert.doesNotMatch(applyRoute, /openAgent\(route\.name, true, [^)]*true\)/)
+  assert.match(actions, /focusComposerWhenReady/)
 })

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   DockviewReact,
@@ -6,46 +6,34 @@ import {
   type DockviewReadyEvent,
   type DockviewTheme,
   type IDockviewHeaderActionsProps,
-  type IDockviewPanelHeaderProps,
-  type IDockviewPanelProps,
   type IWatermarkPanelProps,
 } from 'dockview-react'
 import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from './api/client'
-import { focusComposerWhenReady } from './composerState'
 import { viewerQueryOptions } from './api/queries'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
-import { AgentPanel } from './features/transcript/AgentPanel'
-import { ScreenPanel } from './features/screen/ScreenPanel'
 import { AppLink, currentRoute, type Route } from './shared/navigation'
 import { agentBusStatus } from './shared/agentStatus'
-import { AgentStatusDot, Banner } from './shared/presentation'
+import { Banner } from './shared/presentation'
 import { ThemeToggle } from './shared/ThemeToggle'
-import { useFleetStream, type StreamState } from './stream/useFleetStream'
+import { useFleetStream } from './stream/useFleetStream'
 import { createFileWatchRegistry, FileWatchContext, type FileWatchTarget } from './stream/fileWatchRegistry'
 import { agentTabID } from './previewTabs'
-import type { Board, FileTarget, FolderTarget, Pane } from './types'
-import { FilePanel } from './features/files/FilePanel'
 import { QuickOpen } from './features/files/QuickOpen'
 import { usePanelRecords } from './features/workspace/usePanelRecords'
 import { subscribeToDock } from './features/workspace/subscribeToDock'
+import { WorkspaceContext, useWorkspace, type WorkspaceContextValue } from './features/workspace/workspaceContext'
+import { dockComponents, DockTab, panelID } from './features/workspace/panelRegistry'
+import { defaultSidebarWidth, panelFromAPI, useWorkspaceActions } from './features/workspace/useWorkspaceActions'
 import { PanelState } from './shared/PanelState'
 import { subscribeDOMEvent, useDOMEvent } from './shared/lifecycle'
-import { fileTabID, isMarkdownPath, type FileViewMode } from './features/files/fileTabs'
-import { quickOpenAgentPreference, rootLabel } from './features/files/fileResolution'
-import { FolderPanel } from './features/folders/FolderPanel'
-import { folderTabID } from './features/folders/folderModel'
-import { gitStateForFileOpen, initialGitFileState, type GitBase, type GitFileState } from './features/git/gitViewModel'
-import { changesPanelID } from './features/git/changesModel'
-import { ChangesPanel } from './features/git/ChangesPanel'
+import { quickOpenAgentPreference } from './features/files/fileResolution'
+import type { GitFileState } from './features/git/gitViewModel'
 import { ShortcutReference } from './features/layout/ShortcutReference'
 import { bindShellShortcuts, shortcutLabels } from './features/layout/shellShortcuts'
 import { followScrollCommandEvent, type FollowScrollCommand } from './shared/useFollowScroll'
-import { dockOpenTarget, placementInGroup, type OpenPlacement } from './features/layout/openPlacement'
 import { layoutRouteState, shouldReplayInitialRoute } from './features/layout/routeReplay'
-import { agentMentionMatcher, type AgentMentionMatcher } from './shared/agentMentions'
+import { agentMentionMatcher } from './shared/agentMentions'
 import {
-  layoutStorageBackupKey,
-  layoutStorageKey,
   legacyLayoutStorageKey,
   panelParams,
   parseLegacyLayout,
@@ -54,19 +42,13 @@ import {
   readStoredLayout,
   restoreDockLayout,
   screenIdentityState,
-  screenPanelParams,
   writeStoredLayout,
   type AgentPanelParams,
-  type ChangesPanelParams,
   type DockPanelParams,
-  type FilePanelParams,
-  type FolderPanelParams,
   type LegacyLayout,
-  type ScreenPanelParams,
   type StoredLayout,
 } from './features/layout/dockLayout'
 
-const defaultSidebarWidth = 250
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
   dndOverlayMounting: 'absolute', dndPanelOverlay: 'group', dndTabIndicator: 'line',
@@ -86,18 +68,6 @@ type InitialLayout = {
 
 function clampSidebarWidth(width: number) {
   return Math.min(440, Math.max(200, width))
-}
-
-function dockGroupFacts(api: DockviewApi) {
-  const active = api.activeGroup
-  return {
-    activeGroupID: active?.id,
-    firstGroupID: api.groups[0]?.id,
-    rightGroupID: active ? api.adjacentGroupInDirection(active, 'right')?.id : undefined,
-    leftGroupID: active ? api.adjacentGroupInDirection(active, 'left')?.id : undefined,
-    fallbackGroupID: api.groups.find((group) => group.id !== active?.id)?.id,
-    groupCount: api.groups.length,
-  }
 }
 
 function readInitialLayout(): InitialLayout {
@@ -123,24 +93,6 @@ function readInitialLayout(): InitialLayout {
   }
 }
 
-function screenTabID(paneID: string) { return `screen:${paneID}` }
-
-function dockPanelID(params: DockPanelParams) {
-  if (params.kind === 'agent') return agentTabID(params.name)
-  if (params.kind === 'screen') return screenTabID(params.pane.pane_id)
-  if (params.kind === 'folder') return folderTabID(params.root, params.path)
-  if (params.kind === 'changes') return changesPanelID(params.root)
-  return fileTabID(params.root, params.path)
-}
-
-function panelTitle(params: DockPanelParams) {
-  if (params.kind === 'agent') return params.name
-  if (params.kind === 'screen') return params.pane.label || params.pane.pane_id
-  if (params.kind === 'folder') return rootLabel(params.path) || rootLabel(params.root)
-  if (params.kind === 'changes') return `Changes · ${rootLabel(params.root)}`
-  return rootLabel(params.path)
-}
-
 function setPathForPanel(params: DockPanelParams | undefined, push = true) {
   if (!push) return
   if (params?.kind === 'agent') {
@@ -151,125 +103,6 @@ function setPathForPanel(params: DockPanelParams | undefined, push = true) {
     }
   }
   window.history.replaceState(layoutRouteState, '', `${window.location.pathname}${window.location.search}${window.location.hash}`)
-}
-
-function panelFromAPI(api: DockviewApi, id: string) {
-  const panel = api.getPanel(id)
-  const params = panelParams(panel?.params)
-  return panel && params ? { panel, params } : null
-}
-
-function visiblePane(board: Board | undefined, params: ScreenPanelParams): Pane | undefined {
-  if (screenIdentityState(params, board) !== 'ready') return undefined
-  for (const workspace of board?.workspaces ?? []) {
-    for (const tab of workspace.tabs) {
-      const pane = tab.panes.find((candidate) => candidate.pane_id === params.identity.paneID)
-      if (pane) return pane
-    }
-  }
-}
-
-type WorkspaceContextValue = {
-  board?: Board
-  mentionMatcher: AgentMentionMatcher
-  identityReadOnly: string
-  openAgent: (name: string, preview: boolean, placement?: OpenPlacement, focus?: boolean) => void
-  openFile: (target: FileTarget, placement?: OpenPlacement) => void
-  openFileInDiff: (target: FileTarget, base: GitBase, placement?: OpenPlacement) => void
-  openChanges: (root: string, placement?: OpenPlacement) => void
-  openFolder: (target: FolderTarget, placement?: OpenPlacement) => void
-  pinPanel: (id: string) => void
-  setFileViewMode: (id: string, mode: FileViewMode) => void
-  fileGitStates: Record<string, GitFileState>
-  setFileGitState: (id: string, state: GitFileState) => void
-  agentScreenPanes: Record<string, string>
-  setAgentScreenPane: (name: string, paneID?: string) => void
-  onTerminalFocus: (paneID?: string) => void
-  onViewer: (viewer: string) => void
-  onAgentStatus: (name: string, status: string) => void
-  agentStatuses: Record<string, string>
-  resetLayout: () => void
-  showQuickOpen: (groupID?: string) => void
-  stream: StreamState
-  streamProblems: Record<string, string>
-}
-
-const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
-
-function useWorkspace() {
-  const value = useContext(WorkspaceContext)
-  if (!value) throw new Error('dock workspace context is unavailable')
-  return value
-}
-
-function usePanelVisibility(api: IDockviewPanelProps['api']) {
-  const [visible, setVisible] = useState(api.isVisible)
-  useEffect(() => {
-    setVisible(api.isVisible)
-    const disposable = api.onDidVisibilityChange((event) => setVisible(event.isVisible))
-    return () => disposable.dispose()
-  }, [api])
-  return visible
-}
-
-function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) {
-  const workspace = useWorkspace()
-  const visible = usePanelVisibility(api)
-  return <AgentPanel name={params.name} active={visible} liveStatus={agentBusStatus(workspace.board, params.name)} screenPaneID={workspace.agentScreenPanes[params.name]}
-    mentionMatcher={workspace.mentionMatcher} onOpenAgent={(name, placement) => workspace.openAgent(name, true, placementInGroup(placement, api.group.id), true)}
-    onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
-    onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))}
-    onOpenChanges={(root, placement) => workspace.openChanges(root, placementInGroup(placement, api.group.id))}
-    identityReadOnly={workspace.identityReadOnly} onViewer={workspace.onViewer} onSend={() => workspace.pinPanel(api.id)} onStatus={workspace.onAgentStatus}
-    onTerminalFocus={workspace.onTerminalFocus} />
-}
-
-function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>) {
-  const workspace = useWorkspace()
-  const visible = usePanelVisibility(api)
-  const identity = screenIdentityState(params, workspace.board)
-  if (identity === 'checking') return <PanelState as="main" className="panel-unavailable" title="Verifying screen identity…" detail="The live fleet must confirm this saved pane before it can be subscribed." />
-  const pane = visiblePane(workspace.board, params)
-  if (!pane) return <PanelState as="main" className="panel-unavailable tombstone" title="Screen no longer matches" detail="The saved pane identity is gone or now belongs to different live evidence. No replacement pane was opened." />
-  return <ScreenPanel pane={pane} active={visible} onFocus={workspace.onTerminalFocus} onBlur={() => workspace.onTerminalFocus(undefined)} />
-}
-
-function FileDockPanel({ params, api }: IDockviewPanelProps<FilePanelParams>) {
-  const workspace = useWorkspace()
-  const visible = usePanelVisibility(api)
-  return <FilePanel target={{ root: params.root, path: params.path, ...(params.line ? { line: params.line } : {}) }} viewMode={params.viewMode}
-    gitState={workspace.fileGitStates[api.id] ?? initialGitFileState()} active={visible}
-    onViewMode={(mode) => workspace.setFileViewMode(api.id, mode)} onGitState={(state) => workspace.setFileGitState(api.id, state)}
-    onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
-    onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))} />
-}
-
-function FolderDockPanel({ params, api }: IDockviewPanelProps<FolderPanelParams>) {
-  const workspace = useWorkspace()
-  const visible = usePanelVisibility(api)
-  return <FolderPanel target={{ root: params.root, path: params.path }} active={visible}
-    onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
-    onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))} />
-}
-
-function ChangesDockPanel({ params, api }: IDockviewPanelProps<ChangesPanelParams>) {
-  const workspace = useWorkspace()
-  const visible = usePanelVisibility(api)
-  return <ChangesPanel root={params.root} active={visible} onOpenDiff={(target, base, placement) => workspace.openFileInDiff(target, base, placementInGroup(placement, api.group.id))} />
-}
-
-function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelParams>) {
-  const workspace = useWorkspace()
-  const boardStatus = params.kind === 'agent' ? agentBusStatus(workspace.board, params.name) : '-'
-  const status = params.kind === 'agent' && boardStatus === '-' ? workspace.agentStatuses[params.name] ?? '-' : boardStatus
-  const meta = params.kind === 'agent' ? status !== '-' ? status : 'unknown' : params.kind === 'screen' ? 'terminal' : params.kind === 'file' ? 'file · read-only' : params.kind === 'folder' ? 'folder · read-only' : params.kind === 'changes' ? 'git · read-only' : ''
-  return <div className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
-    onDoubleClick={(event) => { if (params.preview) workspace.pinPanel(api.id); event.stopPropagation() }}
-    onAuxClick={(event) => { if (event.button === 1) api.close() }}>
-    <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{params.kind === 'screen' ? '▣ ' : params.kind === 'file' ? '◇ ' : params.kind === 'folder' ? '▰ ' : params.kind === 'changes' ? '± ' : ''}{panelTitle(params)}</span>
-    {meta && <span className="dock-tab-meta">{params.kind === 'agent' && <AgentStatusDot status={status} />}{meta}</span>}
-    <button type="button" className="dock-tab-close" aria-label={`Close ${panelTitle(params)}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => api.close()}>×</button>
-  </div>
 }
 
 function DockHeaderActions({ group, containerApi }: IDockviewHeaderActionsProps) {
@@ -295,8 +128,6 @@ function DockWatermark({ containerApi }: IWatermarkPanelProps) {
   </div></PanelState>
 }
 
-const dockComponents = { agent: AgentDockPanel, screen: ScreenDockPanel, file: FileDockPanel, folder: FolderDockPanel, changes: ChangesDockPanel }
-
 function sameGitFileState(left: GitFileState, right: GitFileState) {
   return left.mode === right.mode && left.base === right.base &&
     left.revision?.sha === right.revision?.sha && left.revision?.path === right.revision?.path &&
@@ -321,7 +152,6 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const [dockReady, setDockReady] = useState(false)
   const apiRef = useRef<DockviewApi | undefined>(undefined)
   const disposeDock = useRef<() => void>(() => undefined)
-  const composerFocusCancel = useRef<() => void>(() => undefined)
   const persistenceReady = useRef(false)
   const layoutDirty = useRef(false)
   const persistenceState = useRef({ recovering: initial.recovering, lastGoodRaw: initial.lastGoodRaw })
@@ -340,192 +170,17 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     setRevision((value) => value + 1)
   }, [])
 
-  const focusComposer = useCallback(() => {
-    composerFocusCancel.current()
-    composerFocusCancel.current = focusComposerWhenReady(
-      () => document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]'),
-      requestAnimationFrame,
-      20,
-      cancelAnimationFrame,
-    )
-  }, [])
-
-  useEffect(() => () => composerFocusCancel.current(), [])
-
-  const addPanel = useCallback((params: DockPanelParams, position?: { referenceGroup: string, direction: 'within' | 'right' }) => {
-    const api = apiRef.current
-    if (!api) return undefined
-    const id = dockPanelID(params)
-    const existing = api.getPanel(id)
-    if (existing) {
-      existing.api.updateParameters(params)
-      existing.api.setActive()
-      syncDock()
-      return existing
-    }
-    const added = api.addPanel({
-      id, component: params.kind, tabComponent: 'herder-tab', title: panelTitle(params), params,
-      ...(position ? { position } : {}),
-    })
-    syncDock()
-    return added
-  }, [syncDock])
-
-  const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement, focus = false) => {
-    const api = apiRef.current
-    if (!api) return
-    const target = dockOpenTarget(api.getPanel(agentTabID(name)), placement, dockGroupFacts(api))
-    if (target.kind === 'existing') {
-      const existing = target.panel
-      const current = panelParams(existing.params)
-      existing.api.updateParameters(current?.kind === 'agent' ? { ...current, preview: current.preview && preview } : { kind: 'agent', name, preview })
-      existing.api.setActive()
-      syncDock()
-      if (focus) focusComposer()
-      return
-    }
-    const group = target.groupID ? api.getGroup(target.groupID) : undefined
-    const replaced = preview ? group?.panels.find((panel) => {
-      const current = panelParams(panel.params)
-      return current?.kind === 'agent' && current.preview
-    }) : undefined
-    addPanel({ kind: 'agent', name, preview }, target.position)
-    if (replaced) api.removePanel(replaced)
-    syncDock()
-    if (focus) focusComposer()
-  }, [addPanel, focusComposer, syncDock])
-
-  const openScreen = useCallback((pane: Pane, preview: boolean, placement?: OpenPlacement) => {
-    const api = apiRef.current
-    if (!boardQuery.data) return
-    const params = screenPanelParams(boardQuery.data, pane, preview)
-    if (!params) return
-    if (!api) return
-    const target = dockOpenTarget(api.getPanel(screenTabID(pane.pane_id)), placement, dockGroupFacts(api))
-    if (target.kind === 'existing') {
-      const existing = target.panel
-      const current = panelParams(existing.params)
-      existing.api.updateParameters(current?.kind === 'screen' ? { ...params, preview: current.preview && preview } : params)
-      existing.api.setActive()
-      syncDock()
-      return
-    }
-    const group = target.groupID ? api.getGroup(target.groupID) : undefined
-    const replaced = preview ? group?.panels.find((panel) => {
-      const current = panelParams(panel.params)
-      return current?.kind === 'screen' && current.preview
-    }) : undefined
-    addPanel(params, target.position)
-    if (replaced) api.removePanel(replaced)
-    syncDock()
-  }, [addPanel, boardQuery.data, syncDock])
-
-  const openFile = useCallback((target: FileTarget, placement?: OpenPlacement) => {
-    const api = apiRef.current
-    if (!api) return
-    const id = fileTabID(target.root, target.path)
-    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, dockGroupFacts(api))
-    if (dockTarget.kind === 'existing') {
-      const existing = dockTarget.panel
-      if (existing.params.kind !== 'file') return
-      const params: FilePanelParams = { ...existing.params, ...target, viewMode: target.line ? 'source' : existing.params.viewMode }
-      existing.panel.api.updateParameters(params)
-      existing.panel.api.setActive()
-      if (target.line) setFileGitStateRecord(id, (current) => gitStateForFileOpen(current, target.line))
-      queryClient.invalidateQueries({ queryKey: queryKeys.file(target.root, target.path) })
-      syncDock()
-      return
-    }
-    const requestedPlacement = placement ?? (quickOpenGroup ? { direction: 'within' as const, groupID: quickOpenGroup } : undefined)
-    const newTarget = dockOpenTarget(undefined, requestedPlacement, dockGroupFacts(api))
-    const group = newTarget.groupID ? api.getGroup(newTarget.groupID) : undefined
-    const replaced = group?.panels.find((panel) => {
-      const current = panelParams(panel.params)
-      return current?.kind === 'file' && current.preview
-    })
-    const params: FilePanelParams = {
-      kind: 'file', root: target.root, path: target.path,
-      ...(target.line ? { line: target.line } : {}), preview: true,
-      viewMode: isMarkdownPath(target.path) && !target.line ? 'rendered' : 'source',
-    }
-    addPanel(params, newTarget.position)
-    if (replaced) api.removePanel(replaced)
-    queryClient.invalidateQueries({ queryKey: queryKeys.file(target.root, target.path) })
-    setQuickOpenGroup(undefined)
-    syncDock()
-  }, [addPanel, queryClient, quickOpenGroup, setFileGitStateRecord, syncDock])
-
-  const openFileInDiff = useCallback((target: FileTarget, base: GitBase, placement?: OpenPlacement) => {
-    openFile(target, placement)
-    const id = fileTabID(target.root, target.path)
-    setFileGitStateRecord(id, { mode: 'diff', base })
-  }, [openFile, setFileGitStateRecord])
-
-  const openChanges = useCallback((root: string, placement?: OpenPlacement) => {
-    const api = apiRef.current
-    if (!api) return
-    const id = changesPanelID(root)
-    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, dockGroupFacts(api))
-    if (dockTarget.kind === 'existing' && dockTarget.panel.params.kind === 'changes') {
-      const existing = dockTarget.panel
-      existing.panel.api.setActive()
-      queryClient.invalidateQueries({ queryKey: queryKeys.gitStatus(root) })
-      syncDock()
-      return
-    }
-    const requestedGroup = dockTarget.kind === 'new' && dockTarget.groupID ? api.getGroup(dockTarget.groupID) : undefined
-    const replaced = requestedGroup?.panels.find((panel) => {
-      const params = panelParams(panel.params)
-      return params?.kind === 'changes' && params.preview
-    })
-    addPanel({ kind: 'changes', root, preview: true }, dockTarget.kind === 'new' ? dockTarget.position : undefined)
-    if (replaced) api.removePanel(replaced)
-    queryClient.invalidateQueries({ queryKey: queryKeys.gitStatus(root) })
-  }, [addPanel, queryClient, syncDock])
-
-  const openFolder = useCallback((target: FolderTarget, placement?: OpenPlacement) => {
-    const api = apiRef.current
-    if (!api) return
-    const id = folderTabID(target.root, target.path)
-    const dockTarget = dockOpenTarget(panelFromAPI(api, id) ?? undefined, placement, dockGroupFacts(api))
-    if (dockTarget.kind === 'existing' && dockTarget.panel.params.kind === 'folder') {
-      const existing = dockTarget.panel
-      existing.panel.api.setActive()
-      queryClient.invalidateQueries({ queryKey: queryKeys.fileTree(target.root, target.path) })
-      queryClient.invalidateQueries({ queryKey: queryKeys.backlog(target.root, target.path) })
-      syncDock()
-      return
-    }
-    const requestedPlacement = placement ?? (quickOpenGroup ? { direction: 'within' as const, groupID: quickOpenGroup } : undefined)
-    const newTarget = dockOpenTarget(undefined, requestedPlacement, dockGroupFacts(api))
-    const group = newTarget.groupID ? api.getGroup(newTarget.groupID) : undefined
-    const replaced = group?.panels.find((panel) => {
-      const current = panelParams(panel.params)
-      return current?.kind === 'folder' && current.preview
-    })
-    addPanel({ kind: 'folder', root: target.root, path: target.path, preview: true }, newTarget.position)
-    if (replaced) api.removePanel(replaced)
-    queryClient.invalidateQueries({ queryKey: queryKeys.fileTree(target.root, target.path) })
-    queryClient.invalidateQueries({ queryKey: queryKeys.backlog(target.root, target.path) })
-    setQuickOpenGroup(undefined)
-    syncDock()
-  }, [addPanel, queryClient, quickOpenGroup, syncDock])
-
-  const pinPanel = useCallback((id: string) => {
-    const api = apiRef.current
-    const current = api ? panelFromAPI(api, id) : null
-    if (!current || !current.params.preview) return
-    current.panel.api.updateParameters({ ...current.params, preview: false })
-    syncDock()
-  }, [syncDock])
-
-  const setFileViewMode = useCallback((id: string, viewMode: FileViewMode) => {
-    const api = apiRef.current
-    const current = api ? panelFromAPI(api, id) : null
-    if (current?.params.kind !== 'file' || current.params.viewMode === viewMode) return
-    current.panel.api.updateParameters({ ...current.params, viewMode })
-    syncDock()
-  }, [syncDock])
+  const { openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, pinPanel, setFileViewMode, resetLayout } = useWorkspaceActions({
+    apiRef,
+    board: boardQuery.data,
+    queryClient,
+    quickOpenGroup,
+    setQuickOpenGroup,
+    syncDock,
+    setFileGitState: setFileGitStateRecord,
+    setSidebarWidth,
+    persistenceState,
+  })
 
   const applyRoute = useCallback((route: Exclude<Route, { page: 'missing' }>, push = false) => {
     if (route.page === 'shell') return
@@ -637,7 +292,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const effectiveFocusedScreenPaneID = focusedScreenPaneID && screenPaneIDs.includes(focusedScreenPaneID) ? focusedScreenPaneID : undefined
   const stream = useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, effectiveFocusedScreenPaneID)
   const activeParams = openPanels.find((params) => {
-    return dockPanelID(params) === activePanelID
+    return panelID(params) === activePanelID
   })
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
   const viewer = viewerQuery.data?.viewer ?? 'unresolved'
@@ -658,19 +313,6 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     setQuickOpenGroup(groupID ?? apiRef.current?.activeGroup?.id)
     setQuickOpen(true)
   }, [])
-  const resetLayout = useCallback(() => {
-    const api = apiRef.current
-    if (!api) return
-    api.clear()
-    try {
-      localStorage.removeItem(layoutStorageKey)
-      localStorage.removeItem(layoutStorageBackupKey)
-    } catch { /* best effort */ }
-    persistenceState.current = { recovering: false, lastGoodRaw: null }
-    setSidebarWidth(defaultSidebarWidth)
-    syncDock()
-  }, [syncDock])
-
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
       const viewport = document.querySelector('.dv-active-group [data-follow-scroll]')
