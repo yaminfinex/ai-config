@@ -212,7 +212,10 @@ export function FolderPanel({ target, active, selectionHint, onSelectionHintCons
   const absolutePath = rootJoinedAbsolutePath(target.root, currentDir)
   return <main className="folder-panel">
     <header className="folder-header">
-      <div className="folder-title"><div className="path-name"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /></div>{parentFolder !== null && <a className="path-parent-link"
+      <div className="folder-title"><div className="path-name"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><button type="button" className={`header-refresh${currentTree.isFetching || backlog.isFetching ? ' busy' : ''}`}
+        title={currentTree.isFetching || backlog.isFetching ? 'Refreshing…' : 'Refresh'} aria-label="Refresh" onClick={() => { currentTree.refetch(); backlog.refetch() }} disabled={currentTree.isFetching || backlog.isFetching}>
+        <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M12 7a5 5 0 1 1-1.46-3.54" /><path d="M12.5 1.5v2.6h-2.6" /></svg>
+      </button></div>{parentFolder !== null && <a className="path-parent-link"
         href={`/folder?${new URLSearchParams({ root: target.root, path: parentFolder })}`} title={`Open ${rootJoinedAbsolutePath(target.root, parentFolder)} · ${openInSideLabel(navigator.userAgent)}`}
         onClick={(event) => { event.preventDefault(); onOpenFolder({ root: target.root, path: parentFolder }, placementFromModifiers(event)) }}>{parentFolder || '.'}</a>}
         <span className="root-path" title={target.root}>{target.root}</span></div>
@@ -221,7 +224,6 @@ export function FolderPanel({ target, active, selectionHint, onSelectionHintCons
         <button type="button" className={!showBoard ? 'active' : ''} aria-pressed={!showBoard} onClick={() => setBoardView(false)}>Files</button>
         <button type="button" className={showBoard ? 'active' : ''} aria-pressed={showBoard} onClick={() => setBoardView(true)}>Board</button>
       </div>}
-      <button type="button" onClick={() => { currentTree.refetch(); backlog.refetch() }} disabled={currentTree.isFetching || backlog.isFetching}>{currentTree.isFetching || backlog.isFetching ? 'Refreshing…' : 'Refresh'}</button>
     </header>
     {backlogFailure && <Banner source={backlogFailure.source} detail={backlogFailure.detail} />}
     <div className={`folder-workspace${treeHidden ? ' tree-hidden' : ''}`}>

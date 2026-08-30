@@ -112,7 +112,10 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   const absolutePath = rootJoinedAbsolutePath(target.root, target.path)
   return <main className="file-panel">
     <header className="file-header">
-      <div className="file-title"><div className="path-name"><strong>{rootLabel(target.path)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /></div><a className="path-parent-link" href={`/folder?${new URLSearchParams({ root: target.root, path: containingFolder })}`}
+      <div className="file-title"><div className="path-name"><strong>{rootLabel(target.path)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><button type="button" className={`header-refresh${refreshing ? ' busy' : ''}`}
+        title={refreshing ? 'Refreshing…' : 'Refresh'} aria-label="Refresh" onClick={refresh} disabled={refreshing}>
+        <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M12 7a5 5 0 1 1-1.46-3.54" /><path d="M12.5 1.5v2.6h-2.6" /></svg>
+      </button></div><a className="path-parent-link" href={`/folder?${new URLSearchParams({ root: target.root, path: containingFolder })}`}
         title={`Open ${rootJoinedAbsolutePath(target.root, containingFolder)} · ${openInSideLabel(navigator.userAgent)}`} onClick={(event) => {
           event.preventDefault()
           onOpenFolder({ root: target.root, path: containingFolder }, placementFromModifiers(event), target)
@@ -126,7 +129,6 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
         <button type="button" className={viewMode === 'rendered' ? 'active' : ''} aria-pressed={viewMode === 'rendered'} onClick={() => onViewMode('rendered')}>Rendered</button>
         <button type="button" className={viewMode === 'source' ? 'active' : ''} aria-pressed={viewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
       </div>}
-      <button type="button" onClick={refresh} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh'}</button>
     </header>
     {gitState.mode === 'current' && (gitState.revision ? revisionQuery.isPending : fileQuery.isPending) && <PanelState as="div" className="file-state">Reading {gitState.revision ? 'historical revision' : 'current file'}…</PanelState>}
     {gitState.mode === 'current' && failure && !needsAlternatives && <Banner source={failure.source} detail={failure.detail} />}
