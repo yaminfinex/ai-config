@@ -47,6 +47,7 @@ func excludeDeliveredCandidates(candidates map[string]queueCandidate, excluded m
 	if excluded == nil {
 		excluded = make(map[string]bool)
 	}
+	// Safe only because hcom advances a name-keyed cursor after successful injection, including mentions fallback; advancing past an undelivered mention would over-clear.
 	for id, candidate := range candidates {
 		if watermark.Recipient != candidate.Recipient && (candidate.RecipientBase == "" || watermark.Recipient != candidate.RecipientBase) {
 			continue
