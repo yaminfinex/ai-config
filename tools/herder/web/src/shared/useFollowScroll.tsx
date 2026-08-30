@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { UIEventHandler } from 'react'
 import { createFollowScrollState, recordFollowScroll, resizeFollowScroll, restoreFollowScroll } from './followScroll'
+import { useDOMEvent, useSizeObserver } from './lifecycle'
 
 export const followScrollCommandEvent = 'herder:follow-scroll-command'
 export type FollowScrollCommand = 'top' | 'bottom'
@@ -22,14 +23,7 @@ export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, 
     if (viewport) restoreFollowScroll(followingRef.current, viewport)
   }, [active])
 
-  useLayoutEffect(() => {
-    if (!active || typeof ResizeObserver === 'undefined') return
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const observer = new ResizeObserver(() => resizeFollowScroll(followingRef.current, viewport))
-    observer.observe(viewport)
-    return () => observer.disconnect()
-  }, [active])
+  useSizeObserver(viewportRef, (viewport) => resizeFollowScroll(followingRef.current, viewport), active)
 
   const onScroll: UIEventHandler<T> = (event) => {
     recordFollowScroll(followingRef.current, event.currentTarget)
@@ -51,17 +45,10 @@ export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, 
     setFollowing(false)
   }
 
-  useEffect(() => {
-    if (!active) return
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const onCommand = (event: Event) => {
-      if ((event as CustomEvent<FollowScrollCommand>).detail === 'top') jumpToTop()
-      else if ((event as CustomEvent<FollowScrollCommand>).detail === 'bottom') jumpToBottom()
-    }
-    viewport.addEventListener(followScrollCommandEvent, onCommand)
-    return () => viewport.removeEventListener(followScrollCommandEvent, onCommand)
-  }, [active])
+  useDOMEvent<CustomEvent<FollowScrollCommand>>(viewportRef, followScrollCommandEvent, (event) => {
+    if (event.detail === 'top') jumpToTop()
+    else if (event.detail === 'bottom') jumpToBottom()
+  }, undefined, active)
 
   return { viewportRef, following, onScroll, jumpToTop, jumpToBottom }
 }

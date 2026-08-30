@@ -97,12 +97,38 @@ test('focusComposerWhenReady retries until the composer mounts, then stops quiet
   assert.equal(focused, 1)
 })
 
+test('focusComposerWhenReady cancels its outstanding frame', () => {
+  const callbacks = new Map<number, () => void>()
+  const cancelled: number[] = []
+  let nextHandle = 1
+  const cancel = focusComposerWhenReady(
+    () => null,
+    (callback) => {
+      const handle = nextHandle++
+      callbacks.set(handle, callback)
+      return handle
+    },
+    20,
+    (handle) => {
+      cancelled.push(handle)
+      callbacks.delete(handle)
+    },
+  )
+  cancel()
+  assert.deepEqual(cancelled, [1])
+  assert.equal(callbacks.size, 0)
+})
+
 test('selecting an agent focuses its composer only on user-driven opens', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
+  const registry = readFileSync(new URL('../src/features/workspace/panelRegistry.tsx', import.meta.url), 'utf8')
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   assert.match(app, /onPreviewAgent=\{\(name, placement\) => openAgent\(name, true, placement, true\)\}/)
   assert.match(app, /onPinAgent=\{\(name, placement\) => openAgent\(name, false, placement, true\)\}/)
-  assert.match(app, /onOpenAgent=\{\(name, placement\) => workspace\.openAgent\(name, true, placementInGroup\(placement, api\.group\.id\), true\)\}/)
-  const applyRoute = app.slice(app.indexOf('const applyRoute'), app.indexOf('const onDockReady'))
+  assert.match(registry, /onOpenAgent=\{\(name, placement\) => workspace\.openAgent\(name, true, placementInGroup\(placement, api\.group\.id\), true\)\}/)
+  const applyRoute = controller.slice(controller.indexOf('const applyRoute'), controller.indexOf('const onDockReady'))
   assert.match(applyRoute, /openAgent\(route\.name, true\)/)
   assert.doesNotMatch(applyRoute, /openAgent\(route\.name, true, [^)]*true\)/)
+  assert.match(actions, /focusComposerWhenReady/)
 })

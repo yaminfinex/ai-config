@@ -17,6 +17,7 @@ import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
 import type { FileTarget, FolderTarget } from '../../types'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { PanelState } from '../../shared/PanelState'
 
 export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
   const queryClient = useQueryClient()
@@ -59,7 +60,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
   }, [])
 
   if (agentQuery.error && 'response' in agentQuery.error && (agentQuery.error.response as Response)?.status === 404) return <main className="agent-page">
-    <section className="not-found tombstone" role="status"><strong>No retained agent evidence</strong><p>No live or retained session evidence for <span>{name}</span>. This tab is safe to close.</p></section>
+    <PanelState className="not-found tombstone" title="No retained agent evidence" detail={<>No live or retained session evidence for <span>{name}</span>. This tab is safe to close.</>} />
   </main>
 
   const agent = agentQuery.data

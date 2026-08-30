@@ -94,3 +94,9 @@ test('narrow panes show the fade only while facts remain offscreen to the right'
   assert.equal(hasRightOverflow(500, 240, 260), false)
   assert.equal(hasRightOverflow(240, 240, 0), false)
 })
+
+test('status changes trigger a fresh overflow measurement', () => {
+  const strip = readFileSync(new URL('../src/features/transcript/AgentContextStrip.tsx', import.meta.url), 'utf8')
+  assert.match(strip, /useMemo\(\(\) => \(\{ agent, liveStatus \}\), \[agent, liveStatus\]\)/)
+  assert.match(strip, /useSizeObserver\(innerRef, updateOverflow, Boolean\(agent\), overflowVersion,/)
+})

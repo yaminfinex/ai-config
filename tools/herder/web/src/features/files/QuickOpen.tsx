@@ -36,8 +36,11 @@ export function QuickOpen({ open, agent, groupID, onClose, onOpenFile, onOpenFol
     if (!open) return
     restoreFocus.current = document.activeElement as HTMLElement | null
     setActiveIndex(-1)
-    requestAnimationFrame(() => inputRef.current?.focus())
-    return () => restoreFocus.current?.focus()
+    const frame = requestAnimationFrame(() => inputRef.current?.focus())
+    return () => {
+      cancelAnimationFrame(frame)
+      restoreFocus.current?.focus()
+    }
   }, [open])
 
   useEffect(() => setActiveIndex(-1), [debounced])
