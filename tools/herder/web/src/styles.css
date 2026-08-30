@@ -434,6 +434,14 @@ h2, h3, p { margin-top: 0; }
 .thread-chip { border: 1px solid var(--thread-border); background: var(--thread-bg); color: var(--purple); }
 .human-entry { max-width: 790px; margin-left: min(10%, 90px); border-right: 3px solid var(--green); background: var(--human-bg); }
 .assistant-entry { margin: 10px 0; padding: 3px 0 3px 12px; border-left: 3px solid var(--border2); }
+.assistant-fenced-content { display: flex; max-width: 900px; flex-direction: column; align-items: flex-start; gap: 4px; margin: 5px 0; }
+.internal-note { max-width: 100%; }
+.internal-note > summary { display: flex; width: fit-content; max-width: 100%; align-items: center; gap: 4px; overflow: hidden; list-style: none; text-overflow: ellipsis; cursor: pointer; }
+.internal-note > summary::-webkit-details-marker { display: none; }
+.internal-note > summary::before { content: '›'; flex: 0 0 auto; font-size: 12px; line-height: 1; transition: transform 100ms ease; }
+.internal-note[open] > summary::before { transform: rotate(90deg); }
+.internal-note > .entry-detail { max-width: 900px; margin-top: 3px; }
+.assistant-status { max-width: 100%; overflow: hidden; border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); text-overflow: ellipsis; }
 .inline-link { color: var(--accent-text); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .inline-link:hover { color: var(--accent); text-decoration-thickness: 2px; }
 .inline-link:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
