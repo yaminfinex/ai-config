@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DockviewApi, DockviewReadyEvent } from 'dockview-react'
 import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from '../../api/client'
 import { viewerQueryOptions } from '../../api/queries'
+import type { FileTarget } from '../../types'
 import { agentBusStatus } from '../../shared/agentStatus'
 import { agentMentionMatcher } from '../../shared/agentMentions'
 import { subscribeDOMEvent, useDOMEvent } from '../../shared/lifecycle'
@@ -41,6 +42,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const { records: agentScreenPanes, set: setAgentScreenPaneRecord, prune: pruneAgentScreenPane } = usePanelRecords<string>()
   const [focusedScreenPaneID, setFocusedScreenPaneID] = useState<string>()
   const { records: fileGitStates, set: setFileGitStateRecord, prune: pruneFileGitState } = usePanelRecords<GitFileState>(sameGitFileState)
+  const { records: folderSelectionHints, set: setFolderSelectionHint, prune: pruneFolderSelectionHint } = usePanelRecords<FileTarget>()
   const [fileWatchTargets, setFileWatchTargets] = useState<FileWatchTarget[]>([])
   const [activePanelID, setActivePanelID] = useState('')
   const [revision, setRevision] = useState(0)
@@ -83,6 +85,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setQuickOpenGroup,
     syncDock,
     setFileGitState: setFileGitStateRecord,
+    setFolderSelectionHint,
     resetPersistedLayout: layout.resetPersistedLayout,
     withHistorySuppressed: historySuppressor.run,
     onActivePanelParamsChanged,
@@ -136,6 +139,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       removePanel: (panel) => {
         const params = panelParams(panel.params)
         if (params?.kind === 'file') pruneFileGitState(panel.id)
+        if (params?.kind === 'folder') pruneFolderSelectionHint(panel.id)
         if (params?.kind !== 'agent') return
         pruneAgentStatus(params.name)
         pruneAgentScreenPane(params.name)
@@ -146,7 +150,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     layout.completeRestore((replayedRoute && !restoreFailed) || restoredLegacy)
     setActivePanelID(event.api.activePanel?.id ?? '')
     setRevision((value) => value + 1)
-  }, [applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, syncDock, updateHistory])
+  }, [applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
 
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
@@ -204,12 +208,13 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   const actions = useMemo<WorkspaceActionsValue>(() => ({
     openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
+    consumeFolderSelectionHint: pruneFolderSelectionHint,
     setAgentScreenPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
     resetLayout, showQuickOpen,
-  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
+  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
-    board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, agentScreenPanes, agentStatuses, stream, streamProblems,
-  }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, mentionMatcher, stream, streamProblems, viewerReadOnly])
+    board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses, stream, streamProblems,
+  }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, stream, streamProblems, viewerReadOnly])
 
   return {
     actions, data, fileWatchRegister: fileWatchRegistry.register,

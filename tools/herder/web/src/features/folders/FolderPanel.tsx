@@ -6,13 +6,14 @@ import { Banner } from '../../shared/presentation'
 import { FilePanel } from '../files/FilePanel'
 import { isMarkdownPath, type FileViewMode } from '../files/fileTabs'
 import { rootLabel } from '../files/fileResolution'
-import { boardColumns, taskFileTarget } from './folderModel'
+import { boardColumns, folderSelectionTarget, parentFolderPath, rootJoinedAbsolutePath, taskFileTarget } from './folderModel'
 import { initialGitFileState } from '../git/gitViewModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useFileWatch } from '../../stream/fileWatchRegistry'
 import { failureBanner, PanelState } from '../../shared/PanelState'
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { treeChildIndex, treeKeyIntent, treeParentIndex } from '../../shared/treeModel'
+import { PathCopyButton } from '../../shared/PathCopyButton'
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -141,11 +142,13 @@ function BacklogBoard({ backlog, onOpenFile }: { backlog: BacklogRead, onOpenFil
   </section>
 }
 
-export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
+export function FolderPanel({ target, active, selectionHint, onSelectionHintConsumed, onOpenFile, onOpenFolder }: {
   target: FolderTarget
   active: boolean
+  selectionHint?: FileTarget
+  onSelectionHintConsumed?: () => void
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
-  onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void
+  onOpenFolder: (target: FolderTarget, placement?: OpenPlacement, selectionHint?: FileTarget) => void
 }) {
   const [treeHidden, setTreeHidden] = useState(false)
   const [currentDir, setCurrentDir] = useState(target.path)
@@ -173,6 +176,18 @@ export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
   }, [target.path, target.root])
 
   useEffect(() => {
+    if (!selectionHint) return
+    const hintedFile = folderSelectionTarget(target.root, target.path, selectionHint)
+    onSelectionHintConsumed?.()
+    if (!hintedFile) return
+    setCurrentDir(target.path)
+    setSelected(hintedFile)
+    setViewMode(isMarkdownPath(hintedFile.path) && !hintedFile.line ? 'rendered' : 'source')
+    setGitState(initialGitFileState())
+    setBoardView(false)
+  }, [onSelectionHintConsumed, selectionHint, target.path, target.root])
+
+  useEffect(() => {
     if (selected || !currentTree.data) return
     const manifest = currentTree.data.entries.find((entry) => entry.kind === 'file' && entry.name.toLowerCase() === 'mission.md')
     if (manifest) {
@@ -193,9 +208,15 @@ export function FolderPanel({ target, active, onOpenFile, onOpenFolder }: {
     setBoardView(false)
   }
   const backlogFailure = backlog.error ? failureBanner('backlog', backlog.error) : null
+  const parentFolder = parentFolderPath(currentDir)
+  const absolutePath = rootJoinedAbsolutePath(target.root, currentDir)
   return <main className="folder-panel">
     <header className="folder-header">
-      <div className="folder-title"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong><span>{currentDir || '.'}</span><span className="root-path" title={target.root}>{target.root}</span></div>
+      <div className="folder-title"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong>{parentFolder !== null && <a className="path-parent-link"
+        href={`/folder?${new URLSearchParams({ root: target.root, path: parentFolder })}`} title={`Open ${rootJoinedAbsolutePath(target.root, parentFolder)} · ${openInSideLabel(navigator.userAgent)}`}
+        onClick={(event) => { event.preventDefault(); onOpenFolder({ root: target.root, path: parentFolder }, placementFromModifiers(event)) }}>{parentFolder || '.'}</a>}
+        <span className="root-path" title={target.root}>{target.root}</span></div>
+      <PathCopyButton key={absolutePath} path={absolutePath} />
       <button type="button" onClick={() => setTreeHidden((value) => !value)}>{treeHidden ? 'Show tree' : 'Hide tree'}</button>
       {available && <div className="detail-toggle folder-view-toggle" aria-label="Folder view">
         <button type="button" className={!showBoard ? 'active' : ''} aria-pressed={!showBoard} onClick={() => setBoardView(false)}>Files</button>

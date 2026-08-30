@@ -78,10 +78,12 @@ function validDock(value: unknown): value is SerializedDockview {
 
 type ParsedStoredLayout = { layout: StoredLayout, salvaged: boolean }
 
-function validSerializedPanel(id: string, serialized: unknown) {
-  if (!record(serialized) || serialized.id !== id) return false
+function canonicalSerializedPanel(id: string, serialized: unknown) {
+  if (!record(serialized) || serialized.id !== id) return null
   const params = panelParams(serialized.params)
-  return Boolean(params && serialized.contentComponent === params.kind && panelID(params) === id)
+  return params && serialized.contentComponent === params.kind && panelID(params) === id
+    ? { ...serialized, params }
+    : null
 }
 
 function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, salvaged: boolean } | null {
@@ -89,7 +91,11 @@ function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, 
   if (!record(value) || !record(value.panels) || !record(value.grid) || !record(value.grid.root) || value.grid.root.type !== 'branch') return null
   let salvaged = 'floatingGroups' in value || 'popoutGroups' in value || 'edgeGroups' in value
   const panels = Object.fromEntries(Object.entries(value.panels).flatMap(([id, serialized]) => {
-    if (validSerializedPanel(id, serialized)) return [[id, serialized]]
+    const canonical = canonicalSerializedPanel(id, serialized)
+    if (canonical) {
+      if (JSON.stringify(canonical) !== JSON.stringify(serialized)) salvaged = true
+      return [[id, canonical]]
+    }
     salvaged = true
     return []
   }))
@@ -242,6 +248,10 @@ export function persistableDockLayout(value: unknown): SerializedDockview | null
     delete cloned.floatingGroups
     delete cloned.popoutGroups
     delete cloned.edgeGroups
+    cloned.panels = Object.fromEntries(Object.entries(cloned.panels).flatMap(([id, serialized]) => {
+      const canonical = canonicalSerializedPanel(id, serialized)
+      return canonical ? [[id, canonical]] : []
+    }))
     return validDock(cloned) ? cloned : null
   } catch {
     return null

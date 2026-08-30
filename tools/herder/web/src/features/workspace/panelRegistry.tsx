@@ -69,15 +69,17 @@ function FileDockPanel({ params, api }: IDockviewPanelProps<FilePanelParams>) {
     gitState={data.fileGitStates[api.id] ?? initialGitFileState()} active={visible}
     onViewMode={(mode) => actions.setFileViewMode(api.id, mode)} onGitState={(state) => actions.setFileGitState(api.id, state)}
     onOpenFile={(target, placement) => actions.openFile(target, placementInGroup(placement, api.group.id))}
-    onOpenFolder={(target, placement) => actions.openFolder(target, placementInGroup(placement, api.group.id))} />
+    onOpenFolder={(target, placement, selectionHint) => actions.openFolder(target, placementInGroup(placement, api.group.id), selectionHint)} />
 }
 
 function FolderDockPanel({ params, api }: IDockviewPanelProps<FolderPanelParams>) {
   const actions = useWorkspaceActionsContext()
+  const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  return <FolderPanel target={{ root: params.root, path: params.path }} active={visible}
+  return <FolderPanel target={{ root: params.root, path: params.path }} active={visible} selectionHint={data.folderSelectionHints[api.id]}
+    onSelectionHintConsumed={() => actions.consumeFolderSelectionHint(api.id)}
     onOpenFile={(target, placement) => actions.openFile(target, placementInGroup(placement, api.group.id))}
-    onOpenFolder={(target, placement) => actions.openFolder(target, placementInGroup(placement, api.group.id))} />
+    onOpenFolder={(target, placement, selectionHint) => actions.openFolder(target, placementInGroup(placement, api.group.id), selectionHint)} />
 }
 
 function ChangesDockPanel({ params, api }: IDockviewPanelProps<ChangesPanelParams>) {

@@ -7,13 +7,14 @@ import { fileMarkdownComponents, Markdown } from '../../shared/Markdown'
 import { FileResults } from './FileResults'
 import { fileFailureKind, rootLabel } from './fileResolution'
 import { isMarkdownPath, type FileViewMode } from './fileTabs'
-import { candidateDestination, missionFacts, missionMarkdownBody } from '../folders/folderModel'
+import { candidateDestination, missionFacts, missionMarkdownBody, parentFolderPath, rootJoinedAbsolutePath } from '../folders/folderModel'
 import { PierreFile, PierrePatch } from '../git/PierreView'
 import { selectGitFileMode, selectHistoricalDiff, selectHistoricalFile, selectedCurrentLines, type GitBase, type GitFileState } from '../git/gitViewModel'
-import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useFileWatch } from '../../stream/fileWatchRegistry'
 import { failureBanner, PanelState, useActivationRefetch } from '../../shared/PanelState'
 import { historyPagingState } from './historyPaging'
+import { PathCopyButton } from '../../shared/PathCopyButton'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -27,7 +28,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   onViewMode: (mode: FileViewMode) => void
   onGitState: (state: GitFileState) => void
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
-  onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void
+  onOpenFolder: (target: FolderTarget, placement?: OpenPlacement, selectionHint?: FileTarget) => void
 }) {
   useFileWatch({ kind: 'file', root: target.root, path: target.path }, gitState.mode === 'current' && !gitState.revision)
   const fileQuery = useQuery({
@@ -107,9 +108,16 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     else if (gitState.mode === 'history' && gitAvailable) void historyQuery.refetch()
   }
   const refreshing = statusQuery.isFetching || gitState.mode === 'current' && !gitState.revision && fileQuery.isFetching || gitState.mode === 'diff' && diffQuery.isFetching || gitState.mode === 'history' && historyQuery.isFetching
+  const containingFolder = parentFolderPath(target.path) ?? ''
+  const absolutePath = rootJoinedAbsolutePath(target.root, target.path)
   return <main className="file-panel">
     <header className="file-header">
-      <div className="file-title"><strong>{rootLabel(target.path)}</strong><span>{target.path}</span><span className="root-path" title={target.root}>{target.root}</span></div>
+      <div className="file-title"><strong>{rootLabel(target.path)}</strong><a className="path-parent-link" href={`/folder?${new URLSearchParams({ root: target.root, path: containingFolder })}`}
+        title={`Open ${rootJoinedAbsolutePath(target.root, containingFolder)} · ${openInSideLabel(navigator.userAgent)}`} onClick={(event) => {
+          event.preventDefault()
+          onOpenFolder({ root: target.root, path: containingFolder }, placementFromModifiers(event), target)
+        }}>{containingFolder || '.'}</a><span className="root-path" title={target.root}>{target.root}</span></div>
+      <PathCopyButton key={absolutePath} path={absolutePath} />
       <div className="detail-toggle file-mode-toggle" aria-label="File mode">
         {(['current', 'diff', 'history'] as const).map((mode) => <button type="button" key={mode} className={gitState.mode === mode ? 'active' : ''} aria-pressed={gitState.mode === mode}
           disabled={mode !== 'current' && !gitAvailable} title={mode !== 'current' && gitReason ? gitReason : undefined}

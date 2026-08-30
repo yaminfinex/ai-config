@@ -11,7 +11,8 @@ export type WorkspaceActionsValue = {
   openFile: (target: FileTarget, placement?: OpenPlacement) => void
   openFileInDiff: (target: FileTarget, base: GitBase, placement?: OpenPlacement) => void
   openChanges: (root: string, placement?: OpenPlacement) => void
-  openFolder: (target: FolderTarget, placement?: OpenPlacement) => void
+  openFolder: (target: FolderTarget, placement?: OpenPlacement, selectionHint?: FileTarget) => void
+  consumeFolderSelectionHint: (id: string) => void
   closePanel: (id: string) => void
   pinPanel: (id: string) => void
   setFileViewMode: (id: string, mode: FileViewMode) => void
@@ -29,6 +30,7 @@ export type WorkspaceDataValue = {
   mentionMatcher: AgentMentionMatcher
   identityReadOnly: string
   fileGitStates: Record<string, GitFileState>
+  folderSelectionHints: Record<string, FileTarget>
   agentScreenPanes: Record<string, string>
   agentStatuses: Record<string, string>
   stream: StreamState

@@ -67,6 +67,21 @@ test('history subjects omit pin and view state but retain a file line opening hi
   })
 })
 
+test('folder history and popstate replay cannot carry a transient selection hint', () => {
+  const hinted = { ...folder(), selectionHint: { root: '/repo root', path: 'src/lib/model.ts' } }
+  const entry = historyEntryForPanel(hinted)
+  assert.deepEqual(entry.state, {
+    ...layoutRouteState,
+    subject: { kind: 'folder', root: '/repo root', path: 'src/lib' },
+  })
+  const route = routeFromHistory('/folder', '?root=%2Frepo+root&path=src%2Flib', {
+    ...layoutRouteState,
+    subject: { kind: 'folder', root: '/repo root', path: 'src/lib', selectionHint: hinted.selectionHint },
+  })
+  assert.equal(route.page, 'panel')
+  if (route.page === 'panel') assert.deepEqual(route.params, folder())
+})
+
 test('known paths with malformed params and unknown paths are honest missing routes', () => {
   for (const [pathname, search] of [
     ['/file', '?root=%2Frepo'],
