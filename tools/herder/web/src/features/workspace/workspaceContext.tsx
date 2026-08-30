@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, type ReactNode } from 'react'
 import type { Board, FileTarget, FolderTarget } from '../../types'
 import type { StreamState } from '../../stream/useFleetStream'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
@@ -6,10 +6,7 @@ import type { FileViewMode } from '../files/fileTabs'
 import type { GitBase, GitFileState } from '../git/gitViewModel'
 import type { OpenPlacement } from '../layout/openPlacement'
 
-export type WorkspaceContextValue = {
-  board?: Board
-  mentionMatcher: AgentMentionMatcher
-  identityReadOnly: string
+export type WorkspaceActionsValue = {
   openAgent: (name: string, preview: boolean, placement?: OpenPlacement, focus?: boolean) => void
   openFile: (target: FileTarget, placement?: OpenPlacement) => void
   openFileInDiff: (target: FileTarget, base: GitBase, placement?: OpenPlacement) => void
@@ -17,24 +14,44 @@ export type WorkspaceContextValue = {
   openFolder: (target: FolderTarget, placement?: OpenPlacement) => void
   pinPanel: (id: string) => void
   setFileViewMode: (id: string, mode: FileViewMode) => void
-  fileGitStates: Record<string, GitFileState>
   setFileGitState: (id: string, state: GitFileState) => void
-  agentScreenPanes: Record<string, string>
   setAgentScreenPane: (name: string, paneID?: string) => void
   onTerminalFocus: (paneID?: string) => void
   onViewer: (viewer: string) => void
   onAgentStatus: (name: string, status: string) => void
-  agentStatuses: Record<string, string>
   resetLayout: () => void
   showQuickOpen: (groupID?: string) => void
+}
+
+export type WorkspaceDataValue = {
+  board?: Board
+  mentionMatcher: AgentMentionMatcher
+  identityReadOnly: string
+  fileGitStates: Record<string, GitFileState>
+  agentScreenPanes: Record<string, string>
+  agentStatuses: Record<string, string>
   stream: StreamState
   streamProblems: Record<string, string>
 }
 
-export const WorkspaceContext = createContext<WorkspaceContextValue | null>(null)
+export const WorkspaceActionsContext = createContext<WorkspaceActionsValue | null>(null)
+export const WorkspaceDataContext = createContext<WorkspaceDataValue | null>(null)
 
-export function useWorkspace() {
-  const value = useContext(WorkspaceContext)
+function required<T>(value: T | null) {
   if (!value) throw new Error('dock workspace context is unavailable')
   return value
+}
+
+export function useWorkspaceActionsContext() {
+  return required(useContext(WorkspaceActionsContext))
+}
+
+export function useWorkspaceData() {
+  return required(useContext(WorkspaceDataContext))
+}
+
+export function WorkspaceProviders({ actions, data, children }: { actions: WorkspaceActionsValue, data: WorkspaceDataValue, children: ReactNode }) {
+  return <WorkspaceActionsContext.Provider value={actions}><WorkspaceDataContext.Provider value={data}>
+    {children}
+  </WorkspaceDataContext.Provider></WorkspaceActionsContext.Provider>
 }

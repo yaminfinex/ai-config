@@ -6,7 +6,7 @@ import type { Board, FileTarget, FolderTarget, Pane } from '../../types'
 import { fileTabID, isMarkdownPath, type FileViewMode } from '../files/fileTabs'
 import { gitStateForFileOpen, type GitBase, type GitFileState } from '../git/gitViewModel'
 import { dockOpenTarget, type OpenPlacement } from '../layout/openPlacement'
-import { layoutStorageBackupKey, layoutStorageKey, screenPanelParams, type DockPanelParams, type LayoutWriteState } from '../layout/dockLayout'
+import { screenPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import type { PanelRecordUpdate } from './usePanelRecords'
 import {
   invalidatePanel,
@@ -17,8 +17,6 @@ import {
   panelUsesQuickOpenGroup,
   previewPanelToReplace,
 } from './panelRegistry'
-
-export const defaultSidebarWidth = 250
 
 function dockGroupFacts(api: DockviewApi) {
   const active = api.activeGroup
@@ -46,8 +44,7 @@ type WorkspaceActionOptions = {
   setQuickOpenGroup: (groupID?: string) => void
   syncDock: () => void
   setFileGitState: (id: string, update: PanelRecordUpdate<GitFileState>) => void
-  setSidebarWidth: (width: number) => void
-  persistenceState: MutableRefObject<LayoutWriteState>
+  resetPersistedLayout: () => void
 }
 
 export function useWorkspaceActions({
@@ -58,10 +55,13 @@ export function useWorkspaceActions({
   setQuickOpenGroup,
   syncDock,
   setFileGitState,
-  setSidebarWidth,
-  persistenceState,
+  resetPersistedLayout,
 }: WorkspaceActionOptions) {
   const composerFocusCancel = useRef<() => void>(() => undefined)
+  const boardRef = useRef(board)
+  const quickOpenGroupRef = useRef(quickOpenGroup)
+  boardRef.current = board
+  quickOpenGroupRef.current = quickOpenGroup
 
   const focusComposer = useCallback(() => {
     composerFocusCancel.current()
@@ -88,8 +88,8 @@ export function useWorkspaceActions({
       if (focus) focusComposer()
       return 'existing' as const
     }
-    const requestedPlacement = !placement && panelUsesQuickOpenGroup(params) && quickOpenGroup
-      ? { direction: 'within' as const, groupID: quickOpenGroup }
+    const requestedPlacement = !placement && panelUsesQuickOpenGroup(params) && quickOpenGroupRef.current
+      ? { direction: 'within' as const, groupID: quickOpenGroupRef.current }
       : placement
     const newTarget = requestedPlacement === placement
       ? target
@@ -111,17 +111,17 @@ export function useWorkspaceActions({
     syncDock()
     if (focus) focusComposer()
     return 'new' as const
-  }, [apiRef, focusComposer, queryClient, quickOpenGroup, setQuickOpenGroup, syncDock])
+  }, [apiRef, focusComposer, queryClient, setQuickOpenGroup, syncDock])
 
   const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement, focus = false) => {
     openPanel({ kind: 'agent', name, preview }, placement, focus)
   }, [openPanel])
 
   const openScreen = useCallback((pane: Pane, preview: boolean, placement?: OpenPlacement) => {
-    if (!board) return
-    const params = screenPanelParams(board, pane, preview)
+    if (!boardRef.current) return
+    const params = screenPanelParams(boardRef.current, pane, preview)
     if (params) openPanel(params, placement)
-  }, [board, openPanel])
+  }, [openPanel])
 
   const openFile = useCallback((target: FileTarget, placement?: OpenPlacement) => {
     const id = fileTabID(target.root, target.path)
@@ -166,14 +166,9 @@ export function useWorkspaceActions({
     const api = apiRef.current
     if (!api) return
     api.clear()
-    try {
-      localStorage.removeItem(layoutStorageKey)
-      localStorage.removeItem(layoutStorageBackupKey)
-    } catch { /* best effort */ }
-    persistenceState.current = { recovering: false, lastGoodRaw: null }
-    setSidebarWidth(defaultSidebarWidth)
+    resetPersistedLayout()
     syncDock()
-  }, [apiRef, persistenceState, setSidebarWidth, syncDock])
+  }, [apiRef, resetPersistedLayout, syncDock])
 
   return { openPanel, openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, pinPanel, setFileViewMode, resetLayout }
 }
