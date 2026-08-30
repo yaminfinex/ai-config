@@ -43,3 +43,23 @@ test('open-tab status follows placed and unplaced rows from a fleet snapshot', (
   assert.equal(agentBusStatus(board, 'dore'), 'blocked')
   assert.equal(agentBusStatus(board, 'missing'), '-')
 })
+
+test('tool badges are terse, honest, and omitted when unknown', async () => {
+  const { agentToolBadge } = await import('../src/shared/agentStatus.ts')
+  assert.equal(agentToolBadge('claude'), 'cl')
+  assert.equal(agentToolBadge('codex'), 'cx')
+  assert.equal(agentToolBadge('gemini'), 'ge')
+  assert.equal(agentToolBadge('-'), '')
+  assert.equal(agentToolBadge(''), '')
+  assert.equal(agentToolBadge(undefined), '')
+})
+
+test('agent tabs and the agent header carry the badge; the tab narrates no status prose', async () => {
+  const { readFileSync } = await import('node:fs')
+  const tab = readFileSync(new URL('../src/features/workspace/panelRegistry.tsx', import.meta.url), 'utf8')
+  assert.match(tab, /AgentStatusDot status=\{status\}/)
+  assert.match(tab, /toolBadge && <span className="tool-badge">/)
+  assert.doesNotMatch(tab, /status !== '-' \? status : presentation\.meta/)
+  const header = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  assert.match(header, /className="agent-name">\{name\}<\/strong>\n\s*\{agentToolBadge\(agent\?\.tool\)/)
+})

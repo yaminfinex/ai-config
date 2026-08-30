@@ -52,7 +52,6 @@ export function agentContextPresentation(agent: AgentDetail, liveStatus: string)
     retired ? 'read-only' : agent.pane?.pane_id ?? 'unplaced',
     agent.herdr_status !== '-' && agent.herdr_status.toLowerCase() !== 'idle' ? `herdr ${agent.herdr_status}` : '',
     !retired && agent.gap !== '-' ? gapLabel(agent.gap) : '',
-    agent.tool,
   ].filter(Boolean)
   const repo = repoNameFromRemote(agent.git?.remote_url)
   const branch = agent.git?.branch

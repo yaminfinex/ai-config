@@ -45,7 +45,7 @@ test('context presentation relocates every former header fact', () => {
   assert.equal(presentation.status, 'active')
   assert.deepEqual(presentation.cwd, { display: '/home/operator/Coding/ai-config', full: '/home/operator/Coding/ai-config' })
   assert.deepEqual(presentation.repository, { display: 'ai-config · agent-context-strip', remote: 'git@github.com:example/ai-config.git' })
-  assert.deepEqual(presentation.details, ['unplaced', 'herdr active', 'no pane', 'codex'])
+  assert.deepEqual(presentation.details, ['unplaced', 'herdr active', 'no pane'])
   assert.deepEqual(presentation.vitals, ['gpt-5-codex', '100 tokens · 90% left'])
 })
 
@@ -62,16 +62,16 @@ test('retired and absent facts remain honest', () => {
   assert.equal(presentation.status, 'retired')
   assert.equal(presentation.cwd, undefined)
   assert.deepEqual(presentation.repository, { display: 'retained-branch', remote: undefined })
-  assert.deepEqual(presentation.details, ['read-only', 'codex'])
+  assert.deepEqual(presentation.details, ['read-only'])
   assert.deepEqual(presentation.vitals, [])
 })
 
 test('owner-ruled strip exceptions hide the bus word and herdr idle only', () => {
   const idle = agentContextPresentation(detail({ herdr_status: 'idle' }), 'listening')
   assert.equal(idle.status, 'listening')
-  assert.deepEqual(idle.details, ['p1', 'codex'])
+  assert.deepEqual(idle.details, ['p1'])
   const active = agentContextPresentation(detail({ herdr_status: 'active' }), 'active')
-  assert.deepEqual(active.details, ['p1', 'herdr active', 'codex'])
+  assert.deepEqual(active.details, ['p1', 'herdr active'])
 
   const strip = readFileSync(new URL('../src/features/transcript/AgentContextStrip.tsx', import.meta.url), 'utf8')
   assert.match(strip, /<AgentStatusDot status=\{context\.status\} \/>/)

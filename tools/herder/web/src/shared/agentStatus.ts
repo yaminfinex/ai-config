@@ -42,3 +42,38 @@ function rowBusStatus(row: Row, name: string): string | undefined {
   }
   return undefined
 }
+
+export function agentBoardTool(board: Board | undefined, name: string): string {
+  if (!board) return ''
+  for (const workspace of board.workspaces) {
+    for (const tab of workspace.tabs) {
+      for (const pane of tab.panes) {
+        const tool = rowTool(pane, name)
+        if (tool) return tool
+      }
+    }
+  }
+  for (const row of board.unplaced) {
+    const tool = rowTool(row, name)
+    if (tool) return tool
+  }
+  return ''
+}
+
+function rowTool(row: Row, name: string): string | undefined {
+  if (row.agent === name) return row.tool
+  for (const child of row.subagents ?? []) {
+    const tool = rowTool(child, name)
+    if (tool) return tool
+  }
+  return undefined
+}
+
+// Terse per-tool marker for tab bars and headers; empty when unknown so
+// callers can omit the badge instead of showing a lying placeholder.
+export function agentToolBadge(tool: string | undefined): string {
+  if (!tool || tool === '-') return ''
+  if (tool === 'claude') return 'cl'
+  if (tool === 'codex') return 'cx'
+  return tool.slice(0, 2)
+}
