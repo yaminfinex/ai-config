@@ -8,7 +8,15 @@ test('copy path reports success only after the clipboard accepts the absolute pa
   assert.deepEqual(writes, ['/repo/src/App.tsx'])
 })
 
-test('copy path fails honestly when clipboard access is unavailable or rejects', async () => {
-  assert.equal(await copyPath(undefined, '/repo/src/App.tsx'), 'failed')
-  assert.equal(await copyPath({ writeText: async () => { throw new Error('denied') } }, '/repo/src/App.tsx'), 'failed')
+test('copy path falls back when the clipboard writer is unavailable or rejects', async () => {
+  const legacyWrites: string[] = []
+  const execCopy = (value: string) => { legacyWrites.push(value); return true }
+  assert.equal(await copyPath(undefined, '/repo/src/App.tsx', execCopy), 'copied')
+  assert.equal(await copyPath({ writeText: async () => { throw new Error('denied') } }, '/repo/src/App.tsx', execCopy), 'copied')
+  assert.deepEqual(legacyWrites, ['/repo/src/App.tsx', '/repo/src/App.tsx'])
+})
+
+test('copy path fails honestly only when the clipboard writer and fallback both fail', async () => {
+  assert.equal(await copyPath(undefined, '/repo/src/App.tsx', () => false), 'failed')
+  assert.equal(await copyPath({ writeText: async () => { throw new Error('denied') } }, '/repo/src/App.tsx', () => false), 'failed')
 })
