@@ -83,6 +83,7 @@ if [ "${1:-}" = send ]; then
 fi
 if [ "${1:-}" = events ]; then
   case " $* " in
+    *" events --last 1 --full --type status --agent vile --context deliver:* "*) exit 0 ;;
     *" events --last 500 --full --type message "*)
       printf '%s\n' \
         '{"id":97,"ts":"2099-01-01T00:00:00.000001+00:00","type":"message","data":{"from":"web-owner","delivered_to":["vile"],"intent":"request","text":"[HERDER_WEB_OPERATOR_NOTE_BEGIN]\n[This message came from a web operator named web-owner via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n[HERDER_WEB_OPERATOR_NOTE_END]\n\noperator question"}}' \

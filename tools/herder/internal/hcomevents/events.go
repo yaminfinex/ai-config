@@ -27,6 +27,15 @@ type Message struct {
 	SentAt string   `json:"sent_at,omitempty"`
 }
 
+// DeliveryWatermark is the recipient cursor recorded by hcom after a delivery
+// batch. Position is the last bus event consumed by that concrete recipient;
+// MessageTimestamp identifies the batch tail and is corroboration only.
+type DeliveryWatermark struct {
+	Recipient        string
+	Position         int64
+	MessageTimestamp string
+}
+
 const catchUpTimeout = 5 * time.Second
 
 type Cursor struct {
@@ -35,18 +44,63 @@ type Cursor struct {
 }
 
 type event struct {
-	ID   json.Number `json:"id"`
-	TS   string      `json:"ts"`
-	Type string      `json:"type"`
-	Data struct {
-		From        string   `json:"from"`
-		DeliveredTo []string `json:"delivered_to"`
-		Mentions    []string `json:"mentions"`
-		Intent      string   `json:"intent"`
-		Thread      string   `json:"thread"`
-		Text        string   `json:"text"`
+	ID       json.Number `json:"id"`
+	TS       string      `json:"ts"`
+	Type     string      `json:"type"`
+	Instance string      `json:"instance"`
+	Data     struct {
+		From        string      `json:"from"`
+		DeliveredTo []string    `json:"delivered_to"`
+		Mentions    []string    `json:"mentions"`
+		Intent      string      `json:"intent"`
+		Thread      string      `json:"thread"`
+		Text        string      `json:"text"`
+		Context     string      `json:"context"`
+		Position    json.Number `json:"position"`
+		MsgTS       string      `json:"msg_ts"`
 	} `json:"data"`
 	TimedOut bool `json:"timed_out"`
+}
+
+// LatestDelivery returns the newest delivery cursor recorded for recipient.
+// An empty result is a valid fact: callers may retain their transcript-only
+// evidence. Query failures remain distinguishable so optional queue facts can
+// be omitted instead of guessed.
+func LatestDelivery(ctx context.Context, recipient string) (DeliveryWatermark, bool, error) {
+	if recipient == "" {
+		return DeliveryWatermark{}, false, errors.New("empty hcom delivery recipient")
+	}
+	cmd := command(ctx, "events", "--last", "1", "--full", "--type", "status", "--agent", recipient, "--context", "deliver:*")
+	out, err := cmd.Output()
+	if err != nil {
+		return DeliveryWatermark{}, false, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(out))
+	decoder.UseNumber()
+	var parsed event
+	if err := decoder.Decode(&parsed); errors.Is(err, io.EOF) {
+		return DeliveryWatermark{}, false, nil
+	} else if err != nil {
+		return DeliveryWatermark{}, false, err
+	}
+	watermark, err := projectDelivery(parsed)
+	if err != nil {
+		return DeliveryWatermark{}, false, err
+	}
+	return watermark, true, nil
+}
+
+func projectDelivery(parsed event) (DeliveryWatermark, error) {
+	if parsed.Type != "status" || parsed.Instance == "" || !strings.HasPrefix(parsed.Data.Context, "deliver:") {
+		return DeliveryWatermark{}, fmt.Errorf("invalid hcom delivery event %q for %q", parsed.Type, parsed.Instance)
+	}
+	position, err := strconv.ParseInt(parsed.Data.Position.String(), 10, 64)
+	if err != nil || position < 0 {
+		return DeliveryWatermark{}, fmt.Errorf("invalid hcom delivery position %q", parsed.Data.Position)
+	}
+	return DeliveryWatermark{
+		Recipient: parsed.Instance, Position: position, MessageTimestamp: parsed.Data.MsgTS,
+	}, nil
 }
 
 // Recent returns the most recent bus message events in bus order. It uses the

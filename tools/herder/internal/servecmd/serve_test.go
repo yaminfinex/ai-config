@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -53,7 +54,10 @@ func fixtureDeps() dependencies {
 			return nil
 		},
 		recentMessages: func(context.Context, int) ([]hcomevents.Message, error) { return []hcomevents.Message{}, nil },
-		entryEnd:       func(hcomidentity.Row) (int64, error) { return 0, nil },
+		latestDelivery: func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error) {
+			return hcomevents.DeliveryWatermark{}, false, nil
+		},
+		entryEnd: func(hcomidentity.Row) (int64, error) { return 0, nil },
 		entryTail: func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
 			return claudesession.TailResult{Cursor: claudesession.Cursor{SessionID: row.SessionID, Offset: cursor.Offset}}, nil
 		},
@@ -706,6 +710,80 @@ func TestQueueProofRequiresBusMetadataAgreement(t *testing.T) {
 	}
 }
 
+func TestQueueProofAcceptsResolvedRecipientBaseAlias(t *testing.T) {
+	candidates := map[string]queueCandidate{
+		"731": {Sender: "web-owner", Recipient: "qlive-bulo", RecipientBase: "bulo", Intent: "request", Thread: "violet"},
+	}
+	entry := claudesession.Entry{Kind: claudesession.KindHcomDelivery, Payload: json.RawMessage(`{"deliveries":[{"message_id":"731","sender":"web-owner","recipient":"bulo","intent":"request","thread":"violet"}]}`)}
+	proof := newQueueProof(false)
+	if err := proof.observe([]claudesession.Entry{entry}, candidates); err != nil || !proof.excluded["731"] {
+		t.Fatalf("base recipient alias not accepted: excluded=%#v err=%v", proof.excluded, err)
+	}
+}
+
+func TestDeliveryWatermarkIsRecipientScopedAndPositionBased(t *testing.T) {
+	candidates := map[string]queueCandidate{
+		"10": {Recipient: "dore"},
+		"11": {Recipient: "other"},
+		"12": {Recipient: "dore"},
+	}
+	excluded := excludeDeliveredCandidates(candidates, nil, hcomevents.DeliveryWatermark{Recipient: "dore", Position: 11})
+	if !excluded["10"] || excluded["11"] || excluded["12"] {
+		t.Fatalf("recipient watermark exclusions = %#v", excluded)
+	}
+}
+
+func TestCapturedMissingTranscriptProofClearsFromRecipientWatermark(t *testing.T) {
+	for _, test := range []struct {
+		name, fixture, id, recipient, recipientBase, sentAt, msgTS string
+		position                                                   int64
+	}{
+		{
+			name: "post-tool task history batch", fixture: "claude-posttool-task-history.jsonl",
+			id: "161485", recipient: "ziru", sentAt: "2026-08-30T20:13:31.118862+00:00",
+			position: 161498, msgTS: "2026-08-30T20:17:49.539986+00:00",
+		},
+		{
+			name: "stop hook idle wake", fixture: "claude-stop-hook-feedback.jsonl",
+			id: "161525", recipient: "zuma", sentAt: "2026-08-30T20:20:14.553415+00:00",
+			position: 161525, msgTS: "2026-08-30T20:20:14.553415+00:00",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			read, err := claudesession.ReadWindow(filepath.Join("testdata", test.fixture), 0, 20)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range read.Entries {
+				if entry.Kind == claudesession.KindHcomDelivery {
+					t.Fatalf("captured unsupported hook shape normalized as delivery: %#v", entry)
+				}
+			}
+			candidates := map[string]queueCandidate{
+				test.id: {
+					SentAt: test.sentAt, Sender: "web-operator", Recipient: test.recipient,
+					RecipientBase: test.recipientBase, Intent: "request",
+				},
+			}
+			proof := newQueueProof(false)
+			if err := proof.observe(read.Entries, candidates); err != nil {
+				t.Fatal(err)
+			}
+			if proof.excluded[test.id] {
+				t.Fatal("current transcript logic unexpectedly cleared captured failure")
+			}
+			watermark := hcomevents.DeliveryWatermark{Recipient: test.recipient, Position: test.position, MessageTimestamp: test.msgTS}
+			excluded := excludeDeliveredCandidates(candidates, proof.excluded, watermark)
+			if !excluded[test.id] {
+				t.Fatalf("recipient watermark did not clear %s", test.id)
+			}
+			if test.id == "161485" && watermark.MessageTimestamp == candidates[test.id].SentAt {
+				t.Fatal("batched fixture no longer guards against msg_ts equality matching")
+			}
+		})
+	}
+}
+
 func TestQueueProofOmitsPreCompactionCandidatesButKeepsNewer(t *testing.T) {
 	entries := []claudesession.Entry{
 		{
@@ -747,6 +825,11 @@ func TestAgentDetailOmitsQueuedWhenDiffCannotBeProven(t *testing.T) {
 		func(deps *dependencies) {
 			deps.agentQueueExclusions = func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error) {
 				return nil, errors.New("session unreadable")
+			}
+		},
+		func(deps *dependencies) {
+			deps.latestDelivery = func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error) {
+				return hcomevents.DeliveryWatermark{}, false, errors.New("delivery events unreadable")
 			}
 		},
 	} {

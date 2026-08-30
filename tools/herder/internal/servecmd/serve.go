@@ -57,6 +57,7 @@ type dependencies struct {
 	stopped              func(string) (hcomidentity.Row, error)
 	messages             func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
 	recentMessages       func(context.Context, int) ([]hcomevents.Message, error)
+	latestDelivery       func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error)
 	entryEnd             func(hcomidentity.Row) (int64, error)
 	entryTail            func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
 	agentQueueExclusions func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error)
@@ -87,6 +88,7 @@ var liveDependencies = dependencies{
 	stopped:              hcomidentity.Stopped,
 	messages:             hcomevents.Subscribe,
 	recentMessages:       hcomevents.Recent,
+	latestDelivery:       hcomevents.LatestDelivery,
 	entryEnd:             entryTailEnd,
 	entryTail:            entryTail,
 	agentQueueExclusions: readQueueExclusions,
@@ -668,7 +670,13 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 		if messages, messageErr := deps.recentMessages(ctx, 500); messageErr == nil {
 			candidates := operatorQueueCandidates(name, row.BaseName, messages, roster)
 			if excluded, entryErr := deps.agentQueueExclusions(row, candidates); entryErr == nil {
-				result.Queued = diffQueuedMessages(messages, candidates, excluded)
+				watermark, found, deliveryErr := deps.latestDelivery(ctx, row.Name)
+				if deliveryErr == nil {
+					if found {
+						excluded = excludeDeliveredCandidates(candidates, excluded, watermark)
+					}
+					result.Queued = diffQueuedMessages(messages, candidates, excluded)
+				}
 			}
 		}
 	}
