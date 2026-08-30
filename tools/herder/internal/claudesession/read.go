@@ -357,6 +357,11 @@ func classifyUser(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
 		return KindCompactDivider, raw
 	}
 	if env.IsMeta {
+		if feedback, ok := strings.CutPrefix(strings.TrimSpace(text), "Stop hook feedback:"); ok {
+			if payload, ok := parseHcomDeliveryEnvelope(feedback, "stop_hook_feedback"); ok {
+				return KindHcomDelivery, payload
+			}
+		}
 		return KindInjectedSystem, raw
 	}
 	if env.Origin.Kind == "task-notification" {
@@ -384,10 +389,28 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 	if env.Attachment.Type != "hook_additional_context" || !isDeliveryHook(env.Attachment.HookEvent, env.Attachment.HookName) {
 		return KindSystemChip, raw, true
 	}
-	body, ok := exactHcomAttachmentBody(env.Attachment.Content)
+	var parts []string
+	if json.Unmarshal(env.Attachment.Content, &parts) != nil || len(parts) != 1 {
+		return KindSystemChip, raw, true
+	}
+	payload, ok := parseHcomDeliveryEnvelope(parts[0], env.Attachment.Type)
 	if !ok {
 		return KindSystemChip, raw, true
 	}
+	return KindHcomDelivery, payload, true
+}
+
+func parseHcomDeliveryEnvelope(text, subtype string) (json.RawMessage, bool) {
+	text = strings.TrimSpace(text)
+	body, ok := strings.CutPrefix(text, "<hcom>")
+	if !ok {
+		return nil, false
+	}
+	body, ok = strings.CutSuffix(body, "</hcom>")
+	if !ok {
+		return nil, false
+	}
+	body = strings.TrimSpace(body)
 	matches := hcomDeliveryBoundaries(body)
 	deliveries := make([]map[string]any, 0, max(len(matches), 1))
 	for i, match := range matches {
@@ -412,9 +435,7 @@ func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessag
 	if len(deliveries) == 0 {
 		deliveries = append(deliveries, map[string]any{"text": strings.TrimSpace(body)})
 	}
-	return KindHcomDelivery, mustJSON(map[string]any{
-		"subtype": env.Attachment.Type, "deliveries": deliveries,
-	}), true
+	return mustJSON(map[string]any{"subtype": subtype, "deliveries": deliveries}), true
 }
 
 func stripHcomDeliveryTip(text, intent string) string {
@@ -439,20 +460,6 @@ func isDeliveryHook(event, name string) bool {
 	default:
 		return false
 	}
-}
-
-func exactHcomAttachmentBody(raw json.RawMessage) (string, bool) {
-	var parts []string
-	if json.Unmarshal(raw, &parts) != nil || len(parts) != 1 {
-		return "", false
-	}
-	text := strings.TrimSpace(parts[0])
-	body, ok := strings.CutPrefix(text, "<hcom>")
-	if !ok {
-		return "", false
-	}
-	body, ok = strings.CutSuffix(body, "</hcom>")
-	return strings.TrimSpace(body), ok
 }
 
 func hcomDeliveryBoundaries(body string) [][]int {
