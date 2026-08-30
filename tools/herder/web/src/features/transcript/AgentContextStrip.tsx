@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AgentStatusDot } from '../../shared/presentation'
 import { agentContextPresentation, hasRightOverflow } from '../../shared/agentContext'
 import type { AgentDetail } from '../../types'
@@ -28,7 +28,8 @@ export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChang
   const innerRef = useRef<HTMLDivElement>(null)
   const [overflowing, setOverflowing] = useState(false)
   const updateOverflow = (inner: HTMLDivElement) => setOverflowing(hasRightOverflow(inner.scrollWidth, inner.clientWidth, inner.scrollLeft))
-  useSizeObserver(innerRef, updateOverflow, Boolean(agent), agent, (inner) => inner.parentElement ? [inner.parentElement] : [])
+  const overflowVersion = useMemo(() => ({ agent, liveStatus }), [agent, liveStatus])
+  useSizeObserver(innerRef, updateOverflow, Boolean(agent), overflowVersion, (inner) => inner.parentElement ? [inner.parentElement] : [])
   useDOMEvent(innerRef, 'scroll', () => { if (innerRef.current) updateOverflow(innerRef.current) }, { passive: true }, Boolean(agent))
   useEffect(() => { if (!agent) setOverflowing(false) }, [agent])
   return <section className="agent-context-strip" data-overflow-right={overflowing || undefined} aria-label="Agent context" aria-busy={!agent}>
