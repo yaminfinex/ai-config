@@ -112,12 +112,11 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   const absolutePath = rootJoinedAbsolutePath(target.root, target.path)
   return <main className="file-panel">
     <header className="file-header">
-      <div className="file-title"><strong>{rootLabel(target.path)}</strong><a className="path-parent-link" href={`/folder?${new URLSearchParams({ root: target.root, path: containingFolder })}`}
+      <div className="file-title"><div className="path-name"><strong>{rootLabel(target.path)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /></div><a className="path-parent-link" href={`/folder?${new URLSearchParams({ root: target.root, path: containingFolder })}`}
         title={`Open ${rootJoinedAbsolutePath(target.root, containingFolder)} · ${openInSideLabel(navigator.userAgent)}`} onClick={(event) => {
           event.preventDefault()
           onOpenFolder({ root: target.root, path: containingFolder }, placementFromModifiers(event), target)
         }}>{containingFolder || '.'}</a><span className="root-path" title={target.root}>{target.root}</span></div>
-      <PathCopyButton key={absolutePath} path={absolutePath} />
       <div className="detail-toggle file-mode-toggle" aria-label="File mode">
         {(['current', 'diff', 'history'] as const).map((mode) => <button type="button" key={mode} className={gitState.mode === mode ? 'active' : ''} aria-pressed={gitState.mode === mode}
           disabled={mode !== 'current' && !gitAvailable} title={mode !== 'current' && gitReason ? gitReason : undefined}

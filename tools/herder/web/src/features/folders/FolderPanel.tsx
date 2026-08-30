@@ -212,11 +212,10 @@ export function FolderPanel({ target, active, selectionHint, onSelectionHintCons
   const absolutePath = rootJoinedAbsolutePath(target.root, currentDir)
   return <main className="folder-panel">
     <header className="folder-header">
-      <div className="folder-title"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong>{parentFolder !== null && <a className="path-parent-link"
+      <div className="folder-title"><div className="path-name"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /></div>{parentFolder !== null && <a className="path-parent-link"
         href={`/folder?${new URLSearchParams({ root: target.root, path: parentFolder })}`} title={`Open ${rootJoinedAbsolutePath(target.root, parentFolder)} · ${openInSideLabel(navigator.userAgent)}`}
         onClick={(event) => { event.preventDefault(); onOpenFolder({ root: target.root, path: parentFolder }, placementFromModifiers(event)) }}>{parentFolder || '.'}</a>}
         <span className="root-path" title={target.root}>{target.root}</span></div>
-      <PathCopyButton key={absolutePath} path={absolutePath} />
       <button type="button" onClick={() => setTreeHidden((value) => !value)}>{treeHidden ? 'Show tree' : 'Hide tree'}</button>
       {available && <div className="detail-toggle folder-view-toggle" aria-label="Folder view">
         <button type="button" className={!showBoard ? 'active' : ''} aria-pressed={!showBoard} onClick={() => setBoardView(false)}>Files</button>
