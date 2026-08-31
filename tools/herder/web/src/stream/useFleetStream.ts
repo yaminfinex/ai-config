@@ -35,6 +35,7 @@ export type EventSourceLike = {
 }
 
 type TimerHost = Pick<typeof window, 'setTimeout' | 'clearTimeout' | 'setInterval' | 'clearInterval'>
+const transcriptBurstDebounce = 25
 
 function without(problem: Record<string, string>, key: string) {
   const next = { ...problem }
@@ -76,6 +77,7 @@ export function subscribeToFleet(
   let events: EventSourceLike | null = null
   let reconnectTimer: number | null = null
   let watchdog: number | null = null
+  const transcriptRefreshTimers = new Map<string, number>()
   let backoff = 500
   let lastActivity = Date.now()
   const names = [...new Set(agentNames)].sort()
@@ -87,6 +89,15 @@ export function subscribeToFleet(
     }
     void queryClient.invalidateQueries({ queryKey: queryKeys.fileTree(fact.root, fact.path), exact: true })
     void queryClient.invalidateQueries({ queryKey: queryKeys.backlog(fact.root, fact.path), exact: true })
+  }
+  const scheduleTranscriptRefresh = (name: string) => {
+    if (transcriptRefreshTimers.has(name)) return
+    const timer = timers.setTimeout(() => {
+      transcriptRefreshTimers.delete(name)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+    }, transcriptBurstDebounce)
+    transcriptRefreshTimers.set(name, timer)
   }
   const update = (change: (current: StreamState) => StreamState) => {
     queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => change(current ?? initialStreamState))
@@ -171,8 +182,7 @@ export function subscribeToFleet(
     })
     names.forEach((name) => events?.addEventListener(`entry:${name}`, () => {
       touch()
-      void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+      scheduleTranscriptRefresh(name)
     }))
     panes.forEach((paneID) => events?.addEventListener(`screen:${paneID}`, (event) => {
       touch()
@@ -195,6 +205,8 @@ export function subscribeToFleet(
     events?.close()
     if (reconnectTimer !== null) timers.clearTimeout(reconnectTimer)
     if (watchdog !== null) timers.clearInterval(watchdog)
+    transcriptRefreshTimers.forEach((timer) => timers.clearTimeout(timer))
+    transcriptRefreshTimers.clear()
   }
 }
 

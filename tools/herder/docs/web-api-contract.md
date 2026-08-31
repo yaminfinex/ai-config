@@ -714,8 +714,8 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   - `ping`: an empty client-visible heartbeat paired with the required
     SSE comment heartbeat (`: ping`) every 15s.
   Sourced from hcom's event subscription plus herdr snapshot polling
-  (proposed: 2s) and one Claude-session entry tailer set per subscribed
-  page-set. The shell owns reconnect: it closes any errored
+  (proposed: 2s) and one filesystem-woken transcript entry tailer set per
+  subscribed page-set. The shell owns reconnect: it closes any errored
   EventSource, rebuilds with bounded backoff and no stale cursor, and
   rebuilds if neither data nor heartbeat arrives for 45s. Its
   `reconnecting` indicator is present only while a rebuild is scheduled
@@ -750,6 +750,26 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   request context closes its fsnotify watcher and drops the complete ephemeral
   set. Changes/Git panels, transcript panels, recursive tree freshness, editing,
   and file writes remain outside this amendment.
+
+  ### AMENDMENT (conductor-accepted TASK-77, 2026-08-31) — transcript tails wake on session-file writes
+
+  Each SSE request with subscribed agents owns a separate transcript fsnotify
+  watcher. Claude main sessions, proven Claude Task sidechains, and Codex
+  rollout files all watch the resolved session file's parent directory and
+  filter events to the exact path, so in-place appends and atomic replacement
+  both wake the existing entry tail. A trailing 120ms quiet window coalesces a
+  write burst into one affected-agent tail pass. Session identity changes on
+  the existing fleet cadence rebuild the resolved watch path and preserve the
+  existing `rewindow` contract.
+
+  The 2s fleet cadence never tails an unchanged transcript. A separate 30s
+  server-side safety sweep bounds staleness after watcher setup, registration,
+  or runtime failure; those failures are audited and retried by the safety
+  path. No client transcript poll is added. EventSource reconnect still
+  invalidates each subscribed cursor query, catching up writes missed while
+  disconnected. `entry:{bus-name}` remains an immutable entry payload, but the
+  client deliberately treats it only as an invalidation signal and coalesces a
+  multi-entry frame burst into one cursor fetch.
 
   ### AMENDMENT (owner-rescoped 2026-08-27, expanded 2026-08-28) — read-only terminal screens (superseded for terminal surfaces by TASK-73 below)
 

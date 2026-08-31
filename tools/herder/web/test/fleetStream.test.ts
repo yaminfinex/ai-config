@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { eventStreamURL, recordBuildIdentity, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
 
@@ -102,8 +102,8 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   sources[0].emit('message', JSON.stringify({ id: 731, from: 'web-owner', to: ['vile'], text: 'operator question' }))
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
-  // A bus message to an open agent refreshes its transcript immediately —
-  // the sub-second path that beats the 2s transcript poll.
+  // A bus message to an open agent refreshes its transcript immediately,
+  // independently of the session-file watcher.
   assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
   sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false }))
   assert.deepEqual(queryClient.getQueryData(queryKeys.screen('w1:p1')), { pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false })
@@ -117,4 +117,36 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   assert.equal(queryClient.getQueryState(queryKeys.backlog('/repo', 'docs'))?.isInvalidated, true)
   stop()
   assert.equal(sources[0].closed, true)
+})
+
+test('one multi-entry SSE burst causes one active transcript cursor fetch', async () => {
+  const queryClient = new QueryClient()
+  const source = new FakeEventSource()
+  let cursorFetches = 0
+  const observer = new QueryObserver(queryClient, {
+    queryKey: queryKeys.entries('vile'),
+    queryFn: async () => {
+      cursorFetches++
+      return { sessionId: 's', window: { mode: 'from' as const, from: 0, limit: 500 }, entries: [], nextOffset: 0 }
+    },
+  })
+  const unsubscribeObserver = observer.subscribe(() => undefined)
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(cursorFetches, 1)
+
+  const timers = {
+    setTimeout: globalThis.setTimeout as typeof window.setTimeout,
+    clearTimeout: globalThis.clearTimeout as typeof window.clearTimeout,
+    setInterval: globalThis.setInterval as typeof window.setInterval,
+    clearInterval: globalThis.clearInterval as typeof window.clearInterval,
+  }
+  const stop = subscribeToFleet(queryClient, ['vile'], [], [], undefined, () => source, timers)
+  source.emit('entry:vile', JSON.stringify({ uuid: 'one' }))
+  source.emit('entry:vile', JSON.stringify({ uuid: 'two' }))
+  source.emit('entry:vile', JSON.stringify({ uuid: 'three' }))
+  await new Promise((resolve) => setTimeout(resolve, 50))
+
+  assert.equal(cursorFetches, 2)
+  stop()
+  unsubscribeObserver()
 })
