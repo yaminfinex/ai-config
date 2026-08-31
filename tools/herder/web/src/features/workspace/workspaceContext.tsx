@@ -1,6 +1,5 @@
 import { createContext, useContext, type ReactNode } from 'react'
 import type { Board, FileTarget, FolderTarget } from '../../types'
-import type { StreamState } from '../../stream/useFleetStream'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
 import type { FileViewMode } from '../files/fileTabs'
 import type { GitBase, GitFileState } from '../git/gitViewModel'
@@ -33,8 +32,6 @@ export type WorkspaceDataValue = {
   folderSelectionHints: Record<string, FileTarget>
   agentScreenPanes: Record<string, string>
   agentStatuses: Record<string, string>
-  stream: StreamState
-  streamProblems: Record<string, string>
 }
 
 export const WorkspaceActionsContext = createContext<WorkspaceActionsValue | null>(null)

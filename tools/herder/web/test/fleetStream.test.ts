@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
-import { eventStreamURL, recordBuildIdentity, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
+import { eventStreamURL, recordBuildIdentity, streamAlerts, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
 import { beginSendRefresh, settleSendRefresh } from '../src/sendRefresh.ts'
 
@@ -44,6 +44,28 @@ test('a changed reconnect build persistently requests a manual refresh', () => {
   const changed = recordBuildIdentity(loaded, 'source:build-b')
   assert.equal(changed.serverUpdated, true)
   assert.equal(recordBuildIdentity(changed, 'source:build-a').serverUpdated, true)
+})
+
+test('last-event traffic does not notify alert-only stream consumers', async () => {
+  const queryClient = new QueryClient()
+  const initial: StreamState = { problems: {}, substrateProof: { herdr: true, hcom: true }, lastEvent: 1, loadedBuild: 'source:a', serverUpdated: false }
+  queryClient.setQueryData(queryKeys.stream, initial)
+  const observer = new QueryObserver(queryClient, {
+    queryKey: queryKeys.stream,
+    queryFn: async () => initial,
+    select: streamAlerts,
+    notifyOnChangeProps: ['data'],
+  })
+  let notifications = 0
+  const unsubscribe = observer.subscribe(() => { notifications += 1 })
+  const baseline = notifications
+  queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => ({ ...(current ?? initial), lastEvent: 2 }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(notifications, baseline)
+  queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => ({ ...(current ?? initial), problems: { stream: 'reconnecting' } }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(notifications, baseline + 1)
+  unsubscribe()
 })
 
 test('closing an agent subscription prunes only that transcript fault', () => {
