@@ -4,11 +4,13 @@ import test from 'node:test'
 
 import {
   aggregateActivityPills,
+  approximateActivityAge,
   activityPillTone,
   cleanViewDisposition,
   isCleanConversationDelivery,
   persistTranscriptViewMode,
   readTranscriptViewMode,
+  splitFinalActivityRun,
   transcriptViewPreferenceKey,
 } from '../src/features/transcript/cleanView.ts'
 
@@ -115,4 +117,46 @@ test('pill aggregation combines only consecutive repeatable activities', () => {
     { key: 'message-2', label: '✉ nero', kind: 'message', count: 1 },
     { key: 'read-3', label: 'Read', kind: 'tool_use', count: 1 },
   ])
+})
+
+test('final activity split selects the raw latest item before pill aggregation', () => {
+  const first = { key: 'read-1', label: 'Read', timestamp: '2026-08-31T10:00:00.000Z' }
+  const latest = { key: 'read-2', label: 'Read', timestamp: '2026-08-31T10:04:00.000Z' }
+
+  assert.deepEqual(splitFinalActivityRun([
+    { type: 'entry' },
+    { type: 'run', activities: [first, latest] },
+  ]), { collapsed: [first], latest })
+})
+
+test('a one-item final activity run has no collapsed remainder', () => {
+  const latest = { key: 'bash-1', label: 'Bash' }
+  assert.deepEqual(splitFinalActivityRun([
+    { type: 'entry' },
+    { type: 'run', activities: [latest] },
+  ]), { collapsed: [], latest })
+
+  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
+  assert.match(component, /\{finalActivity\.collapsed\.length > 0 && <ActivityStrip/)
+})
+
+test('a trailing show entry including fenced assistant text prevents the final activity hoist', () => {
+  assert.equal(splitFinalActivityRun([
+    { type: 'run', activities: [{ key: 'read-1', label: 'Read' }] },
+    { type: 'entry', kind: 'assistant_text' },
+  ]), null)
+
+  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
+  assert.match(component, /if \(entry\.kind === 'assistant_text'\) return <AssistantText/)
+  assert.match(component, /if \(cleanView\) \{[\s\S]+splitFinalActivityRun\(rows\)[\s\S]+return <MentionContext\.Provider/)
+  assert.match(component, /finalActivity && rowIndex === rows\.length - 1/)
+  assert.match(component, /return <MentionContext\.Provider value=\{mentionContext\}>\{entries\.map\(\(entry, index\) => <EntryView/)
+  assert.match(component, /approximateActivityAge\(activity\.entry\.timestamp, now\)/)
+  assert.doesNotMatch(component, /setInterval/)
+})
+
+test('compact activity age is terse and derived from the supplied clock', () => {
+  const now = Date.parse('2026-08-31T10:04:00.000Z')
+  assert.equal(approximateActivityAge('2026-08-31T10:00:00.000Z', now), '4m')
+  assert.equal(approximateActivityAge(undefined, now), 'time unknown')
 })

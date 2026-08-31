@@ -469,6 +469,7 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .entry-expander > summary:hover, .entry-expander[open] > summary { border-color: var(--border); background: var(--bg2); }
 .entry-expander[open] > summary { border-radius: 6px 6px 0 0; }
 .activity-strip { margin: 5px 0; }
+.activity-latest { display: flex; min-height: 24px; align-items: center; margin: 5px 0; padding: 2px 5px 2px 24px; }
 .activity-strip > summary { display: flex; min-height: 24px; align-items: center; gap: 5px; overflow-x: auto; padding: 2px 5px; list-style: none; border: 1px solid transparent; border-radius: 6px; }
 .activity-strip > summary::-webkit-details-marker { display: none; }
 .activity-strip > summary::before { content: '›'; flex: 0 0 auto; color: var(--dimmer); font-size: 14px; line-height: 1; transition: transform 100ms ease; }
