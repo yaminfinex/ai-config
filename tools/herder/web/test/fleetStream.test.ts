@@ -3,6 +3,7 @@ import test from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { eventStreamURL, recordBuildIdentity, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
+import { beginSendRefresh, settleSendRefresh } from '../src/sendRefresh.ts'
 
 class FakeEventSource implements EventSourceLike {
   onopen: ((event: Event) => void) | null = null
@@ -149,4 +150,44 @@ test('one multi-entry SSE burst causes one active transcript cursor fetch', asyn
   assert.equal(cursorFetches, 2)
   stop()
   unsubscribeObserver()
+})
+
+test('an own-send marker suppresses only the duplicate message invalidation', async () => {
+  const queryClient = new QueryClient()
+  const source = new FakeEventSource()
+  await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
+  const token = beginSendRefresh(queryClient, 'vile')
+  const timers = {
+    setTimeout: globalThis.setTimeout as typeof window.setTimeout,
+    clearTimeout: globalThis.clearTimeout as typeof window.clearTimeout,
+    setInterval: globalThis.setInterval as typeof window.setInterval,
+    clearInterval: globalThis.clearInterval as typeof window.clearInterval,
+  }
+  const stop = subscribeToFleet(queryClient, ['vile'], [], [], undefined, () => source, timers)
+
+  source.onopen?.(new Event('open'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
+  source.emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
+  await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
+
+  source.emit('message', JSON.stringify({ id: 731, from: 'web-owner', to: ['vile'] }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, false)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false)
+
+  await settleSendRefresh(token, true, () => undefined)
+  source.emit('message', JSON.stringify({ id: 732, from: 'someone-else', to: ['vile'] }))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  stop()
 })

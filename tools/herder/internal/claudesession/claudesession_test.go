@@ -574,6 +574,67 @@ func TestTailResetsAndReads(t *testing.T) {
 	}
 }
 
+func TestReadTailMatchesForwardClassifierAcrossWireSensitiveFixtures(t *testing.T) {
+	t.Parallel()
+	mainLine := `{"type":"assistant","uuid":"invented-main","message":{"content":[{"type":"text","text":"main"}]}}`
+	sideLine := `{"type":"assistant","isSidechain":true,"uuid":"invented-side","message":{"content":[{"type":"text","text":"side"}]}}`
+	bookkeeping := `{"type":"queue-operation","uuid":"invented-bookkeeping"}`
+	lastLine := `{"type":"assistant","uuid":"invented-last","message":{"content":[{"type":"text","text":"last"}]}}`
+	partial := `{"type":"assistant","uuid":"invented-partial"}`
+	content := mainLine + "\r\n" + sideLine + "\n" + bookkeeping + "\n{invented invalid\n" + lastLine + "\n" + partial
+	path := writeTemp(t, content)
+
+	for _, test := range []struct {
+		name             string
+		includeSidechain bool
+	}{
+		{name: "main"},
+		{name: "subagent", includeSidechain: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			want, err := read(path, 0, 2, true, test.includeSidechain)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantFrom := want.NextOffset
+			if len(want.Entries) > 0 {
+				wantFrom = want.Entries[0].ByteOffset
+			}
+			var got ReadResult
+			var gotFrom int64
+			if test.includeSidechain {
+				got, gotFrom, err = ReadSubagentTail(path, 2)
+			} else {
+				got, gotFrom, err = ReadTail(path, 2)
+			}
+			if err != nil || gotFrom != wantFrom || !reflect.DeepEqual(got, want) {
+				t.Fatalf("optimized tail = (%#v, %d, %v), want (%#v, %d)", got, gotFrom, err, want, wantFrom)
+			}
+		})
+	}
+}
+
+func TestTailSidechainProbeMatchesFullEnvelopeClassification(t *testing.T) {
+	t.Parallel()
+	for _, raw := range []string{
+		`{"type":"assistant","isSidechain":true,"message":{"content":[]}}`,
+		` { "type": "assistant", "isSidechain" : true, "message": {"content":[]} } `,
+		`{"type":"assistant","\u0069sSidechain":true,"message":{"content":[]}}`,
+		`{"type":"assistant","nested":{"isSidechain":true},"message":{"content":[]}}`,
+		`{"type":"assistant","text":"isSidechain true","message":{"content":[]}}`,
+		`{"type":"assistant","isSidechain":true,"isSidechain":false,"message":{"content":[]}}`,
+		`{"type":"assistant","isSidechain":false,"isSidechain":true,"message":{"content":[]}}`,
+		`{"type":7,"isSidechain":true,"message":{"content":[]}}`,
+		`{"type":"assistant","isSidechain":true`,
+	} {
+		var env envelope
+		want := json.Unmarshal([]byte(raw), &env) == nil && env.IsSidechain
+		if got := tailSidechain([]byte(raw)); got != want {
+			t.Fatalf("tailSidechain(%q) = %v, want %v", raw, got, want)
+		}
+	}
+}
+
 func TestTailMapsConcurrentTruncationReadErrorToReset(t *testing.T) {
 	t.Parallel()
 	cursor := Cursor{SessionID: "invented-session", Offset: 731}
