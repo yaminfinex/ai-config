@@ -1,9 +1,9 @@
-import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react'
+import { createContext, Fragment, useContext, useMemo, useState, type MouseEvent } from 'react'
 import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
 import { agentMarkdownOptions, Markdown } from '../../shared/Markdown'
 import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMentions'
 import type { TranscriptEntry } from '../../types'
-import { activityPillTone, aggregateActivityPills, cleanViewDisposition, isCleanConversationDelivery } from './cleanView'
+import { activityPillTone, aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun } from './cleanView'
 import { parseAssistantFencing } from './fencingModel'
 
 type ObjectValue = Record<string, unknown>
@@ -269,6 +269,10 @@ function ActivityStrip({ activities, entries, relationships, agentName, now }: {
   </div>}</details>
 }
 
+function LatestActivity({ activity, now }: { activity: CleanActivity, now: number }) {
+  return <div className="activity-latest"><span className={`activity-pill ${activity.tone}`}>{activity.label} <time dateTime={activity.entry.timestamp}>· {approximateActivityAge(activity.entry.timestamp, now)}</time></span></div>
+}
+
 function AssistantText({ content, agentName, timestamp, now, showSystem }: { content: string, agentName: string, timestamp?: string, now: number, showSystem: boolean }) {
   const fencing = parseAssistantFencing(content)
   if (!fencing.fenced) return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={timestamp} now={now} /></header><div className="markdown"><MentionMarkdown>{content}</MentionMarkdown></div></article>
@@ -325,10 +329,18 @@ export function TranscriptEntries({ entries, agentName, now, showSystem, cleanVi
   const relationships = useMemo(() => relateEntries(entries), [entries])
   const rows = useMemo(() => cleanView ? cleanRows(entries, relationships) : [], [cleanView, entries, relationships])
   const mentionContext = useMemo(() => ({ matcher: mentionMatcher, onOpenAgent, sideHint }), [mentionMatcher, onOpenAgent, sideHint])
-  if (cleanView) return <MentionContext.Provider value={mentionContext}>{rows.map((row) => row.type === 'run'
-    ? <ActivityStrip activities={row.activities} entries={entries} relationships={relationships} agentName={agentName} now={now} key={row.key} />
-    : row.deliveryIndex == null
-      ? <EntryView entry={row.entry} index={row.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView key={row.key} />
-      : <HcomCards entry={row.entry} entryIndex={row.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={row.deliveryIndex} key={row.key} />)}</MentionContext.Provider>
+  if (cleanView) {
+    const finalActivity = splitFinalActivityRun(rows)
+    return <MentionContext.Provider value={mentionContext}>{rows.map((row, rowIndex) => row.type === 'run'
+      ? finalActivity && rowIndex === rows.length - 1
+        ? <Fragment key={row.key}>
+          {finalActivity.collapsed.length > 0 && <ActivityStrip activities={finalActivity.collapsed} entries={entries} relationships={relationships} agentName={agentName} now={now} />}
+          <LatestActivity activity={finalActivity.latest} now={now} />
+        </Fragment>
+        : <ActivityStrip activities={row.activities} entries={entries} relationships={relationships} agentName={agentName} now={now} key={row.key} />
+      : row.deliveryIndex == null
+        ? <EntryView entry={row.entry} index={row.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView key={row.key} />
+        : <HcomCards entry={row.entry} entryIndex={row.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={row.deliveryIndex} key={row.key} />)}</MentionContext.Provider>
+  }
   return <MentionContext.Provider value={mentionContext}>{entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}</MentionContext.Provider>
 }

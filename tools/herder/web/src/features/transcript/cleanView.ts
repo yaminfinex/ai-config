@@ -53,6 +53,26 @@ export function aggregateActivityPills<T extends { key: string, label: string }>
   return pills
 }
 
+export function splitFinalActivityRun<T>(rows: readonly { type: string, activities?: readonly T[] }[]) {
+  const finalRow = rows[rows.length - 1]
+  if (finalRow?.type !== 'run' || !finalRow.activities?.length) return null
+  return {
+    collapsed: finalRow.activities.slice(0, -1),
+    latest: finalRow.activities[finalRow.activities.length - 1],
+  }
+}
+
+export function approximateActivityAge(timestamp: string | undefined, now: number) {
+  if (!timestamp) return 'time unknown'
+  const delta = now - Date.parse(timestamp)
+  if (!Number.isFinite(delta)) return 'time unknown'
+  const elapsed = Math.max(0, delta)
+  if (elapsed < 60_000) return `${Math.max(1, Math.round(elapsed / 1000))}s`
+  if (elapsed < 3_600_000) return `${Math.round(elapsed / 60_000)}m`
+  if (elapsed < 86_400_000) return `${Math.round(elapsed / 3_600_000)}h`
+  return `${Math.round(elapsed / 86_400_000)}d`
+}
+
 export function activityPillTone(kind: EntryKind, busMessage = false): ActivityPillTone {
   if (busMessage) return 'message'
   if (kind === 'tool_use' || kind === 'tool_result' || kind === 'command_stdout') return 'tool'
