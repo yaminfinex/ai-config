@@ -259,7 +259,8 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF '/agents/' "$ROOT/app.js" &&
   grep -qF 'herder.web.layout.v1' "$ROOT/app.js" &&
   grep -qF 'Preview — double-click to pin' "$ROOT/app.js" &&
-  grep -qF 'Fleet sidebar' "$ROOT/app.js" &&
+  grep -qF 'fleet-sidebar-view' "$ROOT/app.js" &&
+  grep -qF 'utility-rail' "$ROOT/app.js" &&
   grep -qF '@headless-tree/react' "$WEB_ROOT/package-lock.json" &&
   grep -qF 'customPrimaryActionEnter' "$ROOT/app.js" &&
   grep -qF 'customPrimaryActionSpace' "$ROOT/app.js" &&
