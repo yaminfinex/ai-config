@@ -276,7 +276,7 @@ function ActivityEntry({ activity, entries, relationships, agentName, now, showS
 function LatestActivity({ activity, entries, relationships, agentName, now }: { activity: CleanActivity, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number }) {
   return <div className="activity-latest">
     <div className="activity-latest-age">Latest activity <time dateTime={activity.entry.timestamp}>· {approximateActivityAge(activity.entry.timestamp, now)}</time></div>
-    <ActivityEntry activity={activity} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={activity.entry.kind === 'unknown'} />
+    <ActivityEntry activity={activity} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem />
   </div>
 }
 

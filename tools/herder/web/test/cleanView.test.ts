@@ -165,16 +165,14 @@ test('the live activity reuses the Normal entry renderer and resets only when su
   assert.match(component, /<LatestActivity activity=\{finalActivity\.latest\}[\s\S]+key=\{finalActivity\.latest\.key\}/)
 })
 
-test('live unknown detail does not change strip or Normal hidden-machinery policy', () => {
+test('live detail shares the strip showSystem policy without changing Normal', () => {
   const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
-  const activityStrip = component.slice(component.indexOf('function ActivityStrip'), component.indexOf('function ActivityEntry'))
-  const latestActivity = component.slice(component.indexOf('function LatestActivity'), component.indexOf('function AssistantText'))
   const entryView = component.slice(component.indexOf('function EntryView'), component.indexOf('export function TranscriptEntries'))
   const transcriptEntries = component.slice(component.indexOf('export function TranscriptEntries'))
+  const activityEntries = component.match(/<ActivityEntry\b[^>]*\/>/g) ?? []
 
-  assert.match(activityStrip, /<ActivityEntry activity=\{activity\}[\s\S]+showSystem key=\{activity\.key\}/)
-  assert.doesNotMatch(activityStrip, /entry\.kind === 'unknown'/)
-  assert.match(latestActivity, /showSystem=\{activity\.entry\.kind === 'unknown'\}/)
+  assert.equal(activityEntries.length, 2)
+  assert.ok(activityEntries.every((activityEntry) => /\bshowSystem(?:\s|\/>)/.test(activityEntry)))
   assert.match(entryView, /if \(!showSystem\) return null/)
   assert.match(transcriptEntries, /return <MentionContext\.Provider value=\{mentionContext\}>\{entries\.map\([\s\S]+showSystem=\{showSystem\} cleanView=\{cleanView\}/)
 })
