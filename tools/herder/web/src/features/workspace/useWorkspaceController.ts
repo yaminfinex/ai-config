@@ -229,6 +229,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     activePane: activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined,
     openAgent, openScreen, openFile, openFolder,
     onDockReady, flushLayout: layout.flushLayout,
-    stream, streamProblems, viewerProblem, viewer, viewerState, viewerPending: viewerQuery.isPending,
+    stream, streamProblems, viewerProblem, viewer, viewerPending: viewerQuery.isPending,
   }
 }
