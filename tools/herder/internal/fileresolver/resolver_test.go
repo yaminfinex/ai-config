@@ -160,13 +160,15 @@ func TestResolveAbsoluteQueryAcrossNestedRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The nested and parent roots both contain the queried file; only the
+	// best-ranked occurrence may survive so the client never offers the same
+	// absolute file twice.
 	want := []struct {
 		root string
 		path string
 		tier Tier
 	}{
 		{nested, nestedPath, TierExact},
-		{parent, parentPath, TierExact},
 		{parent, "archive/" + parentPath, TierSuffix},
 	}
 	if len(results) != len(want) {

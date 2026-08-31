@@ -214,9 +214,18 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 		}
 		return lessResult(a.result, b.result, rootRanks)
 	})
-	results := make([]Result, len(ranked))
-	for index, result := range ranked {
-		results[index] = result.result
+	// Nested roots can surface the identical file once per root; offering the
+	// same absolute path twice would force a pointless disambiguation popup,
+	// so only the best-ranked occurrence survives.
+	seenAbsolute := make(map[string]bool, len(ranked))
+	results := make([]Result, 0, len(ranked))
+	for _, result := range ranked {
+		absolute := filepath.Join(result.result.Root, result.result.Path) + "\x00" + string(result.result.Kind)
+		if seenAbsolute[absolute] {
+			continue
+		}
+		seenAbsolute[absolute] = true
+		results = append(results, result.result)
 	}
 	return Resolution{Results: results, Roots: outcomes}, nil
 }
