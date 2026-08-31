@@ -43,21 +43,28 @@ func operatorQueueCandidates(agent, baseName string, messages []hcomevents.Messa
 	return candidates
 }
 
-func excludeDeliveredCandidates(candidates map[string]queueCandidate, excluded map[string]bool, watermark hcomevents.DeliveryWatermark) map[string]bool {
-	if excluded == nil {
-		excluded = make(map[string]bool)
-	}
+// partitionDeliveryCandidates separates candidates fully decided by hcom's
+// recipient cursor from candidates that still need transcript evidence. A
+// matching ID at or below Position is delivered; a matching later ID is
+// undelivered at this snapshot. Recipient mismatches and malformed IDs retain
+// the structural fallback.
+func partitionDeliveryCandidates(candidates map[string]queueCandidate, watermark hcomevents.DeliveryWatermark) (map[string]bool, map[string]queueCandidate) {
+	excluded := make(map[string]bool)
+	fallback := make(map[string]queueCandidate)
 	// Safe only because hcom advances a name-keyed cursor after successful injection, including mentions fallback; advancing past an undelivered mention would over-clear.
 	for id, candidate := range candidates {
 		if watermark.Recipient != candidate.Recipient && (candidate.RecipientBase == "" || watermark.Recipient != candidate.RecipientBase) {
+			fallback[id] = candidate
 			continue
 		}
 		messageID, err := strconv.ParseInt(id, 10, 64)
-		if err == nil && messageID <= watermark.Position {
+		if err != nil {
+			fallback[id] = candidate
+		} else if messageID <= watermark.Position {
 			excluded[id] = true
 		}
 	}
-	return excluded
+	return excluded, fallback
 }
 
 func queueSenderName(sender string, roster []hcomidentity.Row) string {

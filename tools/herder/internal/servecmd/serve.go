@@ -692,12 +692,22 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 	if !retired {
 		if messages, messageErr := deps.recentMessages(ctx, 500); messageErr == nil {
 			candidates := operatorQueueCandidates(name, row.BaseName, messages, roster)
-			if excluded, entryErr := deps.agentQueueExclusions(row, candidates); entryErr == nil {
-				watermark, found, deliveryErr := deps.latestDelivery(ctx, row.Name)
-				if deliveryErr == nil {
-					if found {
-						excluded = excludeDeliveredCandidates(candidates, excluded, watermark)
+			watermark, found, deliveryErr := deps.latestDelivery(ctx, row.Name)
+			if deliveryErr == nil {
+				excluded := make(map[string]bool)
+				fallback := candidates
+				if found {
+					excluded, fallback = partitionDeliveryCandidates(candidates, watermark)
+				}
+				var entryErr error
+				if len(fallback) > 0 {
+					var structural map[string]bool
+					structural, entryErr = deps.agentQueueExclusions(row, fallback)
+					for id := range structural {
+						excluded[id] = true
 					}
+				}
+				if entryErr == nil {
 					result.Queued = diffQueuedMessages(messages, candidates, excluded)
 				}
 			}

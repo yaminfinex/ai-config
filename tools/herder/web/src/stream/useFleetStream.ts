@@ -3,6 +3,7 @@ import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-quer
 import { queryKeys } from '../api/client.ts'
 import type { Board, ScreenFrame, SubstrateEvent } from '../types'
 import type { FileWatchTarget } from './fileWatchRegistry.ts'
+import { deferMessageRefresh } from '../sendRefresh.ts'
 
 export type StreamState = {
   problems: Record<string, string>
@@ -179,6 +180,7 @@ export function subscribeToFleet(
       touch()
       const { to } = JSON.parse(event.data) as { to?: string[] }
       to?.filter((name) => names.includes(name)).forEach((name) => {
+        if (deferMessageRefresh(queryClient, name)) return
         void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
         void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
       })

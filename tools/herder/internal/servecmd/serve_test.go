@@ -723,15 +723,103 @@ func TestQueueProofAcceptsResolvedRecipientBaseAlias(t *testing.T) {
 	}
 }
 
-func TestDeliveryWatermarkIsRecipientScopedAndPositionBased(t *testing.T) {
-	candidates := map[string]queueCandidate{
-		"10": {Recipient: "dore"},
-		"11": {Recipient: "other"},
-		"12": {Recipient: "dore"},
+func TestAgentDetailUsesRecipientWatermarkWithoutSessionScan(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		position         int64
+		wantQueued       bool
+		rotateBeforeRead bool
+	}{
+		{name: "just-advanced cursor clears delivered candidate", position: 731},
+		{name: "candidate beyond cursor remains queued", position: 730, wantQueued: true},
+		{name: "rotation and resume do not invalidate bus proof", position: 730, wantQueued: true, rotateBeforeRead: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			deps := fixtureDeps()
+			row := hcomidentity.Row{Name: "dore", BaseName: "dore-base", Tool: "claude", Status: "active", SessionID: fixtureSessionID}
+			deps.roster = func() ([]hcomidentity.Row, error) { return []hcomidentity.Row{row}, nil }
+			deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
+				return []hcomevents.Message{{
+					ID: 731, From: "web-owner", To: []string{"dore-base"}, Intent: "request",
+					Text: webMessage("web-owner", "operator question"), SentAt: "2026-08-31T04:00:00Z",
+				}}, nil
+			}
+			deps.latestDelivery = func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error) {
+				return hcomevents.DeliveryWatermark{Recipient: "dore", Position: test.position}, true, nil
+			}
+			deps.agentQueueExclusions = func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error) {
+				t.Fatal("recipient watermark proof fell through to session scan")
+				return nil, nil
+			}
+			if test.rotateBeforeRead {
+				row.SessionID = "73200000-0000-4000-8000-000000000732"
+			}
+
+			detail, err := readAgent(context.Background(), deps, "dore")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(detail.Queued) == 1; got != test.wantQueued {
+				t.Fatalf("queued = %#v, want present %v", detail.Queued, test.wantQueued)
+			}
+		})
 	}
-	excluded := excludeDeliveredCandidates(candidates, nil, hcomevents.DeliveryWatermark{Recipient: "dore", Position: 11})
-	if !excluded["10"] || excluded["11"] || excluded["12"] {
-		t.Fatalf("recipient watermark exclusions = %#v", excluded)
+}
+
+func TestAgentDetailFallsBackToSessionForWatermarkRecipientMismatch(t *testing.T) {
+	deps := fixtureDeps()
+	deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
+		return []hcomevents.Message{{
+			ID: 731, From: "web-owner", To: []string{"dore"}, Intent: "request",
+			Text: webMessage("web-owner", "operator question"), SentAt: "2026-08-31T04:00:00Z",
+		}}, nil
+	}
+	deps.latestDelivery = func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error) {
+		return hcomevents.DeliveryWatermark{Recipient: "someone-else", Position: 999}, true, nil
+	}
+	scans := 0
+	deps.agentQueueExclusions = func(_ hcomidentity.Row, candidates map[string]queueCandidate) (map[string]bool, error) {
+		scans++
+		if len(candidates) != 1 || candidates["731"].Recipient != "dore" {
+			t.Fatalf("fallback candidates = %#v", candidates)
+		}
+		return map[string]bool{"731": true}, nil
+	}
+
+	detail, err := readAgent(context.Background(), deps, "dore")
+	if err != nil || scans != 1 || len(detail.Queued) != 0 {
+		t.Fatalf("mismatched-recipient fallback = detail:%#v scans:%d err:%v", detail, scans, err)
+	}
+}
+
+func TestAgentDetailWatermarkFailureOmitsQueueWithoutSessionScan(t *testing.T) {
+	deps := fixtureDeps()
+	deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
+		return []hcomevents.Message{{
+			ID: 731, From: "web-owner", To: []string{"dore"}, Intent: "request",
+			Text: webMessage("web-owner", "operator question"), SentAt: "2026-08-31T04:00:00Z",
+		}}, nil
+	}
+	deps.latestDelivery = func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error) {
+		return hcomevents.DeliveryWatermark{}, false, errors.New("delivery cursor unavailable")
+	}
+	scans := 0
+	deps.agentQueueExclusions = func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error) {
+		scans++
+		return map[string]bool{}, nil
+	}
+
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+	var body map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || scans != 0 {
+		t.Fatalf("watermark failure = status:%d scans:%d body:%s", response.Code, scans, response.Body.String())
+	}
+	if _, present := body["queued"]; present {
+		t.Fatalf("unproven queue leaked on watermark failure: %#v", body["queued"])
 	}
 }
 
@@ -781,7 +869,7 @@ func TestCapturedDeliveryClearingUsesTranscriptOrRecipientWatermark(t *testing.T
 				t.Fatalf("transcript proof exclusion = %v, want %v", proof.excluded[test.id], test.transcriptProof)
 			}
 			watermark := hcomevents.DeliveryWatermark{Recipient: test.recipient, Position: test.position, MessageTimestamp: test.msgTS}
-			excluded := excludeDeliveredCandidates(candidates, proof.excluded, watermark)
+			excluded, _ := partitionDeliveryCandidates(candidates, watermark)
 			if !excluded[test.id] {
 				t.Fatalf("recipient watermark did not clear %s", test.id)
 			}

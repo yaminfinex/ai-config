@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
 import { blurComposerOnEscape, composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror } from '../../composerState'
+import { beginSendRefresh, settleSendRefresh } from '../../sendRefresh'
 
 export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }: {
   name: string
@@ -35,18 +36,21 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
     onSend()
     setSendProblem('')
     setSendNotice('')
+    const sendRefresh = beginSendRefresh(queryClient, name)
+    const refresh = () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true }),
+    ])
     try {
       const result = await mutation.mutateAsync(message)
       onViewer(result.from)
       persistComposerDraft(name, '')
       setMessage('')
       setSendNotice(`Sent to ${result.to} as ${result.from}. Waiting for the live reply…`)
-      void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
-      // The sent message is usually on the bus before the 2s transcript poll
-      // notices; refetch entries now so it renders without waiting a tick.
-      void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
+      await settleSendRefresh(sendRefresh, true, refresh)
       onProblem('')
     } catch (error: unknown) {
+      await settleSendRefresh(sendRefresh, false, refresh)
       const { response, problem } = apiProblem(error)
       if (response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')) setReadOnly(viewerReadOnlyMessage(problem, response.status))
       else if (response?.status === 502) onProblem(problem.detail)

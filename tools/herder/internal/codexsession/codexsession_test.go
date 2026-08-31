@@ -233,6 +233,27 @@ func TestTailResetsAndReads(t *testing.T) {
 	}
 }
 
+func TestReadTailMatchesForwardClassifierAcrossWireSensitiveFixtures(t *testing.T) {
+	t.Parallel()
+	first := `{"timestamp":"2026-01-02T03:04:05Z","type":"event_msg","payload":{"type":"user_message","message":"first"}}`
+	bookkeeping := `{"timestamp":"2026-01-02T03:04:06Z","type":"turn_context","payload":{"model":"invented"}}`
+	last := `{"timestamp":"2026-01-02T03:04:07Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"last"}]}}`
+	partial := `{"timestamp":"2026-01-02T03:04:08Z","type":"event_msg"}`
+	path := writeTemp(t, first+"\r\n"+bookkeeping+"\n{invented invalid\n"+last+"\n"+partial)
+	want, err := read(path, 0, 2, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFrom := want.NextOffset
+	if len(want.Entries) > 0 {
+		wantFrom = want.Entries[0].ByteOffset
+	}
+	got, gotFrom, err := ReadTail(path, 2)
+	if err != nil || gotFrom != wantFrom || !reflect.DeepEqual(got, want) {
+		t.Fatalf("optimized tail = (%#v, %d, %v), want (%#v, %d)", got, gotFrom, err, want, wantFrom)
+	}
+}
+
 func assertPayloadField(t *testing.T, raw json.RawMessage, key string, want any) {
 	t.Helper()
 	var payload map[string]any

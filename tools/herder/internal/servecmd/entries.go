@@ -11,6 +11,7 @@ import (
 	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/codexsession"
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/sessionjsonl"
 )
 
 const maxEntryWindow = 500
@@ -170,15 +171,7 @@ func entryTailEnd(row hcomidentity.Row) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	var read claudesession.ReadResult
-	if row.Tool == "codex" {
-		read, _, err = codexsession.ReadTail(path, 1)
-	} else if isSubagent(row) {
-		read, _, err = claudesession.ReadSubagentTail(path, 1)
-	} else {
-		read, _, err = claudesession.ReadTail(path, 1)
-	}
-	return read.NextOffset, err
+	return sessionjsonl.CompleteEnd(path)
 }
 
 func entryTail(row hcomidentity.Row, cursor claudesession.Cursor, limit int) (claudesession.TailResult, error) {

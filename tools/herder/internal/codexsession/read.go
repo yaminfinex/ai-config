@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -213,11 +214,20 @@ func ReadTail(path string, limit int) (ReadResult, int64, error) {
 	if limit < 1 {
 		return ReadResult{}, 0, fmt.Errorf("session entry limit must be positive: %d", limit)
 	}
-	result, err := read(path, 0, limit, true)
+	result := ReadResult{}
+	end, err := sessionjsonl.ScanCompleteTail(path, nil, func(raw []byte, line, offset int64) bool {
+		entry, render := classify(raw, line, offset)
+		if render {
+			result.Entries = append(result.Entries, entry)
+		}
+		return len(result.Entries) < limit
+	})
 	if err != nil {
 		return ReadResult{}, 0, err
 	}
-	from := result.NextOffset
+	slices.Reverse(result.Entries)
+	result.NextOffset = end
+	from := end
 	if len(result.Entries) > 0 {
 		from = result.Entries[0].ByteOffset
 	}

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -224,30 +225,147 @@ func ReadTail(path string, limit int) (ReadResult, int64, error) {
 	if limit < 1 {
 		return ReadResult{}, 0, fmt.Errorf("session entry limit must be positive: %d", limit)
 	}
-	result, err := read(path, 0, limit, true, false)
-	if err != nil {
-		return ReadResult{}, 0, err
-	}
-	from := result.NextOffset
-	if len(result.Entries) > 0 {
-		from = result.Entries[0].ByteOffset
-	}
-	return result, from, nil
+	return readTail(path, limit, false)
 }
 
 func ReadSubagentTail(path string, limit int) (ReadResult, int64, error) {
 	if limit < 1 {
 		return ReadResult{}, 0, fmt.Errorf("session entry limit must be positive: %d", limit)
 	}
-	result, err := read(path, 0, limit, true, true)
+	return readTail(path, limit, true)
+}
+
+func readTail(path string, limit int, includeSidechain bool) (ReadResult, int64, error) {
+	result := ReadResult{}
+	var inspect func([]byte)
+	if !includeSidechain {
+		inspect = func(raw []byte) {
+			if tailSidechain(raw) {
+				result.Stats.SidechainSkipped++
+			}
+		}
+	}
+	end, err := sessionjsonl.ScanCompleteTail(path, inspect, func(raw []byte, line, offset int64) bool {
+		entry, render, _ := classifyMode(raw, line, offset, includeSidechain)
+		if render {
+			result.Entries = append(result.Entries, entry)
+		}
+		return len(result.Entries) < limit
+	})
 	if err != nil {
 		return ReadResult{}, 0, err
 	}
-	from := result.NextOffset
+	slices.Reverse(result.Entries)
+	result.NextOffset = end
+	from := end
 	if len(result.Entries) > 0 {
 		from = result.Entries[0].ByteOffset
 	}
 	return result, from, nil
+}
+
+func tailSidechain(raw []byte) bool {
+	if !json.Valid(raw) {
+		return false
+	}
+	i := skipJSONSpace(raw, 0)
+	if i >= len(raw) || raw[i] != '{' {
+		return false
+	}
+	i++
+	candidate := false
+	for {
+		i = skipJSONSpace(raw, i)
+		if i >= len(raw) || raw[i] == '}' {
+			break
+		}
+		if raw[i] != '"' {
+			return false
+		}
+		keyStart := i
+		i = jsonStringEnd(raw, i)
+		keyRaw := raw[keyStart:i]
+		isSidechain := bytes.Equal(keyRaw, []byte(`"isSidechain"`))
+		if !isSidechain && bytes.IndexByte(keyRaw, '\\') >= 0 {
+			key, err := strconv.Unquote(string(keyRaw))
+			isSidechain = err == nil && key == "isSidechain"
+		}
+		i = skipJSONSpace(raw, i)
+		if i >= len(raw) || raw[i] != ':' {
+			return false
+		}
+		i = skipJSONSpace(raw, i+1)
+		valueEnd := jsonValueEnd(raw, i)
+		if isSidechain {
+			candidate = bytes.Equal(bytes.TrimSpace(raw[i:valueEnd]), []byte("true"))
+		}
+		i = skipJSONSpace(raw, valueEnd)
+		if i < len(raw) && raw[i] == ',' {
+			i++
+			continue
+		}
+		if i >= len(raw) || raw[i] != '}' {
+			return false
+		}
+		break
+	}
+	if !candidate {
+		return false
+	}
+	var env envelope
+	return json.Unmarshal(raw, &env) == nil && env.IsSidechain
+}
+
+func skipJSONSpace(raw []byte, i int) int {
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\r' || raw[i] == '\n') {
+		i++
+	}
+	return i
+}
+
+func jsonStringEnd(raw []byte, start int) int {
+	for i := start + 1; i < len(raw); i++ {
+		if raw[i] == '\\' {
+			i++
+			continue
+		}
+		if raw[i] == '"' {
+			return i + 1
+		}
+	}
+	return len(raw)
+}
+
+func jsonValueEnd(raw []byte, start int) int {
+	if start >= len(raw) {
+		return start
+	}
+	if raw[start] == '"' {
+		return jsonStringEnd(raw, start)
+	}
+	if raw[start] != '{' && raw[start] != '[' {
+		for i := start; i < len(raw); i++ {
+			if raw[i] == ',' || raw[i] == '}' {
+				return i
+			}
+		}
+		return len(raw)
+	}
+	depth := 0
+	for i := start; i < len(raw); i++ {
+		switch raw[i] {
+		case '"':
+			i = jsonStringEnd(raw, i) - 1
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return i + 1
+			}
+		}
+	}
+	return len(raw)
 }
 
 func lineAt(f *os.File, offset int64) (int64, error) {
