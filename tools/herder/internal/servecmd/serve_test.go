@@ -723,18 +723,6 @@ func TestQueueProofAcceptsResolvedRecipientBaseAlias(t *testing.T) {
 	}
 }
 
-func TestDeliveryWatermarkIsRecipientScopedAndPositionBased(t *testing.T) {
-	candidates := map[string]queueCandidate{
-		"10": {Recipient: "dore"},
-		"11": {Recipient: "other"},
-		"12": {Recipient: "dore"},
-	}
-	excluded := excludeDeliveredCandidates(candidates, nil, hcomevents.DeliveryWatermark{Recipient: "dore", Position: 11})
-	if !excluded["10"] || excluded["11"] || excluded["12"] {
-		t.Fatalf("recipient watermark exclusions = %#v", excluded)
-	}
-}
-
 func TestAgentDetailUsesRecipientWatermarkWithoutSessionScan(t *testing.T) {
 	for _, test := range []struct {
 		name             string
@@ -881,7 +869,7 @@ func TestCapturedDeliveryClearingUsesTranscriptOrRecipientWatermark(t *testing.T
 				t.Fatalf("transcript proof exclusion = %v, want %v", proof.excluded[test.id], test.transcriptProof)
 			}
 			watermark := hcomevents.DeliveryWatermark{Recipient: test.recipient, Position: test.position, MessageTimestamp: test.msgTS}
-			excluded := excludeDeliveredCandidates(candidates, proof.excluded, watermark)
+			excluded, _ := partitionDeliveryCandidates(candidates, watermark)
 			if !excluded[test.id] {
 				t.Fatalf("recipient watermark did not clear %s", test.id)
 			}

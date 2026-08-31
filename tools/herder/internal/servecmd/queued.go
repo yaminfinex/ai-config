@@ -43,17 +43,6 @@ func operatorQueueCandidates(agent, baseName string, messages []hcomevents.Messa
 	return candidates
 }
 
-func excludeDeliveredCandidates(candidates map[string]queueCandidate, excluded map[string]bool, watermark hcomevents.DeliveryWatermark) map[string]bool {
-	if excluded == nil {
-		excluded = make(map[string]bool)
-	}
-	proven, _ := partitionDeliveryCandidates(candidates, watermark)
-	for id := range proven {
-		excluded[id] = true
-	}
-	return excluded
-}
-
 // partitionDeliveryCandidates separates candidates fully decided by hcom's
 // recipient cursor from candidates that still need transcript evidence. A
 // matching ID at or below Position is delivered; a matching later ID is
