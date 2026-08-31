@@ -40,20 +40,22 @@ export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlK
   return event.key === 'Enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)
 }
 
-export type ComposerMeasureKey = { name: string, value: string }
+type ComposerResizeTarget = {
+  offsetWidth: number
+  style: Pick<CSSStyleDeclaration, 'height' | 'overflowY'>
+}
 
-// The auto-resizing field must collapse to zero before measuring so it can
-// contract — but collapsing on every keystroke forces a reflow with the field at
-// zero height, which transiently grows the sibling transcript and makes the
-// browser clamp its scroll off the bottom, tripping the jump-to-bottom button
-// while the owner is only typing. Skip the collapse only when the draft strictly
-// grew by appended text (typing or pasting at the end): scrollHeight already
-// reflects the taller content, so no collapse is needed. Any other edit — a
-// deletion, a mid-draft insertion, a paste that replaces a selection (which can
-// add characters yet remove rendered lines), or an agent switch — may shorten
-// the field, so measure honestly from zero.
-export function composerShouldRemeasureFromZero(previous: ComposerMeasureKey, next: ComposerMeasureKey) {
-  return next.name !== previous.name || !next.value.startsWith(previous.value)
+type ComposerMeasureMirror = {
+  scrollHeight: number
+  style: Pick<CSSStyleDeclaration, 'width'>
+}
+
+export function resizeComposerFromMirror(composer: ComposerResizeTarget, mirror: ComposerMeasureMirror) {
+  mirror.style.width = `${composer.offsetWidth}px`
+  const contentHeight = mirror.scrollHeight
+  const height = Math.min(contentHeight, 160)
+  composer.style.height = `${height}px`
+  composer.style.overflowY = contentHeight > height ? 'auto' : 'hidden'
 }
 
 export function blurComposerOnEscape(event: { key: string, currentTarget: Pick<HTMLElement, 'blur'> }) {
