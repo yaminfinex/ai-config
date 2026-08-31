@@ -10,6 +10,7 @@ import { useWorkspaceController } from './features/workspace/useWorkspaceControl
 import { FileWatchContext } from './stream/fileWatchRegistry'
 import { AppLink, currentRoute, type Route } from './shared/navigation'
 import { Banner } from './shared/presentation'
+import { statusBarHealth, type HealthTick } from './shared/statusBarPresentation'
 import { ThemeToggle } from './shared/ThemeToggle'
 
 const herderTheme: DockviewTheme = {
@@ -18,12 +19,18 @@ const herderTheme: DockviewTheme = {
   dndOverlayBorder: '2px solid var(--accent)', tabGroupIndicator: 'none', tabAnimation: 'smooth',
 }
 
+function StatusTick({ tick }: { tick: HealthTick }) {
+  return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}</span>
+}
+
 function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
   const workspace = useWorkspaceController(initialRoute)
   const {
     openAgent, openScreen, openFile, openFolder,
     sidebarWidth, setSidebarWidth, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
   } = workspace
+  const lastEvent = workspace.stream.lastEvent ? new Date(workspace.stream.lastEvent).toLocaleTimeString() : '—'
+  const health = statusBarHealth({ problems: workspace.streamProblems, substrateProof: workspace.stream.substrateProof, lastEventLabel: lastEvent })
 
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell">
     <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder} />
@@ -46,11 +53,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
           pinnedTabs={{ enabled: false }} layoutHistory={{ enabled: false }} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
       </div>
       <footer className="status-bar">
-        <span>substrate: herdr {workspace.board ? '✓' : '…'} · hcom {workspace.streamProblems.hcom ? '×' : '✓'}</span>
-        <span className={workspace.streamProblems.stream ? 'fault' : ''}>SSE: {workspace.streamProblems.stream ? 'reconnecting' : 'connected'}</span>
-        <span title="Dock layout is stored in this browser">layout: this browser</span>
-        <span title="Web sends are attributed to this viewer; web senders are not addressable bus peers.">viewer: {workspace.viewerPending ? 'resolving…' : workspace.viewer}</span><span>{workspace.viewerState === 'resolving' ? 'resolving identity' : workspace.viewerState === 'attributed' ? 'attributed' : workspace.viewerState === 'unavailable' ? 'identity unavailable' : 'read-only · unattributed'}</span>
-        <span className="status-spacer" /><span>{workspace.stream.messages} messages</span><span>last event: {workspace.stream.lastEvent ? new Date(workspace.stream.lastEvent).toLocaleTimeString() : '—'}</span>
+        {health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}
+        <span title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {workspace.viewerPending ? 'resolving…' : workspace.viewer}</span>
+        <span className="status-spacer" /><span>last event: {lastEvent}</span>
         <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={() => workspace.setShortcutReference(true)}>?</button>
         <ThemeToggle />
       </footer>

@@ -1307,7 +1307,7 @@ func TestOpenListenersRejectsWildcard(t *testing.T) {
 	}
 }
 
-func TestEventsSendsFleetThenMessage(t *testing.T) {
+func TestEventsSendsFleetInitialHcomHealthThenMessage(t *testing.T) {
 	deps := fixtureDeps()
 	readSnapshot := deps.snapshot
 	started := make(chan struct{})
@@ -1343,8 +1343,12 @@ func TestEventsSendsFleetThenMessage(t *testing.T) {
 		t.Fatalf("first event = %q %s", event, data)
 	}
 	event, data = readEvent(t, reader)
+	if event != "substrate" || !strings.Contains(data, `"source":"hcom"`) || !strings.Contains(data, `"status":"recovered"`) {
+		t.Fatalf("initial hcom health event = %q %s", event, data)
+	}
+	event, data = readEvent(t, reader)
 	if event != "message" || !strings.Contains(data, `"id":7`) || !strings.Contains(data, `"to":["dore"]`) {
-		t.Fatalf("second event = %q %s", event, data)
+		t.Fatalf("message event = %q %s", event, data)
 	}
 }
 

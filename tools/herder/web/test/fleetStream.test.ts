@@ -35,7 +35,7 @@ test('closing the last screen consumer identifies only stale screen caches', () 
 })
 
 test('a changed reconnect build persistently requests a manual refresh', () => {
-  const initial: StreamState = { problems: {}, messages: 0, lastEvent: null, loadedBuild: null, serverUpdated: false }
+  const initial: StreamState = { problems: {}, substrateProof: { herdr: false, hcom: false }, lastEvent: null, loadedBuild: null, serverUpdated: false }
   const loaded = recordBuildIdentity(initial, 'source:build-a')
   assert.equal(loaded.loadedBuild, 'source:build-a')
   assert.equal(loaded.serverUpdated, false)
@@ -71,7 +71,7 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   await queryClient.fetchQuery({ queryKey: queryKeys.fileTree('/repo', 'docs'), queryFn: async () => ({ entries: [] }) })
   await queryClient.fetchQuery({ queryKey: queryKeys.backlog('/repo', 'docs'), queryFn: async () => ({ tasks: [] }) })
   queryClient.setQueryData(queryKeys.screen('w1:p1'), { pane_id: 'w1:p1', status: 'available', text: 'stable previous frame', truncated: false })
-  queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, messages: 0, lastEvent: null, loadedBuild: 'source:previous', serverUpdated: false })
+  queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, substrateProof: { herdr: true, hcom: true }, lastEvent: null, loadedBuild: 'source:previous', serverUpdated: false })
   const stop = subscribeToFleet(queryClient, ['vile', 'vile'], ['w1:p1'], [
     { kind: 'file', root: '/repo', path: 'README.md' },
     { kind: 'folder', root: '/repo', path: 'docs' },
@@ -83,12 +83,17 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
 
   assert.equal(sources.length, 1)
   assert.equal(queryClient.getQueryData<{ text: string }>(queryKeys.screen('w1:p1'))?.text, 'stable previous frame')
+  assert.deepEqual(queryClient.getQueryData<StreamState>(queryKeys.stream)?.substrateProof, { herdr: false, hcom: false })
+  sources[0].onopen?.(new Event('open'))
   assert.equal(queryClient.getQueryData<StreamState>(queryKeys.stream)?.problems.stream, undefined)
   sources[0].emit('hello', JSON.stringify({ buildIdentity: 'source:fixture' }))
   assert.equal(queryClient.getQueryData<StreamState>(queryKeys.stream)?.loadedBuild, 'source:previous')
   assert.equal(queryClient.getQueryData<StreamState>(queryKeys.stream)?.serverUpdated, true)
   sources[0].emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))
   assert.deepEqual(queryClient.getQueryData(queryKeys.fleet), { workspaces: [], unplaced: [] })
+  assert.deepEqual(queryClient.getQueryData<StreamState>(queryKeys.stream)?.substrateProof, { herdr: true, hcom: false })
+  sources[0].emit('substrate', JSON.stringify({ source: 'hcom', status: 'recovered' }))
+  assert.deepEqual(queryClient.getQueryData<StreamState>(queryKeys.stream)?.substrateProof, { herdr: true, hcom: true })
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
