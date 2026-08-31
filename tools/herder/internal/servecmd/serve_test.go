@@ -30,6 +30,7 @@ import (
 	"ai-config/tools/herder/internal/repoctx"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
+	"github.com/fsnotify/fsnotify"
 )
 
 func fixtureDeps() dependencies {
@@ -70,15 +71,16 @@ func fixtureDeps() dependencies {
 		spawn: func(context.Context, []string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
-		poll:         10 * time.Millisecond,
-		heartbeat:    time.Second,
-		screens:      func() (screenSource, error) { return &fixtureScreenSource{}, nil },
-		roots:        buildRootSet,
-		fileResolver: fileresolver.New(fileindex.New(fileindex.Options{})),
-		repoContext:  repoctx.Read,
-		now:          time.Now,
-		audit:        func(string, ...any) {},
-		inputSerial:  &paneInputSerial{},
+		poll:             10 * time.Millisecond,
+		heartbeat:        time.Second,
+		transcriptSafety: time.Hour,
+		screens:          func() (screenSource, error) { return &fixtureScreenSource{}, nil },
+		roots:            buildRootSet,
+		fileResolver:     fileresolver.New(fileindex.New(fileindex.Options{})),
+		repoContext:      repoctx.Read,
+		now:              time.Now,
+		audit:            func(string, ...any) {},
+		inputSerial:      &paneInputSerial{},
 	}
 }
 
@@ -1348,6 +1350,7 @@ func TestEventsSendsFleetThenMessage(t *testing.T) {
 
 func TestEventsMultiplexesOnlySubscribedAgentTranscripts(t *testing.T) {
 	deps := fixtureDeps()
+	deps.transcriptSafety = 10 * time.Millisecond
 	baseRoster := deps.roster
 	deps.roster = func() ([]hcomidentity.Row, error) {
 		rows, _ := baseRoster()
@@ -1399,6 +1402,7 @@ func TestEventsMultiplexesOnlySubscribedAgentTranscripts(t *testing.T) {
 
 func TestEventsContinuesRetiredTranscriptWithoutSubstrateFault(t *testing.T) {
 	deps := fixtureDeps()
+	deps.transcriptSafety = 10 * time.Millisecond
 	baseRoster := deps.roster
 	var rosterCalls atomic.Int32
 	deps.roster = func() ([]hcomidentity.Row, error) {
@@ -1448,6 +1452,7 @@ func TestEventsContinuesRetiredTranscriptWithoutSubstrateFault(t *testing.T) {
 
 func TestEventsRewindowsWhenEntryTailResets(t *testing.T) {
 	deps := fixtureDeps()
+	deps.transcriptSafety = 10 * time.Millisecond
 	endCalls := 0
 	deps.entryEnd = func(hcomidentity.Row) (int64, error) {
 		endCalls++
@@ -1518,6 +1523,146 @@ func TestEventStreamEmitsHeartbeatComments(t *testing.T) {
 		t.Fatalf("events heartbeat = %q", line)
 	}
 	eventsResponse.Body.Close()
+}
+
+func TestEventsDoNotTailTranscriptsOnFleetPolls(t *testing.T) {
+	deps := fixtureDeps()
+	deps.poll = 5 * time.Millisecond
+	deps.transcriptSafety = 80 * time.Millisecond
+	tailCalled := make(chan struct{}, 1)
+	deps.entryTail = func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
+		select {
+		case tailCalled <- struct{}{}:
+		default:
+		}
+		return claudesession.TailResult{Cursor: cursor}, nil
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?agents=dore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "hello" {
+		t.Fatalf("hello=%q", event)
+	}
+	if event, _ := readEvent(t, reader); event != "fleet" {
+		t.Fatalf("fleet=%q", event)
+	}
+	time.Sleep(40 * time.Millisecond)
+	select {
+	case <-tailCalled:
+		t.Fatal("2s-equivalent fleet poll tailed a quiet transcript")
+	default:
+	}
+	select {
+	case <-tailCalled:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("30s-equivalent transcript safety sweep did not run")
+	}
+}
+
+func TestTranscriptWatcherSetupFailureFallsBackToSafetySweep(t *testing.T) {
+	deps := fixtureDeps()
+	deps.poll = time.Hour
+	deps.transcriptSafety = 10 * time.Millisecond
+	deps.entryPath = func(hcomidentity.Row) (string, error) { return filepath.Join(t.TempDir(), "session.jsonl"), nil }
+	deps.transcriptWatcher = func() (*fsnotify.Watcher, error) { return nil, errors.New("watch limit reached") }
+	audits := make(chan string, 8)
+	deps.audit = func(format string, values ...any) { audits <- fmt.Sprintf(format, values...) }
+	call := 0
+	deps.entryTail = func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
+		call++
+		result := claudesession.TailResult{Cursor: cursor}
+		if call == 1 {
+			result.Read = claudesession.ReadResult{Entries: []claudesession.Entry{{UUID: "safety", Kind: claudesession.KindAssistantText, Payload: json.RawMessage(`{"text":"safety"}`)}}, NextOffset: 73}
+			result.Cursor.Offset = 73
+		}
+		return result, nil
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?agents=dore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	if event, _ := readEvent(t, reader); event != "hello" {
+		t.Fatalf("hello=%q", event)
+	}
+	if event, _ := readEvent(t, reader); event != "fleet" {
+		t.Fatalf("fleet=%q", event)
+	}
+	if event, data := readEvent(t, reader); event != "entry:dore" || !strings.Contains(data, `"uuid":"safety"`) {
+		t.Fatalf("fallback event=%q data=%s", event, data)
+	}
+	select {
+	case audit := <-audits:
+		if !strings.Contains(audit, "using safety sweep") {
+			t.Fatalf("watch failure audit=%q", audit)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("watch setup failure was not audited")
+	}
+}
+
+func TestTranscriptWatcherRuntimeFailureFallsBackToSafetySweep(t *testing.T) {
+	deps := fixtureDeps()
+	deps.poll = time.Hour
+	deps.transcriptSafety = 100 * time.Millisecond
+	root := t.TempDir()
+	path := filepath.Join(root, "session.jsonl")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps.entryPath = func(hcomidentity.Row) (string, error) { return path, nil }
+	var watcher *fsnotify.Watcher
+	deps.transcriptWatcher = func() (*fsnotify.Watcher, error) {
+		var err error
+		watcher, err = fsnotify.NewWatcher()
+		return watcher, err
+	}
+	audits := make(chan string, 8)
+	deps.audit = func(format string, values ...any) { audits <- fmt.Sprintf(format, values...) }
+	call := 0
+	deps.entryTail = func(row hcomidentity.Row, cursor claudesession.Cursor, _ int) (claudesession.TailResult, error) {
+		call++
+		result := claudesession.TailResult{Cursor: cursor}
+		if call == 1 {
+			result.Read = claudesession.ReadResult{Entries: []claudesession.Entry{{UUID: "runtime-safety", Kind: claudesession.KindAssistantText, Payload: json.RawMessage(`{"text":"runtime safety"}`)}}, NextOffset: 73}
+			result.Cursor.Offset = 73
+		}
+		return result, nil
+	}
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	response, err := http.Get(server.URL + "/api/events?agents=dore")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	reader := bufio.NewReader(response.Body)
+	readUntilEvent(t, reader, "fleet")
+	if watcher == nil {
+		t.Fatal("runtime watcher was not started")
+	}
+	if err := watcher.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if data := readUntilEvent(t, reader, "entry:dore"); !strings.Contains(data, `"uuid":"runtime-safety"`) {
+		t.Fatalf("runtime fallback entry=%s", data)
+	}
+	select {
+	case audit := <-audits:
+		if !strings.Contains(audit, "using safety sweep") {
+			t.Fatalf("runtime watcher failure audit=%q", audit)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runtime watcher failure was not audited")
+	}
 }
 
 func TestEventsReportsUnreachableAndRecoveredWithoutEmptyFleet(t *testing.T) {

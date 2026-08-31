@@ -199,6 +199,14 @@ func entryTail(row hcomidentity.Row, cursor claudesession.Cursor, limit int) (cl
 	return claudesession.TailWindow(path, entryTranscriptID(row), cursor, limit)
 }
 
+func entrySessionPath(row hcomidentity.Row) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return resolveEntryPath(home, row)
+}
+
 func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
 	if row.Tool != "claude" && row.Tool != "codex" {
 		return claudesession.Vitals{}, nil

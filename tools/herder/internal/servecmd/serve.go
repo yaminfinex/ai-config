@@ -41,11 +41,12 @@ import (
 )
 
 const (
-	DefaultPort      = 4400
-	PollCadence      = 2 * time.Second
-	HeartbeatCadence = 15 * time.Second
-	webNoteStart     = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
-	webNoteEnd       = "[HERDER_WEB_OPERATOR_NOTE_END]"
+	DefaultPort             = 4400
+	PollCadence             = 2 * time.Second
+	HeartbeatCadence        = 15 * time.Second
+	TranscriptSafetyCadence = 30 * time.Second
+	webNoteStart            = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
+	webNoteEnd              = "[HERDER_WEB_OPERATOR_NOTE_END]"
 )
 
 type dependencies struct {
@@ -60,6 +61,7 @@ type dependencies struct {
 	latestDelivery       func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error)
 	entryEnd             func(hcomidentity.Row) (int64, error)
 	entryTail            func(hcomidentity.Row, claudesession.Cursor, int) (claudesession.TailResult, error)
+	entryPath            func(hcomidentity.Row) (string, error)
 	agentQueueExclusions func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error)
 	agentVitals          func(hcomidentity.Row) (claudesession.Vitals, error)
 	sender               func(context.Context, string) (string, error)
@@ -67,12 +69,14 @@ type dependencies struct {
 	spawn                func(context.Context, []string) (webaction.Result, error)
 	poll                 time.Duration
 	heartbeat            time.Duration
+	transcriptSafety     time.Duration
 	listeners            func(int) ([]net.Listener, []string, error)
 	screens              func() (screenSource, error)
 	configuredRoots      []string
 	roots                func(context.Context, []string, []hcomidentity.Row) (fileroots.Set, error)
 	fileResolver         fileresolver.Resolver
 	fileWatcher          func() (*fsnotify.Watcher, error)
+	transcriptWatcher    func() (*fsnotify.Watcher, error)
 	fileWatcherDelta     func(int)
 	repoContext          func(context.Context, string) (repoctx.Context, error)
 	now                  func() time.Time
@@ -91,6 +95,7 @@ var liveDependencies = dependencies{
 	latestDelivery:       hcomevents.LatestDelivery,
 	entryEnd:             entryTailEnd,
 	entryTail:            entryTail,
+	entryPath:            entrySessionPath,
 	agentQueueExclusions: readQueueExclusions,
 	agentVitals:          readAgentVitals,
 	sender:               webidentity.Sender,
@@ -98,17 +103,19 @@ var liveDependencies = dependencies{
 	spawn:                webaction.Spawn,
 	poll:                 PollCadence,
 	heartbeat:            HeartbeatCadence,
+	transcriptSafety:     TranscriptSafetyCadence,
 	listeners:            liveListeners,
 	screens: func() (screenSource, error) {
 		return herdrcli.NewLiveScreens()
 	},
-	roots:        buildRootSet,
-	fileResolver: fileresolver.New(fileindex.New(fileindex.Options{})),
-	fileWatcher:  fsnotify.NewWatcher,
-	repoContext:  repoctx.Read,
-	now:          time.Now,
-	audit:        log.Printf,
-	inputSerial:  &paneInputSerial{},
+	roots:             buildRootSet,
+	fileResolver:      fileresolver.New(fileindex.New(fileindex.Options{})),
+	fileWatcher:       fsnotify.NewWatcher,
+	transcriptWatcher: fsnotify.NewWatcher,
+	repoContext:       repoctx.Read,
+	now:               time.Now,
+	audit:             log.Printf,
+	inputSerial:       &paneInputSerial{},
 }
 
 type paneInputSerial struct{ locks sync.Map }
@@ -184,6 +191,22 @@ type eventTranscript struct {
 	session     string
 	offset      int64
 	retired     *hcomidentity.Row
+	watch       transcriptWatchIdentity
+	watchPath   string
+}
+
+type transcriptWatchIdentity struct {
+	tool, directory, sessionID, agentID, transcriptPath    string
+	parentDirectory, parentSessionID, parentTranscriptPath string
+}
+
+func watchIdentity(row hcomidentity.Row) transcriptWatchIdentity {
+	return transcriptWatchIdentity{
+		tool: row.Tool, directory: row.Directory, sessionID: row.SessionID,
+		agentID: row.AgentID, transcriptPath: row.TranscriptPath,
+		parentDirectory: row.ParentDirectory, parentSessionID: row.ParentSessionID,
+		parentTranscriptPath: row.ParentTranscriptPath,
+	}
 }
 
 type messageRequest struct {
@@ -1348,7 +1371,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		unreachable[source] = true
 		return emit("substrate", substrate{Source: source, Status: "unreachable", Detail: err.Error()})
 	}
-	syncTranscripts := func(roster []hcomidentity.Row, initial bool) bool {
+	var reconcileTranscriptWatches func(bool)
+	syncTranscripts := func(roster []hcomidentity.Row, initial bool, requested map[string]bool) (bool, bool) {
+		pathsChanged := false
 		pendingFailures := make([]substrate, 0)
 		rows := make(map[string]hcomidentity.Row, len(roster))
 		for _, row := range roster {
@@ -1378,7 +1403,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 							unreachable[source] = true
 							pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: err.Error()})
 						} else if !emitTranscriptFailure(name, err) {
-							return false
+							return false, pathsChanged
 						}
 						continue
 					}
@@ -1390,7 +1415,21 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			if _, live := rows[name]; live {
 				state.retired = nil
 			}
+			identity := watchIdentity(row)
+			if state.watch != identity || state.watchPath == "" && (initial || requested == nil) {
+				path := ""
+				if deps.entryPath != nil {
+					path, _ = deps.entryPath(row)
+				}
+				pathsChanged = pathsChanged || state.watch != identity || state.watchPath != path
+				state.watch = identity
+				state.watchPath = path
+				if pathsChanged && reconcileTranscriptWatches != nil {
+					reconcileTranscriptWatches(initial || requested == nil)
+				}
+			}
 			transcriptID := entryTranscriptID(row)
+			rewindowed := false
 			if !state.initialized || state.session != transcriptID {
 				end, endErr := deps.entryEnd(row)
 				if endErr != nil {
@@ -1399,16 +1438,20 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 						unreachable[source] = true
 						pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: endErr.Error()})
 					} else if !emitTranscriptFailure(name, endErr) {
-						return false
+						return false, pathsChanged
 					}
 					continue
 				}
 				state.initialized = true
 				state.session = transcriptID
 				state.offset = end
+				rewindowed = true
 				if !initial && !emit("rewindow", transcriptReset{Agent: name}) {
-					return false
+					return false, pathsChanged
 				}
+			}
+			if initial || rewindowed || requested != nil && !requested[name] {
+				continue
 			}
 			tail, tailErr := deps.entryTail(row, claudesession.Cursor{SessionID: state.session, Offset: state.offset}, maxEntryWindow)
 			if tailErr != nil {
@@ -1417,7 +1460,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					unreachable[source] = true
 					pendingFailures = append(pendingFailures, substrate{Source: source, Status: "unreachable", Detail: tailErr.Error()})
 				} else if !emitTranscriptFailure(name, tailErr) {
-					return false
+					return false, pathsChanged
 				}
 				continue
 			}
@@ -1425,37 +1468,89 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			if unreachable[source] {
 				unreachable[source] = false
 				if !emit("substrate", substrate{Source: source, Status: "recovered"}) {
-					return false
+					return false, pathsChanged
 				}
 			}
 			if tail.Reset != nil {
 				end, endErr := deps.entryEnd(row)
 				if endErr != nil {
 					if !emitTranscriptFailure(name, endErr) {
-						return false
+						return false, pathsChanged
 					}
 					continue
 				}
 				state.session = transcriptID
 				state.offset = end
 				if !emit("rewindow", transcriptReset{Agent: name}) {
-					return false
+					return false, pathsChanged
 				}
 				continue
 			}
 			for _, entry := range serializeEntries(tail.Read.Entries) {
 				if !emit("entry:"+name, entry) {
-					return false
+					return false, pathsChanged
 				}
 			}
 			state.offset = tail.Cursor.Offset
 		}
 		for _, failure := range pendingFailures {
 			if !emit("substrate", failure) {
-				return false
+				return false, pathsChanged
 			}
 		}
-		return true
+		return true, pathsChanged
+	}
+	transcriptTargets := func() []transcriptWatchTarget {
+		targets := make([]transcriptWatchTarget, 0, len(agents))
+		for _, name := range agents {
+			if path := transcripts[name].watchPath; path != "" {
+				targets = append(targets, transcriptWatchTarget{Agent: name, Path: path})
+			}
+		}
+		return targets
+	}
+	var transcriptWatches *transcriptWatchSubscription
+	var transcriptChangeCh <-chan []string
+	var transcriptWatchErrorCh <-chan error
+	closeTranscriptWatches := func() {
+		if transcriptWatches != nil {
+			transcriptWatches.Close()
+		}
+		transcriptWatches = nil
+		transcriptChangeCh = nil
+		transcriptWatchErrorCh = nil
+	}
+	defer closeTranscriptWatches()
+	reconcileTranscriptWatches = func(allowStart bool) {
+		targets := transcriptTargets()
+		if len(targets) == 0 {
+			if transcriptWatches != nil {
+				if err := transcriptWatches.Update(nil); err != nil {
+					deps.audit("herder serve: transcript watch update failed; using safety sweep: %v", err)
+					closeTranscriptWatches()
+				}
+			}
+			return
+		}
+		if transcriptWatches == nil {
+			if !allowStart {
+				return
+			}
+			started, err := startTranscriptWatches(ctx, deps.transcriptWatcher, transcriptWatchDebounce)
+			if err != nil || started == nil {
+				if err != nil {
+					deps.audit("herder serve: transcript watch setup failed; using safety sweep: %v", err)
+				}
+				return
+			}
+			transcriptWatches = started
+			transcriptChangeCh = started.Changes
+			transcriptWatchErrorCh = started.Errors
+		}
+		if err := transcriptWatches.Update(targets); err != nil {
+			deps.audit("herder serve: transcript watch update failed; using safety sweep: %v", err)
+			closeTranscriptWatches()
+		}
 	}
 	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, map[string]screenPaneFact, error) {
 		snapshot, roster, readErr := readFleetInputs(deps)
@@ -1476,9 +1571,10 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 	} else {
 		previous, _ = json.Marshal(board)
-		if !syncTranscripts(roster, true) {
+		if ok, _ := syncTranscripts(roster, true, map[string]bool{}); !ok {
 			return
 		}
+		reconcileTranscriptWatches(true)
 		if !emit("fleet", board) {
 			return
 		}
@@ -1491,6 +1587,8 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	defer ticker.Stop()
 	heartbeat := time.NewTicker(deps.heartbeat)
 	defer heartbeat.Stop()
+	transcriptSafety := time.NewTicker(deps.transcriptSafety)
+	defer transcriptSafety.Stop()
 	var backgroundScreenTick <-chan time.Time
 	var backgroundScreenTicker *time.Ticker
 	var focusedScreenTick <-chan time.Time
@@ -1517,6 +1615,17 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			if !emit("file-change", fact) {
 				return
 			}
+		case names := <-transcriptChangeCh:
+			requested := make(map[string]bool, len(names))
+			for _, name := range names {
+				requested[name] = true
+			}
+			if ok, _ := syncTranscripts(roster, false, requested); !ok {
+				return
+			}
+		case watchErr := <-transcriptWatchErrorCh:
+			deps.audit("herder serve: transcript watch failed; using safety sweep: %v", watchErr)
+			closeTranscriptWatches()
 		case <-hcomHealthy:
 			hcomEventsDown = false
 			if unreachable["hcom"] && !hcomRosterDown {
@@ -1555,8 +1664,13 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				return
 			}
 			flusher.Flush()
+		case <-transcriptSafety.C:
+			if ok, _ := syncTranscripts(roster, false, nil); !ok {
+				return
+			}
+			reconcileTranscriptWatches(true)
 		case <-ticker.C:
-			board, roster, panes, boardErr := readEventBoard()
+			nextBoard, nextRoster, nextPanes, boardErr := readEventBoard()
 			if boardErr != nil {
 				var sourced sourceError
 				source := "unknown"
@@ -1583,15 +1697,21 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					}
 				}
 			}
-			encoded, _ := json.Marshal(board)
+			encoded, _ := json.Marshal(nextBoard)
 			if !bytes.Equal(previous, encoded) {
 				previous = encoded
-				if !emit("fleet", board) {
+				if !emit("fleet", nextBoard) {
 					return
 				}
 			}
-			if !syncTranscripts(roster, false) {
+			roster = nextRoster
+			panes = nextPanes
+			ok, pathsChanged := syncTranscripts(roster, false, map[string]bool{})
+			if !ok {
 				return
+			}
+			if pathsChanged {
+				reconcileTranscriptWatches(false)
 			}
 			if screenReader == nil && len(screens) > 0 {
 				if source, sourceErr := deps.screens(); sourceErr == nil {
