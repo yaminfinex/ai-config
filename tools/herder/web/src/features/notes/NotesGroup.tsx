@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Note } from './notesStore'
 import { noteSourceLabel, noteTransferText, selectionAfterGesture, type SelectionGesture } from './notesPresentation'
 import { useNotes } from './NotesProvider'
+import { handOffSelectedNotes } from './noteHandOff'
 
 export type NotesHandOff = (target: string, notes: Note[]) => { ok: true } | { ok: false, reason: string }
 
@@ -14,7 +15,7 @@ export function NotesGroup({ group, label = group, agents, orphaned = false, qui
   collapsed?: boolean
   onHandOff: NotesHandOff
 }) {
-  const { store, notes: allNotes, announce } = useNotes()
+  const { store, notes: allNotes, announce, handOffGuard } = useNotes()
   const notes = useMemo(() => allNotes.filter((note) => note.group === group), [allNotes, group])
   const ids = useMemo(() => notes.map((note) => note.id), [notes])
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -85,16 +86,8 @@ export function NotesGroup({ group, label = group, agents, orphaned = false, qui
   }
   const handOff = () => {
     if (!target) { setProblem('Choose a live agent for this hand-off.'); return }
-    const result = onHandOff(target, selectedNotes)
+    const result = handOffSelectedNotes({ target, notes: selectedNotes, guard: handOffGuard, append: onHandOff, remove: store.delete, flush: store.flush, status: store.status })
     if (!result.ok) { setProblem(result.reason); return }
-    const removed = store.delete(selectedNotes.map((note) => note.id))
-    if (!removed.ok) { setProblem(removed.reason); return }
-    store.flush()
-    const status = store.status()
-    if (!status.persistent) {
-      setProblem(`The draft was updated, but the notes could not be removed durably. ${status.problem}`)
-      return
-    }
     announce(`Moved ${selectedNotes.length} ${selectedNotes.length === 1 ? 'note' : 'notes'} to ${target}’s composer.`)
     clearSelection()
     setProblem('')

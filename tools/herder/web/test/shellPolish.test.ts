@@ -13,6 +13,9 @@ test('shell facts and global controls live only in the bottom status bar', () =>
   assert.match(footer, /className="shortcut-button"/)
   assert.match(footer, /workspace-switcher-slot/)
   assert.match(footer, /<RailStatusToggle side="left"[\s\S]*<RailStatusToggle side="right"/)
+  assert.match(app, /function NotesCount\(\)[\s\S]*useNotes\(\)[\s\S]*<NotesCount \/>/)
+  const shell = app.slice(app.indexOf('function Shell'), app.indexOf('export default function App'))
+  assert.doesNotMatch(shell, /useNotes\(\)/)
 })
 
 test('owner-ruled composer noise is removed without dropping accessibility or attribution truth', () => {

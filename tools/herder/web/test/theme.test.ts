@@ -36,6 +36,19 @@ function contrast(foreground: string, background: string) {
   return (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
 }
 
+function rule(css: string, selector: string) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const block = css.match(new RegExp(`${escaped} \\{([^}]*)\\}`))?.[1]
+  assert.ok(block, `${selector} must have a concrete style rule`)
+  return block
+}
+
+function token(block: string, property: string) {
+  const name = block.match(new RegExp(`${property}: var\\(--([\\w-]+)\\)`))?.[1]
+  assert.ok(name, `${property} must use a theme token`)
+  return name
+}
+
 test('theme preference uses one global v1 key and defaults invalid or missing values to system', () => {
   assert.equal(themeStorageKey, 'herder.web.theme.v1')
   assert.equal(readThemePreference(memoryStorage()), 'system')
@@ -146,6 +159,24 @@ test('inline link text token meets WCAG AA across both theme surfaces', () => {
       assert.ok(background, `${backgroundName} must be a concrete theme declaration`)
       const ratio = contrast(foreground, background)
       assert.ok(ratio >= 4.5, `inline link on ${backgroundName} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
+    }
+  }
+})
+
+test('notes action labels, count badges, and orphan flags meet WCAG AA in both themes', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const pairs = [
+    ['action-bar labels', token(rule(css, '.notes-action-bar label'), 'color'), token(rule(css, '.notes-action-bar'), 'background')],
+    ['group-count badge', token(rule(css, '.notes-group-heading span'), 'color'), token(rule(css, '.notes-group-heading span'), 'background')],
+    ['orphan flag', token(rule(css, '.notes-group-heading em'), 'color'), token(rule(css, '.notes-group-heading'), 'background')],
+  ]
+  for (const block of themeBlocks(css)) {
+    for (const [label, foregroundName, backgroundName] of pairs) {
+      const foreground = block.match(new RegExp(`--${foregroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+      const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+      assert.ok(foreground && background, `${label} tokens must be concrete theme declarations`)
+      const ratio = contrast(foreground, background)
+      assert.ok(ratio >= 4.5, `${label} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
     }
   }
 })

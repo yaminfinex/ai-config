@@ -28,6 +28,11 @@ function StatusTick({ tick }: { tick: HealthTick }) {
   return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}</span>
 }
 
+function NotesCount() {
+  const { notes } = useNotes()
+  return <span title="Notes saved in this browser">notes: {notes.length}</span>
+}
+
 function streamProblems(problems: Record<string, string>, fleetProblem: string) {
   return { ...problems, ...(fleetProblem ? { fleet: fleetProblem } : {}) }
 }
@@ -52,7 +57,6 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   onShortcuts: () => void
 }) {
   const stream = useStreamStatus()
-  const { notes } = useNotes()
   const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
   const lastEvent = stream.lastEvent ? new Date(stream.lastEvent).toLocaleTimeString() : '—'
   const health = statusBarHealth({ problems, substrateProof: stream.substrateProof, lastEventLabel: lastEvent })
@@ -62,7 +66,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
     <RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} />
     {health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}
     <span title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {viewerPending ? 'resolving…' : viewer}</span>
-    <span title="Notes saved in this browser">notes: {notes.length}</span>
+    <NotesCount />
     <span className="status-spacer" /><span>last event: {lastEvent}</span>
     <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={onShortcuts}>?</button>
     <ThemeToggle />

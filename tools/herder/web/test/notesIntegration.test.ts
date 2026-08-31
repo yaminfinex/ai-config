@@ -32,8 +32,10 @@ test('capture is shared by file, diff, and transcript panels and never opens the
 test('hand-off persists the composer append before deleting selected notes', () => {
   const group = read('../src/features/notes/NotesGroup.tsx')
   const rail = read('../src/features/notes/NotesRail.tsx')
-  assert.ok(group.indexOf('onHandOff(target, selectedNotes)') < group.indexOf('store.delete(selectedNotes.map'))
-  assert.ok(group.indexOf('store.delete(selectedNotes.map') < group.indexOf('store.flush()'))
+  const handOff = read('../src/features/notes/noteHandOff.ts')
+  assert.match(group, /handOffSelectedNotes/)
+  assert.ok(handOff.indexOf('append(target, pending)') < handOff.indexOf('remove(notes.map'))
+  assert.ok(handOff.indexOf('remove(notes.map') < handOff.indexOf('flush()'))
   assert.ok(rail.indexOf('appendComposerDraft') < rail.indexOf('onOpenAgent'))
 })
 

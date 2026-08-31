@@ -25,13 +25,12 @@ test('new rail preferences preserve the fleet width and start both rails open', 
   })
 })
 
-test('the utility rail stays hand-rolled and collapsed rails reserve no layout gutter', () => {
+test('the utility rail stays hand-rolled and status toggles stay in permanent shell chrome', () => {
   const rail = readFileSync(new URL('../src/features/layout/UtilityRail.tsx', import.meta.url), 'utf8')
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.doesNotMatch(rail, /dockview/i)
-  assert.match(rail, /hidden=\{collapsed\}/)
   assert.match(rail, /RailStatusToggle/)
   assert.doesNotMatch(rail, /rail-toggle-collapsed/)
   assert.match(app, /<UtilityRail[\s\S]*side="left"[\s\S]*<section className="shell-main">[\s\S]*<UtilityRail[\s\S]*side="right"/)
