@@ -105,8 +105,8 @@ func Resolve(home string, row hcomidentity.Row) (string, error) {
 // ResolveSubagent locates a dedicated Claude Task transcript. The agent ID is
 // validated before it participates in a path. An hcom-provided transcript path
 // is accepted only when its resolved target exists inside ~/.claude/projects
-// and names this exact agent; otherwise the path derived from the proven parent
-// session is used.
+// and names this exact agent; otherwise the path derived from the row's proven
+// parent session is used.
 func ResolveSubagent(home string, row hcomidentity.Row) (string, error) {
 	if row.Tool != "claude" {
 		return "", &ResolveError{Reason: ResolveWrongTool}
@@ -120,7 +120,7 @@ func ResolveSubagent(home string, row hcomidentity.Row) (string, error) {
 			return path, nil
 		}
 	}
-	if row.ParentAgent == "" || row.ParentSessionID == "" {
+	if row.ParentSessionID == "" {
 		return "", &ResolveError{Reason: ResolveMissingParent}
 	}
 	parentPath, err := Resolve(home, hcomidentity.Row{

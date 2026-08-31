@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -38,7 +40,7 @@ type Row struct {
 	TranscriptPath       string        `json:"transcript_path,omitempty"`
 	LaunchContext        LaunchContext `json:"launch_context"`
 	ParentAgent          string        `json:"-"`
-	ParentSessionID      string        `json:"-"`
+	ParentSessionID      string        `json:"parent_session_id,omitempty"`
 	ParentDirectory      string        `json:"-"`
 	ParentTranscriptPath string        `json:"-"`
 }
@@ -73,9 +75,15 @@ func WithParents(rows []Row) []Row {
 			continue
 		}
 		out[i].ParentAgent = parent.Name
-		out[i].ParentSessionID = parent.SessionID
-		out[i].ParentDirectory = parent.Directory
-		out[i].ParentTranscriptPath = parent.TranscriptPath
+		if out[i].ParentSessionID == "" {
+			out[i].ParentSessionID = parent.SessionID
+		}
+		if out[i].ParentDirectory == "" {
+			out[i].ParentDirectory = parent.Directory
+		}
+		if out[i].ParentTranscriptPath == "" {
+			out[i].ParentTranscriptPath = parent.TranscriptPath
+		}
 	}
 	return out
 }
@@ -145,10 +153,36 @@ func DecodeStopped(requestedName string, raw []byte) (Row, error) {
 	if baseName == "" || fields["Time"] == "" || fields["Tool"] == "" {
 		return Row{}, fmt.Errorf("could not decode hcom stopped agent")
 	}
-	return Row{
+	row := Row{
 		Name: requestedName, BaseName: baseName, Tool: fields["Tool"], Status: "retired",
 		Directory: fields["Directory"], SessionID: fields["Session"], TranscriptPath: fields["Transcript"],
-	}, nil
+	}
+	row.AgentID, row.ParentSessionID = stoppedSubagentEvidence(row.Tool, row.TranscriptPath)
+	return row, nil
+}
+
+var stoppedSubagentAgentID = regexp.MustCompile(`^[0-9a-f]{17}$`)
+var stoppedSubagentParentSessionID = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+
+// stoppedSubagentEvidence recognizes only the Claude layout observed on disk:
+// <parent-session>/subagents/agent-<17 lowercase hex>.jsonl. A shape mismatch
+// retains the ordinary stopped row without inventing subagent identity.
+func stoppedSubagentEvidence(tool, transcript string) (string, string) {
+	if tool != "claude" || transcript == "" {
+		return "", ""
+	}
+	base := filepath.Base(transcript)
+	if filepath.Ext(base) != ".jsonl" {
+		return "", ""
+	}
+	agentID := strings.TrimSuffix(strings.TrimPrefix(base, "agent-"), ".jsonl")
+	subagents := filepath.Dir(transcript)
+	parentSessionID := filepath.Base(filepath.Dir(subagents))
+	if !strings.HasPrefix(base, "agent-") || filepath.Base(subagents) != "subagents" ||
+		!stoppedSubagentAgentID.MatchString(agentID) || !stoppedSubagentParentSessionID.MatchString(parentSessionID) {
+		return "", ""
+	}
+	return agentID, parentSessionID
 }
 
 // Decode accepts both the array and JSONL roster formats emitted by hcom.

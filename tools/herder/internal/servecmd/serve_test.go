@@ -613,6 +613,35 @@ func TestAgentEndpointCarriesOnlyProvenSubagentParent(t *testing.T) {
 	if response.Code != http.StatusOK || detail.ParentAgent != "probe-fame" || detail.Pane != nil {
 		t.Fatalf("subagent detail = %d %#v", response.Code, detail)
 	}
+
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "probe-child", BaseName: "child", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active"}}, nil
+	}
+	response = httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/probe-child", nil))
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || detail.ParentAgent != "fame" {
+		t.Fatalf("stopped-parent name = %d %#v", response.Code, detail)
+	}
+
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{
+			{Name: "one-fame", BaseName: "fame", Tool: "claude", Status: "active"},
+			{Name: "two-fame", BaseName: "fame", Tool: "claude", Status: "active"},
+			{Name: "probe-child", BaseName: "child", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active"},
+		}, nil
+	}
+	response = httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/probe-child", nil))
+	detail = agentDetail{}
+	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || detail.ParentAgent != "" {
+		t.Fatalf("ambiguous parent was exposed = %d %#v", response.Code, detail)
+	}
 }
 
 func TestAgentDetailShowsBusMessageUntilTranscriptProvesDelivery(t *testing.T) {

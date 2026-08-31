@@ -76,7 +76,11 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 	if err != nil {
 		var resolveErr *claudesession.ResolveError
 		var codexResolveErr *codexsession.ResolveError
-		if errors.As(err, &resolveErr) || errors.As(err, &codexResolveErr) {
+		if errors.As(err, &resolveErr) && unavailableSubagentTranscript(row, resolveErr) {
+			refuse(w, http.StatusConflict, "no independent transcript", err.Error())
+			return
+		}
+		if resolveErr != nil || errors.As(err, &codexResolveErr) {
 			refuse(w, http.StatusConflict, "no session", err.Error())
 			return
 		}
@@ -114,6 +118,18 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		SessionID: currentTranscriptID, Window: window, Entries: &entries,
 		NextOffset: &next, Stats: &stats,
 	})
+}
+
+func unavailableSubagentTranscript(row hcomidentity.Row, resolveErr *claudesession.ResolveError) bool {
+	if !isSubagent(row) {
+		return false
+	}
+	switch resolveErr.Reason {
+	case claudesession.ResolveMissingParent, claudesession.ResolveFileAbsent, claudesession.ResolveAmbiguousFile:
+		return true
+	default:
+		return false
+	}
 }
 
 // serializeEntries is the single wire projection shared by entry windows and
@@ -308,7 +324,7 @@ func readEntryTail(path string, row hcomidentity.Row, limit int) (claudesession.
 }
 
 func isSubagent(row hcomidentity.Row) bool {
-	return row.ParentAgent != "" && row.AgentID != ""
+	return row.Tool == "claude" && row.AgentID != ""
 }
 
 func entryTranscriptID(row hcomidentity.Row) string {

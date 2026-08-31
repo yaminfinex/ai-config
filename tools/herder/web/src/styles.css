@@ -402,6 +402,9 @@ h2, h3, p { margin-top: 0; }
 .transcript { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; }
 .transcript > * { max-width: 900px; }
 .window-note { margin: 2px 0 10px; color: var(--dimmer); font: 9px var(--mono); text-align: center; }
+.transcript-unavailable { max-width: 34rem; margin: 3rem auto; text-align: center; color: var(--dim); }
+.transcript-unavailable strong { display: block; color: var(--text); }
+.transcript-unavailable button { margin-top: 0.5rem; }
 .queued-dock { flex: 0 0 auto; padding: 0 14px; background: var(--bg); }
 .queued-dock:empty { display: none; }
 .queued-dock .queued-messages { max-width: 900px; margin-bottom: 7px; }

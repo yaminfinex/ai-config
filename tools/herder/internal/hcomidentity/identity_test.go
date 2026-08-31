@@ -33,6 +33,37 @@ func TestDecodeStoppedDistinguishesMissingAndMalformedEvidence(t *testing.T) {
 	}
 }
 
+func TestDecodeStoppedCarriesValidatedSubagentTranscriptEvidence(t *testing.T) {
+	const parentSessionID = "c28b3424-9baf-4808-a7a2-a728a5340bac"
+	const agentID = "a49beeb7f81d46586"
+	raw := []byte("Stopped: raza_general_purpose_1\n" +
+		"  Time: 2026-08-31T04:28:04Z\n" +
+		"  Tool: claude\n" +
+		"  Transcript: /fixture/projects/slug/" + parentSessionID + "/subagents/agent-" + agentID + ".jsonl\n")
+	row, err := DecodeStopped("review-raza_general_purpose_1", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.AgentID != agentID || row.ParentSessionID != parentSessionID {
+		t.Fatalf("stopped subagent evidence = %#v", row)
+	}
+
+	for _, transcript := range []string{
+		"/fixture/projects/slug/not-a-session/subagents/agent-" + agentID + ".jsonl",
+		"/fixture/projects/slug/" + parentSessionID + "/subagents/agent-too-short.jsonl",
+		"/fixture/projects/slug/" + parentSessionID + "/other/agent-" + agentID + ".jsonl",
+	} {
+		malformed := []byte("Stopped: child\n  Time: now\n  Tool: claude\n  Transcript: " + transcript + "\n")
+		got, decodeErr := DecodeStopped("child", malformed)
+		if decodeErr != nil {
+			t.Fatalf("shape mismatch should retain ordinary stopped evidence: %v", decodeErr)
+		}
+		if got.AgentID != "" || got.ParentSessionID != "" {
+			t.Errorf("shape mismatch was mis-derived: %#v", got)
+		}
+	}
+}
+
 func TestDecodeArrayAndJSONL(t *testing.T) {
 	for name, input := range map[string]string{
 		"array": `[{"name":"mavu","tool":"codex","status":"active","launch_context":{"pane_id":"p1"}}]`,
@@ -78,6 +109,19 @@ func TestDecodeEnrichesOnlyProvenParentSession(t *testing.T) {
 	}
 	if rows[1].ParentAgent != "probe-fame" || rows[1].ParentSessionID != "parent-session" || rows[1].ParentDirectory != "/probe" {
 		t.Fatalf("enriched child = %#v", rows[1])
+	}
+}
+
+func TestDecodeParentEnrichmentNeverOverwritesRowOwnedSessionEvidence(t *testing.T) {
+	rows, err := Decode([]byte(`[
+		{"name":"probe-fame","base_name":"fame","session_id":"live-parent-session","directory":"/live"},
+		{"name":"probe-child","base_name":"child","parent_name":"fame","parent_session_id":"carried-parent-session","agent_id":"a35b593a6be7a9ba5"}
+	]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[1].ParentAgent != "probe-fame" || rows[1].ParentSessionID != "carried-parent-session" {
+		t.Fatalf("enrichment overwrote row-owned evidence: %#v", rows[1])
 	}
 }
 

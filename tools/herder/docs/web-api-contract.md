@@ -315,7 +315,7 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   window; an offset beyond the current complete file returns its typed
   `truncated` reset. Reset responses contain `sessionId`, `window`, and
   `reset`, but no entries or fabricated next offset. `sessionId` without
-  `from` is a 400. Refusals: 404 unknown bus agent; 409 no resolvable Claude
+  `from` is a 400. Refusals: 404 unknown bus agent; 409 `no independent transcript` for a proven subagent whose dedicated transcript cannot be resolved; 409 no resolvable Claude
   session (wrong tool, missing/invalid ID, or absent derived file); 502 bus,
   filesystem, or other substrate failure.
 

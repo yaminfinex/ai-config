@@ -159,6 +159,64 @@ func TestEntriesEndpointReadsRealSubagentSidechainShape(t *testing.T) {
 	}
 }
 
+func TestEntriesEndpointRoutesSubagentFromItsOwnEvidenceWithoutLiveParent(t *testing.T) {
+	home := t.TempDir()
+	childPath := filepath.Join(home, ".claude", "projects", claudesession.Slug("/invented/violet"), fixtureSessionID, "subagents", "agent-a35b593a6be7a9ba5.jsonl")
+	if err := os.MkdirAll(filepath.Dir(childPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(childPath, []byte(sessionLines(`{"parentUuid":null,"isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"assistant","uuid":"row-owned","message":{"content":[{"type":"text","text":"Still here."}]}}`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	deps := entryDepsWithRow(hcomidentity.Row{
+		Name: "probe-child", Tool: "claude", Status: "active", ParentName: "fame",
+		AgentID: "a35b593a6be7a9ba5", TranscriptPath: childPath,
+	})
+
+	response := requestEntries(t, deps, "/api/agents/probe-child/entries?limit=10")
+	page := decodeEntriesResponse(t, response)
+	if response.Code != http.StatusOK || page.SessionID != "subagent:a35b593a6be7a9ba5" || page.Entries == nil || len(*page.Entries) != 1 || (*page.Entries)[0].UUID != "row-owned" {
+		t.Fatalf("row-owned subagent response = %d %#v %s", response.Code, page, response.Body.String())
+	}
+}
+
+func TestEntriesEndpointResolvesStoppedSubagentFromTranscriptShape(t *testing.T) {
+	home := t.TempDir()
+	childPath := filepath.Join(home, ".claude", "projects", claudesession.Slug("/invented/violet"), fixtureSessionID, "subagents", "agent-a35b593a6be7a9ba5.jsonl")
+	if err := os.MkdirAll(filepath.Dir(childPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(childPath, []byte(sessionLines(`{"parentUuid":null,"isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"assistant","uuid":"retained-child","message":{"content":[{"type":"text","text":"Retained."}]}}`)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	row, err := hcomidentity.DecodeStopped("probe-child", []byte("Stopped: child\n  Time: now\n  Tool: claude\n  Transcript: "+childPath+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := fixtureDeps()
+	deps.roster = func() ([]hcomidentity.Row, error) { return nil, nil }
+	deps.stopped = func(string) (hcomidentity.Row, error) { return row, nil }
+
+	response := requestEntries(t, deps, "/api/agents/probe-child/entries?limit=10")
+	page := decodeEntriesResponse(t, response)
+	if response.Code != http.StatusOK || page.Entries == nil || len(*page.Entries) != 1 || (*page.Entries)[0].UUID != "retained-child" {
+		t.Fatalf("stopped subagent response = %d %#v %s", response.Code, page, response.Body.String())
+	}
+}
+
+func TestEntriesEndpointRefusesMissingSubagentTranscriptHonestly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	deps := entryDepsWithRow(hcomidentity.Row{
+		Name: "probe-child", Tool: "claude", Status: "active", ParentName: "fame", AgentID: "a35b593a6be7a9ba5",
+	})
+	response := requestEntries(t, deps, "/api/agents/probe-child/entries?limit=10")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"no independent transcript"`) || strings.Contains(response.Body.String(), "missing_session_id") {
+		t.Fatalf("missing subagent transcript = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestReadQueueExclusionsUsesToolSpecificCompactBoundaryPolicy(t *testing.T) {
 	for _, fixture := range []struct {
 		name              string

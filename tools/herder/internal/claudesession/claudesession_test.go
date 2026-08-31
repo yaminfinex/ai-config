@@ -117,7 +117,7 @@ func TestResolveSubagentUsesProvenParentAndRejectsHostileAgentID(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	row := hcomidentity.Row{Tool: "claude", AgentID: "a35b593a6be7a9ba5", ParentAgent: "probe-fame", ParentSessionID: parentID, ParentDirectory: "/invented/violet"}
+	row := hcomidentity.Row{Tool: "claude", AgentID: "a35b593a6be7a9ba5", ParentSessionID: parentID, ParentDirectory: "/invented/violet"}
 	if got, err := ResolveSubagent(home, row); err != nil || got != childPath {
 		t.Fatalf("ResolveSubagent() = %q, %v", got, err)
 	}

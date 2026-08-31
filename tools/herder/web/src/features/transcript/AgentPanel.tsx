@@ -11,6 +11,7 @@ import { AgentContextStrip } from './AgentContextStrip'
 import { QueuedMessages } from './QueuedMessages'
 import { visibleQueuedMessages } from './queuedMessages'
 import { TranscriptEntries } from './TranscriptEntries'
+import { transcriptUnavailable } from './transcriptUnavailable'
 import { ScreenViewport } from '../screen/ScreenPanel'
 import { agentScreenChoice } from '../screen/screenPresentation'
 import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
@@ -26,9 +27,12 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
   const [viewMode, setViewMode] = useState(() => readTranscriptViewMode(name))
   const [now, setNow] = useState(Date.now())
   const [sendProblem, setSendProblem] = useState('')
+  const agent = agentQuery.data
   const entries = entriesQuery.data?.entries ?? []
-  const queued = visibleQueuedMessages(agentQuery.data?.queued ?? [], entries)
-  const entriesNotice = transcriptNotice(entriesQuery.isPending, entriesQuery.error?.message ?? '')
+  const queued = visibleQueuedMessages(agent?.queued ?? [], entries)
+  const unavailable = transcriptUnavailable(entriesQuery.error, agent?.parent_agent)
+  const unavailableParent = unavailable?.parent
+  const entriesNotice = transcriptNotice(entriesQuery.isPending, unavailable ? '' : entriesQuery.error?.message ?? '')
   const screenChoice = agentScreenChoice(agentQuery.data, screenPaneID)
   const screenMode = screenChoice.active
   const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode, active && !screenMode)
@@ -63,7 +67,6 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
     <PanelState className="not-found tombstone" title="No retained agent evidence" detail={<>No live or retained session evidence for <span>{name}</span>. This tab is safe to close.</>} />
   </main>
 
-  const agent = agentQuery.data
   const retired = agent?.bus_status === 'retired'
   return <main className="agent-page">
     <header className="agent-header">
@@ -87,9 +90,13 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
     {sendProblem && <Banner source="send" detail={sendProblem} />}
     {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} active={active} onFocus={() => onTerminalFocus(screenPaneID)} onBlur={() => onTerminalFocus(undefined)} /> : <div className="transcript-viewport">
       <section className="transcript" data-follow-scroll aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick}>
-        <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
-        {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
-        <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} />
+        {unavailable ? <PanelState className="transcript-unavailable" title={unavailable.title} detail={unavailable.detail}>
+          {unavailableParent && <button type="button" onClick={() => onOpenAgent(unavailableParent)}>Open parent</button>}
+        </PanelState> : <>
+          <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
+          {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
+          <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} />
+        </>}
       </section>
       {fileResolver.element}
       <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onBottom={transcriptFollow.jumpToBottom} />

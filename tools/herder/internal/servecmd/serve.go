@@ -671,7 +671,7 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 		Name: name, Tool: row.Tool, HerdrStatus: "-", BusStatus: row.Status,
 		Gap: "no visible pane", Directory: row.Directory, SessionID: row.SessionID,
 		LaunchContext: row.LaunchContext,
-		ParentAgent:   row.ParentAgent,
+		ParentAgent:   transcriptParentName(row, roster),
 	}
 	if row.Directory != "" {
 		repository, contextErr := deps.repoContext(ctx, row.Directory)
@@ -743,6 +743,22 @@ func readAgent(ctx context.Context, deps dependencies, name string) (agentDetail
 		}
 	}
 	return result, nil
+}
+
+func transcriptParentName(row hcomidentity.Row, roster []hcomidentity.Row) string {
+	if row.ParentAgent != "" || row.ParentName == "" {
+		return row.ParentAgent
+	}
+	matches := 0
+	for _, candidate := range roster {
+		if candidate.BaseName == row.ParentName {
+			matches++
+		}
+	}
+	if matches == 0 {
+		return row.ParentName
+	}
+	return ""
 }
 
 // resolveAgentEvidence is deliberately live-first: a reused live name always
