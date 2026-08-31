@@ -1307,7 +1307,7 @@ func TestOpenListenersRejectsWildcard(t *testing.T) {
 	}
 }
 
-func TestEventsSendsFleetThenMessage(t *testing.T) {
+func TestEventsAnnouncesInitialHcomHealthOnceThenMessage(t *testing.T) {
 	deps := fixtureDeps()
 	readSnapshot := deps.snapshot
 	started := make(chan struct{})
@@ -1321,6 +1321,9 @@ func TestEventsSendsFleetThenMessage(t *testing.T) {
 	}
 	deps.messages = func(ctx context.Context, cursor *hcomevents.Cursor, emit func(hcomevents.Message) error, healthy func() error) error {
 		close(started)
+		if err := healthy(); err != nil {
+			return err
+		}
 		if err := healthy(); err != nil {
 			return err
 		}
@@ -1342,9 +1345,22 @@ func TestEventsSendsFleetThenMessage(t *testing.T) {
 	if event != "fleet" || !strings.Contains(data, `"workspaces"`) {
 		t.Fatalf("first event = %q %s", event, data)
 	}
-	event, data = readEvent(t, reader)
-	if event != "message" || !strings.Contains(data, `"id":7`) || !strings.Contains(data, `"to":["dore"]`) {
-		t.Fatalf("second event = %q %s", event, data)
+	recovered := 0
+	messageSeen := false
+	for range 2 {
+		event, data = readEvent(t, reader)
+		if event == "substrate" && strings.Contains(data, `"source":"hcom"`) && strings.Contains(data, `"status":"recovered"`) {
+			recovered++
+		}
+		if event == "message" && strings.Contains(data, `"id":7`) && strings.Contains(data, `"to":["dore"]`) {
+			messageSeen = true
+		}
+	}
+	if recovered != 1 {
+		t.Fatalf("initial hcom recovered events = %d, want 1", recovered)
+	}
+	if !messageSeen {
+		t.Fatal("message event was not emitted after initial hcom health")
 	}
 }
 

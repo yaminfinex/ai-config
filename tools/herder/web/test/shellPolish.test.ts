@@ -4,10 +4,11 @@ import test from 'node:test'
 
 test('shell facts and global controls live only in the bottom status bar', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
-  assert.equal(app.match(/SSE:/g)?.length, 1)
   const footer = app.slice(app.indexOf('<footer className="status-bar">'), app.indexOf('</footer>'))
-  assert.match(footer, /SSE:/)
-  assert.match(footer, /layout: this browser/)
+  assert.match(footer, /health\.map/)
+  assert.match(footer, /user:/)
+  assert.match(footer, /last event:/)
+  assert.doesNotMatch(footer, /layout: this browser|viewer:|>attributed<|stream\.messages|\{workspace\.stream\.messages\}/)
   assert.match(footer, /<ThemeToggle \/>/)
   assert.match(footer, /className="shortcut-button"/)
 })
@@ -18,7 +19,7 @@ test('owner-ruled composer noise is removed without dropping accessibility or at
   assert.match(composer, /aria-label=\{`Message \$\{name\}`\}/)
 
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
-  assert.match(app, /Web sends are attributed to this viewer; web senders are not addressable bus peers\./)
+  assert.match(app, /Web sends are attributed to this user; web senders are not addressable bus peers\./)
 })
 
 test('the physical Alt+W binding keeps the editable-target guard', () => {

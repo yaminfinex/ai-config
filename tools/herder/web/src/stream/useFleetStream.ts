@@ -6,7 +6,7 @@ import type { FileWatchTarget } from './fileWatchRegistry.ts'
 
 export type StreamState = {
   problems: Record<string, string>
-  messages: number
+  substrateProof: { herdr: boolean, hcom: boolean }
   lastEvent: number | null
   loadedBuild: string | null
   serverUpdated: boolean
@@ -14,7 +14,7 @@ export type StreamState = {
 
 const initialStreamState: StreamState = {
   problems: { stream: 'Connecting to live fleet…' },
-  messages: 0,
+  substrateProof: { herdr: false, hcom: false },
   lastEvent: null,
   loadedBuild: null,
   serverUpdated: false,
@@ -121,7 +121,11 @@ export function subscribeToFleet(
   const connect = () => {
     if (!active) return
     lastActivity = Date.now()
-    update((current) => current.loadedBuild ? current : { ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } })
+    update((current) => ({
+      ...current,
+      substrateProof: { herdr: false, hcom: false },
+      problems: { ...current.problems, stream: 'Connecting to live fleet…' },
+    }))
     try {
       events = createEventSource(eventStreamURL(names, panes, fileWatches, focusedScreenPaneID))
     } catch {
@@ -152,13 +156,20 @@ export function subscribeToFleet(
         void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
         void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
       })
-      update((current) => ({ ...current, problems: without(current.problems, 'fleet') }))
+      update((current) => ({
+        ...current,
+        substrateProof: { ...current.substrateProof, herdr: true },
+        problems: without(current.problems, 'fleet'),
+      }))
     })
     events.addEventListener('substrate', (event) => {
       touch()
       const state = JSON.parse(event.data) as SubstrateEvent
       update((current) => ({
         ...current,
+        substrateProof: state.status === 'recovered' && (state.source === 'herdr' || state.source === 'hcom')
+          ? { ...current.substrateProof, [state.source]: true }
+          : current.substrateProof,
         problems: state.status === 'recovered'
           ? without(current.problems, state.source)
           : { ...current.problems, [state.source]: state.detail ?? `${state.source} is unreachable` },
@@ -166,7 +177,6 @@ export function subscribeToFleet(
     })
     events.addEventListener('message', (event) => {
       touch()
-      update((current) => ({ ...current, messages: current.messages + 1 }))
       const { to } = JSON.parse(event.data) as { to?: string[] }
       to?.filter((name) => names.includes(name)).forEach((name) => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })

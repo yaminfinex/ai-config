@@ -1185,6 +1185,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	}
 	hcomRosterDown := false
 	hcomEventsDown := false
+	hcomHealthAnnounced := false
 	messageCh := make(chan hcomevents.Message)
 	hcomHealthy := make(chan struct{})
 	hcomState := make(chan error, 1)
@@ -1628,11 +1629,12 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			closeTranscriptWatches()
 		case <-hcomHealthy:
 			hcomEventsDown = false
-			if unreachable["hcom"] && !hcomRosterDown {
+			if !hcomRosterDown && (!hcomHealthAnnounced || unreachable["hcom"]) {
 				unreachable["hcom"] = false
 				if !emit("substrate", substrate{Source: "hcom", Status: "recovered"}) {
 					return
 				}
+				hcomHealthAnnounced = true
 			}
 		case eventErr := <-hcomState:
 			if eventErr != nil {
@@ -1694,6 +1696,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 					unreachable[source] = false
 					if !emit("substrate", substrate{Source: source, Status: "recovered"}) {
 						return
+					}
+					if source == "hcom" {
+						hcomHealthAnnounced = true
 					}
 				}
 			}

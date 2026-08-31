@@ -163,7 +163,10 @@ h2, h3, p { margin-top: 0; }
 .status-spacer { flex: 1; }
 .theme-toggle { display: flex; height: 20px; align-items: center; gap: 5px; padding: 0 7px; border-color: var(--border); background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .theme-toggle:hover:not(:disabled) { color: var(--text); }
-.status-bar .fault { color: var(--red); }
+.health-tick { display: inline-flex; align-items: center; gap: 4px; }
+.health-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; }
+.health-dot.healthy { background: var(--green); }
+.health-dot.fault { background: var(--red); }
 .shell-banners { flex: 0 0 auto; background: var(--bg); }
 .shell-banners:empty { display: none; }
 .banner { display: flex; min-height: 27px; align-items: center; gap: 8px; margin: 0; padding: 3px 12px; border-bottom: 1px solid; font-size: 11px; }
@@ -543,7 +546,7 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 .back-link { margin: 12px; color: var(--dim); }
 
 @media (max-width: 900px) {
-  .status-bar > span:nth-of-type(4), .status-bar > span:nth-of-type(5) { display: none; }
+  .status-bar > span:nth-of-type(4) { display: none; }
 }
 @media (max-width: 700px) {
   .agent-status, .tool-chip { display: none; }
