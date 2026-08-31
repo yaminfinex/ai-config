@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
-import { blurComposerOnEscape, composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror } from '../../composerState'
+import { blurComposerOnEscape, composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
 import { beginSendRefresh, settleSendRefresh } from '../../sendRefresh'
 
 export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }: {
@@ -21,6 +21,8 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
   const mutation = useMutation({ mutationFn: (text: string) => sendMessage(name, text) })
   const effectiveReadOnly = identityReadOnly || readOnly
   const fieldId = composerFieldId(name)
+
+  useEffect(() => subscribeComposerDraft(name, setMessage), [name])
 
   useLayoutEffect(() => {
     persistComposerDraft(name, message)

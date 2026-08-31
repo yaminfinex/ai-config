@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
+  appendComposerDraft,
   focusComposerWhenReady,
   composerFieldId,
   composerDraftKey,
@@ -11,6 +12,7 @@ import {
   readComposerDraft,
   resizeComposerFromMirror,
   resolveComposerStorage,
+  subscribeComposerDraft,
 } from '../src/composerState.ts'
 
 function memoryStorage() {
@@ -45,6 +47,31 @@ test('blocked browser storage degrades to a working non-persistent composer', ()
   assert.equal(readComposerDraft('agent/blocked', blocked), '')
   assert.doesNotThrow(() => persistComposerDraft('agent/blocked', 'usable draft', blocked))
   assert.equal(isComposerSendShortcut({ key: 'Enter', ctrlKey: true, metaKey: false }), true)
+})
+
+test('note hand-off appends with blank lines and notifies a mounted composer after persistence', () => {
+  const storage = memoryStorage()
+  persistComposerDraft('agent/one', 'existing draft', storage)
+  const received: string[] = []
+  const unsubscribe = subscribeComposerDraft('agent/one', (text) => received.push(text))
+  const result = appendComposerDraft('agent/one', ['first note', 'second note'], storage)
+  unsubscribe()
+
+  assert.deepEqual(result, { ok: true, text: 'existing draft\n\nfirst note\n\nsecond note' })
+  assert.equal(readComposerDraft('agent/one', storage), result.text)
+  assert.deepEqual(received, [result.text])
+})
+
+test('failed note hand-off leaves the composer draft and notes available to retry', () => {
+  const blocked = {
+    getItem: () => 'existing draft',
+    setItem: () => { throw new Error('quota') },
+    removeItem: () => undefined,
+  }
+  assert.deepEqual(appendComposerDraft('agent/blocked', ['kept note'], blocked), {
+    ok: false,
+    reason: 'The composer draft could not be saved. Your notes were left in place.',
+  })
 })
 
 test('only Ctrl+Enter and Cmd+Enter are send shortcuts', () => {

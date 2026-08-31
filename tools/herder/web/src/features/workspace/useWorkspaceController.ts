@@ -51,6 +51,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     (handle) => window.cancelAnimationFrame(handle),
   ))
   const apiRef = useRef<DockviewApi | undefined>(undefined)
+  const notesFocusReturn = useRef<HTMLElement | null>(null)
   const disposeDock = useRef<() => void>(() => undefined)
   const queryClient = useQueryClient()
   const boardQuery = useQuery({ queryKey: queryKeys.fleet, queryFn: () => getFleet(), staleTime: Infinity, retry: false })
@@ -189,8 +190,14 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   }, [layout.setFleetRail])
   const toggleNotesRail = useCallback(() => {
     const opening = layout.notesRail.collapsed
+    if (opening) notesFocusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     layout.setNotesRail((rail) => ({ ...rail, collapsed: !rail.collapsed }))
-    if (opening) window.requestAnimationFrame(() => document.querySelector<HTMLElement>('.utility-rail-right')?.focus())
+    if (opening) window.requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-notes-quick-input="general"]')?.focus())
+    else {
+      const target = notesFocusReturn.current
+      notesFocusReturn.current = null
+      window.requestAnimationFrame(() => target?.isConnected && target.focus())
+    }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
   useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail })
 

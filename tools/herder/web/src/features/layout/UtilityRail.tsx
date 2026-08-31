@@ -19,15 +19,6 @@ export function UtilityRail({ side, label, detail, headingStart, width, collapse
   onToggle: () => void
   children: ReactNode
 }) {
-  const toggleTitle = `${collapsed ? 'Open' : 'Collapse'} ${label} rail`
-  const toggle = <button type="button"
-    className={`rail-toggle${collapsed ? ' rail-toggle-collapsed' : ''} rail-toggle-${side}`}
-    aria-label={toggleTitle} title={toggleTitle} onClick={onToggle}>
-    <span aria-hidden="true">{side === 'left' ? collapsed ? '›' : '‹' : collapsed ? '‹' : '›'}</span>
-  </button>
-
-  if (collapsed) return toggle
-
   const startResize = (event: React.PointerEvent) => {
     const startX = event.clientX
     const move = (moveEvent: PointerEvent) => onWidth(resizedRailWidth(width, side, moveEvent.clientX - startX))
@@ -36,11 +27,13 @@ export function UtilityRail({ side, label, detail, headingStart, width, collapse
     const stop = () => { disposeMove(); disposeUp() }
     disposeUp = subscribeDOMEvent(window, 'pointerup', stop)
   }
-  const rail = <aside className={`utility-rail utility-rail-${side}`} aria-label={`${label} rail`} style={{ width }} tabIndex={-1}>
-    <header className="rail-heading">{headingStart}<strong>{label}</strong>{detail && <span>{detail}</span>}{toggle}</header>
+  const rail = <aside className={`utility-rail utility-rail-${side}`} aria-label={`${label} rail`} style={{ width }} tabIndex={-1} hidden={collapsed}>
+    <header className="rail-heading">{headingStart}<strong>{label}</strong>{detail && <span>{detail}</span>}<button type="button"
+      className={`rail-toggle rail-toggle-${side}`} aria-label={`Collapse ${label} rail`} title={`Collapse ${label} rail`}
+      onClick={onToggle}><span aria-hidden="true">{side === 'left' ? '‹' : '›'}</span></button></header>
     {children}
   </aside>
-  const resizer = <div className={`utility-rail-resizer utility-rail-resizer-${side}`} role="separator"
+  const resizer = <div className={`utility-rail-resizer utility-rail-resizer-${side}`} role="separator" hidden={collapsed}
     aria-label={`Resize ${label.toLowerCase()} rail`} aria-orientation="vertical"
     aria-valuemin={minimumRailWidth} aria-valuemax={maximumRailWidth} aria-valuenow={width} tabIndex={0}
     onPointerDown={startResize} onKeyDown={(event) => {
@@ -49,4 +42,20 @@ export function UtilityRail({ side, label, detail, headingStart, width, collapse
       event.preventDefault()
     }} />
   return side === 'left' ? <>{rail}{resizer}</> : <>{resizer}{rail}</>
+}
+
+export function RailStatusToggle({ side, label, shortcut, collapsed, onToggle }: {
+  side: RailSide
+  label: string
+  shortcut: string
+  collapsed: boolean
+  onToggle: () => void
+}) {
+  const state = collapsed ? 'collapsed' : 'open'
+  const title = `${label} rail: ${state} (${shortcut})`
+  return <button type="button" className={`rail-status-toggle rail-status-toggle-${side}`} aria-label={title}
+    aria-pressed={!collapsed} title={title} onClick={onToggle}>
+    <svg aria-hidden="true" viewBox="0 0 16 14" width="16" height="14"><rect x="1" y="1" width="14" height="12" rx="1" />
+      {!collapsed && <path d={side === 'left' ? 'M2 2h4v10H2z' : 'M10 2h4v10h-4z'} />}</svg>
+  </button>
 }

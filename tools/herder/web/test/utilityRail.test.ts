@@ -31,11 +31,14 @@ test('the utility rail stays hand-rolled and collapsed rails reserve no layout g
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.doesNotMatch(rail, /dockview/i)
-  assert.match(rail, /rail-toggle-collapsed/)
-  assert.match(rail, /if \(collapsed\)/)
+  assert.match(rail, /hidden=\{collapsed\}/)
+  assert.match(rail, /RailStatusToggle/)
+  assert.doesNotMatch(rail, /rail-toggle-collapsed/)
   assert.match(app, /<UtilityRail[\s\S]*side="left"[\s\S]*<section className="shell-main">[\s\S]*<UtilityRail[\s\S]*side="right"/)
+  assert.match(app, /workspace-switcher-slot[\s\S]*side="left"[\s\S]*side="right"/)
   assert.doesNotMatch(controller, /toggleNotesRail[\s\S]{0,300}(?:pushState|replaceState|updateHistory)/)
-  assert.match(styles, /\.rail-toggle-collapsed \{[^}]*top: 76px/)
+  assert.doesNotMatch(styles, /\.rail-toggle-collapsed/)
+  assert.match(styles, /\.rail-status-toggle\[aria-pressed='true'\]/)
 })
 
 test('open rails shrink before the centre can collapse at the minimum viewport', () => {

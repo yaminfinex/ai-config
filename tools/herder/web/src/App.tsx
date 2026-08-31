@@ -3,7 +3,7 @@ import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { QuickOpen } from './features/files/QuickOpen'
 import { ShortcutReference } from './features/layout/ShortcutReference'
-import { UtilityRail } from './features/layout/UtilityRail'
+import { RailStatusToggle, UtilityRail } from './features/layout/UtilityRail'
 import { dockComponents, DockTab } from './features/workspace/panelRegistry'
 import { DockHeaderActions, DockWatermark } from './features/workspace/workspaceChrome'
 import { WorkspaceProviders } from './features/workspace/workspaceContext'
@@ -14,6 +14,9 @@ import { AppLink, currentRoute, type Route } from './shared/navigation'
 import { Banner } from './shared/presentation'
 import { statusBarHealth, type HealthTick } from './shared/statusBarPresentation'
 import { ThemeToggle } from './shared/ThemeToggle'
+import { NotesProvider, useNotes } from './features/notes/NotesProvider'
+import { NotesRail } from './features/notes/NotesRail'
+import { shortcutLabels } from './features/layout/shellShortcuts'
 
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
@@ -38,17 +41,32 @@ function StreamBanners({ fleetProblem, viewerProblem, flushLayout }: { fleetProb
   </div>
 }
 
-function StreamStatusBar({ fleetProblem, viewer, viewerPending, onShortcuts }: { fleetProblem: string, viewer: string, viewerPending: boolean, onShortcuts: () => void }) {
+function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts }: {
+  fleetProblem: string
+  viewer: string
+  viewerPending: boolean
+  fleetCollapsed: boolean
+  notesCollapsed: boolean
+  onToggleFleet: () => void
+  onToggleNotes: () => void
+  onShortcuts: () => void
+}) {
   const stream = useStreamStatus()
+  const { notes } = useNotes()
   const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
   const lastEvent = stream.lastEvent ? new Date(stream.lastEvent).toLocaleTimeString() : '—'
   const health = statusBarHealth({ problems, substrateProof: stream.substrateProof, lastEventLabel: lastEvent })
+  const shortcuts = shortcutLabels(navigator.userAgent)
   return <footer className="status-bar">
+    <span className="workspace-switcher-slot" aria-hidden="true" />
+    <RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} />
     {health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}
     <span title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {viewerPending ? 'resolving…' : viewer}</span>
+    <span title="Notes saved in this browser">notes: {notes.length}</span>
     <span className="status-spacer" /><span>last event: {lastEvent}</span>
     <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={onShortcuts}>?</button>
     <ThemeToggle />
+    <RailStatusToggle side="right" label="Notes" shortcut={shortcuts.toggleNotesRail} collapsed={notesCollapsed} onToggle={onToggleNotes} />
   </footer>
 }
 
@@ -75,17 +93,20 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
           pinnedTabs={{ enabled: false }} layoutHistory={{ enabled: false }} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
       </div>
-      <StreamStatusBar fleetProblem={workspace.fleetProblem} viewer={workspace.viewer} viewerPending={workspace.viewerPending} onShortcuts={() => workspace.setShortcutReference(true)} />
+      <StreamStatusBar fleetProblem={workspace.fleetProblem} viewer={workspace.viewer} viewerPending={workspace.viewerPending}
+        fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
+        onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
+        onShortcuts={() => workspace.setShortcutReference(true)} />
     </section>
     <UtilityRail side="right" label="Notes" width={notesRail.width} collapsed={notesRail.collapsed}
       onWidth={(width) => setNotesRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleNotesRail}>
-      <div className="notes-rail-empty" role="status">No notes yet</div>
+      <NotesRail board={workspace.board} onOpenAgent={(name, placement) => openAgent(name, true, placement, true)} />
     </UtilityRail>
   </div></FileWatchContext.Provider></WorkspaceProviders>
 }
 
 export default function App() {
   const route = currentRoute()
-  if (route.page !== 'missing') return <Shell initialRoute={route} />
+  if (route.page !== 'missing') return <NotesProvider><Shell initialRoute={route} /></NotesProvider>
   return <main className="agent-page"><AppLink to="/" className="back-link">← Workspace</AppLink><section className="not-found"><strong>404 · Page not found</strong></section></main>
 }

@@ -19,8 +19,10 @@ import type { FileTarget, FolderTarget } from '../../types'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { PanelState } from '../../shared/PanelState'
+import { AgentNotesStrip } from '../notes/AgentNotesStrip'
+import { useNoteCapture } from '../notes/useNoteCapture'
 
-export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
+export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -45,6 +47,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
     persistTranscriptViewMode(name, mode)
   }
   const fileResolver = useTranscriptFileResolver(name, active && !screenMode, onOpenFile, onOpenFolder)
+  const noteCapture = useNoteCapture({ active: active && !screenMode, source: { kind: 'transcript', agent: name }, agents })
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
@@ -68,7 +71,7 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
   </main>
 
   const retired = agent?.bus_status === 'retired'
-  return <main className="agent-page">
+  return <main className="agent-page" ref={noteCapture.containerRef} onPointerUp={noteCapture.onPointerUp}>
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
       <ToolBadge tool={agent?.tool} />
@@ -103,6 +106,8 @@ export function AgentPanel({ name, active, liveStatus, screenPaneID, mentionMatc
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />
+    {agent && <AgentNotesStrip agent={name} agents={agents} />}
     {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
+    {noteCapture.element}
   </main>
 }

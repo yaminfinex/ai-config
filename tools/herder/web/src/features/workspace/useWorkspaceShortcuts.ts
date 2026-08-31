@@ -2,6 +2,7 @@ import { useEffect, type MutableRefObject } from 'react'
 import type { DockviewApi } from 'dockview-react'
 import { followScrollCommandEvent, type FollowScrollCommand } from '../../shared/useFollowScroll'
 import { bindShellShortcuts } from '../layout/shellShortcuts'
+import { noteCaptureShortcutEvent, type NoteCaptureShortcutDetail } from '../../shared/noteCaptureEvent'
 
 export function useWorkspaceShortcuts({
   apiRef,
@@ -55,6 +56,11 @@ export function useWorkspaceShortcuts({
         return true
       },
       toggleNotesRail,
+      captureNote: () => {
+        const detail: NoteCaptureShortcutDetail = { claimed: false }
+        window.dispatchEvent(new CustomEvent(noteCaptureShortcutEvent, { detail }))
+        return detail.claimed
+      },
       focusComposer: () => {
         const composer = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
         if (!composer) return false

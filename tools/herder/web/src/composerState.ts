@@ -1,6 +1,7 @@
 export const composerDraftPrefix = 'herder.web.messageDraft.v1:'
 
 type ComposerStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+const composerDraftListeners = new Map<string, Set<(text: string) => void>>()
 
 export function resolveComposerStorage(accessor: () => ComposerStorage = () => window.localStorage): ComposerStorage | null {
   try {
@@ -33,6 +34,35 @@ export function persistComposerDraft(agentName: string, text: string, storage: P
     else storage.removeItem(composerDraftKey(agentName))
   } catch {
     // Draft persistence is best-effort when browser storage is unavailable.
+  }
+}
+
+export function subscribeComposerDraft(agentName: string, listener: (text: string) => void) {
+  const listeners = composerDraftListeners.get(agentName) ?? new Set()
+  listeners.add(listener)
+  composerDraftListeners.set(agentName, listeners)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) composerDraftListeners.delete(agentName)
+  }
+}
+
+export function appendComposerDraft(
+  agentName: string,
+  notes: string[],
+  storage: Pick<ComposerStorage, 'getItem' | 'setItem'> | null = resolveComposerStorage(),
+): { ok: true, text: string } | { ok: false, reason: string } {
+  const addition = notes.filter((note) => note.trim()).join('\n\n')
+  if (!addition) return { ok: false, reason: 'Choose at least one note to hand to the composer.' }
+  try {
+    if (!storage) throw new Error('storage unavailable')
+    const existing = storage.getItem(composerDraftKey(agentName)) ?? ''
+    const text = existing ? `${existing}\n\n${addition}` : addition
+    storage.setItem(composerDraftKey(agentName), text)
+    composerDraftListeners.get(agentName)?.forEach((listener) => listener(text))
+    return { ok: true, text }
+  } catch {
+    return { ok: false, reason: 'The composer draft could not be saved. Your notes were left in place.' }
   }
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, type FunctionComponent } from 'react'
+import { useEffect, useMemo, useState, type FunctionComponent } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import type { IDockviewPanelHeaderProps, IDockviewPanelProps } from 'dockview-react'
 import { queryKeys } from '../../api/client'
@@ -16,6 +16,7 @@ import { placementInGroup } from '../layout/openPlacement'
 import { screenIdentityState, type AgentPanelParams, type ChangesPanelParams, type DockPanelParams, type FilePanelParams, type FolderPanelParams, type ScreenPanelParams } from '../layout/dockLayout'
 import { useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext'
 import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace, type PanelKind } from './panelRegistryModel'
+import { liveRosterNames } from '../notes/notesPresentation'
 
 function usePanelVisibility(api: IDockviewPanelProps['api']) {
   const [visible, setVisible] = useState(api.isVisible)
@@ -25,6 +26,10 @@ function usePanelVisibility(api: IDockviewPanelProps['api']) {
     return () => disposable.dispose()
   }, [api])
   return visible
+}
+
+function useLiveRosterNames(board: Board | undefined) {
+  return useMemo(() => liveRosterNames(board), [board])
 }
 
 function visiblePane(board: Board | undefined, params: ScreenPanelParams) {
@@ -41,7 +46,8 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const workspace = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  return <AgentPanel name={params.name} active={visible} liveStatus={agentBusStatus(data.board, params.name)} screenPaneID={data.agentScreenPanes[params.name]}
+  const agents = useLiveRosterNames(data.board)
+  return <AgentPanel name={params.name} agents={agents} active={visible} liveStatus={agentBusStatus(data.board, params.name)} screenPaneID={data.agentScreenPanes[params.name]}
     mentionMatcher={data.mentionMatcher} onOpenAgent={(name, placement) => workspace.openAgent(name, true, placementInGroup(placement, api.group.id), true)}
     onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
     onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))}
@@ -65,7 +71,8 @@ function FileDockPanel({ params, api }: IDockviewPanelProps<FilePanelParams>) {
   const actions = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  return <FilePanel target={{ root: params.root, path: params.path, ...(params.line ? { line: params.line } : {}) }} viewMode={params.viewMode}
+  const agents = useLiveRosterNames(data.board)
+  return <FilePanel target={{ root: params.root, path: params.path, ...(params.line ? { line: params.line } : {}) }} agents={agents} viewMode={params.viewMode}
     gitState={data.fileGitStates[api.id] ?? initialGitFileState()} active={visible}
     onViewMode={(mode) => actions.setFileViewMode(api.id, mode)} onGitState={(state) => actions.setFileGitState(api.id, state)}
     onOpenFile={(target, placement) => actions.openFile(target, placementInGroup(placement, api.group.id))}
@@ -76,7 +83,8 @@ function FolderDockPanel({ params, api }: IDockviewPanelProps<FolderPanelParams>
   const actions = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  return <FolderPanel target={{ root: params.root, path: params.path }} active={visible} selectionHint={data.folderSelectionHints[api.id]}
+  const agents = useLiveRosterNames(data.board)
+  return <FolderPanel target={{ root: params.root, path: params.path }} agents={agents} active={visible} selectionHint={data.folderSelectionHints[api.id]}
     onSelectionHintConsumed={() => actions.consumeFolderSelectionHint(api.id)}
     onOpenFile={(target, placement) => actions.openFile(target, placementInGroup(placement, api.group.id))}
     onOpenFolder={(target, placement, selectionHint) => actions.openFolder(target, placementInGroup(placement, api.group.id), selectionHint)} />

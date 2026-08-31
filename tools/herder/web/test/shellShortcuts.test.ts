@@ -53,6 +53,7 @@ function actions(calls: string[]): ShellShortcutActions {
     switchTab: (direction) => { calls.push(`tab:${direction}`); return true },
     focusFleet: () => { calls.push('fleet'); return true },
     toggleNotesRail: () => { calls.push('notes'); return true },
+    captureNote: () => { calls.push('capture'); return true },
     focusComposer: () => { calls.push('composer'); return true },
     goToTop: () => { calls.push('top'); return true },
     goToBottom: () => { calls.push('bottom'); return true },
@@ -75,7 +76,8 @@ test('tinykeys dispatches Mac Option character events by physical code', () => {
     assert.equal(dispatch(target, { key: '¡', code: 'Digit1', altKey: true }).defaultPrevented, true)
     assert.equal(dispatch(target, { key: '™', code: 'Digit2', altKey: true }).defaultPrevented, true)
     assert.equal(dispatch(target, { key: '£', code: 'Digit3', altKey: true }).defaultPrevented, true)
-    assert.deepEqual(calls, ['close', 'fleet', 'composer', 'notes'])
+    assert.equal(dispatch(target, { key: '¢', code: 'Digit4', altKey: true }).defaultPrevented, true)
+    assert.deepEqual(calls, ['close', 'fleet', 'composer', 'notes', 'capture'])
   } finally {
     unsubscribe()
   }
@@ -96,6 +98,7 @@ test('editable targets stay dead through the real tinykeys-bound handler', () =>
     dispatch(target, { key: '¡', code: 'Digit1', altKey: true })
     dispatch(target, { key: '™', code: 'Digit2', altKey: true })
     dispatch(target, { key: '£', code: 'Digit3', altKey: true })
+    dispatch(target, { key: '¢', code: 'Digit4', altKey: true })
     dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true })
     dispatch(target, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
     dispatch(target, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
@@ -159,6 +162,8 @@ test('shortcut reference labels are platform-aware and Escape stays neutral', ()
   )
   assert.equal(shortcutLabels('Macintosh').toggleNotesRail, '⌥3')
   assert.equal(shortcutLabels('Linux').toggleNotesRail, 'Alt+3')
+  assert.equal(shortcutLabels('Macintosh').captureNote, '⌥4')
+  assert.equal(shortcutLabels('Linux').captureNote, 'Alt+4')
 })
 
 test('unclaimed actions do not prevent browser defaults', () => {

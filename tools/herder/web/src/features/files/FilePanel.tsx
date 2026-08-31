@@ -16,13 +16,16 @@ import { failureBanner, PanelState, useActivationRefetch } from '../../shared/Pa
 import { historyPagingState } from './historyPaging'
 import { PathCopyButton } from '../../shared/PathCopyButton'
 import { useTranscriptFileResolver } from './TranscriptFileResolver'
+import { useNoteCapture } from '../notes/useNoteCapture'
+import type { NoteSource } from '../notes/notesStore'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
 }
 
-export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGitState, onOpenFile, onOpenFolder }: {
+export function FilePanel({ target, agents, viewMode, gitState, active, onViewMode, onGitState, onOpenFile, onOpenFolder }: {
   target: FileTarget
+  agents: string[]
   viewMode: FileViewMode
   gitState: GitFileState
   active: boolean
@@ -65,6 +68,10 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
     staleTime: gitState.commit ? Infinity : 0,
     retry: false,
   })
+  const captureSource: NoteSource = gitState.mode === 'diff'
+    ? { kind: 'diff', path: diffPath, base: diffQuery.data?.base.label ?? (gitState.commit ? `commit ${gitState.commit.sha.slice(0, 12)}` : effectiveBase === 'branch' ? 'merge-base' : 'HEAD') }
+    : { kind: 'file', path: viewedPath }
+  const noteCapture = useNoteCapture({ active: active && gitState.mode !== 'history', source: captureSource, agents })
   const historyQuery = useInfiniteQuery({
     queryKey: queryKeys.gitLog(target.root, target.path),
     queryFn: ({ pageParam, signal }) => getGitLog(target.root, target.path, pageParam ?? undefined, fetch, signal),
@@ -113,7 +120,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
   const refreshing = statusQuery.isFetching || gitState.mode === 'current' && !gitState.revision && fileQuery.isFetching || gitState.mode === 'diff' && diffQuery.isFetching || gitState.mode === 'history' && historyQuery.isFetching
   const containingFolder = parentFolderPath(target.path) ?? ''
   const absolutePath = rootJoinedAbsolutePath(target.root, target.path)
-  return <main className="file-panel">
+  return <main className="file-panel" ref={noteCapture.containerRef} onPointerUp={noteCapture.onPointerUp}>
     <header className="file-header">
       <div className="file-title"><div className="path-name"><strong>{rootLabel(target.path)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><button type="button" className={`header-refresh${refreshing ? ' busy' : ''}`}
         title={refreshing ? 'Refreshing…' : 'Refresh'} aria-label="Refresh" onClick={refresh} disabled={refreshing}>
@@ -168,6 +175,7 @@ export function FilePanel({ target, viewMode, gitState, active, onViewMode, onGi
       onFile={(entry) => onGitState(selectHistoricalFile(gitState, { sha: entry.sha, path: entry.path_then }))}
       onDiff={(entry) => onGitState(selectHistoricalDiff(gitState, { sha: entry.sha, path: entry.path_then }))} />}
     {fileResolver.element}
+    {noteCapture.element}
   </main>
 }
 

@@ -11,6 +11,8 @@ test('shell facts and global controls live only in the bottom status bar', () =>
   assert.doesNotMatch(footer, /layout: this browser|viewer:|>attributed<|stream\.messages|\{workspace\.stream\.messages\}/)
   assert.match(footer, /<ThemeToggle \/>/)
   assert.match(footer, /className="shortcut-button"/)
+  assert.match(footer, /workspace-switcher-slot/)
+  assert.match(footer, /<RailStatusToggle side="left"[\s\S]*<RailStatusToggle side="right"/)
 })
 
 test('owner-ruled composer noise is removed without dropping accessibility or attribution truth', () => {

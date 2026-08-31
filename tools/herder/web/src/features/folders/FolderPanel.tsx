@@ -142,8 +142,9 @@ function BacklogBoard({ backlog, onOpenFile }: { backlog: BacklogRead, onOpenFil
   </section>
 }
 
-export function FolderPanel({ target, active, selectionHint, onSelectionHintConsumed, onOpenFile, onOpenFolder }: {
+export function FolderPanel({ target, agents, active, selectionHint, onSelectionHintConsumed, onOpenFile, onOpenFolder }: {
   target: FolderTarget
+  agents: string[]
   active: boolean
   selectionHint?: FileTarget
   onSelectionHintConsumed?: () => void
@@ -232,7 +233,7 @@ export function FolderPanel({ target, active, selectionHint, onSelectionHintCons
         {showBoard && backlog.data && boardAvailable(backlog.data) ? <>
           <div className="backlog-facts"><span>Fetched {new Date(backlog.data.fetched_at).toLocaleString()}</span><span>{backlog.data.tasks.length} parsed tasks</span></div>
           <BacklogBoard backlog={backlog.data} onOpenFile={onOpenFile} />
-        </> : selected ? <FilePanel target={selected} viewMode={viewMode} gitState={gitState} active={active} onViewMode={setViewMode} onGitState={setGitState} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} />
+        </> : selected ? <FilePanel target={selected} agents={agents} viewMode={viewMode} gitState={gitState} active={active} onViewMode={setViewMode} onGitState={setGitState} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} />
           : <PanelState as="div" className="folder-empty" title="Select a file" detail="A single click previews it here. Double-click or use Open tab to create a dock preview." />}
       </section>
     </div>
