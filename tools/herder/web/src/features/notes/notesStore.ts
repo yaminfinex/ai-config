@@ -110,6 +110,20 @@ function storedBytes(records: Iterable<StoredRecord>) {
   return total
 }
 
+// crypto.randomUUID only exists in secure contexts; the owner browses over
+// plain http, so fall back to a getRandomValues-built UUIDv4 there.
+function fallbackUUID(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+export function defaultRandomID(): string {
+  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : fallbackUUID()
+}
+
 function recordKey(id: string) { return `${recordPrefix}${encodeURIComponent(id)}` }
 function backupKey(id: string) { return `${backupPrefix}${encodeURIComponent(id)}` }
 function recordID(key: string) {
@@ -119,7 +133,7 @@ function recordID(key: string) {
 
 export function createNotesStore(options: Options = {}): NotesStore {
   const now = options.now ?? Date.now
-  const randomID = options.randomID ?? (() => crypto.randomUUID())
+  const randomID = options.randomID ?? defaultRandomID
   const schedule = options.schedule ?? ((callback, delay) => window.setTimeout(callback, delay))
   const cancel = options.cancel ?? ((handle) => window.clearTimeout(handle as number))
   const debounceMs = options.debounceMs ?? 120
@@ -139,6 +153,15 @@ export function createNotesStore(options: Options = {}): NotesStore {
   let eventsAttached = false
 
   const notify = () => { for (const listener of listeners) listener() }
+  // A thrown exception here would vanish inside a click handler and the owner
+  // would see nothing happen; every unexpected failure must become a visible refusal.
+  const guarded = <T,>(operation: () => NotesResult<T>): NotesResult<T> => {
+    try {
+      return operation()
+    } catch {
+      return { ok: false, reason: 'Something went wrong in this browser and the change was not saved. Existing notes were left untouched.' }
+    }
+  }
   const degrade = () => {
     storage = null
     dirty.clear()
@@ -294,7 +317,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
   return {
     list: currentNotes,
     listGroup: (group) => currentNotes().filter((note) => note.group === group),
-    add: ({ group, text, source }) => {
+    add: ({ group, text, source }) => guarded(() => {
       const value = text.trim()
       if (!value) return { ok: false, reason: 'Write something before saving this note.' }
       const timestamp = now()
@@ -304,8 +327,8 @@ export function createNotesStore(options: Options = {}): NotesStore {
       if (reason) return { ok: false, reason }
       put(stored)
       return { ok: true, value: note }
-    },
-    edit: (id, changes) => {
+    }),
+    edit: (id, changes) => guarded(() => {
       const current = reconcile(id)
       if (!current || !active(current.record)) return { ok: false, reason: 'This note no longer exists.' }
       const text = changes.text === undefined ? current.record.text : changes.text.trim()
@@ -316,8 +339,8 @@ export function createNotesStore(options: Options = {}): NotesStore {
       if (reason) return { ok: false, reason }
       put(stored)
       return { ok: true, value: note }
-    },
-    delete: (ids) => {
+    }),
+    delete: (ids) => guarded(() => {
       let deleted = 0
       for (const id of ids) {
         const current = reconcile(id)
@@ -326,7 +349,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
         deleted += 1
       }
       return deleted ? { ok: true, value: deleted } : { ok: false, reason: 'These notes no longer exist.' }
-    },
+    }),
     subscribe: (listener) => {
       listeners.add(listener)
       attachEvents()

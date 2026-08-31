@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { copyPath, type CopyPathState } from './pathCopyModel'
 
-function copyWithHiddenTextarea(value: string): boolean {
+export function copyWithHiddenTextarea(value: string): boolean {
   const textarea = document.createElement('textarea')
   const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   textarea.value = value

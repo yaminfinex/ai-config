@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   createNotesStore,
+  defaultRandomID,
   notesStoragePrefix,
   type NotesStorage,
   type NotesStoreEventTarget,
@@ -258,4 +259,37 @@ test('old tombstones purge after 30 days without returning deleted notes', () =>
   const later = harness({ storage, now: () => 2_000 + 31 * 24 * 60 * 60 * 1_000 })
   assert.deepEqual(later.store.list(), [])
   assert.equal([...storage.values.keys()].some((key) => key.includes(encodeURIComponent(added.value.id))), false)
+})
+
+test('add still works when crypto.randomUUID is missing (insecure origins such as plain-http tailnet)', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(crypto, 'randomUUID')
+  Object.defineProperty(crypto, 'randomUUID', { value: undefined, configurable: true, writable: true })
+  try {
+    const storage = new FakeStorage()
+    const store = createNotesStore({ storage, events: new FakeEvents(), schedule: () => undefined, cancel: () => undefined })
+    const added = store.add({ group: 'general', text: 'saved without randomUUID' })
+    assert.equal(added.ok, true)
+    if (added.ok) assert.match(added.value.id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    assert.equal(store.list()[0]?.text, 'saved without randomUUID')
+    assert.equal(defaultRandomID() === defaultRandomID(), false)
+  } finally {
+    if (descriptor) Object.defineProperty(crypto, 'randomUUID', descriptor)
+  }
+})
+
+test('an unexpected exception during a mutation becomes a visible refusal, never a silent throw', () => {
+  const subject = harness()
+  assert.equal(subject.store.add({ group: 'general', text: 'kept safe' }).ok, true)
+  const kept = subject.store.list()
+  const broken = createNotesStore({
+    storage: new FakeStorage(),
+    events: new FakeEvents(),
+    randomID: () => { throw new Error('id generation exploded') },
+    schedule: () => undefined,
+    cancel: () => undefined,
+  })
+  const added = broken.add({ group: 'general', text: 'doomed' })
+  assert.equal(added.ok, false)
+  if (!added.ok) assert.match(added.reason, /was not saved|left untouched/i)
+  assert.deepEqual(subject.store.list(), kept)
 })

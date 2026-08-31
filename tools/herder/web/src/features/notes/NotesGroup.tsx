@@ -3,6 +3,8 @@ import type { Note } from './notesStore'
 import { noteSourceLabel, noteTransferText, selectionAfterGesture, type SelectionGesture } from './notesPresentation'
 import { useNotes } from './NotesProvider'
 import { handOffSelectedNotes } from './noteHandOff'
+import { copyPath } from '../../shared/pathCopyModel'
+import { copyWithHiddenTextarea } from '../../shared/PathCopyButton'
 
 export type NotesHandOff = (target: string, notes: Note[]) => { ok: true } | { ok: false, reason: string }
 
@@ -93,11 +95,13 @@ export function NotesGroup({ group, label = group, agents, orphaned = false, qui
     setProblem('')
   }
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(selectedNotes.map(noteTransferText).join('\n\n'))
+    // navigator.clipboard is undefined on insecure origins (the owner's tailnet
+    // origin); copyPath falls back to the hidden-textarea legacy copy there.
+    const state = await copyPath(navigator.clipboard, selectedNotes.map(noteTransferText).join('\n\n'), copyWithHiddenTextarea)
+    if (state === 'copied') {
       announce(`Copied ${selectedNotes.length} ${selectedNotes.length === 1 ? 'note' : 'notes'}.`)
       setProblem('')
-    } catch {
+    } else {
       setProblem('These notes could not be copied. They were left unchanged.')
     }
   }
