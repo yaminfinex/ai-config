@@ -2,7 +2,7 @@ import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { QuickOpen } from './features/files/QuickOpen'
 import { ShortcutReference } from './features/layout/ShortcutReference'
-import { clampSidebarWidth } from './features/layout/useLayoutPersistence'
+import { UtilityRail } from './features/layout/UtilityRail'
 import { dockComponents, DockTab } from './features/workspace/panelRegistry'
 import { DockHeaderActions, DockWatermark } from './features/workspace/workspaceChrome'
 import { WorkspaceProviders } from './features/workspace/workspaceContext'
@@ -27,7 +27,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const workspace = useWorkspaceController(initialRoute)
   const {
     openAgent, openScreen, openFile, openFolder,
-    sidebarWidth, setSidebarWidth, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
+    fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
   } = workspace
   const lastEvent = workspace.stream.lastEvent ? new Date(workspace.stream.lastEvent).toLocaleTimeString() : '—'
   const health = statusBarHealth({ problems: workspace.streamProblems, substrateProof: workspace.stream.substrateProof, lastEventLabel: lastEvent })
@@ -35,13 +35,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell">
     <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
-    <div className="sidebar-region" style={{ width: sidebarWidth }}>
+    <UtilityRail side="left" label="Fleet" detail="herdr truth" headingStart={<span className="status-dot listening" />}
+      width={fleetRail.width} collapsed={fleetRail.collapsed}
+      onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
       <FleetSidebar board={workspace.board} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
         onPreviewAgent={(name, placement) => openAgent(name, true, placement, true)} onPinAgent={(name, placement) => openAgent(name, false, placement, true)} onPreviewPane={(pane, placement) => openScreen(pane, true, placement)} onPinPane={(pane, placement) => openScreen(pane, false, placement)}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
-    </div>
-    <div className="sidebar-resizer" role="separator" aria-label="Resize fleet sidebar" aria-orientation="vertical" aria-valuemin={200} aria-valuemax={440} aria-valuenow={sidebarWidth} tabIndex={0}
-      onPointerDown={workspace.startResize} onKeyDown={(event) => { if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { setSidebarWidth((width) => clampSidebarWidth(width + (event.key === 'ArrowRight' ? 10 : -10))); event.preventDefault() } }} />
+    </UtilityRail>
     <section className="shell-main">
       <div className="shell-banners">
         {workspace.stream.serverUpdated && <div className="banner server-update" role="alert"><strong>update</strong><span>Server updated — refresh to load the new version</span><button type="button" onClick={() => { workspace.flushLayout(); window.location.reload() }}>Refresh</button></div>}
@@ -60,6 +60,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         <ThemeToggle />
       </footer>
     </section>
+    <UtilityRail side="right" label="Notes" width={notesRail.width} collapsed={notesRail.collapsed}
+      onWidth={(width) => setNotesRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleNotesRail}>
+      <div className="notes-rail-empty" role="status">No notes yet</div>
+    </UtilityRail>
   </div></FileWatchContext.Provider></WorkspaceProviders>
 }
 

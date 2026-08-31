@@ -9,6 +9,7 @@ export type ShellShortcutActions = {
   closeShortcutReference: () => boolean | void
   switchTab: (direction: TabDirection) => boolean | void
   focusFleet: () => boolean | void
+  toggleNotesRail: () => boolean | void
   focusComposer: () => boolean | void
   goToTop: () => boolean | void
   goToBottom: () => boolean | void
@@ -20,6 +21,7 @@ export type ShortcutLabels = {
   quickOpen: string
   switchTabs: string
   focusFleet: string
+  toggleNotesRail: string
   focusComposer: string
   sendRequest: string
   leaveComposer: string
@@ -39,6 +41,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     quickOpen: '⌘K',
     switchTabs: '⌥← / ⌥→ (legacy: ⌘PageUp / ⌘PageDown)',
     focusFleet: '⌥1',
+    toggleNotesRail: '⌥3',
     focusComposer: '⌥2',
     sendRequest: '⌘Enter',
     leaveComposer: 'Esc',
@@ -51,6 +54,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     quickOpen: 'Ctrl+K',
     switchTabs: 'Alt+Left / Alt+Right (legacy: Ctrl+PageUp / Ctrl+PageDown)',
     focusFleet: 'Alt+1',
+    toggleNotesRail: 'Alt+3',
     focusComposer: 'Alt+2',
     sendRequest: 'Ctrl+Enter',
     leaveComposer: 'Esc',
@@ -90,6 +94,7 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     '$mod+PageDown': claimed(() => actions.switchTab('next')),
     'Alt+Digit1': claimed(actions.focusFleet, true),
     'Alt+Digit2': claimed(actions.focusComposer, true),
+    'Alt+Digit3': claimed(actions.toggleNotesRail, true),
     ...(isMacPlatform(userAgent) ? { 'Meta+Slash': quickOpen } : {}),
   }
   return tinykeys(target, bindings, {

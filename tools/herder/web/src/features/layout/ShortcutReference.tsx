@@ -9,6 +9,7 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
     [labels.quickOpen, 'Quick open file or folder'],
     [labels.switchTabs, 'Switch tabs'],
     [labels.focusFleet, 'Focus fleet sidebar'],
+    [labels.toggleNotesRail, 'Toggle notes rail'],
     [labels.focusComposer, 'Focus active composer'],
     [labels.sendRequest, 'Send request'],
     [labels.leaveComposer, 'Leave text box'],

@@ -81,8 +81,7 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
 
   useEffect(() => { tree.rebuildTree() }, [nodes, tree])
 
-  return <aside className="fleet-sidebar" aria-label="Fleet sidebar">
-    <div className="sidebar-heading"><span className="status-dot listening" /><strong>Fleet</strong><span>herdr truth</span></div>
+  return <div className="fleet-sidebar-view">
     {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps('Workspaces and agents')} className="fleet-tree panel-tree">
       {tree.getItems().map((item) => {
         const node = item.getItemData()
@@ -128,5 +127,5 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
         />
       })}
     </div>}
-  </aside>
+  </div>
 }

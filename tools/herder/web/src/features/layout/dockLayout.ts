@@ -3,9 +3,11 @@ import type { Board, Pane } from '../../types'
 import type { FileViewMode } from '../files/fileTabs.ts'
 import { agentTabID } from '../../previewTabs.ts'
 import { panelID, panelParams } from '../workspace/panelRegistryModel.ts'
+import { clampRailWidth, defaultRailPreferences, type RailPreferences } from './utilityRailModel.ts'
 
-export const layoutStorageKey = 'herder.web.layout.v2'
-export const layoutStorageBackupKey = 'herder.web.layout.v2.last-good'
+export const layoutStorageKey = 'herder.web.layout.v3'
+export const layoutStorageBackupKey = 'herder.web.layout.v3.last-good'
+export const v2LayoutStorageKey = 'herder.web.layout.v2'
 export const legacyLayoutStorageKey = 'herder.web.layout.v1'
 
 export type AgentPanelParams = { kind: 'agent', name: string, preview: boolean }
@@ -26,9 +28,9 @@ export type ChangesPanelParams = { kind: 'changes', root: string, preview: boole
 export type DockPanelParams = AgentPanelParams | ScreenPanelParams | FilePanelParams | FolderPanelParams | ChangesPanelParams
 
 export type StoredLayout = {
-  version: 2
+  version: 3
   dock: SerializedDockview | null
-  sidebarWidth: number
+  rails: RailPreferences
   expandedItems?: string[]
   knownWorkspaceItems?: string[]
 }
@@ -50,6 +52,18 @@ function record(value: unknown): value is UnknownRecord {
 
 function strings(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
+function railPreferences(value: unknown): RailPreferences | null {
+  if (!record(value) || !record(value.fleet) || !record(value.notes)) return null
+  const fleet = value.fleet
+  const notes = value.notes
+  if (typeof fleet.width !== 'number' || !Number.isFinite(fleet.width) || typeof fleet.collapsed !== 'boolean' ||
+    typeof notes.width !== 'number' || !Number.isFinite(notes.width) || typeof notes.collapsed !== 'boolean') return null
+  return {
+    fleet: { width: clampRailWidth(fleet.width), collapsed: fleet.collapsed },
+    notes: { width: clampRailWidth(notes.width), collapsed: notes.collapsed },
+  }
 }
 
 export { panelParams } from '../workspace/panelRegistryModel.ts'
@@ -120,14 +134,17 @@ function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, 
 function parseStoredLayoutResult(raw: string | null): ParsedStoredLayout | null {
   try {
     const value: unknown = JSON.parse(raw ?? '')
-    if (!record(value) || value.version !== 2 ||
-      typeof value.sidebarWidth !== 'number' || !Number.isFinite(value.sidebarWidth) ||
+    if (!record(value) || (value.version !== 2 && value.version !== 3) ||
       (value.expandedItems !== undefined && !strings(value.expandedItems)) ||
       (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems))) return null
+    const rails = value.version === 2
+      ? typeof value.sidebarWidth === 'number' && Number.isFinite(value.sidebarWidth) ? defaultRailPreferences(value.sidebarWidth) : null
+      : railPreferences(value.rails)
+    if (!rails) return null
     const result = sanitizeStoredDock(value.dock)
     if (!result) return null
     return { layout: {
-      version: 2, dock: result.dock, sidebarWidth: value.sidebarWidth,
+      version: 3, dock: result.dock, rails,
       ...(value.expandedItems === undefined ? {} : { expandedItems: value.expandedItems }),
       ...(value.knownWorkspaceItems === undefined ? {} : { knownWorkspaceItems: value.knownWorkspaceItems }),
     }, salvaged: result.salvaged }

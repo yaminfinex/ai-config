@@ -6,13 +6,13 @@ import { viewerQueryOptions } from '../../api/queries'
 import type { FileTarget } from '../../types'
 import { agentBusStatus } from '../../shared/agentStatus'
 import { agentMentionMatcher } from '../../shared/agentMentions'
-import { subscribeDOMEvent, useDOMEvent } from '../../shared/lifecycle'
+import { useDOMEvent } from '../../shared/lifecycle'
 import { type Route } from '../../shared/navigation'
 import { createFileWatchRegistry, type FileWatchTarget } from '../../stream/fileWatchRegistry'
 import { useFleetStream } from '../../stream/useFleetStream'
 import { quickOpenAgentPreference } from '../files/fileResolution'
 import type { GitFileState } from '../git/gitViewModel'
-import { clampSidebarWidth, useLayoutPersistence } from '../layout/useLayoutPersistence'
+import { useLayoutPersistence } from '../layout/useLayoutPersistence'
 import {
   createHistorySuppressor,
   decideHistoryUpdate,
@@ -187,17 +187,15 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setQuickOpenGroup(groupID ?? apiRef.current?.activeGroup?.id)
     setQuickOpen(true)
   }, [])
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel })
-
-  const startResize = (event: React.PointerEvent) => {
-    const startX = event.clientX
-    const startWidth = layout.sidebarWidth
-    const move = (moveEvent: PointerEvent) => layout.setSidebarWidth(clampSidebarWidth(startWidth + moveEvent.clientX - startX))
-    let disposeUp: () => void = () => undefined
-    const disposeMove = subscribeDOMEvent<PointerEvent>(window, 'pointermove', move)
-    const stop = () => { disposeMove(); disposeUp() }
-    disposeUp = subscribeDOMEvent(window, 'pointerup', stop)
-  }
+  const toggleFleetRail = useCallback(() => {
+    layout.setFleetRail((rail) => ({ ...rail, collapsed: !rail.collapsed }))
+  }, [layout.setFleetRail])
+  const toggleNotesRail = useCallback(() => {
+    const opening = layout.notesRail.collapsed
+    layout.setNotesRail((rail) => ({ ...rail, collapsed: !rail.collapsed }))
+    if (opening) window.requestAnimationFrame(() => document.querySelector<HTMLElement>('.utility-rail-right')?.focus())
+  }, [layout.notesRail.collapsed, layout.setNotesRail])
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
@@ -221,7 +219,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     quickOpen, quickOpenAgent, quickOpenGroup,
     closeQuickOpen: () => { setQuickOpen(false); setQuickOpenGroup(undefined) },
     shortcutReference, setShortcutReference,
-    sidebarWidth: layout.sidebarWidth, setSidebarWidth: layout.setSidebarWidth, startResize,
+    fleetRail: layout.fleetRail, setFleetRail: layout.setFleetRail, toggleFleetRail,
+    notesRail: layout.notesRail, setNotesRail: layout.setNotesRail, toggleNotesRail,
     expandedItems: layout.expandedItems, setExpandedItems: layout.setExpandedItems,
     knownWorkspaceItems: layout.knownWorkspaceItems, setKnownWorkspaceItems: layout.setKnownWorkspaceItems,
     board: boardQuery.data,

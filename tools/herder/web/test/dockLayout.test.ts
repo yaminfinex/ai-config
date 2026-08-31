@@ -66,6 +66,59 @@ test('single-group pinned agent, file, and folder panels round-trip with a branc
   assert.deepEqual(loaded, saved)
 })
 
+test('v2 sidebar preferences migrate into the single v3 rail preference family', () => {
+  const restored = parseStoredLayout(JSON.stringify({
+    version: 2,
+    dock: singleGroupDock,
+    sidebarWidth: 275,
+    expandedItems: ['workspace:w1'],
+    knownWorkspaceItems: ['workspace:w1'],
+  }))
+  assert.deepEqual(restored?.rails, {
+    fleet: { width: 275, collapsed: false },
+    notes: { width: 280, collapsed: false },
+  })
+  assert.equal(restored?.version, 3)
+  assert.deepEqual(restored?.expandedItems, ['workspace:w1'])
+})
+
+test('v3 rail widths and collapsed states round-trip together', () => {
+  const restored = parseStoredLayout(JSON.stringify({
+    version: 3,
+    dock: singleGroupDock,
+    rails: {
+      fleet: { width: 320, collapsed: true },
+      notes: { width: 240, collapsed: false },
+    },
+  }))
+  assert.deepEqual(restored?.rails, {
+    fleet: { width: 320, collapsed: true },
+    notes: { width: 240, collapsed: false },
+  })
+})
+
+test('an invalid v3 rail preference falls back to the last-good layout', () => {
+  const backupRaw = JSON.stringify({
+    version: 3,
+    dock: singleGroupDock,
+    rails: {
+      fleet: { width: 300, collapsed: false },
+      notes: { width: 260, collapsed: true },
+    },
+  })
+  const values = new Map<string, string>([
+    [layoutStorageKey, JSON.stringify({
+      version: 3,
+      dock: singleGroupDock,
+      rails: { fleet: { width: 300, collapsed: 'no' }, notes: { width: 260, collapsed: false } },
+    })],
+    [layoutStorageBackupKey, backupRaw],
+  ])
+  const layouts = readStoredLayout({ getItem: (key) => values.get(key) ?? null })
+  assert.equal(layouts.recovering, true)
+  assert.deepEqual(layouts.stored?.rails.notes, { width: 260, collapsed: true })
+})
+
 test('saved and restored layouts cannot carry a transient folder selection hint', () => {
   const hinted = structuredClone(singleGroupDock)
   Object.assign(hinted.panels['folder:%2Frepo:src'].params, { selectionHint: { root: '/repo', path: 'src/App.tsx' } })

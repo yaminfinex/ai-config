@@ -6,18 +6,15 @@ import {
   layoutStorageBackupKey,
   layoutStorageKey,
   parseLegacyLayout,
+  parseStoredLayout,
   persistableDockLayout,
   readStoredLayout,
+  v2LayoutStorageKey,
   writeStoredLayout,
   type LegacyLayout,
   type StoredLayout,
 } from './dockLayout'
-
-export const defaultSidebarWidth = 250
-
-export function clampSidebarWidth(width: number) {
-  return Math.min(440, Math.max(200, width))
-}
+import { defaultRailPreferences, type RailPreference } from './utilityRailModel'
 
 export type InitialLayout = {
   stored: StoredLayout | null
@@ -25,7 +22,8 @@ export type InitialLayout = {
   legacy: LegacyLayout | null
   recovering: boolean
   lastGoodRaw: string | null
-  sidebarWidth: number
+  fleetRail: RailPreference
+  notesRail: RailPreference
   expandedItems: string[] | null
   knownWorkspaceItems: string[] | null
 }
@@ -42,12 +40,15 @@ function readInitialLayout(): InitialLayout {
     backup = layouts.backup
     recovering = layouts.recovering
     lastGoodRaw = layouts.lastGoodRaw
+    if (!stored) stored = parseStoredLayout(localStorage.getItem(v2LayoutStorageKey))
     if (!stored) legacy = parseLegacyLayout(localStorage.getItem(legacyLayoutStorageKey))
   } catch { /* browser storage is best effort */ }
   const source = stored ?? legacy
+  const rails = stored?.rails ?? defaultRailPreferences(legacy?.sidebarWidth)
   return {
     stored, backup, legacy, recovering, lastGoodRaw,
-    sidebarWidth: clampSidebarWidth(source?.sidebarWidth ?? defaultSidebarWidth),
+    fleetRail: rails.fleet,
+    notesRail: rails.notes,
     expandedItems: source?.expandedItems ?? null,
     knownWorkspaceItems: source?.knownWorkspaceItems ?? null,
   }
@@ -55,14 +56,15 @@ function readInitialLayout(): InitialLayout {
 
 export function useLayoutPersistence(apiRef: MutableRefObject<DockviewApi | undefined>, revision: number) {
   const [initial] = useState(readInitialLayout)
-  const [sidebarWidth, setSidebarWidth] = useState(initial.sidebarWidth)
+  const [fleetRail, setFleetRail] = useState(initial.fleetRail)
+  const [notesRail, setNotesRail] = useState(initial.notesRail)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
   const [dockReady, setDockReady] = useState(false)
   const persistenceReady = useRef(false)
   const layoutDirty = useRef(false)
   const persistenceState = useRef({ recovering: initial.recovering, lastGoodRaw: initial.lastGoodRaw })
-  const preferenceSnapshot = useRef(JSON.stringify([initial.sidebarWidth, initial.expandedItems, initial.knownWorkspaceItems]))
+  const preferenceSnapshot = useRef(JSON.stringify([initial.fleetRail, initial.notesRail, initial.expandedItems, initial.knownWorkspaceItems]))
 
   const markDirty = useCallback(() => {
     if (persistenceReady.current) layoutDirty.current = true
@@ -82,9 +84,13 @@ export function useLayoutPersistence(apiRef: MutableRefObject<DockviewApi | unde
     try {
       localStorage.removeItem(layoutStorageKey)
       localStorage.removeItem(layoutStorageBackupKey)
+      localStorage.removeItem(v2LayoutStorageKey)
+      localStorage.removeItem(legacyLayoutStorageKey)
     } catch { /* best effort */ }
     persistenceState.current = { recovering: false, lastGoodRaw: null }
-    setSidebarWidth(defaultSidebarWidth)
+    const defaults = defaultRailPreferences()
+    setFleetRail(defaults.fleet)
+    setNotesRail(defaults.notes)
   }, [])
 
   const flushLayout = useCallback(() => {
@@ -93,7 +99,7 @@ export function useLayoutPersistence(apiRef: MutableRefObject<DockviewApi | unde
     if (!api) return false
     const dock = persistableDockLayout(api.toJSON())
     if (!dock && api.panels.length > 0) return false
-    const value: StoredLayout = { version: 2, dock, sidebarWidth }
+    const value: StoredLayout = { version: 3, dock, rails: { fleet: fleetRail, notes: notesRail } }
     if (expandedItems !== null) value.expandedItems = expandedItems
     if (knownWorkspaceItems !== null) value.knownWorkspaceItems = knownWorkspaceItems
     const previous = persistenceState.current
@@ -102,11 +108,11 @@ export function useLayoutPersistence(apiRef: MutableRefObject<DockviewApi | unde
     persistenceState.current = next
     layoutDirty.current = false
     return true
-  }, [apiRef, expandedItems, knownWorkspaceItems, sidebarWidth])
+  }, [apiRef, expandedItems, fleetRail, knownWorkspaceItems, notesRail])
 
   useEffect(() => {
     if (!dockReady) return
-    const nextPreferences = JSON.stringify([sidebarWidth, expandedItems, knownWorkspaceItems])
+    const nextPreferences = JSON.stringify([fleetRail, notesRail, expandedItems, knownWorkspaceItems])
     if (preferenceSnapshot.current !== nextPreferences) {
       preferenceSnapshot.current = nextPreferences
       layoutDirty.current = true
@@ -114,14 +120,16 @@ export function useLayoutPersistence(apiRef: MutableRefObject<DockviewApi | unde
     if (!layoutDirty.current) return
     const timer = window.setTimeout(flushLayout, 120)
     return () => window.clearTimeout(timer)
-  }, [dockReady, expandedItems, flushLayout, knownWorkspaceItems, revision, sidebarWidth])
+  }, [dockReady, expandedItems, fleetRail, flushLayout, knownWorkspaceItems, notesRail, revision])
 
   useDOMEvent(window, 'pagehide', () => { flushLayout() })
 
   return {
     initial,
-    sidebarWidth,
-    setSidebarWidth,
+    fleetRail,
+    setFleetRail,
+    notesRail,
+    setNotesRail,
     expandedItems,
     setExpandedItems,
     knownWorkspaceItems,

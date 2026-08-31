@@ -9,12 +9,14 @@ export function useWorkspaceShortcuts({
   setShortcutReference,
   showQuickOpen,
   closePanel,
+  toggleNotesRail,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   shortcutReference: boolean
   setShortcutReference: (open: boolean) => void
   showQuickOpen: () => void
   closePanel: (id: string) => void
+  toggleNotesRail: () => void
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
@@ -52,6 +54,7 @@ export function useWorkspaceShortcuts({
         item.focus()
         return true
       },
+      toggleNotesRail,
       focusComposer: () => {
         const composer = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
         if (!composer) return false
@@ -68,5 +71,5 @@ export function useWorkspaceShortcuts({
         return true
       },
     }, navigator.userAgent)
-  }, [apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen])
+  }, [apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen, toggleNotesRail])
 }
