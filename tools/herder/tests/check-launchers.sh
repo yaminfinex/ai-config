@@ -2,7 +2,8 @@
 # Hermetic contract for the managed interactive launcher functions: resolve
 # the vendor once past retired herder shims and mise-owned candidates, then
 # launch ON-BUS in the current pane via `hcom <tool> --run-here` with the
-# vendor pinned on the child PATH and ambient identity env scrubbed.
+# vendor pinned on the child PATH, ambient bus identity scrubbed, and the
+# current HERDR_* pane tuple retained for placement.
 # Direct vendor exec survives only for grok and claude -p/--print one-shots.
 
 set -euo pipefail
@@ -38,6 +39,13 @@ for tool in claude codex grok; do
   printf 'exe=%s\n' "$0"
   printf 'arg=%s\n' "$@"
   printf 'env_process_id=%s\n' "${HCOM_PROCESS_ID-UNSET}"
+  printf 'env_herder_guid=%s\n' "${HERDER_GUID-UNSET}"
+  printf 'env_herdr_env=%s\n' "${HERDR_ENV-UNSET}"
+  printf 'env_herdr_pane=%s\n' "${HERDR_PANE_ID-UNSET}"
+  printf 'env_herdr_socket=%s\n' "${HERDR_SOCKET_PATH-UNSET}"
+  printf 'env_herdr_tab=%s\n' "${HERDR_TAB_ID-UNSET}"
+  printf 'env_herdr_workspace=%s\n' "${HERDR_WORKSPACE_ID-UNSET}"
+  printf 'env_herdr_future=%s\n' "${HERDR_FUTURE_BINDING-UNSET}"
 } >"$LAUNCHER_TEST_LOG"
 exit 23
 EOF
@@ -50,7 +58,12 @@ cat >"$TEST_ROOT/hcom-bin/hcom" <<'EOF'
   printf 'path_head=%s\n' "${PATH%%:*}"
   printf 'env_process_id=%s\n' "${HCOM_PROCESS_ID-UNSET}"
   printf 'env_herder_guid=%s\n' "${HERDER_GUID-UNSET}"
+  printf 'env_herdr_env=%s\n' "${HERDR_ENV-UNSET}"
   printf 'env_herdr_pane=%s\n' "${HERDR_PANE_ID-UNSET}"
+  printf 'env_herdr_socket=%s\n' "${HERDR_SOCKET_PATH-UNSET}"
+  printf 'env_herdr_tab=%s\n' "${HERDR_TAB_ID-UNSET}"
+  printf 'env_herdr_workspace=%s\n' "${HERDR_WORKSPACE_ID-UNSET}"
+  printf 'env_herdr_future=%s\n' "${HERDR_FUTURE_BINDING-UNSET}"
   printf 'env_hcom_dir=%s\n' "${HCOM_DIR-UNSET}"
   printf 'env_inflight=%s\n' "${HCOM_LAUNCH_INFLIGHT-UNSET}"
 } >"$LAUNCHER_TEST_LOG"
@@ -66,16 +79,37 @@ export XDG_CACHE_HOME="$TEST_ROOT/cache"
 PIN_DIR="$XDG_CACHE_HOME/ai-config/vendorbin"
 BUS_PATH="$TEST_ROOT/herder-bin:$TEST_ROOT/mise/shims:$TEST_ROOT/symlink-bin:$TEST_ROOT/vendor-bin:$TEST_ROOT/hcom-bin:/usr/bin:/bin"
 PATH="$BUS_PATH"
-# Ambient identity a hand-typed launch from an agent shell would inherit;
-# the launcher must scrub it (docs/hazards/agent-cli-identity-hijack.md).
+# Ambient bus identity a hand-typed launch from an agent shell would inherit;
+# the launcher must scrub it (docs/hazards/agent-cli-identity-hijack.md). The
+# HERDR_* tuple belongs to the current pane and must cross only the on-bus path.
 export HCOM_PROCESS_ID="stale-caller-row"
 export HERDER_GUID="stale-guid"
-export HERDR_PANE_ID="stale-pane"
+export HERDR_ENV="1"
+export HERDR_PANE_ID="current-pane"
+export HERDR_SOCKET_PATH="$TEST_ROOT/herdr.sock"
+export HERDR_TAB_ID="current-tab"
+export HERDR_WORKSPACE_ID="current-workspace"
+export HERDR_FUTURE_BINDING="future value=preserved"
 export HCOM_DIR="$TEST_ROOT/busdir"
 # shellcheck source=../../../lib/launchers.sh
 source "$ROOT/lib/launchers.sh"
 
 log_has() { grep -Fx "$1" "$LAUNCHER_TEST_LOG" >/dev/null; }
+assert_herdr_tuple_present() {
+  log_has 'env_herdr_env=1' || fail "$1 lost HERDR_ENV"
+  log_has 'env_herdr_pane=current-pane' || fail "$1 lost HERDR_PANE_ID"
+  log_has "env_herdr_socket=$TEST_ROOT/herdr.sock" || fail "$1 lost HERDR_SOCKET_PATH"
+  log_has 'env_herdr_tab=current-tab' || fail "$1 lost HERDR_TAB_ID"
+  log_has 'env_herdr_workspace=current-workspace' || fail "$1 lost HERDR_WORKSPACE_ID"
+  log_has 'env_herdr_future=future value=preserved' \
+    || fail "$1 did not restore the complete HERDR_* tuple"
+}
+assert_herdr_tuple_absent() {
+  local key
+  for key in env pane socket tab workspace future; do
+    log_has "env_herdr_${key}=UNSET" || fail "$1 leaked HERDR_* through env_herdr_${key}"
+  done
+}
 
 set +e
 claude --model test-model
@@ -96,12 +130,12 @@ pass "hand-typed claude launches on-bus via hcom --run-here with the vendor pinn
 
 log_has 'env_process_id=UNSET' || fail "ambient HCOM_PROCESS_ID leaked into the launch (identity hijack)"
 log_has 'env_herder_guid=UNSET' || fail "ambient HERDER_GUID leaked into the launch"
-log_has 'env_herdr_pane=UNSET' || fail "ambient HERDR_PANE_ID leaked into the launch"
+assert_herdr_tuple_present "Claude on-bus launch"
 log_has "env_hcom_dir=$TEST_ROOT/busdir" || fail "HCOM_DIR (bus location) was not preserved"
 log_has 'env_inflight=1' || fail "HCOM_LAUNCH_INFLIGHT guard not set"
 [[ "${HCOM_PROCESS_ID-}" == "stale-caller-row" ]] \
   || fail "scrub mutated the interactive shell's own environment"
-pass "ambient identity env is scrubbed in the child only; HCOM_DIR survives"
+pass "ambient bus identity is scrubbed; HCOM_DIR and HERDR_* placement survive"
 
 set +e
 claude -p 'one shot'
@@ -112,6 +146,8 @@ log_has "exe=$TEST_ROOT/vendor-bin/claude" \
   || fail "claude -p was routed through hcom (task-010: the answer would never return)"
 log_has 'arg=-p' || fail "print bypass lost the -p flag"
 log_has 'env_process_id=UNSET' || fail "print bypass leaked ambient identity"
+log_has 'env_herder_guid=UNSET' || fail "print bypass leaked ambient HERDER identity"
+assert_herdr_tuple_absent "Claude print bypass"
 pass "claude -p bypasses hcom and execs the vendor directly"
 
 set +e
@@ -125,6 +161,7 @@ fi
 head -n 6 "$LAUNCHER_TEST_LOG" | grep -Fx 'arg=codex' >/dev/null || fail "hcom was not asked to launch codex"
 log_has 'arg=--run-here' || fail "codex launch missing --run-here"
 log_has 'arg=exec' && log_has 'arg=hello' || fail "Codex override lost caller args"
+assert_herdr_tuple_present "Codex on-bus launch"
 pass "codex routes on-bus; empty launcher override preserves ask-mode behavior"
 
 set +e
@@ -133,6 +170,9 @@ rc=$?
 set -e
 [[ $rc -eq 23 ]] || fail "grok did not exec the vendor directly (rc=$rc)"
 log_has "exe=$TEST_ROOT/vendor-bin/grok" || fail "grok was routed through hcom"
+log_has 'env_process_id=UNSET' || fail "grok direct path leaked ambient HCOM identity"
+log_has 'env_herder_guid=UNSET' || fail "grok direct path leaked ambient HERDER identity"
+assert_herdr_tuple_absent "Grok direct path"
 pass "grok remains a direct vendor exec"
 
 PATH="$TEST_ROOT/herder-bin:$TEST_ROOT/mise/shims:$TEST_ROOT/hcom-bin:/usr/bin:/bin"

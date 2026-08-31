@@ -29,7 +29,9 @@
 #     path: a vendor CLI launched from an identity-bearing shell takes over
 #     the caller's live bus row and deletes it on exit
 #     (docs/hazards/agent-cli-identity-hijack.md, task-244). HCOM_DIR is
-#     preserved — it locates the bus, it is not an identity.
+#     preserved — it locates the bus, it is not an identity. For on-bus
+#     in-place launches only, the caller's HERDR_* pane tuple is snapshotted
+#     before the scrub and restored for hcom to place the fresh row.
 #
 # Scope: interactive shells only. Escape hatch that bypasses hcom, the
 # resolver, and default args:  command claude ...
@@ -178,9 +180,23 @@ _aic_launch() {
     printf "ai-config launcher: could not pin vendor '%s' for hcom's lookup; launching with unpinned PATH (imposter risk — see docs/launcher-design.md)\n" "$tool" >&2
     pin=""
   fi
+  # HERDR_* describes the current physical pane, not the caller's bus row.
+  # Snapshot the complete tuple before the identity scrub, then restore it only
+  # for hcom's in-place launch so hcom can bind the fresh row to this pane. Use
+  # NUL-delimited entries so values are restored verbatim without eval.
+  local -a _aic_herdr_env=()
+  local _aic_env_entry
+  while IFS= read -r -d '' _aic_env_entry; do
+    case "$_aic_env_entry" in
+      HERDR_*=*) _aic_herdr_env+=("$_aic_env_entry") ;;
+    esac
+  done < <(env -0)
   # shellcheck disable=SC2086
   (
     _aic_scrub_identity
+    for _aic_env_entry in "${_aic_herdr_env[@]}"; do
+      export "$_aic_env_entry"
+    done
     if [ -n "$pin" ]; then
       PATH="$pin:$PATH"
     fi
