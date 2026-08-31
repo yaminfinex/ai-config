@@ -13,6 +13,12 @@ export type StreamState = {
   serverUpdated: boolean
 }
 
+type StreamAlerts = Pick<StreamState, 'problems' | 'serverUpdated'>
+
+export function streamAlerts(stream: StreamState): StreamAlerts {
+  return { problems: stream.problems, serverUpdated: stream.serverUpdated }
+}
+
 const initialStreamState: StreamState = {
   problems: { stream: 'Connecting to live fleet…' },
   substrateProof: { herdr: false, hcom: false },
@@ -228,13 +234,6 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
   const subscription = [...new Set(agentNames)].sort().join(',')
   const screenSubscription = [...new Set(screenPaneIDs)].sort().join(',')
   const fileWatchSubscription = JSON.stringify(fileWatches)
-  const stream = useQuery({
-    queryKey: queryKeys.stream,
-    queryFn: async () => initialStreamState,
-    initialData: initialStreamState,
-    staleTime: Infinity,
-  }).data
-
   useEffect(() => {
     const current = screenSubscription ? screenSubscription.split(',') : []
     if (previousScreenSubscription.current) {
@@ -251,5 +250,25 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
     JSON.parse(fileWatchSubscription) as FileWatchTarget[],
     focusedScreenPaneID,
   ), [fileWatchSubscription, focusedScreenPaneID, queryClient, subscription, screenSubscription])
-  return stream
+}
+
+export function useStreamStatus() {
+  return useQuery({
+    queryKey: queryKeys.stream,
+    queryFn: async () => initialStreamState,
+    initialData: initialStreamState,
+    staleTime: Infinity,
+    notifyOnChangeProps: ['data'],
+  }).data
+}
+
+export function useStreamAlerts(): StreamAlerts {
+  return useQuery({
+    queryKey: queryKeys.stream,
+    queryFn: async () => initialStreamState,
+    initialData: initialStreamState,
+    staleTime: Infinity,
+    select: streamAlerts,
+    notifyOnChangeProps: ['data'],
+  }).data
 }

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { WebglAddon } from '@xterm/addon-webgl'
 import '@xterm/xterm/css/xterm.css'
 import { getPaneHistory, queryKeys, sendPaneInput } from '../../api/client'
 import { Banner } from '../../shared/presentation'
@@ -42,6 +41,7 @@ function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: Te
       const proposal = fitAddon.proposeDimensions()
       if (proposal && proposal.cols >= current.cols && proposal.rows >= current.rows) break
     }
+    if (terminal.cols !== current.cols || terminal.rows !== current.rows) painterRef.current?.reset()
     terminal.resize(current.cols, current.rows)
   }
   useSizeObserver(hostRef, measureAndResize, true, `${frame?.cols}x${frame?.rows}`)
@@ -66,20 +66,7 @@ function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: Te
     terminal.open(host)
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
-    painterRef.current = new SnapshotPainter((data, done) => terminal.write(data, done))
-
-    let webgl: WebglAddon | null = null
-    try {
-      webgl = new WebglAddon()
-      webgl.onContextLoss(() => {
-        webgl?.dispose()
-        webgl = null
-      })
-      terminal.loadAddon(webgl)
-    } catch {
-      webgl?.dispose()
-      webgl = null
-    }
+    painterRef.current = new SnapshotPainter((data, done) => terminal.write(data, done), live)
 
     measureAndResize()
     const input = onData ? terminal.onData(onData) : null
@@ -89,7 +76,6 @@ function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: Te
       painterRef.current = null
       fitAddonRef.current = null
       terminalRef.current = null
-      webgl?.dispose()
       terminal.dispose()
     }
   }, [live, onData])
@@ -97,13 +83,14 @@ function XtermSurface({ frame, text, live, active, onFocus, onBlur, onData }: Te
   useEffect(() => {
     const terminal = terminalRef.current
     if (terminal && frame?.cols && frame.rows && (terminal.cols !== frame.cols || terminal.rows !== frame.rows)) {
+      painterRef.current?.reset()
       terminal.resize(frame.cols, frame.rows)
     }
   }, [frame])
 
   useEffect(() => {
-    painterRef.current?.paint(text)
-  }, [text])
+    painterRef.current?.paint(text, active)
+  }, [active, text])
 
   useEffect(() => {
     if (!active) terminalRef.current?.blur()

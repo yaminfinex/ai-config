@@ -18,6 +18,20 @@ test('workspace actions and changing data have separate contexts', () => {
   assert.doesNotMatch(context, /WorkspaceContext =/)
 })
 
+test('per-event stream state is isolated from the workspace controller and dock contexts', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  const context = readFileSync(new URL('../src/features/workspace/workspaceContext.tsx', import.meta.url), 'utf8')
+  const stream = readFileSync(new URL('../src/stream/useFleetStream.ts', import.meta.url), 'utf8')
+  assert.match(app, /function StreamStatusBar/)
+  assert.match(app, /function StreamBanners/)
+  assert.match(stream, /export function useStreamStatus/)
+  assert.match(stream, /export function useStreamAlerts/)
+  assert.doesNotMatch(controller, /const stream\s*=\s*useFleetStream/)
+  assert.doesNotMatch(controller, /streamProblems/)
+  assert.doesNotMatch(context, /StreamState|streamProblems|stream:/)
+})
+
 test('layout persistence owns restore, debounce, pagehide, and last-good writes', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const persistence = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')

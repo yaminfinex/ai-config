@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { QuickOpen } from './features/files/QuickOpen'
@@ -8,6 +9,7 @@ import { DockHeaderActions, DockWatermark } from './features/workspace/workspace
 import { WorkspaceProviders } from './features/workspace/workspaceContext'
 import { useWorkspaceController } from './features/workspace/useWorkspaceController'
 import { FileWatchContext } from './stream/fileWatchRegistry'
+import { useStreamAlerts, useStreamStatus } from './stream/useFleetStream'
 import { AppLink, currentRoute, type Route } from './shared/navigation'
 import { Banner } from './shared/presentation'
 import { statusBarHealth, type HealthTick } from './shared/statusBarPresentation'
@@ -23,15 +25,39 @@ function StatusTick({ tick }: { tick: HealthTick }) {
   return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}</span>
 }
 
+function streamProblems(problems: Record<string, string>, fleetProblem: string) {
+  return { ...problems, ...(fleetProblem ? { fleet: fleetProblem } : {}) }
+}
+
+function StreamBanners({ fleetProblem, viewerProblem, flushLayout }: { fleetProblem: string, viewerProblem: string, flushLayout: () => void }) {
+  const stream = useStreamAlerts()
+  const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
+  return <div className="shell-banners">
+    {stream.serverUpdated && <div className="banner server-update" role="alert"><strong>update</strong><span>Server updated — refresh to load the new version</span><button type="button" onClick={() => { flushLayout(); window.location.reload() }}>Refresh</button></div>}
+    {viewerProblem && <Banner source="viewer" detail={viewerProblem} />}{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} tone={source === 'stream' && detail === 'Connecting to live fleet…' ? 'info' : 'error'} key={source} />)}
+  </div>
+}
+
+function StreamStatusBar({ fleetProblem, viewer, viewerPending, onShortcuts }: { fleetProblem: string, viewer: string, viewerPending: boolean, onShortcuts: () => void }) {
+  const stream = useStreamStatus()
+  const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
+  const lastEvent = stream.lastEvent ? new Date(stream.lastEvent).toLocaleTimeString() : '—'
+  const health = statusBarHealth({ problems, substrateProof: stream.substrateProof, lastEventLabel: lastEvent })
+  return <footer className="status-bar">
+    {health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}
+    <span title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {viewerPending ? 'resolving…' : viewer}</span>
+    <span className="status-spacer" /><span>last event: {lastEvent}</span>
+    <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={onShortcuts}>?</button>
+    <ThemeToggle />
+  </footer>
+}
+
 function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
   const workspace = useWorkspaceController(initialRoute)
   const {
     openAgent, openScreen, openFile, openFolder,
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
   } = workspace
-  const lastEvent = workspace.stream.lastEvent ? new Date(workspace.stream.lastEvent).toLocaleTimeString() : '—'
-  const health = statusBarHealth({ problems: workspace.streamProblems, substrateProof: workspace.stream.substrateProof, lastEventLabel: lastEvent })
-
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell">
     <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
@@ -43,22 +69,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
     </UtilityRail>
     <section className="shell-main">
-      <div className="shell-banners">
-        {workspace.stream.serverUpdated && <div className="banner server-update" role="alert"><strong>update</strong><span>Server updated — refresh to load the new version</span><button type="button" onClick={() => { workspace.flushLayout(); window.location.reload() }}>Refresh</button></div>}
-        {workspace.viewerProblem && <Banner source="viewer" detail={workspace.viewerProblem} />}{Object.entries(workspace.streamProblems).map(([source, detail]) => <Banner source={source} detail={detail} tone={source === 'stream' && detail === 'Connecting to live fleet…' ? 'info' : 'error'} key={source} />)}
-      </div>
+      <StreamBanners fleetProblem={workspace.fleetProblem} viewerProblem={workspace.viewerProblem} flushLayout={workspace.flushLayout} />
       <div className="dock-host">
         <DockviewReact components={dockComponents} tabComponents={{ 'herder-tab': DockTab }} rightHeaderActionsComponent={DockHeaderActions} watermarkComponent={DockWatermark}
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
           pinnedTabs={{ enabled: false }} layoutHistory={{ enabled: false }} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
       </div>
-      <footer className="status-bar">
-        {health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}
-        <span title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {workspace.viewerPending ? 'resolving…' : workspace.viewer}</span>
-        <span className="status-spacer" /><span>last event: {lastEvent}</span>
-        <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={() => workspace.setShortcutReference(true)}>?</button>
-        <ThemeToggle />
-      </footer>
+      <StreamStatusBar fleetProblem={workspace.fleetProblem} viewer={workspace.viewer} viewerPending={workspace.viewerPending} onShortcuts={() => workspace.setShortcutReference(true)} />
     </section>
     <UtilityRail side="right" label="Notes" width={notesRail.width} collapsed={notesRail.collapsed}
       onWidth={(width) => setNotesRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleNotesRail}>

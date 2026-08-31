@@ -170,7 +170,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const provenScreenPaneIDs = openPanels.flatMap((params) => params.kind === 'screen' && screenIdentityState(params, boardQuery.data) === 'ready' ? [params.identity.paneID] : [])
   const screenPaneIDs = [...new Set([...provenScreenPaneIDs, ...agentNames.flatMap((name) => agentScreenPanes[name] ? [agentScreenPanes[name]] : [])])]
   const focusedPane = focusedScreenPaneID && screenPaneIDs.includes(focusedScreenPaneID) ? focusedScreenPaneID : undefined
-  const stream = useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane)
+  useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane)
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
   const viewer = viewerQuery.data?.viewer ?? 'unresolved'
@@ -178,10 +178,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const viewerProblem = viewerState === 'unavailable' ? viewerFailure?.problem.detail ?? '' : ''
   const viewerReadOnly = viewerQuery.isPending ? 'Resolving viewer identity…' : viewerQuery.data ? ''
     : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
-  const streamProblems = useMemo<Record<string, string>>(() => ({
-    ...stream.problems,
-    ...(boardQuery.error ? { fleet: boardQuery.error.message } : {}),
-  }), [boardQuery.error, stream.problems])
+  const fleetProblem = boardQuery.error?.message ?? ''
 
   const showQuickOpen = useCallback((groupID?: string) => {
     setQuickOpenGroup(groupID ?? apiRef.current?.activeGroup?.id)
@@ -211,8 +208,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     resetLayout, showQuickOpen,
   }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
-    board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses, stream, streamProblems,
-  }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, stream, streamProblems, viewerReadOnly])
+    board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
+  }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, viewerReadOnly])
 
   return {
     actions, data, fileWatchRegister: fileWatchRegistry.register,
@@ -228,6 +225,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     activePane: activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined,
     openAgent, openScreen, openFile, openFolder,
     onDockReady, flushLayout: layout.flushLayout,
-    stream, streamProblems, viewerProblem, viewer, viewerPending: viewerQuery.isPending,
+    fleetProblem, viewerProblem, viewer, viewerPending: viewerQuery.isPending,
   }
 }
