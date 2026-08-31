@@ -86,11 +86,16 @@ test('reset forces a full repaint after terminal geometry changes', () => {
 test('an in-flight write cannot restore a baseline invalidated by resize', () => {
   const writes: Array<{ data: string, done: () => void }> = []
   const painter = new SnapshotPainter((data, done) => writes.push({ data, done }))
-  painter.paint('old')
+  const previous = 'one\r\ntwo\r\nthree\r'
+  const latest = 'one\r\nchanged\r\nthree\r'
+  painter.paint(previous)
   painter.reset()
-  painter.paint('latest')
+  painter.paint(latest)
   writes[0].done()
-  assert.equal(writes[1].data, '\x1bclatest')
+  const staleIncremental = '\x1b7\x1b[2;1H\x1b[0m\x1b[2Kchanged\r\x1b8'
+  assert.equal(snapshotUpdate(previous, latest), staleIncremental)
+  assert.notEqual(writes[1].data, staleIncremental)
+  assert.equal(writes[1].data, snapshotRepaint(latest))
 })
 
 test('non-incremental painters fully repaint history snapshots', () => {
