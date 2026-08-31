@@ -2,17 +2,23 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
+import type { TranscriptEntry } from '../src/types.ts'
 import {
   aggregateActivityPills,
   approximateActivityAge,
   activityPillTone,
   cleanViewDisposition,
   isCleanConversationDelivery,
+  markerOnlyAssistantActivity,
   persistTranscriptViewMode,
   readTranscriptViewMode,
   splitFinalActivityRun,
   transcriptViewPreferenceKey,
 } from '../src/features/transcript/cleanView.ts'
+import { cleanRows } from '../src/features/transcript/cleanRows.ts'
+
+const transcriptEntriesSource = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
+const stylesSource = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
 
 function memoryStorage() {
   const values = new Map<string, string>()
@@ -106,17 +112,103 @@ test('compact activity pills use distinct non-error semantic tones', () => {
 
 test('pill aggregation combines only consecutive repeatable activities', () => {
   assert.deepEqual(aggregateActivityPills([
-    { key: 'read-1', label: 'Read', kind: 'tool_use' },
-    { key: 'read-2', label: 'Read', kind: 'tool_use' },
+    { key: 'read-1', label: 'Read', kind: 'tool_use', aggregation: { category: 'tool', content: 'Read' } },
+    { key: 'read-2', label: 'Read', kind: 'tool_use', aggregation: { category: 'tool', content: 'Read' } },
     { key: 'message-1', label: '✉ nero', kind: 'message' },
     { key: 'message-2', label: '✉ nero', kind: 'message' },
-    { key: 'read-3', label: 'Read', kind: 'tool_use' },
-  ], (activity) => activity.kind === 'tool_use'), [
-    { key: 'read-1', label: 'Read', kind: 'tool_use', count: 2 },
+    { key: 'read-3', label: 'Read', kind: 'tool_use', aggregation: { category: 'tool', content: 'Read' } },
+  ]), [
+    { key: 'read-1', label: 'Read', kind: 'tool_use', aggregation: { category: 'tool', content: 'Read' }, count: 2 },
     { key: 'message-1', label: '✉ nero', kind: 'message', count: 1 },
     { key: 'message-2', label: '✉ nero', kind: 'message', count: 1 },
-    { key: 'read-3', label: 'Read', kind: 'tool_use', count: 1 },
+    { key: 'read-3', label: 'Read', kind: 'tool_use', aggregation: { category: 'tool', content: 'Read' }, count: 1 },
   ])
+})
+
+test('marker-only assistant activity uses compact labels, proven tones, and exact repeat keys', () => {
+  assert.deepEqual(markerOnlyAssistantActivity('<status>sent to ziru</status>'), {
+    label: 'sent to ziru',
+    tone: 'assistant-status',
+    title: 'sent to ziru',
+    aggregation: { category: 'assistant-status', content: '<status>sent to ziru</status>' },
+  })
+  assert.deepEqual(markerOnlyAssistantActivity('<internal>private detail</internal>'), {
+    label: 'internal note',
+    tone: 'thinking',
+    title: 'private detail',
+    aggregation: { category: 'assistant-internal', content: '<internal>private detail</internal>' },
+  })
+  assert.deepEqual(markerOnlyAssistantActivity('<status>sent</status><internal>private detail</internal>'), {
+    label: 'sent · internal note',
+    tone: 'assistant-status',
+    title: 'sent\nprivate detail',
+    aggregation: { category: 'assistant-mixed', content: '<status>sent</status><internal>private detail</internal>' },
+  })
+})
+
+test('visible and phantom-open fail-open assistant text never becomes compact activity', () => {
+  assert.equal(markerOnlyAssistantActivity('visible <status>sent</status>'), null)
+  assert.equal(markerOnlyAssistantActivity('<internal>phantom-open poisoned message'), null)
+})
+
+test('marker pill counts require consecutive exact content and category matches', () => {
+  const activities = [
+    { key: 'internal-1', label: 'internal note', aggregation: { category: 'assistant-internal', content: '<internal>first</internal>' } },
+    { key: 'internal-2', label: 'internal note', aggregation: { category: 'assistant-internal', content: '<internal>second</internal>' } },
+    { key: 'internal-3', label: 'internal note', aggregation: { category: 'assistant-internal', content: '<internal>second</internal>' } },
+    { key: 'status-1', label: 'internal note', aggregation: { category: 'assistant-status', content: '<status>internal note</status>' } },
+    { key: 'tool-1', label: 'internal note', aggregation: { category: 'tool', content: 'internal note' } },
+  ]
+  assert.deepEqual(aggregateActivityPills(activities), [
+    { ...activities[0], count: 1 },
+    { ...activities[1], count: 2 },
+    { ...activities[3], count: 1 },
+    { ...activities[4], count: 1 },
+  ])
+})
+
+test('compact row building joins marker-only entries and fail-open text splits runs', () => {
+  const entry = (kind: TranscriptEntry['kind'], content: string, byteOffset: number): TranscriptEntry => ({
+    line: byteOffset,
+    byteOffset,
+    kind,
+    payload: kind === 'tool_use' ? { name: content } : { message: { content } },
+  })
+  const relationships = {
+    pairedToolResults: new Set<number>(),
+    pairedDeliveries: new Set<number>(),
+    pairedCommandOutputs: new Set<number>(),
+    duplicateHcomDeliveries: new Map<number, Set<number>>(),
+  }
+  const tool = entry('tool_use', 'Read', 1)
+  const status = entry('assistant_text', '<status>sent</status>', 2)
+  const phantom = entry('assistant_text', '<internal>phantom-open poisoned message', 3)
+  const internal = entry('assistant_text', '<internal>private detail</internal>', 4)
+  const visible = entry('assistant_text', 'visible <status>sent</status>', 5)
+  const finalStatus = entry('assistant_text', '<status>done</status>', 6)
+
+  const rows = cleanRows([tool, status, phantom, internal, visible, finalStatus], relationships)
+  assert.deepEqual(rows.map((row) => row.type), ['run', 'entry', 'run', 'entry', 'run'])
+  assert.deepEqual(rows[0].type === 'run' ? rows[0].activities.map((activity) => activity.entry.byteOffset) : [], [1, 2])
+  assert.equal(rows[1].type === 'entry' ? rows[1].entry : null, phantom)
+  assert.deepEqual(rows[2].type === 'run' ? rows[2].activities.map((activity) => activity.entry.byteOffset) : [], [4])
+  assert.equal(rows[3].type === 'entry' ? rows[3].entry : null, visible)
+  assert.equal(splitFinalActivityRun(rows)?.latest.entry, finalStatus)
+
+  const superseded = cleanRows([...([tool, status] as TranscriptEntry[]), entry('human_prompt', 'owner reply', 7)], relationships)
+  assert.equal(splitFinalActivityRun(superseded), null)
+  assert.deepEqual(superseded[0].type === 'run' ? superseded[0].activities.map((activity) => activity.entry.byteOffset) : [], [1, 2])
+})
+
+test('compact strip wraps accessibly', () => {
+  const strip = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function ActivityStrip'), transcriptEntriesSource.indexOf('function ActivityEntry'))
+  const summaryRule = stylesSource.match(/\.activity-strip > summary \{([^}]*)\}/)?.[1] ?? ''
+
+  assert.match(strip, /<summary aria-label=/)
+  assert.match(strip, /title=\{pill\.title\}/)
+  assert.match(summaryRule, /flex-wrap:\s*wrap/)
+  assert.doesNotMatch(summaryRule, /overflow-x:\s*auto/)
+  assert.match(stylesSource, /\.activity-strip > summary::before \{[^}]*flex:\s*0 0 auto/s)
 })
 
 test('final activity split selects the raw latest item before pill aggregation', () => {
@@ -136,8 +228,7 @@ test('a one-item final activity run has no collapsed remainder', () => {
     { type: 'run', activities: [latest] },
   ]), { collapsed: [], latest })
 
-  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
-  assert.match(component, /\{finalActivity\.collapsed\.length > 0 && <ActivityStrip/)
+  assert.match(transcriptEntriesSource, /\{finalActivity\.collapsed\.length > 0 && <ActivityStrip/)
 })
 
 test('a trailing show entry including fenced assistant text prevents the final activity hoist', () => {
@@ -146,30 +237,27 @@ test('a trailing show entry including fenced assistant text prevents the final a
     { type: 'entry', kind: 'assistant_text' },
   ]), null)
 
-  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
-  assert.match(component, /if \(entry\.kind === 'assistant_text'\) return <AssistantText/)
-  assert.match(component, /if \(cleanView\) \{[\s\S]+splitFinalActivityRun\(rows\)[\s\S]+return <MentionContext\.Provider/)
-  assert.match(component, /finalActivity && rowIndex === rows\.length - 1/)
-  assert.match(component, /return <MentionContext\.Provider value=\{mentionContext\}>\{entries\.map\(\(entry, index\) => <EntryView/)
-  assert.match(component, /approximateActivityAge\(activity\.entry\.timestamp, now\)/)
-  assert.doesNotMatch(component, /setInterval/)
+  assert.match(transcriptEntriesSource, /if \(entry\.kind === 'assistant_text'\) return <AssistantText/)
+  assert.match(transcriptEntriesSource, /if \(cleanView\) \{[\s\S]+splitFinalActivityRun\(rows\)[\s\S]+return <MentionContext\.Provider/)
+  assert.match(transcriptEntriesSource, /finalActivity && rowIndex === rows\.length - 1/)
+  assert.match(transcriptEntriesSource, /return <MentionContext\.Provider value=\{mentionContext\}>\{entries\.map\(\(entry, index\) => <EntryView/)
+  assert.match(transcriptEntriesSource, /approximateActivityAge\(activity\.entry\.timestamp, now\)/)
+  assert.doesNotMatch(transcriptEntriesSource, /setInterval/)
 })
 
 test('the live activity reuses the Normal entry renderer and resets only when superseded', () => {
-  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
-  const latestActivity = component.slice(component.indexOf('function LatestActivity'), component.indexOf('function AssistantText'))
+  const latestActivity = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function LatestActivity'), transcriptEntriesSource.indexOf('function AssistantText'))
 
-  assert.match(component, /function ActivityEntry\([\s\S]+<EntryView[\s\S]+<HcomCards/)
+  assert.match(transcriptEntriesSource, /function ActivityEntry\([\s\S]+<EntryView[\s\S]+<HcomCards/)
   assert.match(latestActivity, /<ActivityEntry/)
   assert.doesNotMatch(latestActivity, /activity-pill/)
-  assert.match(component, /<LatestActivity activity=\{finalActivity\.latest\}[\s\S]+key=\{finalActivity\.latest\.key\}/)
+  assert.match(transcriptEntriesSource, /<LatestActivity activity=\{finalActivity\.latest\}[\s\S]+key=\{finalActivity\.latest\.key\}/)
 })
 
 test('live detail shares the strip showSystem policy without changing Normal', () => {
-  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
-  const entryView = component.slice(component.indexOf('function EntryView'), component.indexOf('export function TranscriptEntries'))
-  const transcriptEntries = component.slice(component.indexOf('export function TranscriptEntries'))
-  const activityEntries = component.match(/<ActivityEntry\b[^>]*\/>/g) ?? []
+  const entryView = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function EntryView'), transcriptEntriesSource.indexOf('export function TranscriptEntries'))
+  const transcriptEntries = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('export function TranscriptEntries'))
+  const activityEntries = transcriptEntriesSource.match(/<ActivityEntry\b[^>]*\/>/g) ?? []
 
   assert.equal(activityEntries.length, 2)
   assert.ok(activityEntries.every((activityEntry) => /\bshowSystem(?:\s|\/>)/.test(activityEntry)))

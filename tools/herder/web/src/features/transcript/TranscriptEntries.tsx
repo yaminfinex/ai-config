@@ -3,12 +3,9 @@ import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryT
 import { agentMarkdownOptions, Markdown } from '../../shared/Markdown'
 import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMentions'
 import type { TranscriptEntry } from '../../types'
-import { activityPillTone, aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun } from './cleanView'
+import { aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun } from './cleanView'
+import { cleanRows, messageText, objectValue, valueText, type CleanActivity, type ObjectValue } from './cleanRows'
 import { parseAssistantFencing } from './fencingModel'
-
-type ObjectValue = Record<string, unknown>
-const objectValue = (value: unknown): ObjectValue => value && typeof value === 'object' && !Array.isArray(value) ? value as ObjectValue : {}
-const valueText = (value: unknown) => typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''
 
 type MentionContextValue = {
   matcher: AgentMentionMatcher
@@ -27,16 +24,6 @@ function MentionMarkdown({ children }: { children: string }) {
   const mentions = useContext(MentionContext)
   const options = useMemo(() => mentions ? agentMarkdownOptions(mentions.matcher, mentions.onOpenAgent, mentions.sideHint) : {}, [mentions])
   return <Markdown {...options}>{children}</Markdown>
-}
-
-function messageText(payload: unknown): string {
-  const content = objectValue(objectValue(payload).message).content
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content.map((block) => {
-    const part = objectValue(block)
-    return valueText(part.text ?? part.thinking)
-  }).filter(Boolean).join('\n')
 }
 
 function formatDuration(milliseconds: number) {
@@ -182,86 +169,10 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
   })}</>
 }
 
-type CleanActivity = {
-  key: string
-  label: string
-  tone: ReturnType<typeof activityPillTone>
-  entry: TranscriptEntry
-  index: number
-  deliveryIndex?: number
-}
-
-type CleanRow =
-  | { type: 'entry', key: string, entry: TranscriptEntry, index: number, deliveryIndex?: number }
-  | { type: 'run', key: string, activities: CleanActivity[] }
-
-function activityLabel(entry: TranscriptEntry) {
-  const payload = objectValue(entry.payload)
-  if (entry.kind === 'tool_use') return valueText(payload.name) || 'tool'
-  if (entry.kind === 'tool_result') return 'tool result'
-  if (entry.kind === 'thinking') return 'thinking'
-  if (entry.kind === 'command_stdout') {
-    return messageText(entry.payload).match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1] || 'command'
-  }
-  if (entry.kind === 'task_notification') return 'task'
-  return entry.quarantine ? 'quarantined' : 'unknown'
-}
-
-function cleanRows(entries: TranscriptEntry[], relationships: EntryRelationships): CleanRow[] {
-  const rows: CleanRow[] = []
-  let run: CleanActivity[] = []
-  const flush = () => {
-    if (run.length === 0) return
-    rows.push({ type: 'run', key: `run:${run[0].key}`, activities: run })
-    run = []
-  }
-  const addEntry = (entry: TranscriptEntry, index: number, deliveryIndex?: number) => {
-    flush()
-    rows.push({ type: 'entry', key: deliveryIndex == null ? `entry:${entry.uuid ?? entry.byteOffset}` : `delivery:${entry.uuid ?? entry.byteOffset}:${deliveryIndex}`, entry, index, deliveryIndex })
-  }
-
-  entries.forEach((entry, index) => {
-    if (relationships.pairedToolResults.has(index) || relationships.pairedCommandOutputs.has(index) || relationships.pairedDeliveries.has(index)) return
-    const disposition = cleanViewDisposition[entry.kind]
-    if (disposition === 'delivery') {
-      const delivery = entry.kind === 'hcom_delivery_stub' ? entries[index + 1] : entry
-      const deliveryIndex = entry.kind === 'hcom_delivery_stub' ? index + 1 : index
-      if (delivery?.kind !== 'hcom_delivery') return
-      const values = objectValue(delivery.payload).deliveries
-      if (!Array.isArray(values)) return
-      const duplicates = relationships.duplicateHcomDeliveries.get(deliveryIndex)
-      values.forEach((raw, valueIndex) => {
-        const message = objectValue(raw)
-        if (duplicates?.has(valueIndex) || !isCleanConversationDelivery(message)) return
-        if (isWebOperatorMessage(valueText(message.text))) {
-          addEntry(delivery, deliveryIndex, valueIndex)
-          return
-        }
-        run.push({
-          key: `message:${delivery.uuid ?? delivery.byteOffset}:${valueIndex}`,
-          label: `✉ ${valueText(message.sender) || 'unknown sender'}`,
-          tone: activityPillTone(delivery.kind, true),
-          entry: delivery,
-          index: deliveryIndex,
-          deliveryIndex: valueIndex,
-        })
-      })
-      return
-    }
-    if (disposition === 'activity') {
-      run.push({ key: `activity:${entry.uuid ?? entry.byteOffset}`, label: activityLabel(entry), tone: activityPillTone(entry.kind), entry, index })
-      return
-    }
-    if (disposition === 'show') addEntry(entry, index)
-  })
-  flush()
-  return rows
-}
-
 function ActivityStrip({ activities, entries, relationships, agentName, now }: { activities: CleanActivity[], entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number }) {
   const [open, setOpen] = useState(false)
   return <details className="activity-strip" onToggle={(event) => setOpen(event.currentTarget.open)}><summary aria-label={`${activities.length} hidden transcript activities`}>
-    {aggregateActivityPills(activities, (activity) => activity.entry.kind === 'tool_use' && activity.deliveryIndex == null).map((pill) => <span className={`activity-pill ${pill.tone}`} key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
+    {aggregateActivityPills(activities).map((pill) => <span className={`activity-pill ${pill.tone}`} title={pill.title} key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
   </summary>{open && <div className="activity-run-detail">
     {activities.map((activity) => <ActivityEntry activity={activity} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem key={activity.key} />)}
   </div>}</details>
