@@ -155,6 +155,28 @@ test('a trailing show entry including fenced assistant text prevents the final a
   assert.doesNotMatch(component, /setInterval/)
 })
 
+test('the live activity reuses the Normal entry renderer and resets only when superseded', () => {
+  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
+  const latestActivity = component.slice(component.indexOf('function LatestActivity'), component.indexOf('function AssistantText'))
+
+  assert.match(component, /function ActivityEntry\([\s\S]+<EntryView[\s\S]+<HcomCards/)
+  assert.match(latestActivity, /<ActivityEntry/)
+  assert.doesNotMatch(latestActivity, /activity-pill/)
+  assert.match(component, /<LatestActivity activity=\{finalActivity\.latest\}[\s\S]+key=\{finalActivity\.latest\.key\}/)
+})
+
+test('live detail shares the strip showSystem policy without changing Normal', () => {
+  const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
+  const entryView = component.slice(component.indexOf('function EntryView'), component.indexOf('export function TranscriptEntries'))
+  const transcriptEntries = component.slice(component.indexOf('export function TranscriptEntries'))
+  const activityEntries = component.match(/<ActivityEntry\b[^>]*\/>/g) ?? []
+
+  assert.equal(activityEntries.length, 2)
+  assert.ok(activityEntries.every((activityEntry) => /\bshowSystem(?:\s|\/>)/.test(activityEntry)))
+  assert.match(entryView, /if \(!showSystem\) return null/)
+  assert.match(transcriptEntries, /return <MentionContext\.Provider value=\{mentionContext\}>\{entries\.map\([\s\S]+showSystem=\{showSystem\} cleanView=\{cleanView\}/)
+})
+
 test('compact activity age is terse and derived from the supplied clock', () => {
   const now = Date.parse('2026-08-31T10:04:00.000Z')
   assert.equal(approximateActivityAge('2026-08-31T10:00:00.000Z', now), '4m')

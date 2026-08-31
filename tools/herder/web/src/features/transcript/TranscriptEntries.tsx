@@ -263,14 +263,21 @@ function ActivityStrip({ activities, entries, relationships, agentName, now }: {
   return <details className="activity-strip" onToggle={(event) => setOpen(event.currentTarget.open)}><summary aria-label={`${activities.length} hidden transcript activities`}>
     {aggregateActivityPills(activities, (activity) => activity.entry.kind === 'tool_use' && activity.deliveryIndex == null).map((pill) => <span className={`activity-pill ${pill.tone}`} key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
   </summary>{open && <div className="activity-run-detail">
-    {activities.map((activity) => activity.deliveryIndex == null
-      ? <EntryView entry={activity.entry} index={activity.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem cleanView={false} key={activity.key} />
-      : <HcomCards entry={activity.entry} entryIndex={activity.index} now={now} showSystem cleanView={false} relationships={relationships} deliveryIndex={activity.deliveryIndex} key={activity.key} />)}
+    {activities.map((activity) => <ActivityEntry activity={activity} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem key={activity.key} />)}
   </div>}</details>
 }
 
-function LatestActivity({ activity, now }: { activity: CleanActivity, now: number }) {
-  return <div className="activity-latest"><span className={`activity-pill ${activity.tone}`}>{activity.label} <time dateTime={activity.entry.timestamp}>· {approximateActivityAge(activity.entry.timestamp, now)}</time></span></div>
+function ActivityEntry({ activity, entries, relationships, agentName, now, showSystem }: { activity: CleanActivity, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number, showSystem: boolean }) {
+  return activity.deliveryIndex == null
+    ? <EntryView entry={activity.entry} index={activity.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={false} />
+    : <HcomCards entry={activity.entry} entryIndex={activity.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={activity.deliveryIndex} />
+}
+
+function LatestActivity({ activity, entries, relationships, agentName, now }: { activity: CleanActivity, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number }) {
+  return <div className="activity-latest">
+    <div className="activity-latest-age">Latest activity <time dateTime={activity.entry.timestamp}>· {approximateActivityAge(activity.entry.timestamp, now)}</time></div>
+    <ActivityEntry activity={activity} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem />
+  </div>
 }
 
 function AssistantText({ content, agentName, timestamp, now, showSystem }: { content: string, agentName: string, timestamp?: string, now: number, showSystem: boolean }) {
@@ -335,7 +342,7 @@ export function TranscriptEntries({ entries, agentName, now, showSystem, cleanVi
       ? finalActivity && rowIndex === rows.length - 1
         ? <Fragment key={row.key}>
           {finalActivity.collapsed.length > 0 && <ActivityStrip activities={finalActivity.collapsed} entries={entries} relationships={relationships} agentName={agentName} now={now} />}
-          <LatestActivity activity={finalActivity.latest} now={now} />
+          <LatestActivity activity={finalActivity.latest} entries={entries} relationships={relationships} agentName={agentName} now={now} key={finalActivity.latest.key} />
         </Fragment>
         : <ActivityStrip activities={row.activities} entries={entries} relationships={relationships} agentName={agentName} now={now} key={row.key} />
       : row.deliveryIndex == null
