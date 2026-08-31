@@ -78,7 +78,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 h2, h3, p { margin-top: 0; }
 
 .app-shell { position: relative; display: flex; height: 100%; min-width: 640px; background: var(--bg); }
-.utility-rail { display: flex; min-width: 200px; max-width: 440px; flex: 0 0 auto; flex-direction: column; overflow: hidden; background: var(--sidebar); outline: none; }
+.utility-rail { display: flex; min-width: 200px; max-width: 440px; flex: 0 1 auto; flex-direction: column; overflow: hidden; background: var(--sidebar); outline: none; }
 .utility-rail-left { border-right: 1px solid var(--border); }
 .utility-rail-right { border-left: 1px solid var(--border); }
 .utility-rail:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
@@ -86,14 +86,14 @@ h2, h3, p { margin-top: 0; }
 .rail-heading strong { color: var(--text); font-size: 10px; }
 .rail-heading > span:not(.status-dot) { margin-left: auto; color: var(--dimmer); font-size: 9px; letter-spacing: 0; text-transform: none; }
 .rail-toggle { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; margin-left: auto; padding: 0; border-color: transparent; background: transparent; color: var(--dim); font-size: 16px; }
-.rail-toggle-collapsed { position: absolute; z-index: 5; top: 4px; border-color: var(--border); background: var(--sidebar); opacity: .78; }
+.rail-toggle-collapsed { position: absolute; z-index: 5; top: 76px; border-color: var(--border); background: var(--sidebar); opacity: .78; }
 .rail-toggle-collapsed:hover, .rail-toggle-collapsed:focus-visible { opacity: 1; }
 .rail-toggle-left.rail-toggle-collapsed { left: 4px; }
 .rail-toggle-right.rail-toggle-collapsed { right: 4px; }
 .utility-rail-resizer { width: 5px; flex: 0 0 5px; cursor: col-resize; outline: none; }
 .utility-rail-resizer:hover, .utility-rail-resizer:focus-visible { background: var(--accent); }
 .fleet-sidebar-view { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
-.notes-rail-empty { display: grid; flex: 1; place-content: center; padding: 20px; color: var(--dimmer); font: 10px var(--mono); text-align: center; }
+.notes-rail-empty { display: grid; flex: 1; place-content: center; padding: 20px; color: var(--dim); font: 10px var(--mono); text-align: center; }
 .fleet-tree { flex: 1; overflow: auto; padding: 4px 4px 10px; outline: none; }
 .panel-tree { outline: none; }
 .panel-tree-row { display: flex; min-width: 0; height: 22px; min-height: 22px; align-items: center; gap: 7px; padding: 0 7px; overflow: hidden; border: 1px solid transparent; border-radius: 4px; color: var(--text); font-size: 12px; outline: none; user-select: none; white-space: nowrap; }
@@ -131,7 +131,7 @@ h2, h3, p { margin-top: 0; }
 .tree-state strong { color: inherit; font: inherit; font-weight: 500; }
 .tree-state p { margin: 2px 0 0; }
 .tree-state[role='alert'] { border: 1px solid var(--error-border); border-radius: 4px; background: var(--error-bg); color: var(--error-text); }
-.shell-main { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.shell-main { display: flex; flex: 1; min-width: 200px; flex-direction: column; }
 .dock-host { flex: 1; min-height: 0; min-width: 0; }
 .dockview-theme-herder {
   --dv-paneview-active-outline-color: var(--accent); --dv-tabs-and-actions-container-font-size: 12px; --dv-tabs-and-actions-container-height: 32px;

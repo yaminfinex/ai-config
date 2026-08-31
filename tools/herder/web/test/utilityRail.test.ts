@@ -29,14 +29,28 @@ test('the utility rail stays hand-rolled and collapsed rails reserve no layout g
   const rail = readFileSync(new URL('../src/features/layout/UtilityRail.tsx', import.meta.url), 'utf8')
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.doesNotMatch(rail, /dockview/i)
   assert.match(rail, /rail-toggle-collapsed/)
   assert.match(rail, /if \(collapsed\)/)
   assert.match(app, /<UtilityRail[\s\S]*side="left"[\s\S]*<section className="shell-main">[\s\S]*<UtilityRail[\s\S]*side="right"/)
   assert.doesNotMatch(controller, /toggleNotesRail[\s\S]{0,300}(?:pushState|replaceState|updateHistory)/)
+  assert.match(styles, /\.rail-toggle-collapsed \{[^}]*top: 76px/)
 })
 
-test('reset cannot resurrect migrated v2 rail preferences', () => {
+test('open rails shrink before the centre can collapse at the minimum viewport', () => {
+  const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.utility-rail \{[^}]*flex: 0 1 auto/)
+  assert.match(styles, /\.shell-main \{[^}]*min-width: 200px/)
+})
+
+test('notes empty-state copy uses the accessible secondary text colour', () => {
+  const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.notes-rail-empty \{[^}]*color: var\(--dim\)/)
+})
+
+test('reset cannot resurrect legacy v1 or migrated v2 rail preferences', () => {
   const persistence = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
   assert.match(persistence, /removeItem\(v2LayoutStorageKey\)/)
+  assert.match(persistence, /removeItem\(legacyLayoutStorageKey\)/)
 })
