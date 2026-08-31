@@ -217,6 +217,17 @@ func TestEntriesEndpointRefusesMissingSubagentTranscriptHonestly(t *testing.T) {
 	}
 }
 
+func TestEntriesEndpointKeepsNonDegradeSubagentResolveRefusalPlain(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	deps := entryDepsWithRow(hcomidentity.Row{
+		Name: "probe-child", Tool: "claude", Status: "active", ParentName: "fame", AgentID: "INVALID-SUBAGENT-ID",
+	})
+	response := requestEntries(t, deps, "/api/agents/probe-child/entries?limit=10")
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"no session"`) || strings.Contains(response.Body.String(), `"error":"no independent transcript"`) {
+		t.Fatalf("non-degrade subagent refusal = %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestReadQueueExclusionsUsesToolSpecificCompactBoundaryPolicy(t *testing.T) {
 	for _, fixture := range []struct {
 		name              string

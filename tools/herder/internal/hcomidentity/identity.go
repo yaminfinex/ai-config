@@ -162,7 +162,7 @@ func DecodeStopped(requestedName string, raw []byte) (Row, error) {
 }
 
 var stoppedSubagentAgentID = regexp.MustCompile(`^[0-9a-f]{17}$`)
-var stoppedSubagentParentSessionID = regexp.MustCompile(`^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$`)
+var stoppedSubagentParentSessionID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // stoppedSubagentEvidence recognizes only the Claude layout observed on disk:
 // <parent-session>/subagents/agent-<17 lowercase hex>.jsonl. A shape mismatch

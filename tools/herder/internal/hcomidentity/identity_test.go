@@ -50,7 +50,10 @@ func TestDecodeStoppedCarriesValidatedSubagentTranscriptEvidence(t *testing.T) {
 
 	for _, transcript := range []string{
 		"/fixture/projects/slug/not-a-session/subagents/agent-" + agentID + ".jsonl",
-		"/fixture/projects/slug/" + parentSessionID + "/subagents/agent-too-short.jsonl",
+		"/fixture/projects/slug/C28B3424-9BAF-4808-A7A2-A728A5340BAC/subagents/agent-" + agentID + ".jsonl",
+		"/fixture/projects/slug/" + parentSessionID + "/subagents/agent-a49beeb7f81d4658.jsonl",
+		"/fixture/projects/slug/" + parentSessionID + "/subagents/agent-a49beeb7f81d465860.jsonl",
+		"/fixture/projects/slug/" + parentSessionID + "/subagents/agent-A49beeb7f81d46586.jsonl",
 		"/fixture/projects/slug/" + parentSessionID + "/other/agent-" + agentID + ".jsonl",
 	} {
 		malformed := []byte("Stopped: child\n  Time: now\n  Tool: claude\n  Transcript: " + transcript + "\n")
