@@ -102,10 +102,17 @@ test('all concrete stylesheet colors live in the light/dark token declarations',
 test('compact pill text tokens meet WCAG AA contrast in both themes', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   for (const block of themeBlocks(css)) {
-    for (const tone of ['tool', 'thinking', 'message', 'other']) {
-      const foreground = block.match(new RegExp(`--pill-${tone}-text: (#[\\da-f]{6})`, 'i'))?.[1]
-      const background = block.match(new RegExp(`--pill-${tone}-bg: (#[\\da-f]{6})`, 'i'))?.[1]
-      assert.ok(foreground && background, `${tone} pill tokens must be concrete theme declarations`)
+    for (const [tone, tokenPrefix] of [
+      ['tool', 'pill-tool'],
+      ['thinking', 'pill-thinking'],
+      ['message', 'pill-message'],
+      ['other', 'pill-other'],
+      ['assistant-status', 'info'],
+    ]) {
+      const border = block.match(new RegExp(`--${tokenPrefix}-border: (#[\\da-f]{6})`, 'i'))?.[1]
+      const foreground = block.match(new RegExp(`--${tokenPrefix}-text: (#[\\da-f]{6})`, 'i'))?.[1]
+      const background = block.match(new RegExp(`--${tokenPrefix}-bg: (#[\\da-f]{6})`, 'i'))?.[1]
+      assert.ok(border && foreground && background, `${tone} pill tokens must be concrete theme declarations`)
       const ratio = contrast(foreground, background)
       assert.ok(ratio >= 4.5, `${tone} pill contrast ${ratio.toFixed(2)} must meet WCAG AA`)
     }

@@ -477,6 +477,7 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .activity-strip[open] > summary::before { transform: rotate(90deg); }
 .activity-strip > summary:hover, .activity-strip[open] > summary { border-color: var(--border); background: var(--bg2); }
 .activity-pill { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: 10px; background: var(--chip); color: var(--dim); font: 9px var(--mono); white-space: nowrap; }
+.activity-pill.assistant-status { border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); }
 .activity-pill.tool { border-color: var(--pill-tool-border); background: var(--pill-tool-bg); color: var(--pill-tool-text); }
 .activity-pill.thinking { border-color: var(--pill-thinking-border); background: var(--pill-thinking-bg); color: var(--pill-thinking-text); }
 .activity-pill.message { border-color: var(--pill-message-border); background: var(--pill-message-bg); color: var(--pill-message-text); }

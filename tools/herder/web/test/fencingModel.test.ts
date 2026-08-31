@@ -83,5 +83,9 @@ test('internal pills and status chips use established AA theme token pairs', () 
   const component = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
   assert.match(component, /<summary className="activity-pill thinking">/)
   assert.match(component, /<span className="activity-pill assistant-status"/)
-  assert.match(css, /\.assistant-status \{[^}]*var\(--info-border\)[^}]*var\(--info-bg\)[^}]*var\(--info-text\)/s)
+  assert.match(css, /\.activity-pill\.assistant-status \{[^}]*var\(--info-border\)[^}]*var\(--info-bg\)[^}]*var\(--info-text\)/s)
+  assert.ok(
+    css.indexOf('.activity-pill.assistant-status {') > css.indexOf('.activity-pill {'),
+    'assistant-status pill rule must follow the base pill rule to win the cascade',
+  )
 })
