@@ -733,10 +733,12 @@ func TestDeliveryWatermarkIsRecipientScopedAndPositionBased(t *testing.T) {
 	}
 }
 
-func TestCapturedMissingTranscriptProofClearsFromRecipientWatermark(t *testing.T) {
+func TestCapturedDeliveryClearingUsesTranscriptOrRecipientWatermark(t *testing.T) {
 	for _, test := range []struct {
 		name, fixture, id, recipient, recipientBase, sentAt, msgTS string
 		position                                                   int64
+		transcriptProof                                            bool
+		wantDeliveries                                             int
 	}{
 		{
 			name: "post-tool task history batch", fixture: "claude-posttool-task-history.jsonl",
@@ -746,7 +748,7 @@ func TestCapturedMissingTranscriptProofClearsFromRecipientWatermark(t *testing.T
 		{
 			name: "stop hook idle wake", fixture: "claude-stop-hook-feedback.jsonl",
 			id: "161525", recipient: "zuma", sentAt: "2026-08-30T20:20:14.553415+00:00",
-			position: 161525, msgTS: "2026-08-30T20:20:14.553415+00:00",
+			position: 161525, msgTS: "2026-08-30T20:20:14.553415+00:00", transcriptProof: true, wantDeliveries: 1,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -754,10 +756,14 @@ func TestCapturedMissingTranscriptProofClearsFromRecipientWatermark(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
+			deliveries := 0
 			for _, entry := range read.Entries {
 				if entry.Kind == claudesession.KindHcomDelivery {
-					t.Fatalf("captured unsupported hook shape normalized as delivery: %#v", entry)
+					deliveries++
 				}
+			}
+			if deliveries != test.wantDeliveries {
+				t.Fatalf("structural deliveries = %d, want %d", deliveries, test.wantDeliveries)
 			}
 			candidates := map[string]queueCandidate{
 				test.id: {
@@ -769,8 +775,8 @@ func TestCapturedMissingTranscriptProofClearsFromRecipientWatermark(t *testing.T
 			if err := proof.observe(read.Entries, candidates); err != nil {
 				t.Fatal(err)
 			}
-			if proof.excluded[test.id] {
-				t.Fatal("current transcript logic unexpectedly cleared captured failure")
+			if proof.excluded[test.id] != test.transcriptProof {
+				t.Fatalf("transcript proof exclusion = %v, want %v", proof.excluded[test.id], test.transcriptProof)
 			}
 			watermark := hcomevents.DeliveryWatermark{Recipient: test.recipient, Position: test.position, MessageTimestamp: test.msgTS}
 			excluded := excludeDeliveredCandidates(candidates, proof.excluded, watermark)
