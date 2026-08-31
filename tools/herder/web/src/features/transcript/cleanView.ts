@@ -1,4 +1,5 @@
 import type { EntryKind } from '../../types'
+import { parseAssistantFencing } from './fencingModel.ts'
 
 export type CleanViewDisposition = 'show' | 'delivery' | 'activity' | 'system' | 'hide'
 
@@ -24,7 +25,8 @@ export const cleanViewDisposition = {
 type DeliveryValue = Record<string, unknown>
 type CleanViewStorage = Pick<Storage, 'getItem' | 'setItem'>
 export type TranscriptViewMode = 'compact' | 'normal' | 'full'
-export type ActivityPillTone = 'tool' | 'thinking' | 'message' | 'other'
+export type ActivityPillTone = 'tool' | 'thinking' | 'message' | 'other' | 'assistant-status'
+export type ActivityAggregation = { category: string, content: string }
 
 const legacyCleanViewPreferencePrefix = 'herder.web.cleanView.v1:'
 const legacyShowSystemPreferencePrefix = 'herder.web.showSystem.v1:'
@@ -40,17 +42,40 @@ export function isCleanConversationDelivery(delivery: DeliveryValue): boolean {
   return delivery.sender !== '[hcom-launcher]' && delivery.intent !== 'ack'
 }
 
-export function aggregateActivityPills<T extends { key: string, label: string }>(activities: T[], canAggregate: (activity: T) => boolean) {
+export function aggregateActivityPills<T extends { key: string, label: string, aggregation?: ActivityAggregation }>(activities: T[]) {
   const pills: Array<T & { count: number }> = []
   activities.forEach((activity) => {
     const previous = pills[pills.length - 1]
-    if (canAggregate(activity) && previous?.label === activity.label) {
+    if (activity.aggregation && previous?.aggregation?.category === activity.aggregation.category && previous.aggregation.content === activity.aggregation.content) {
       previous.count++
       return
     }
     pills.push({ ...activity, count: 1 })
   })
   return pills
+}
+
+export function markerOnlyAssistantActivity(content: string) {
+  const fencing = parseAssistantFencing(content)
+  if (!fencing.fenced || fencing.hasVisibleText) return null
+  const markers = fencing.segments.filter((segment) => segment.kind !== 'text')
+  if (markers.length === 0) return null
+
+  const statuses = markers.filter((segment) => segment.kind === 'status')
+  const hasInternal = markers.some((segment) => segment.kind === 'internal')
+  const category = statuses.length > 0 ? hasInternal ? 'mixed' : 'status' : 'internal'
+  const label = [
+    ...statuses.map((segment) => segment.content.trim() ? segment.content : 'status'),
+    ...(hasInternal ? ['internal note'] : []),
+  ].join(' · ')
+  const title = markers.map((segment) => segment.content.trim()).filter(Boolean).join('\n') || label
+
+  return {
+    label,
+    tone: statuses.length > 0 ? 'assistant-status' as const : 'thinking' as const,
+    title,
+    aggregation: { category: `assistant-${category}`, content },
+  }
 }
 
 export function splitFinalActivityRun<T>(rows: readonly { type: string, activities?: readonly T[] }[]) {

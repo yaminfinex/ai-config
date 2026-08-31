@@ -474,12 +474,13 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .activity-strip { margin: 5px 0; }
 .activity-latest { margin: 5px 0; }
 .activity-latest-age { display: flex; align-items: center; gap: 4px; min-height: 18px; padding: 0 9px; color: var(--dimmer); font: 9px var(--mono); }
-.activity-strip > summary { display: flex; min-height: 24px; align-items: center; gap: 5px; overflow-x: auto; padding: 2px 5px; list-style: none; border: 1px solid transparent; border-radius: 6px; }
+.activity-strip > summary { display: flex; min-height: 24px; flex-wrap: wrap; align-items: center; gap: 5px; padding: 2px 5px; list-style: none; border: 1px solid transparent; border-radius: 6px; }
 .activity-strip > summary::-webkit-details-marker { display: none; }
 .activity-strip > summary::before { content: '›'; flex: 0 0 auto; color: var(--dimmer); font-size: 14px; line-height: 1; transition: transform 100ms ease; }
 .activity-strip[open] > summary::before { transform: rotate(90deg); }
 .activity-strip > summary:hover, .activity-strip[open] > summary { border-color: var(--border); background: var(--bg2); }
 .activity-pill { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: 10px; background: var(--chip); color: var(--dim); font: 9px var(--mono); white-space: nowrap; }
+.activity-pill.assistant-status { border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); }
 .activity-pill.tool { border-color: var(--pill-tool-border); background: var(--pill-tool-bg); color: var(--pill-tool-text); }
 .activity-pill.thinking { border-color: var(--pill-thinking-border); background: var(--pill-thinking-bg); color: var(--pill-thinking-text); }
 .activity-pill.message { border-color: var(--pill-message-border); background: var(--pill-message-bg); color: var(--pill-message-text); }
