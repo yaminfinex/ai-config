@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FunctionComponent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FunctionComponent } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import type { IDockviewPanelHeaderProps, IDockviewPanelProps } from 'dockview-react'
 import { queryKeys } from '../../api/client'
@@ -17,6 +17,7 @@ import { screenIdentityState, type AgentPanelParams, type ChangesPanelParams, ty
 import { useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext'
 import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace, type PanelKind } from './panelRegistryModel'
 import { liveRosterNames } from '../notes/notesPresentation'
+import { useDockTabMenu } from './DockTabMenu'
 
 function usePanelVisibility(api: IDockviewPanelProps['api']) {
   const [visible, setVisible] = useState(api.isVisible)
@@ -139,14 +140,17 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
   const status = params.kind === 'agent' && boardStatus === '-' ? data.agentStatuses[params.name] ?? '-' : boardStatus
   // Agent tabs stay terse: a status dot plus a tool badge, no status prose (owner ruling 2026-08-30).
   const meta = params.kind === 'agent' ? '' : presentation.meta
-  return <div className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
+  const tabRef = useRef<HTMLDivElement | null>(null)
+  const tabMenu = useDockTabMenu(tabRef, api.id, params)
+  return <><div ref={tabRef} className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
+    onContextMenu={tabMenu.onContextMenu}
     onDoubleClick={(event) => { if (params.preview) actions.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) actions.closePanel(api.id) }}>
     <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{presentation.icon}{presentation.title}</span>
     {params.kind === 'agent' && <span className="dock-tab-meta"><AgentStatusDot status={status} /><ToolBadge tool={agentBoardTool(data.board, params.name)} /></span>}
     {params.kind !== 'agent' && meta && <span className="dock-tab-meta">{meta}</span>}
     <button type="button" className="dock-tab-close" aria-label={`Close ${presentation.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closePanel(api.id)}>×</button>
-  </div>
+  </div>{tabMenu.menu}</>
 }
 
 export { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace }

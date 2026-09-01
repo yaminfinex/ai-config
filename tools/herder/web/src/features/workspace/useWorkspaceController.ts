@@ -20,7 +20,7 @@ import {
   shouldReplayInitialRoute,
   type HistoryCause,
 } from '../layout/historyModel'
-import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
+import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, writePanelToStoredSpace, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import { panelID } from './panelRegistry'
 import { panelFromAPI, useWorkspaceActions } from './useWorkspaceActions'
 import { usePanelRecords } from './usePanelRecords'
@@ -29,11 +29,15 @@ import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import {
   createSpacesStore,
+  createAndSwitchSpace,
   closeSpaceLayout,
+  hasRecoverableSpaceLayout,
   initializeSpaces,
   defaultMaxSpaces,
   moveBeforeActiveClose,
   performSpaceSwitch,
+  sendPanelToExistingSpace,
+  sendPanelToNewSpace as sendPanelToNewSpaceModel,
   readLegacyLayoutFamilies,
   readActiveSpace,
   removeLayoutRecovery,
@@ -86,7 +90,7 @@ function initializeBrowserSpaces(): SpacesRuntime {
       'Spaces are unavailable because their saved definitions could not be read. Your current layout is still being saved.',
       readLegacyLayoutFamilies(localStorage),
     )
-    return { initialization, store, spaces, recent: store.recentlyClosed(), activeSpaceID, status: store.status(), problem: store.status().problem }
+    return { initialization, store, spaces, recent: store.recentlyClosed().filter((space) => hasRecoverableSpaceLayout(localStorage, space.id)), activeSpaceID, status: store.status(), problem: store.status().problem }
   } catch {
     const initialization = initializeSpaces({
       getItem: () => null,
@@ -137,7 +141,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     if (!store) return
     const refresh = () => {
       setSpaces(store.list())
-      setRecentSpaces(store.recentlyClosed())
+      setRecentSpaces(store.recentlyClosed().filter((space) => hasRecoverableSpaceLayout(localStorage, space.id)))
       setSpacesStatus(store.status())
       if (store.status().problem) setSpaceProblem(store.status().problem)
     }
@@ -315,6 +319,19 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setSpaceProblem(store.status().problem)
     return result
   }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
+  const createNamedSpace = useCallback((name: string) => {
+    const store = spacesRuntime.store
+    if (!store) { setSpaceProblem(spacesRuntime.problem); return false }
+    const result = createAndSwitchSpace(name, {
+      create: store.create,
+      rename: store.rename,
+      switchTo: switchSpace,
+      rollbackCreate: store.rollbackCreate,
+      flush: store.flush,
+    })
+    setSpaceProblem(result.ok ? store.status().problem : result.reason)
+    return result.ok
+  }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
   const renameSpace = useCallback((id: string, name: string) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
@@ -368,6 +385,37 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setSpaceProblem(store.status().problem)
     return reopened
   }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
+  const sendPanelToSpace = useCallback((sourceID: string, params: DockPanelParams, spaceID: string) => {
+    try {
+      const result = sendPanelToExistingSpace(spaceID, params, {
+        write: writePanelToStoredSpace.bind(undefined, localStorage),
+        closeSource: () => closePanel(sourceID),
+      })
+      setSpaceProblem(result.ok ? spacesRuntime.store?.status().problem ?? '' : result.reason)
+      return result.ok
+    } catch {
+      setSpaceProblem('This pane could not be sent because browser storage is unavailable. Nothing was discarded.')
+      return false
+    }
+  }, [closePanel, spacesRuntime.store])
+  const sendPanelToNewSpace = useCallback((sourceID: string, params: DockPanelParams) => {
+    const store = spacesRuntime.store
+    if (!store) { setSpaceProblem(spacesRuntime.problem); return false }
+    try {
+      const result = sendPanelToNewSpaceModel(params, {
+        create: store.create,
+        rollbackCreate: store.rollbackCreate,
+        write: writePanelToStoredSpace.bind(undefined, localStorage),
+        flush: store.flush,
+        closeSource: () => closePanel(sourceID),
+      })
+      setSpaceProblem(result.ok ? store.status().problem : result.reason)
+      return result.ok
+    } catch {
+      setSpaceProblem('This pane could not be sent because browser storage is unavailable. Nothing was discarded.')
+      return false
+    }
+  }, [closePanel, spacesRuntime.problem, spacesRuntime.store])
   const toggleFleetRail = useCallback(() => {
     layout.setFleetRail((rail) => ({ ...rail, collapsed: !rail.collapsed }))
   }, [layout.setFleetRail])
@@ -382,7 +430,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       window.requestAnimationFrame(() => target?.isConnected && target.focus())
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail })
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
@@ -395,11 +443,12 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
     setAgentScreenPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
-    resetLayout, showQuickOpen,
-  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
+    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace,
+  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
     board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
-  }), [agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, viewerReadOnly])
+    spaces, activeSpaceID,
+  }), [activeSpaceID, agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, spaces, viewerReadOnly])
 
   return {
     actions, data, fileWatchRegister: fileWatchRegistry.register,
@@ -424,6 +473,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       problem: spaceProblem,
       switch: switchSpace,
       create: createSpace,
+      createNamed: createNamedSpace,
       rename: renameSpace,
       close: closeSpace,
       reopen: reopenSpace,

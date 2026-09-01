@@ -4,6 +4,8 @@ import type { AgentMentionMatcher } from '../../shared/agentMentions'
 import type { FileViewMode } from '../files/fileTabs'
 import type { GitBase, GitFileState } from '../git/gitViewModel'
 import type { OpenPlacement } from '../layout/openPlacement'
+import type { DockPanelParams } from '../layout/dockLayout'
+import type { SpaceDefinition } from '../spaces/spacesModel'
 
 export type WorkspaceActionsValue = {
   openAgent: (name: string, preview: boolean, placement?: OpenPlacement, focus?: boolean) => void
@@ -22,6 +24,8 @@ export type WorkspaceActionsValue = {
   onAgentStatus: (name: string, status: string) => void
   resetLayout: () => void
   showQuickOpen: (groupID?: string) => void
+  sendPanelToSpace: (sourceID: string, params: DockPanelParams, spaceID: string) => boolean
+  sendPanelToNewSpace: (sourceID: string, params: DockPanelParams) => boolean
 }
 
 export type WorkspaceDataValue = {
@@ -32,6 +36,8 @@ export type WorkspaceDataValue = {
   folderSelectionHints: Record<string, FileTarget>
   agentScreenPanes: Record<string, string>
   agentStatuses: Record<string, string>
+  spaces: SpaceDefinition[]
+  activeSpaceID: string | null
 }
 
 export const WorkspaceActionsContext = createContext<WorkspaceActionsValue | null>(null)

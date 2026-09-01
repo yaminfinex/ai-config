@@ -17,7 +17,8 @@ import { ThemeToggle } from './shared/ThemeToggle'
 import { NotesProvider, useNotes } from './features/notes/NotesProvider'
 import { NotesRail } from './features/notes/NotesRail'
 import { shortcutLabels } from './features/layout/shellShortcuts'
-import { SpaceStrip } from './features/spaces/index.ts'
+import { defaultMaxSpaces, SpaceStrip } from './features/spaces/index.ts'
+import { liveRosterNames } from './features/notes/notesPresentation.ts'
 
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
@@ -64,15 +65,19 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   const health = statusBarHealth({ problems, substrateProof: stream.substrateProof, lastEventLabel: lastEvent })
   const shortcuts = shortcutLabels(navigator.userAgent)
   return <footer className="status-bar">
-    <div className="workspace-switcher-slot">{spaceStrip}</div>
-    <RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} />
-    {health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}
-    <span title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {viewerPending ? 'resolving…' : viewer}</span>
-    <NotesCount />
-    <span className="status-spacer" /><span>last event: {lastEvent}</span>
-    <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={onShortcuts}>?</button>
-    <ThemeToggle />
-    <RailStatusToggle side="right" label="Notes" shortcut={shortcuts.toggleNotesRail} collapsed={notesCollapsed} onToggle={onToggleNotes} />
+    <div className="status-primary">
+      <RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} />
+      <div className="workspace-switcher-slot">{spaceStrip}</div>
+    </div>
+    <div className="status-secondary">
+      <span className="status-health">{health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}</span>
+      <span className="status-user" title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {viewerPending ? 'resolving…' : viewer}</span>
+      <span className="status-notes-count"><NotesCount /></span>
+      <span className="status-last">last event: {lastEvent}</span>
+      <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={onShortcuts}>?</button>
+      <ThemeToggle />
+      <RailStatusToggle side="right" label="Notes" shortcut={shortcuts.toggleNotesRail} collapsed={notesCollapsed} onToggle={onToggleNotes} />
+    </div>
   </footer>
 }
 
@@ -83,7 +88,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
   } = workspace
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell">
-    <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder} />
+    <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup}
+      spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)} atSpaceCap={workspace.spaces.items.length >= defaultMaxSpaces}
+      onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder}
+      onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
     <UtilityRail side="left" label="Fleet" detail="herdr truth" headingStart={<span className="status-dot listening" />}
       width={fleetRail.width} collapsed={fleetRail.collapsed}

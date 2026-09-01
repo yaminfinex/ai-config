@@ -6,8 +6,9 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
   const labels = shortcutLabels(navigator.userAgent)
   const shortcuts = [
     [labels.closePanel, 'Close active pane'],
-    [labels.quickOpen, 'Quick open file or folder'],
+    [labels.quickOpen, 'Open spaces, agents, files, or folders'],
     [labels.switchTabs, 'Switch tabs'],
+    [labels.switchSpaces, 'Switch spaces'],
     [labels.focusFleet, 'Focus fleet sidebar'],
     [labels.toggleNotesRail, 'Toggle notes rail'],
     [labels.captureNote, 'Capture selected text as a note'],

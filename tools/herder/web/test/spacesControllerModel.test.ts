@@ -4,6 +4,10 @@ import test from 'node:test'
 import {
   moveBeforeActiveClose,
   performSpaceSwitch,
+  sendPanelToExistingSpace,
+  sendPanelToNewSpace,
+  createAndSwitchSpace,
+  spaceIDInDirection,
   type SpaceDockSource,
 } from '../src/features/spaces/spacesControllerModel.ts'
 
@@ -39,6 +43,93 @@ test('space switch flushes, suspends, restores through backup, completes, then s
     'dock:clear', 'restore:primary', 'dock:clear', 'restore:backup', 'recovered:review',
     'complete:review', 'active:review', 'history:replace', 'finish:true',
   ])
+})
+
+test('space cycling follows stored order and wraps both directions', () => {
+  const spaces = [
+    { id: 'a', name: 'a', order: 0, created: 0, updated: 0 },
+    { id: 'b', name: 'b', order: 1, created: 0, updated: 0 },
+    { id: 'c', name: 'c', order: 2, created: 0, updated: 0 },
+  ]
+  assert.equal(spaceIDInDirection(spaces, 'c', 'next'), 'a')
+  assert.equal(spaceIDInDirection(spaces, 'a', 'previous'), 'c')
+  assert.equal(spaceIDInDirection(spaces, 'missing', 'next'), 'a')
+})
+
+test('panel transfer closes the source only after the target write succeeds', () => {
+  const calls: string[] = []
+  const failed = sendPanelToExistingSpace('target', { id: 'panel' }, {
+    write: () => { calls.push('write'); return { ok: false, reason: 'corrupt' } },
+    closeSource: () => { calls.push('close') },
+  })
+  assert.equal(failed.ok, false)
+  assert.deepEqual(calls, ['write'])
+
+  calls.length = 0
+  const sent = sendPanelToExistingSpace('target', { id: 'panel' }, {
+    write: () => { calls.push('write'); return { ok: true, duplicate: false } },
+    closeSource: () => { calls.push('close') },
+  })
+  assert.equal(sent.ok, true)
+  assert.deepEqual(calls, ['write', 'close'])
+})
+
+test('send-to-new uses create and rolls back when the layout mutation fails', () => {
+  const fresh = { id: 'fresh', name: 'space 2', order: 1, created: 1, updated: 1 }
+  const calls: string[] = []
+  const result = sendPanelToNewSpace({ id: 'panel' }, {
+    create: () => { calls.push('create'); return { ok: true, value: fresh } },
+    rollbackCreate: (id) => { calls.push(`rollback:${id}`); return true },
+    write: (id) => { calls.push(`write:${id}`); return { ok: false, reason: 'write' } },
+    flush: () => { calls.push('flush'); return true },
+    closeSource: () => { calls.push('close') },
+  })
+  assert.equal(result.ok, false)
+  assert.deepEqual(calls, ['create', 'write:fresh', 'rollback:fresh'])
+})
+
+test('send-to-new flushes the shared store before closing the source', () => {
+  const fresh = { id: 'fresh', name: 'space 2', order: 1, created: 1, updated: 1 }
+  const calls: string[] = []
+  assert.equal(sendPanelToNewSpace({ id: 'panel' }, {
+    create: () => { calls.push('create'); return { ok: true, value: fresh } },
+    rollbackCreate: () => false,
+    write: (id) => { calls.push(`write:${id}`); return { ok: true, duplicate: false } },
+    flush: () => { calls.push('flush'); return true },
+    closeSource: () => { calls.push('close') },
+  }).ok, true)
+  assert.deepEqual(calls, ['create', 'write:fresh', 'flush', 'close'])
+})
+
+test('palette space creation renames then switches, rolling back either failure', () => {
+  const fresh = { id: 'fresh', name: 'space 2', order: 1, created: 1, updated: 1 }
+  for (const failAt of ['rename', 'switch'] as const) {
+    const calls: string[] = []
+    const result = createAndSwitchSpace('review', {
+      create: () => { calls.push('create'); return { ok: true, value: fresh } },
+      rename: () => { calls.push('rename'); return failAt === 'rename' ? { ok: false, reason: 'rename failed' } : { ok: true, value: { ...fresh, name: 'review' } } },
+      switchTo: () => { calls.push('switch'); return failAt !== 'switch' },
+      rollbackCreate: (id) => { calls.push(`rollback:${id}`); return true },
+      flush: () => { calls.push('flush'); return true },
+    })
+    assert.equal(result.ok, false)
+    assert.deepEqual(calls, failAt === 'rename'
+      ? ['create', 'rename', 'rollback:fresh']
+      : ['create', 'rename', 'switch', 'rollback:fresh'])
+  }
+})
+
+test('palette space creation flushes only after a successful switch', () => {
+  const fresh = { id: 'fresh', name: 'space 2', order: 1, created: 1, updated: 1 }
+  const calls: string[] = []
+  assert.equal(createAndSwitchSpace('review', {
+    create: () => { calls.push('create'); return { ok: true, value: fresh } },
+    rename: () => { calls.push('rename'); return { ok: true, value: { ...fresh, name: 'review' } } },
+    switchTo: () => { calls.push('switch'); return true },
+    rollbackCreate: () => false,
+    flush: () => { calls.push('flush'); return true },
+  }).ok, true)
+  assert.deepEqual(calls, ['create', 'rename', 'switch', 'flush'])
 })
 
 test('failed primary and backup restore clears to empty before the visible failure result', () => {

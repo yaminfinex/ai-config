@@ -86,6 +86,7 @@ export function subscribeToFleet(
   let watchdog: number | null = null
   const transcriptRefreshTimers = new Map<string, number>()
   let backoff = 500
+  let hasOpened = false
   let lastActivity = Date.now()
   const names = [...new Set(agentNames)].sort()
   const panes = [...new Set(screenPaneIDs)].sort()
@@ -143,11 +144,15 @@ export function subscribeToFleet(
       touch()
       backoff = 500
       update((current) => ({ ...current, problems: without(current.problems, 'stream') }))
-      names.forEach((name) => {
-        void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
-        void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
-      })
-      fileWatches.forEach(invalidateFileWatch)
+      const catchUp = hasOpened
+      hasOpened = true
+      if (catchUp) {
+        names.forEach((name) => {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
+          void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+        })
+        fileWatches.forEach(invalidateFileWatch)
+      }
     }
     events.onerror = () => scheduleReconnect('Live stream disconnected; reconnecting…')
     events.addEventListener('hello', (event) => {
@@ -228,6 +233,31 @@ export function subscribeToFleet(
   }
 }
 
+export function deferFleetSubscription(
+  subscribe: () => () => void,
+  scheduleFrame: (callback: () => void) => number = (callback) => window.requestAnimationFrame(callback),
+  cancelFrame: (handle: number) => void = (handle) => window.cancelAnimationFrame(handle),
+  scheduleSettle: (callback: () => void) => number = (callback) => window.setTimeout(callback, 60),
+  cancelSettle: (handle: number) => void = (handle) => window.clearTimeout(handle),
+) {
+  let pending = true
+  let stop: (() => void) | undefined
+  let settleHandle: number | null = null
+  const frameHandle = scheduleFrame(() => {
+    settleHandle = scheduleSettle(() => {
+      pending = false
+      stop = subscribe()
+    })
+  })
+  return () => {
+    if (pending) {
+      cancelFrame(frameHandle)
+      if (settleHandle !== null) cancelSettle(settleHandle)
+    }
+    stop?.()
+  }
+}
+
 export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string) {
   const queryClient = useQueryClient()
   const previousScreenSubscription = useRef('')
@@ -243,13 +273,13 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
     }
     previousScreenSubscription.current = screenSubscription
   }, [queryClient, screenSubscription])
-  useEffect(() => subscribeToFleet(
+  useEffect(() => deferFleetSubscription(() => subscribeToFleet(
     queryClient,
     subscription ? subscription.split(',') : [],
     screenSubscription ? screenSubscription.split(',') : [],
     JSON.parse(fileWatchSubscription) as FileWatchTarget[],
     focusedScreenPaneID,
-  ), [fileWatchSubscription, focusedScreenPaneID, queryClient, subscription, screenSubscription])
+  )), [fileWatchSubscription, focusedScreenPaneID, queryClient, subscription, screenSubscription])
 }
 
 export function useStreamStatus() {

@@ -1,8 +1,9 @@
 export { SpaceStrip } from './SpaceStrip.tsx'
-export { moveBeforeActiveClose, performSpaceSwitch, restoreSpaceDock } from './spacesControllerModel.ts'
+export { createAndSwitchSpace, moveBeforeActiveClose, performSpaceSwitch, restoreSpaceDock, sendPanelToExistingSpace, sendPanelToNewSpace, spaceIDInDirection } from './spacesControllerModel.ts'
 export { createSpacesStore, defaultMaxSpaces, type SpacesStatus, type SpacesStore } from './spacesStore.ts'
 export {
   closeSpaceLayout,
+  hasRecoverableSpaceLayout,
   initializeSpaces,
   readLegacyLayoutFamilies,
   readActiveSpace,

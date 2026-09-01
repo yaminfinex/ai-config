@@ -3,12 +3,14 @@ import type { DockviewApi } from 'dockview-react'
 import { useDOMEvent } from '../../shared/lifecycle'
 import {
   persistableDockLayout,
+  catchUpExternalPanels,
   readStoredSpaceLayout,
   type LegacyLayout,
   type LayoutWriteState,
   type StoredLayout,
   type StoredSpaceLayout,
 } from './dockLayout'
+import { panelPresentation } from '../workspace/panelRegistryModel.ts'
 import { persistLayoutSnapshot } from './layoutPersistenceModel.ts'
 import { defaultRailPreferences, type RailPreference } from './utilityRailModel'
 import {
@@ -20,6 +22,7 @@ import {
   activeSpaceSessionKey,
   clearAllLayoutFamilies,
   readLegacyLayoutFamilies,
+  spaceLayoutKey,
   type SpacesInitialization,
 } from '../spaces/spacesModel.ts'
 
@@ -230,6 +233,19 @@ export function useLayoutPersistence(
   }, [cancelTimer, dockReady, expandedItems, fleetRail, flushAll, initialization.mode, knownWorkspaceItems, notesRail, revision])
 
   useDOMEvent(window, 'pagehide', () => { flushAll() })
+  useDOMEvent<StorageEvent>(window, 'storage', (event) => {
+    if (initialization.mode !== 'spaces' || !dockReady || event.key !== spaceLayoutKey(restoredSpaceID.current ?? '')) return
+    const api = apiRef.current
+    if (!api) return
+    const added = catchUpExternalPanels(event.newValue, {
+      hasPanel: (id) => Boolean(api.getPanel(id)),
+      addPanel: (id, params) => {
+        const presentation = panelPresentation(params)
+        api.addPanel({ id, component: params.kind, tabComponent: 'herder-tab', title: presentation.title, params })
+      },
+    })
+    if (added.length > 0) layoutDirty.current = true
+  }, undefined, initialization.mode === 'spaces' && dockReady)
 
   return {
     initial,
