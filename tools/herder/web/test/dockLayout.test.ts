@@ -4,13 +4,17 @@ import {
   layoutStorageBackupKey,
   layoutStorageKey,
   parseLegacyLayout,
+  parseStoredSpaceLayout,
   parseStoredLayout,
   pinMovedPreview,
   persistableDockLayout,
   readStoredLayout,
+  readStoredSpaceLayout,
   restoreDockLayout,
   screenIdentityState,
   writeStoredLayout,
+  writeStoredSpaceLayout,
+  spaceLayoutRecoveryPrefix,
   type DockPanelParams,
   type ScreenPanelParams,
 } from '../src/features/layout/dockLayout.ts'
@@ -95,6 +99,38 @@ test('v3 rail widths and collapsed states round-trip together', () => {
     fleet: { width: 320, collapsed: true },
     notes: { width: 240, collapsed: false },
   })
+})
+
+test('v4 dock-only layouts reuse the one sanitizer and isolate keys by space', () => {
+  const raw = JSON.stringify({ version: 4, dock: singleGroupDock })
+  const parsed = parseStoredSpaceLayout(raw)
+  assert.ok(parsed?.layout.dock)
+  assert.equal(parsed.layout.dock.grid.root.type, 'branch')
+
+  const values = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  const initial = { recovering: false, lastGoodRaw: null }
+  assert.notEqual(writeStoredSpaceLayout(storage, 'alpha', raw, initial), initial)
+  assert.notEqual(writeStoredSpaceLayout(storage, 'beta', JSON.stringify({ version: 4, dock: null }), initial), initial)
+  assert.ok(readStoredSpaceLayout(storage, 'alpha').stored?.dock)
+  assert.equal(readStoredSpaceLayout(storage, 'beta').stored?.dock, null)
+})
+
+test('one corrupt v4 space preserves raw and cannot poison another space', () => {
+  const values = new Map<string, string>([
+    ['herder.web.layout.v4:alpha', '{broken'],
+    ['herder.web.layout.v4:beta', JSON.stringify({ version: 4, dock: singleGroupDock })],
+  ])
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  assert.equal(readStoredSpaceLayout(storage, 'alpha').stored, null)
+  assert.ok(values.has(`${spaceLayoutRecoveryPrefix}alpha`))
+  assert.ok(readStoredSpaceLayout(storage, 'beta').stored?.dock)
 })
 
 test('an invalid v3 rail preference falls back to the last-good layout', () => {

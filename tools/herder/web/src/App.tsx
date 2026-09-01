@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { QuickOpen } from './features/files/QuickOpen'
@@ -17,6 +17,7 @@ import { ThemeToggle } from './shared/ThemeToggle'
 import { NotesProvider, useNotes } from './features/notes/NotesProvider'
 import { NotesRail } from './features/notes/NotesRail'
 import { shortcutLabels } from './features/layout/shellShortcuts'
+import { SpaceStrip } from './features/spaces/index.ts'
 
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
@@ -37,16 +38,16 @@ function streamProblems(problems: Record<string, string>, fleetProblem: string) 
   return { ...problems, ...(fleetProblem ? { fleet: fleetProblem } : {}) }
 }
 
-function StreamBanners({ fleetProblem, viewerProblem, flushLayout }: { fleetProblem: string, viewerProblem: string, flushLayout: () => void }) {
+function StreamBanners({ fleetProblem, viewerProblem, spaceProblem, flushLayout }: { fleetProblem: string, viewerProblem: string, spaceProblem: string, flushLayout: () => void }) {
   const stream = useStreamAlerts()
   const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
   return <div className="shell-banners">
     {stream.serverUpdated && <div className="banner server-update" role="alert"><strong>update</strong><span>Server updated — refresh to load the new version</span><button type="button" onClick={() => { flushLayout(); window.location.reload() }}>Refresh</button></div>}
-    {viewerProblem && <Banner source="viewer" detail={viewerProblem} />}{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} tone={source === 'stream' && detail === 'Connecting to live fleet…' ? 'info' : 'error'} key={source} />)}
+    {viewerProblem && <Banner source="viewer" detail={viewerProblem} />}{spaceProblem && <Banner source="space" detail={spaceProblem} />}{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} tone={source === 'stream' && detail === 'Connecting to live fleet…' ? 'info' : 'error'} key={source} />)}
   </div>
 }
 
-function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts }: {
+function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, spaceStrip }: {
   fleetProblem: string
   viewer: string
   viewerPending: boolean
@@ -55,6 +56,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   onToggleFleet: () => void
   onToggleNotes: () => void
   onShortcuts: () => void
+  spaceStrip: ReactNode
 }) {
   const stream = useStreamStatus()
   const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
@@ -62,7 +64,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   const health = statusBarHealth({ problems, substrateProof: stream.substrateProof, lastEventLabel: lastEvent })
   const shortcuts = shortcutLabels(navigator.userAgent)
   return <footer className="status-bar">
-    <span className="workspace-switcher-slot" aria-hidden="true" />
+    <div className="workspace-switcher-slot">{spaceStrip}</div>
     <RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} />
     {health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}
     <span title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {viewerPending ? 'resolving…' : viewer}</span>
@@ -91,7 +93,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
     </UtilityRail>
     <section className="shell-main">
-      <StreamBanners fleetProblem={workspace.fleetProblem} viewerProblem={workspace.viewerProblem} flushLayout={workspace.flushLayout} />
+      <StreamBanners fleetProblem={workspace.fleetProblem} viewerProblem={workspace.viewerProblem} spaceProblem={workspace.spaces.enabled ? workspace.spaceProblem : ''} flushLayout={workspace.flushLayout} />
       <div className="dock-host">
         <DockviewReact components={dockComponents} tabComponents={{ 'herder-tab': DockTab }} rightHeaderActionsComponent={DockHeaderActions} watermarkComponent={DockWatermark}
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
@@ -100,7 +102,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       <StreamStatusBar fleetProblem={workspace.fleetProblem} viewer={workspace.viewer} viewerPending={workspace.viewerPending}
         fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
         onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
-        onShortcuts={() => workspace.setShortcutReference(true)} />
+        onShortcuts={() => workspace.setShortcutReference(true)}
+        spaceStrip={<SpaceStrip {...workspace.spaces} />} />
     </section>
     <UtilityRail side="right" label="Notes" width={notesRail.width} collapsed={notesRail.collapsed}
       onWidth={(width) => setNotesRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleNotesRail}>

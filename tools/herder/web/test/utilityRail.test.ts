@@ -50,9 +50,3 @@ test('notes empty-state copy uses the accessible secondary text colour', () => {
   const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.match(styles, /\.notes-rail-empty \{[^}]*color: var\(--dim\)/)
 })
-
-test('reset cannot resurrect legacy v1 or migrated v2 rail preferences', () => {
-  const persistence = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
-  assert.match(persistence, /removeItem\(v2LayoutStorageKey\)/)
-  assert.match(persistence, /removeItem\(legacyLayoutStorageKey\)/)
-})

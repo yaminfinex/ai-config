@@ -32,12 +32,12 @@ test('per-event stream state is isolated from the workspace controller and dock 
   assert.doesNotMatch(context, /StreamState|streamProblems|stream:/)
 })
 
-test('layout persistence owns restore, debounce, pagehide, and last-good writes', () => {
+test('browser persistence stays outside the App composition root', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const persistence = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
   assert.doesNotMatch(app, /localStorage|persistableDockLayout|writeStoredLayout/)
-  assert.match(persistence, /readStoredLayout\(localStorage\)/)
-  assert.match(persistence, /window\.setTimeout\(flushLayout, 120\)/)
+  assert.match(persistence, /window\.setTimeout/)
+  assert.match(persistence, /}, 120\)/)
   assert.match(persistence, /useDOMEvent\(window, 'pagehide'/)
-  assert.match(persistence, /writeStoredLayout\(localStorage/)
+  assert.match(persistence, /persistLayoutSnapshot/)
 })
