@@ -38,6 +38,7 @@ export type WorkspaceDataValue = {
   agentStatuses: Record<string, string>
   spaces: SpaceDefinition[]
   activeSpaceID: string | null
+  activePanel: { id: string, params: DockPanelParams } | null
 }
 
 export const WorkspaceActionsContext = createContext<WorkspaceActionsValue | null>(null)

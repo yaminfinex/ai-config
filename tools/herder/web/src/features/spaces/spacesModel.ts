@@ -134,14 +134,18 @@ export function initializeSpaces(storage: MigrationStorage): SpacesInitializatio
   }
 }
 
-export function selectActiveSpace(spaces: SpaceDefinition[], sessionID: string | null, lastActiveID: string | null) {
+export function selectActiveSpace(spaces: SpaceDefinition[], urlID: string | null, sessionID: string | null, lastActiveID: string | null) {
   const live = spaces.filter((space) => !space.deleted).sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
-  return live.find((space) => space.id === sessionID)?.id ?? live.find((space) => space.id === lastActiveID)?.id ?? live[0]?.id ?? null
+  const url = live.find((space) => space.id === urlID)?.id
+  return {
+    id: url ?? live.find((space) => space.id === sessionID)?.id ?? live.find((space) => space.id === lastActiveID)?.id ?? live[0]?.id ?? null,
+    staleURL: urlID !== null && !url,
+  }
 }
 
-export function readActiveSpace(spaces: SpaceDefinition[], session: Pick<Storage, 'getItem'>, local: Pick<Storage, 'getItem'>) {
-  try { return selectActiveSpace(spaces, session.getItem(activeSpaceSessionKey), local.getItem(lastActiveSpaceKey)) }
-  catch { return selectActiveSpace(spaces, null, null) }
+export function readActiveSpace(spaces: SpaceDefinition[], urlID: string | null, session: Pick<Storage, 'getItem'>, local: Pick<Storage, 'getItem'>) {
+  try { return selectActiveSpace(spaces, urlID, session.getItem(activeSpaceSessionKey), local.getItem(lastActiveSpaceKey)) }
+  catch { return selectActiveSpace(spaces, urlID, null, null) }
 }
 
 export function writeActiveSpace(id: string, session: Pick<Storage, 'setItem'>, local: Pick<Storage, 'setItem'>) {

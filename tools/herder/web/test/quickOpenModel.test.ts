@@ -54,3 +54,13 @@ test('create is arrow-select only and an empty reflexive Enter does nothing', ()
   assert.deepEqual(quickOpenEnterTarget(rows, 'new place', createIndex, false), { kind: 'action', index: createIndex })
   assert.equal(quickOpenEnterTarget(quickOpenActionRows('', spaces, [], false), '', -1, false), null)
 })
+
+test('pane-send rows require an active pane, exclude the current space, and preserve reflexive Enter', () => {
+  assert.equal(quickOpenActionRows('send', spaces, [], false).some((row) => row.kind.startsWith('send')), false)
+  const rows = quickOpenActionRows('send', spaces, [], false, true, 'main')
+  assert.deepEqual(rows.filter((row) => row.kind === 'send-space').map((row) => row.label), [
+    'Send this pane to review queue', 'Send this pane to weekly review',
+  ])
+  assert.equal(rows.some((row) => row.kind === 'send-new'), true)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'send', -1, true), { kind: 'file' })
+})

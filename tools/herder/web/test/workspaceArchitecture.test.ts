@@ -41,3 +41,12 @@ test('browser persistence stays outside the App composition root', () => {
   assert.match(persistence, /useDOMEvent\(window, 'pagehide'/)
   assert.match(persistence, /persistLayoutSnapshot/)
 })
+
+test('palette and tab menu share the exact workspace pane-send actions', () => {
+  const palette = readFileSync(new URL('../src/features/files/QuickOpen.tsx', import.meta.url), 'utf8')
+  const menu = readFileSync(new URL('../src/features/workspace/DockTabMenu.tsx', import.meta.url), 'utf8')
+  for (const action of ['sendPanelToSpace', 'sendPanelToNewSpace']) {
+    assert.match(palette, new RegExp(`workspaceActions\\.${action}\\(`))
+    assert.match(menu, new RegExp(`actions\\.${action}\\(`))
+  }
+})

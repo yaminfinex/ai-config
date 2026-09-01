@@ -81,6 +81,56 @@ test('create, rename, close, and reopen preserve identity and ordering', () => {
   assert.deepEqual(subject.store.list().map((space) => space.name), ['main', 'review'])
 })
 
+test('reorder persists one whole shared-stamp ordering and reopen returns at the end', () => {
+  const subject = harness()
+  const second = subject.store.create()
+  const third = subject.store.create()
+  assert.equal(second.ok && third.ok, true)
+  if (!second.ok || !third.ok) return
+  assert.equal(subject.store.reorder(third.value.id, 0).ok, true)
+  subject.store.flush()
+  const stored = subject.store.list().map((space) => JSON.parse(subject.storage.getItem(spaceRecordKey(space.id)) ?? ''))
+  assert.equal(new Set(stored.map((value) => value.writeID)).size, 1)
+  assert.equal(new Set(stored.map((value) => value.record.updated)).size, 1)
+  assert.deepEqual(subject.store.list().map((space) => space.id), [third.value.id, mainSpaceID, second.value.id])
+  subject.store.close(third.value.id)
+  subject.store.reopen(third.value.id)
+  assert.equal(subject.store.list().at(-1)?.id, third.value.id)
+})
+
+test('equal order values from a concurrent create/reorder collision sort deterministically by id', () => {
+  const storage = new FakeStorage()
+  for (const id of ['z-created', 'a-reordered']) storage.values.set(spaceRecordKey(id), JSON.stringify({
+    version: 1, writeID: id, record: { id, name: id, order: 2, created: 0, updated: 1 },
+  }))
+  const subject = harness({ storage })
+  assert.deepEqual(subject.store.list().map((space) => space.id), ['a-reordered', 'z-created'])
+})
+
+test('conflicting two-tab reorder batches converge to one whole LWW ordering', () => {
+  const storage = new FakeStorage()
+  for (const [id, order] of [['a', 0], ['b', 1], ['c', 2]] as const) storage.values.set(spaceRecordKey(id), JSON.stringify({
+    version: 1, writeID: 'seed', record: { id, name: id, order, created: 0, updated: 0 },
+  }))
+  const eventsA = new FakeEvents()
+  const eventsB = new FakeEvents()
+  const tabA = harness({ storage, events: eventsA, now: () => 1_000, randomID: () => 'a-batch' })
+  const tabB = harness({ storage, events: eventsB, now: () => 1_000, randomID: () => 'z-batch' })
+  tabA.store.subscribe(() => undefined)
+  tabB.store.subscribe(() => undefined)
+  tabA.store.reorder('c', 0)
+  tabB.store.reorder('a', 2)
+  tabA.store.flush()
+  tabB.store.flush()
+  for (const id of ['a', 'b', 'c']) {
+    const key = spaceRecordKey(id)
+    eventsA.dispatch('storage', { key, newValue: storage.getItem(key), storageArea: storage as Storage })
+    eventsB.dispatch('storage', { key, newValue: storage.getItem(key), storageArea: storage as Storage })
+  }
+  assert.deepEqual(tabA.store.list().map((space) => space.id), ['b', 'c', 'a'])
+  assert.deepEqual(tabB.store.list().map((space) => space.id), ['b', 'c', 'a'])
+})
+
 test('a pending create can roll back without becoming recently closed', () => {
   const subject = harness()
   const created = subject.store.create()

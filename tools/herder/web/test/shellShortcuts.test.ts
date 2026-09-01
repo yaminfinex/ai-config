@@ -52,6 +52,7 @@ function actions(calls: string[]): ShellShortcutActions {
     closeShortcutReference: () => { calls.push('escape'); return true },
     switchTab: (direction) => { calls.push(`tab:${direction}`); return true },
     switchSpace: (direction) => { calls.push(`space:${direction}`); return true },
+    reorderSpace: (direction) => { calls.push(`reorder:${direction}`); return true },
     focusFleet: () => { calls.push('fleet'); return true },
     toggleNotesRail: () => { calls.push('notes'); return true },
     captureNote: () => { calls.push('capture'); return true },
@@ -136,6 +137,18 @@ test('Shift-Option arrows switch spaces without replacing tab shortcuts', () => 
     dispatch(target, { key: 'ArrowRight', code: 'ArrowRight', altKey: true, shiftKey: true })
     dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true })
     assert.deepEqual(calls, ['space:previous', 'space:next', 'tab:previous'])
+  } finally { unsubscribe() }
+})
+
+test('Cmd and Ctrl arrows are claimable focused-chip reorder commands including boundaries', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', ctrlKey: true }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: 'ArrowRight', code: 'ArrowRight', ctrlKey: true }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', metaKey: true }).defaultPrevented, true)
+    assert.deepEqual(calls, ['reorder:previous', 'reorder:next', 'reorder:previous'])
   } finally { unsubscribe() }
 })
 

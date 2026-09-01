@@ -17,6 +17,7 @@ import {
   createHistorySuppressor,
   decideHistoryUpdate,
   routeFromHistory,
+  spaceIDFromSearch,
   shouldReplayInitialRoute,
   type HistoryCause,
 } from '../layout/historyModel'
@@ -84,13 +85,17 @@ function initializeBrowserSpaces(): SpacesRuntime {
     const initialization = initializeSpaces(localStorage)
     if (initialization.mode === 'legacy') return unavailableSpacesRuntime(initialization.problem, initialization.legacy)
     const store = createSpacesStore({ onPurge: (id) => removeLayoutRecovery(localStorage, id) })
-    const spaces = store.list()
-    const activeSpaceID = readActiveSpace(spaces, sessionStorage, localStorage)
-    if (!activeSpaceID) return unavailableSpacesRuntime(
+  const spaces = store.list()
+    const selection = readActiveSpace(spaces, spaceIDFromSearch(window.location.search), sessionStorage, localStorage)
+    if (!selection.id) return unavailableSpacesRuntime(
       'Spaces are unavailable because their saved definitions could not be read. Your current layout is still being saved.',
       readLegacyLayoutFamilies(localStorage),
     )
-    return { initialization, store, spaces, recent: store.recentlyClosed().filter((space) => hasRecoverableSpaceLayout(localStorage, space.id)), activeSpaceID, status: store.status(), problem: store.status().problem }
+    const fallback = spaces.find((space) => space.id === selection.id)
+    const problem = selection.staleURL
+      ? `The space in this link is closed or unavailable. This tab opened ${fallback?.name ?? 'another space'} instead.`
+      : store.status().problem
+    return { initialization, store, spaces, recent: store.recentlyClosed().filter((space) => hasRecoverableSpaceLayout(localStorage, space.id)), activeSpaceID: selection.id, status: store.status(), problem }
   } catch {
     const initialization = initializeSpaces({
       getItem: () => null,
@@ -120,6 +125,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [spacesStatus, setSpacesStatus] = useState(spacesRuntime.status)
   const [activeSpaceID, setActiveSpaceID] = useState(spacesRuntime.activeSpaceID)
   const [spaceProblem, setSpaceProblem] = useState(spacesRuntime.problem)
+  const [spaceAnnouncement, setSpaceAnnouncement] = useState('')
   const [historySuppressor] = useState(() => createHistorySuppressor(
     (callback) => window.requestAnimationFrame(callback),
     (handle) => window.cancelAnimationFrame(handle),
@@ -149,10 +155,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     return () => unsubscribe()
   }, [spacesRuntime.store])
 
-  const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause) => {
-    const update = decideHistoryUpdate(window.history.state, params, cause, historySuppressor.active())
+  const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause, spaceID = activeSpaceID) => {
+    const update = decideHistoryUpdate(window.history.state, params, cause, historySuppressor.active(), spaceID)
     window.history[update.method === 'push' ? 'pushState' : 'replaceState'](update.entry.state, '', update.entry.path)
-  }, [historySuppressor])
+  }, [activeSpaceID, historySuppressor])
 
   const onActivePanelParamsChanged = useCallback((params: DockPanelParams) => {
     updateHistory(params, 'merge')
@@ -211,7 +217,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       recoveredFromBackup: layout.noteBackupRecovery,
       complete: (id) => layout.completeRestore(id, false),
       persistActive: (id) => writeActiveSpace(id, sessionStorage, localStorage),
-      replaceStamp: () => updateHistory(panelParams(api.activePanel?.params) ?? undefined, 'stamp'),
+      replaceStamp: () => updateHistory(panelParams(api.activePanel?.params) ?? undefined, 'stamp', spaceID),
       finish: ({ restoreFailed, activeSaved }) => {
         setActiveSpaceID(spaceID)
         setActivePanelID(api.activePanel?.id ?? '')
@@ -340,6 +346,24 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     else { store.flush(); setSpaceProblem(store.status().problem) }
     return result
   }, [spacesRuntime.problem, spacesRuntime.store])
+  const reorderSpace = useCallback((id: string, targetIndex: number) => {
+    const store = spacesRuntime.store
+    if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    const before = store.list()
+    const sourceIndex = before.findIndex((space) => space.id === id)
+    if (sourceIndex < 0) return { ok: false as const, reason: 'This space is no longer open.' }
+    const destination = Math.max(0, Math.min(Math.trunc(targetIndex), before.length - 1))
+    const result = store.reorder(id, destination)
+    if (!result.ok) setSpaceProblem(result.reason)
+    else {
+      store.flush()
+      setSpaceProblem(store.status().problem)
+      setSpaceAnnouncement(destination === sourceIndex
+        ? `${result.value.name} is already ${destination === 0 ? 'first' : 'last'}.`
+        : `Moved ${result.value.name} to position ${destination + 1} of ${before.length}.`)
+    }
+    return result
+  }, [spacesRuntime.problem, spacesRuntime.store])
   const closeSpace = useCallback((id: string) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
@@ -430,7 +454,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       window.requestAnimationFrame(() => target?.isConnected && target.focus())
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace })
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace, reorderSpace })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
@@ -447,8 +471,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
     board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
-    spaces, activeSpaceID,
-  }), [activeSpaceID, agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, spaces, viewerReadOnly])
+    spaces, activeSpaceID, activePanel: activeParams ? { id: activePanelID, params: activeParams } : null,
+  }), [activePanelID, activeParams, activeSpaceID, agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, spaces, viewerReadOnly])
 
   return {
     actions, data, fileWatchRegister: fileWatchRegistry.register,
@@ -475,8 +499,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       create: createSpace,
       createNamed: createNamedSpace,
       rename: renameSpace,
+      reorder: reorderSpace,
       close: closeSpace,
       reopen: reopenSpace,
+      announcement: spaceAnnouncement,
     },
     spaceProblem,
     fleetProblem, viewerProblem, viewer, viewerPending: viewerQuery.isPending,
