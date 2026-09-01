@@ -156,15 +156,16 @@ test('a recovery write failure refuses close and leaves the live layout untouche
   assert.ok(storage.values.has(spaceLayoutKey('alpha')))
 })
 
-test('active selection prefers this tab, then global last-active, then the first live space', () => {
+test('active selection prefers URL, then this tab, last-active, and first while stale URLs stay honest', () => {
   const spaces = [
     { id: 'main', name: 'main', order: 0, created: 0, updated: 0 },
     { id: 'review', name: 'review', order: 1, created: 1, updated: 1 },
     { id: 'closed', name: 'closed', order: 2, created: 2, updated: 3, deleted: true as const },
   ]
-  assert.equal(selectActiveSpace(spaces, 'review', 'main'), 'review')
-  assert.equal(selectActiveSpace(spaces, 'missing', 'review'), 'review')
-  assert.equal(selectActiveSpace(spaces, 'closed', 'missing'), 'main')
+  assert.deepEqual(selectActiveSpace(spaces, 'main', 'review', 'missing'), { id: 'main', staleURL: false })
+  assert.deepEqual(selectActiveSpace(spaces, 'missing', 'review', 'main'), { id: 'review', staleURL: true })
+  assert.deepEqual(selectActiveSpace(spaces, 'closed', 'missing', 'review'), { id: 'review', staleURL: true })
+  assert.deepEqual(selectActiveSpace(spaces, null, 'missing', 'missing'), { id: 'main', staleURL: false })
 })
 
 test('reset clears every new family and all retained legacy keys', () => {

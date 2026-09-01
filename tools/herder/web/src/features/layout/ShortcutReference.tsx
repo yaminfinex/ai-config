@@ -9,6 +9,7 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
     [labels.quickOpen, 'Open spaces, agents, files, or folders'],
     [labels.switchTabs, 'Switch tabs'],
     [labels.switchSpaces, 'Switch spaces'],
+    [labels.reorderSpace, 'Move focused space'],
     [labels.focusFleet, 'Focus fleet sidebar'],
     [labels.toggleNotesRail, 'Toggle notes rail'],
     [labels.captureNote, 'Capture selected text as a note'],

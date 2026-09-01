@@ -10,6 +10,7 @@ import {
   routeFromHistory,
   routeFromLocation,
   shouldReplayInitialRoute,
+  pathWithSpace,
 } from '../src/features/layout/historyModel.ts'
 
 const agent = (name = 'mavu'): DockPanelParams => ({ kind: 'agent', name, preview: true })
@@ -40,6 +41,14 @@ test('every addressable panel kind has a canonical URL and round-trips through i
     assert.equal(route.page, 'panel')
     if (route.page === 'panel') assert.equal(route.params.kind, params.kind)
   }
+})
+
+test('space composes with every panel route without disturbing panel query parameters', () => {
+  assert.equal(historyEntryForPanel(agent('mavu'), 'review/one').path, '/agents/mavu?space=review%2Fone')
+  assert.equal(historyEntryForPanel(file('README.md', 8), 'review').path, '/file?root=%2Frepo+root&path=README.md&line=8&space=review')
+  assert.equal(historyEntryForPanel(screen(), 'review').path, '/?space=review')
+  assert.equal(pathWithSpace('/file?root=x&path=y&space=old', 'new'), '/file?root=x&path=y&space=new')
+  assert.equal(routeFromHistory('/', '?space=stale', historyEntryForPanel(screen(), 'stale').state).page, 'panel')
 })
 
 test('HTML deep links default rendered unless a line anchor requests source', () => {
@@ -107,6 +116,17 @@ test('history replay rejects unknown or malformed state instead of resurrecting 
   assert.deepEqual(routeFromHistory('/', '', { ...layoutRouteState, subject: { kind: 'notes', id: 'ghost' } }), { page: 'shell' })
   assert.deepEqual(routeFromHistory('/', '', { ...layoutRouteState, subject: { kind: 'screen', pane: {}, identity: {} } }), { page: 'shell' })
   assert.equal(routeFromHistory('/agents/mavu', '', { ...layoutRouteState, subject: { kind: 'agent', name: '' } }).page, 'panel')
+})
+
+test('popstate parsing treats stale space ids as inert panel metadata', () => {
+  const route = routeFromHistory('/agents/mavu', '?space=closed', historyEntryForPanel(agent('mavu'), 'closed').state)
+  assert.equal(route.page, 'panel')
+  if (route.page === 'panel') assert.equal(route.params.kind, 'agent')
+  assert.equal('spaceID' in route, false)
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  const popstate = controller.match(/useDOMEvent\(window, 'popstate',[\s\S]*?\n {2}\}\)/)?.[0] ?? ''
+  assert.match(popstate, /routeFromHistory/)
+  assert.doesNotMatch(popstate, /readActiveSpace|switchSpace/)
 })
 
 test('a restored layout wins over an app-created route while deliberate deep links replay', () => {

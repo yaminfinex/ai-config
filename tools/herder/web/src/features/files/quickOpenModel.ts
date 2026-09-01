@@ -4,6 +4,8 @@ export type QuickOpenActionRow =
   | { kind: 'space', id: string, label: string }
   | { kind: 'agent', name: string, label: string }
   | { kind: 'create', name: string, label: string }
+  | { kind: 'send-space', id: string, label: string }
+  | { kind: 'send-new', label: string }
 
 export type QuickOpenEnterTarget = { kind: 'action', index: number } | { kind: 'file' }
 
@@ -28,6 +30,8 @@ export function quickOpenActionRows(
   spaces: SpaceDefinition[],
   agents: string[],
   atSpaceCap: boolean,
+  hasActivePanel = false,
+  activeSpaceID: string | null = null,
 ): QuickOpenActionRow[] {
   const name = rawQuery.trim()
   const query = name.toLocaleLowerCase()
@@ -36,11 +40,16 @@ export function quickOpenActionRows(
   const agentRows: QuickOpenActionRow[] = ranked(agents, (agent) => agent, query)
     .map((agent) => ({ kind: 'agent', name: agent, label: agent }))
   const exactSpace = spaces.some((space) => space.name.trim().toLocaleLowerCase() === query)
+  const sendRows: QuickOpenActionRow[] = hasActivePanel ? ranked([
+    ...spaces.filter((space) => space.id !== activeSpaceID).map((space) => ({ kind: 'send-space' as const, id: space.id, label: `Send this pane to ${space.name}` })),
+    { kind: 'send-new' as const, label: 'Send this pane to a new space' },
+  ], (row) => row.label, query) : []
   return [
     ...spaceRows,
     ...name && !atSpaceCap && !exactSpace
       ? [{ kind: 'create' as const, name, label: `Create space “${name}”` }]
       : [],
+    ...sendRows,
     ...agentRows,
   ]
 }

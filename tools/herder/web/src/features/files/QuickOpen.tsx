@@ -8,6 +8,7 @@ import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { quickOpenActionRows, quickOpenEnterTarget, type QuickOpenActionRow } from './quickOpenModel.ts'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
+import { useWorkspaceActionsContext, useWorkspaceData } from '../workspace/workspaceContext.tsx'
 
 const QUICK_OPEN_RESULT_LIMIT = 100
 
@@ -35,6 +36,8 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
   onSwitchSpace: (id: string) => boolean
   onCreateSpace: (name: string) => boolean
 }) {
+  const workspaceActions = useWorkspaceActionsContext()
+  const workspaceData = useWorkspaceData()
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -70,16 +73,19 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
   const settled = query.trim() === debounced
   const settledResolution = settled ? resolution.data : undefined
   const candidates = settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? []
-  const actions = quickOpenActionRows(query, spaces, agents, atSpaceCap)
+  const actions = quickOpenActionRows(query, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID)
   const totalRows = actions.length + candidates.length
   const chooseAction = (row: QuickOpenActionRow) => {
     let chosen = true
     if (row.kind === 'space') chosen = row.id === activeSpaceID || onSwitchSpace(row.id)
     else if (row.kind === 'agent') onOpenAgent(row.name)
-    else chosen = onCreateSpace(row.name)
+    else if (row.kind === 'create') chosen = onCreateSpace(row.name)
+    else if (row.kind === 'send-space') chosen = Boolean(workspaceData.activePanel && workspaceActions.sendPanelToSpace(workspaceData.activePanel.id, workspaceData.activePanel.params, row.id))
+    else chosen = Boolean(workspaceData.activePanel && workspaceActions.sendPanelToNewSpace(workspaceData.activePanel.id, workspaceData.activePanel.params))
     if (chosen) onClose()
   }
-  const spaceActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind !== 'agent')
+  const spaceActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'space' || row.kind === 'create')
+  const sendActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'send-space' || row.kind === 'send-new')
   const agentActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'agent')
   return <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <section className="quick-open" role="dialog" aria-modal="true" aria-label="Quick open spaces, agents, files, or folders">
@@ -105,7 +111,12 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
       <div className="quick-open-results">
         {spaceActions.length > 0 && <section className="quick-open-section" aria-label="Spaces"><strong>Spaces</strong>
           {spaceActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}
-            className={activeIndex === index ? 'active' : ''} key={`${row.kind}:${row.kind === 'space' ? row.id : row.name}`}
+            className={activeIndex === index ? 'active' : ''} key={`${row.kind}:${row.kind === 'space' ? row.id : row.kind === 'create' ? row.name : row.label}`}
+            onMouseDown={(event) => event.preventDefault()} onClick={() => chooseAction(row)}>{row.label}</button>)}
+        </section>}
+        {sendActions.length > 0 && <section className="quick-open-section" aria-label="Pane actions"><strong>Pane actions</strong>
+          {sendActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}
+            className={activeIndex === index ? 'active' : ''} key={`${row.kind}:${row.kind === 'send-space' ? row.id : 'new'}`}
             onMouseDown={(event) => event.preventDefault()} onClick={() => chooseAction(row)}>{row.label}</button>)}
         </section>}
         {agentActions.length > 0 && <section className="quick-open-section" aria-label="Live agents"><strong>Live agents</strong>

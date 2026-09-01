@@ -15,6 +15,7 @@ export function useWorkspaceShortcuts({
   spaces,
   activeSpaceID,
   switchSpace,
+  reorderSpace,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   shortcutReference: boolean
@@ -25,6 +26,7 @@ export function useWorkspaceShortcuts({
   spaces: SpaceDefinition[]
   activeSpaceID: string | null
   switchSpace: (id: string) => boolean
+  reorderSpace: (id: string, targetIndex: number) => { ok: boolean }
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
@@ -60,6 +62,15 @@ export function useWorkspaceShortcuts({
         const target = spaceIDInDirection(spaces, activeSpaceID, direction)
         return target ? switchSpace(target) : false
       },
+      reorderSpace: (direction) => {
+        const focused = document.activeElement?.closest<HTMLElement>('[data-space-id]')
+        const id = focused?.dataset.spaceId
+        if (!id) return false
+        const index = spaces.findIndex((space) => space.id === id)
+        if (index < 0 || spaces.length < 2) return false
+        reorderSpace(id, index + (direction === 'next' ? 1 : -1))
+        return true
+      },
       focusFleet: () => {
         const item = document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')
         if (!item) return false
@@ -88,5 +99,5 @@ export function useWorkspaceShortcuts({
         return true
       },
     }, navigator.userAgent)
-  }, [activeSpaceID, apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail])
+  }, [activeSpaceID, apiRef, closePanel, reorderSpace, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail])
 }

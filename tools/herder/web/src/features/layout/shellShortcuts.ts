@@ -9,6 +9,7 @@ export type ShellShortcutActions = {
   closeShortcutReference: () => boolean | void
   switchTab: (direction: TabDirection) => boolean | void
   switchSpace: (direction: TabDirection) => boolean | void
+  reorderSpace: (direction: TabDirection) => boolean | void
   focusFleet: () => boolean | void
   toggleNotesRail: () => boolean | void
   captureNote: () => boolean | void
@@ -23,6 +24,7 @@ export type ShortcutLabels = {
   quickOpen: string
   switchTabs: string
   switchSpaces: string
+  reorderSpace: string
   focusFleet: string
   toggleNotesRail: string
   captureNote: string
@@ -45,6 +47,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     quickOpen: '⌘K',
     switchTabs: '⌥← / ⌥→',
     switchSpaces: '⇧⌥← / ⇧⌥→',
+    reorderSpace: '⌘← / ⌘→',
     focusFleet: '⌥1',
     toggleNotesRail: '⌥3',
     captureNote: '⌥4',
@@ -60,6 +63,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     quickOpen: 'Ctrl+K',
     switchTabs: 'Alt+Left / Alt+Right',
     switchSpaces: 'Shift+Alt+Left / Shift+Alt+Right',
+    reorderSpace: 'Ctrl+Left / Ctrl+Right',
     focusFleet: 'Alt+1',
     toggleNotesRail: 'Alt+3',
     captureNote: 'Alt+4',
@@ -97,6 +101,10 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     'Alt+ArrowRight': claimed(() => actions.switchTab('next'), true),
     'Shift+Alt+ArrowLeft': claimed(() => actions.switchSpace('previous'), true),
     'Shift+Alt+ArrowRight': claimed(() => actions.switchSpace('next'), true),
+    'Meta+ArrowLeft': claimed(() => actions.reorderSpace('previous'), true),
+    'Meta+ArrowRight': claimed(() => actions.reorderSpace('next'), true),
+    'Control+ArrowLeft': claimed(() => actions.reorderSpace('previous'), true),
+    'Control+ArrowRight': claimed(() => actions.reorderSpace('next'), true),
     'Alt+ArrowUp': claimed(actions.goToTop, true),
     'Alt+ArrowDown': claimed(actions.goToBottom, true),
     'Alt+Enter': claimed(actions.toggleMaximize, true),

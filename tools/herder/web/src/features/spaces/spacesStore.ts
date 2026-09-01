@@ -23,6 +23,7 @@ export type SpacesStore = {
   recentlyClosed: () => SpaceDefinition[]
   create: () => SpaceResult<SpaceDefinition>
   rename: (id: string, name: string) => SpaceResult<SpaceDefinition>
+  reorder: (id: string, targetIndex: number) => SpaceResult<SpaceDefinition>
   close: (id: string) => SpaceResult<SpaceDefinition>
   reopen: (id: string) => SpaceResult<SpaceDefinition>
   rollbackCreate: (id: string) => boolean
@@ -160,6 +161,14 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
     scheduleFlush()
     notify()
   }
+  const putBatch = (values: StoredSpaceRecord[]) => {
+    for (const stored of values) {
+      records.set(stored.record.id, stored)
+      dirty.add(stored.record.id)
+    }
+    scheduleFlush()
+    notify()
+  }
   const reconcile = (id: string) => {
     if (!storage) return records.get(id)
     try {
@@ -243,7 +252,7 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       const timestamp = now()
       const space: SpaceDefinition = {
         id: randomID(), name: `space ${number}`,
-        order: Math.max(-1, ...[...records.values()].map(({ record }) => record.order)) + 1,
+        order: Math.max(-1, ...live().map(({ order }) => order)) + 1,
         created: timestamp, updated: timestamp,
       }
       put({ version: 1, writeID: randomID(), record: space })
@@ -258,6 +267,23 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       put({ version: 1, writeID: randomID(), record: space })
       return { ok: true, value: space }
     }),
+    reorder: (id, targetIndex) => guarded(() => {
+      for (const space of live()) reconcile(space.id)
+      const ordered = live()
+      const sourceIndex = ordered.findIndex((space) => space.id === id)
+      if (sourceIndex < 0) return { ok: false, reason: 'This space is no longer open.' }
+      const destination = Math.max(0, Math.min(Math.trunc(targetIndex), ordered.length - 1))
+      if (destination === sourceIndex) return { ok: true, value: ordered[sourceIndex] }
+      const [moved] = ordered.splice(sourceIndex, 1)
+      ordered.splice(destination, 0, moved)
+      const updated = Math.max(now(), ...ordered.map((space) => space.updated + 1))
+      const writeID = randomID()
+      const batch = ordered.map((space, order): StoredSpaceRecord => ({
+        version: 1, writeID, record: { ...space, order, updated },
+      }))
+      putBatch(batch)
+      return { ok: true, value: batch[destination].record }
+    }),
     close: (id) => guarded(() => {
       const current = reconcile(id)
       if (!current || current.record.deleted) return { ok: false, reason: 'This space is already closed.' }
@@ -271,7 +297,11 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       if (!current || !current.record.deleted) return { ok: false, reason: 'This space is not recently closed.' }
       const { deleted: _deleted, ...rest } = current.record
       void _deleted
-      const space: SpaceDefinition = { ...rest, updated: Math.max(now(), current.record.updated + 1) }
+      const space: SpaceDefinition = {
+        ...rest,
+        order: Math.max(-1, ...live().map(({ order }) => order)) + 1,
+        updated: Math.max(now(), current.record.updated + 1),
+      }
       put({ version: 1, writeID: randomID(), record: space })
       return { ok: true, value: space }
     }),

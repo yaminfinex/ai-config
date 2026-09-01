@@ -10,6 +10,7 @@ import {
 export type Route = { page: 'shell' } | { page: 'panel', params: DockPanelParams } | { page: 'missing' }
 export type HistoryCause = 'activation' | 'merge' | 'stamp' | 'replay'
 export const layoutRouteState = { herderLayoutRoute: true } as const
+export const spaceQueryParam = 'space'
 
 type LayoutRouteState = typeof layoutRouteState & { subject?: unknown }
 
@@ -18,9 +19,24 @@ export function isLayoutRouteState(value: unknown): value is LayoutRouteState {
     'herderLayoutRoute' in value && value.herderLayoutRoute === true
 }
 
-export function historyEntryForPanel(params?: DockPanelParams) {
+export function spaceIDFromSearch(search: string) {
+  return new URLSearchParams(search).get(spaceQueryParam)
+}
+
+export function pathWithSpace(path: string, spaceID: string | null) {
+  const url = new URL(path, 'http://herder.invalid')
+  if (spaceID) url.searchParams.set(spaceQueryParam, spaceID)
+  else url.searchParams.delete(spaceQueryParam)
+  return `${url.pathname}${url.search}`
+}
+
+function pathWithoutSpace(pathname: string, search: string) {
+  return pathWithSpace(`${pathname}${search}`, null)
+}
+
+export function historyEntryForPanel(params?: DockPanelParams, spaceID: string | null = null) {
   return {
-    path: params ? panelRoutePath(params) : '/',
+    path: pathWithSpace(params ? panelRoutePath(params) : '/', spaceID),
     state: params ? { ...layoutRouteState, subject: panelRouteSubject(params) } : layoutRouteState,
   }
 }
@@ -35,7 +51,7 @@ export function routeFromLocation(pathname: string, search: string): Route {
 export function routeFromHistory(pathname: string, search: string, state: unknown): Route {
   if (isLayoutRouteState(state) && 'subject' in state) {
     const params = panelParamsFromHistorySubject(state.subject)
-    if (params && panelRoutePath(params) === `${pathname}${search}`) return { page: 'panel', params }
+    if (params && panelRoutePath(params) === pathWithoutSpace(pathname, search)) return { page: 'panel', params }
   }
   return routeFromLocation(pathname, search)
 }
@@ -44,8 +60,8 @@ export function shouldReplayInitialRoute(route: Exclude<Route, { page: 'missing'
   return route.page === 'panel' && (!restored || !isLayoutRouteState(historyState))
 }
 
-export function decideHistoryUpdate(currentState: unknown, next: DockPanelParams | undefined, cause: HistoryCause, suppressed: boolean) {
-  const entry = historyEntryForPanel(next)
+export function decideHistoryUpdate(currentState: unknown, next: DockPanelParams | undefined, cause: HistoryCause, suppressed: boolean, spaceID: string | null = null) {
+  const entry = historyEntryForPanel(next, spaceID)
   const current = isLayoutRouteState(currentState) && 'subject' in currentState
     ? panelParamsFromHistorySubject(currentState.subject)
     : null

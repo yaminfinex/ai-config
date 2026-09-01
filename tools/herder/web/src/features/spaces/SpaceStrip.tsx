@@ -13,8 +13,10 @@ type Props = {
   switch: (id: string) => boolean
   create: () => SpaceResult<SpaceDefinition>
   rename: (id: string, name: string) => SpaceResult<SpaceDefinition>
+  reorder: (id: string, targetIndex: number) => SpaceResult<SpaceDefinition>
   close: (id: string) => SpaceResult<unknown>
   reopen: (id: string) => SpaceResult<unknown>
+  announcement: string
 }
 
 export function SpaceStrip(props: Props) {
@@ -28,6 +30,9 @@ export function SpaceStrip(props: Props) {
   const [available, setAvailable] = useState(Number.POSITIVE_INFINITY)
   const [widths, setWidths] = useState<Record<string, number>>({})
   const [moreOpen, setMoreOpen] = useState(false)
+  const [dragging, setDragging] = useState<string | null>(null)
+  const draggingID = useRef<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ id: string, after: boolean } | null>(null)
 
   useEffect(() => { if (editing) input.current?.select() }, [editing])
   useEffect(() => {
@@ -76,7 +81,37 @@ export function SpaceStrip(props: Props) {
 
   return <div ref={strip} className="space-strip" role="group" aria-label={`${props.items.length} spaces`}>
     <div className="space-chips">
-      {props.items.filter((space) => visible.has(space.id)).map((space) => <div className={`space-chip${space.id === props.activeID ? ' active' : ''}`} key={space.id}>
+      {props.items.filter((space) => visible.has(space.id)).map((space) => <div
+        className={`space-chip${space.id === props.activeID ? ' active' : ''}${dragging === space.id ? ' dragging' : ''}${dropTarget?.id === space.id ? dropTarget.after ? ' drop-after' : ' drop-before' : ''}`}
+        data-space-id={space.id} draggable={editing !== space.id} key={space.id}
+        onDragStart={(event) => {
+          if ((event.target as HTMLElement).closest('.space-close')) { event.preventDefault(); return }
+          event.dataTransfer.effectAllowed = 'move'
+          event.dataTransfer.setData('text/plain', space.id)
+          draggingID.current = space.id
+          setDragging(space.id)
+        }}
+        onDragOver={(event) => {
+          event.preventDefault()
+          if (!draggingID.current || draggingID.current === space.id) return
+          const rect = event.currentTarget.getBoundingClientRect()
+          setDropTarget({ id: space.id, after: event.clientX >= rect.left + rect.width / 2 })
+        }}
+        onDrop={(event) => {
+          event.preventDefault()
+          const sourceID = event.dataTransfer.getData('text/plain') || draggingID.current
+          if (!sourceID || sourceID === space.id) return
+          const sourceIndex = props.items.findIndex((item) => item.id === sourceID)
+          const targetIndex = props.items.findIndex((item) => item.id === space.id)
+          const rect = event.currentTarget.getBoundingClientRect()
+          const after = event.clientX >= rect.left + rect.width / 2
+          const destination = targetIndex - (sourceIndex < targetIndex ? 1 : 0) + (after ? 1 : 0)
+          props.reorder(sourceID, destination)
+          draggingID.current = null
+          setDragging(null)
+          setDropTarget(null)
+        }}
+        onDragEnd={() => { draggingID.current = null; setDragging(null); setDropTarget(null) }}>
         {editing === space.id
           ? <input ref={input} aria-label={`Rename ${space.name}`} value={name} maxLength={80}
             onChange={(event) => setName(event.target.value)} onBlur={finishRename}
@@ -88,6 +123,7 @@ export function SpaceStrip(props: Props) {
               }
             }} />
           : <button type="button" className="space-name" aria-pressed={space.id === props.activeID}
+            aria-keyshortcuts="Meta+ArrowLeft Meta+ArrowRight Control+ArrowLeft Control+ArrowRight"
             onClick={() => props.switch(space.id)} onDoubleClick={() => beginRename(space)} onKeyDown={(event) => {
               if (event.key === 'Enter' || event.key === 'F2') {
                 if (space.id === props.activeID) beginRename(space)
@@ -113,5 +149,6 @@ export function SpaceStrip(props: Props) {
         <span className="space-name">{space.name}</span>{space.id === props.activeID && <span className="space-close">×</span>}
       </span>)}
     </div>
+    <span className="visually-hidden" role="status" aria-live="polite">{props.announcement}</span>
   </div>
 }
