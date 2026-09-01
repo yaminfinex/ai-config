@@ -74,7 +74,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
   </main>
 
   const retired = agent?.bus_status === 'retired'
-  return <main className="agent-page" ref={noteCapture.containerRef} onPointerDown={noteCapture.onPointerDown} onPointerUp={noteCapture.onPointerUp} onPointerCancel={noteCapture.onPointerCancel}>
+  return <main className="agent-page" ref={noteCapture.containerRef} onDoubleClickCapture={noteCapture.onDoubleClick}>
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
       <ToolBadge tool={agent?.tool} />

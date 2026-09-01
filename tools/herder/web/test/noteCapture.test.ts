@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { captureNoteText, capturePosition, captureSourceWithRange, placeCaretAtEnd } from '../src/features/notes/noteCaptureModel.ts'
+import {
+  captureNoteText,
+  capturePosition,
+  captureSourceWithRange,
+  isRangeSelection,
+  isReservedFileResolutionSelection,
+  placeCaretAtEnd,
+  reserveSelectionForFileResolution,
+} from '../src/features/notes/noteCaptureModel.ts'
+import { fileResolveGestureEvent } from '../src/shared/selectionPopoverEvents.ts'
 
 test('capture always keeps the quote and appends an optional comment', () => {
   assert.equal(captureNoteText('  selected text  ', ''), 'selected text')
@@ -33,10 +42,31 @@ test('keyboard range selection waits for Shift release before focusing the chip'
   assert.match(hook, /if \(!active \|\| pointer\.current \|\| keyboardSelecting\.current\) return/)
 })
 
-test('pointer capture clears an outside-panel selection release', () => {
+test('drag selection stays passive and leaves native double-click routing untouched', () => {
   const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
-  assert.match(hook, /setPointerCapture\(event\.pointerId\)/)
-  assert.match(hook, /onPointerCancel/)
+  const agent = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  const file = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(hook, /setPointerCapture|releasePointerCapture/)
+  assert.match(hook, /useDOMEvent<PointerEvent>\(window, 'pointerdown'/)
+  assert.match(hook, /useDOMEvent<PointerEvent>\(window, 'pointerup'/)
+  assert.match(hook, /event\.composedPath\(\)/)
+  assert.match(hook, /shadowRoot\.getSelection\?\.\(\)/)
+  assert.doesNotMatch(`${agent}\n${file}`, /onPointerDown=\{noteCapture/)
+  assert.match(agent, /onDoubleClickCapture=\{noteCapture\.onDoubleClick\}/)
+  assert.match(file, /onDoubleClickCapture=\{noteCapture\.onDoubleClick\}/)
+})
+
+test('synthetic transcript double-click dispatches file resolution and cannot open the chip', () => {
+  const node = {}
+  const selection = { isCollapsed: false, anchorNode: node, anchorOffset: 0, focusNode: node, focusOffset: 8 }
+  const events = new EventTarget()
+  let fileResolutions = 0
+  let chipOpens = 0
+  events.addEventListener(fileResolveGestureEvent, () => { fileResolutions += 1 })
+  const reserved = reserveSelectionForFileResolution(selection, () => events.dispatchEvent(new Event(fileResolveGestureEvent)))
+  if (isRangeSelection(selection) && !isReservedFileResolutionSelection(selection, reserved)) chipOpens += 1
+  assert.equal(fileResolutions, 1)
+  assert.equal(chipOpens, 0)
 })
 
 test('reselection preserves a comment and cannot capture the chip preview itself', () => {

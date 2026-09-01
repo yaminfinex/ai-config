@@ -1,4 +1,5 @@
 import type { Note } from './notesStore.ts'
+import { selectorInitialValue } from './notesSelectorModel.ts'
 
 export type NoteSelection = {
   selected: Set<string>
@@ -72,9 +73,7 @@ export function handOffRoute(notes: Note[], liveOrder: string[]): { kind: 'direc
   const groups = new Set(notes.map((note) => note.group))
   const sole = groups.size === 1 ? notes[0]?.group : undefined
   if (sole && live.has(sole)) return { kind: 'direct', target: sole }
-  const counts = new Map<string, number>()
-  for (const note of notes) if (live.has(note.group)) counts.set(note.group, (counts.get(note.group) ?? 0) + 1)
-  const highest = Math.max(0, ...counts.values())
-  const initial = liveOrder.find((agent) => (counts.get(agent) ?? 0) === highest) ?? liveOrder[0] ?? ''
+  const rows = liveOrder.map((value) => ({ value, label: value }))
+  const initial = selectorInitialValue(notes, rows, 'destination')
   return { kind: 'selector', initial }
 }

@@ -1,5 +1,38 @@
 import type { NoteSource } from './notesStore'
 
+type SelectionLike = {
+  isCollapsed: boolean
+  anchorNode: unknown | null
+  anchorOffset: number
+  focusNode: unknown | null
+  focusOffset: number
+}
+
+export type ReservedSelection = Omit<SelectionLike, 'isCollapsed'> | null
+
+export function isRangeSelection(selection: SelectionLike | null): selection is SelectionLike {
+  return Boolean(selection && !selection.isCollapsed && (selection.anchorNode !== selection.focusNode || selection.anchorOffset !== selection.focusOffset))
+}
+
+export function reserveSelectionForFileResolution(selection: SelectionLike | null, dispatch: () => void): ReservedSelection {
+  const reserved = selection ? {
+    anchorNode: selection.anchorNode,
+    anchorOffset: selection.anchorOffset,
+    focusNode: selection.focusNode,
+    focusOffset: selection.focusOffset,
+  } : null
+  dispatch()
+  return reserved
+}
+
+export function isReservedFileResolutionSelection(selection: SelectionLike | null, reserved: ReservedSelection) {
+  return Boolean(selection && reserved
+    && selection.anchorNode === reserved.anchorNode
+    && selection.anchorOffset === reserved.anchorOffset
+    && selection.focusNode === reserved.focusNode
+    && selection.focusOffset === reserved.focusOffset)
+}
+
 export function captureNoteText(quote: string, comment: string) {
   const selected = quote.trim()
   const aside = comment.trim()

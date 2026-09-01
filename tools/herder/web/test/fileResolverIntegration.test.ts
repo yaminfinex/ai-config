@@ -30,3 +30,7 @@ test('note capture aborts any in-flight resolver request before closing it', () 
   assert.match(cancel, /close\(\)/)
   assert.match(resolver, /useDOMEvent\(window, noteCaptureGestureEvent, cancel/)
 })
+
+test('the panel-level reservation owns the one file-resolution gesture dispatch', () => {
+  assert.doesNotMatch(resolver, /dispatchEvent\(new CustomEvent\(fileResolveGestureEvent\)\)/)
+})

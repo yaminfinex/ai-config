@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import type { Note } from '../src/features/notes/notesStore.ts'
@@ -53,6 +54,12 @@ test('hand-off goes direct only when every note shares one live target', () => {
   assert.deepEqual(handOffRoute([note('1', 'retired'), note('2', 'general')], order), { kind: 'selector', initial: 'kilo' })
   assert.deepEqual(handOffRoute([note('1', 'muro'), note('2', 'kilo')], order), { kind: 'selector', initial: 'kilo' })
   assert.deepEqual(handOffRoute([note('1', 'muro'), note('2', 'muro'), note('3', 'kilo')], order), { kind: 'selector', initial: 'muro' })
+})
+
+test('hand-off destination defaults defer to the shared selector computation', () => {
+  const source = readFileSync(new URL('../src/features/notes/notesListModel.ts', import.meta.url), 'utf8')
+  assert.match(source, /selectorInitialValue/)
+  assert.doesNotMatch(source, /const counts = new Map/)
 })
 
 test('dragging an unselected card moves only it; dragging a selected card moves the selection', () => {

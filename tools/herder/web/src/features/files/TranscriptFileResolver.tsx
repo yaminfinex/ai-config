@@ -6,7 +6,7 @@ import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useDOMEvent } from '../../shared/lifecycle'
-import { fileResolveGestureEvent, noteCaptureGestureEvent } from '../../shared/selectionPopoverEvents'
+import { noteCaptureGestureEvent } from '../../shared/selectionPopoverEvents'
 
 type PopoverState = { left: number, top: number, mention: string, resolution: ResolveResponse }
 
@@ -58,7 +58,6 @@ export function useTranscriptFileResolver(context: ResolveContext, enabled: bool
   useDOMEvent(window, noteCaptureGestureEvent, cancel, undefined, enabled)
 
   const onDoubleClick = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
-    window.dispatchEvent(new CustomEvent(fileResolveGestureEvent))
     cancel()
     const target = event.nativeEvent.composedPath().find((item): item is Element => item instanceof Element) ?? event.target as Element
     if (target.closest('a, button, header, summary, .window-note, .entry-time')) return
