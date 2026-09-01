@@ -16,6 +16,7 @@ import { statusBarHealth, type HealthTick } from './shared/statusBarPresentation
 import { ThemeToggle } from './shared/ThemeToggle'
 import { NotesProvider, useNotes } from './features/notes/NotesProvider'
 import { NotesRail } from './features/notes/NotesRail'
+import { NoteQuickAdd } from './features/notes/NoteQuickAdd'
 import { shortcutLabels } from './features/layout/shellShortcuts'
 import { defaultMaxSpaces, SpaceStrip } from './features/spaces/index.ts'
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
@@ -113,7 +114,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         onShortcuts={() => workspace.setShortcutReference(true)}
         spaceStrip={<SpaceStrip {...workspace.spaces} />} />
     </section>
-    <UtilityRail side="right" label="Notes" width={notesRail.width} collapsed={notesRail.collapsed}
+    <UtilityRail side="right" label="Notes" headingAction={<NoteQuickAdd group="general" label="unassigned" />} width={notesRail.width} collapsed={notesRail.collapsed}
       onWidth={(width) => setNotesRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleNotesRail}>
       <NotesRail board={workspace.board} onOpenAgent={(name, placement) => openAgent(name, true, placement, true)} />
     </UtilityRail>

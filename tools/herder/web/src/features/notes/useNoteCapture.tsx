@@ -1,10 +1,18 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import type { NoteSource } from './notesStore'
-import { captureNoteText, capturePosition, captureSourceWithRange } from './noteCaptureModel'
-import { useNotes } from './NotesProvider'
-import { noteCaptureShortcutEvent, type NoteCaptureShortcutDetail } from '../../shared/noteCaptureEvent'
-
-type Capture = { quote: string, source: NoteSource, left: number, top: number, group: string }
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useDOMEvent, useScheduledFrame } from '../../shared/lifecycle.ts'
+import { fileResolveGestureEvent, noteCaptureGestureEvent } from '../../shared/selectionPopoverEvents.ts'
+import {
+  captureNoteText,
+  capturePosition,
+  captureSourceWithRange,
+  isRangeSelection,
+  isReservedFileResolutionSelection,
+  reserveSelectionForFileResolution,
+  type ReservedSelection,
+} from './noteCaptureModel.ts'
+import { NoteCaptureChip, type NoteCaptureDraft } from './NoteCaptureChip.tsx'
+import type { NoteSource } from './notesStore.ts'
+import { useNotes } from './NotesProvider.tsx'
 
 function selectionElement(node: Node | null) {
   if (!node) return null
@@ -18,6 +26,22 @@ function belongsTo(container: HTMLElement, node: Node | null) {
   return root instanceof ShadowRoot && container.contains(root.host)
 }
 
+function shadowSelection(root: ParentNode): Selection | null {
+  for (const element of root.querySelectorAll('*')) {
+    const shadowRoot = element.shadowRoot as ShadowRoot & { getSelection?: () => Selection | null } | null
+    if (!shadowRoot) continue
+    const selection = shadowRoot.getSelection?.()
+    if (selection?.toString().trim()) return selection
+    const nested = shadowSelection(shadowRoot)
+    if (nested) return nested
+  }
+  return null
+}
+
+function activeSelection(container: HTMLElement) {
+  return shadowSelection(container) ?? document.getSelection()
+}
+
 function selectedLine(node: Node | null) {
   const raw = selectionElement(node)?.closest<HTMLElement>('[data-line]')?.dataset.line
   if (!raw || !/^\d+$/.test(raw)) return undefined
@@ -25,83 +49,79 @@ function selectedLine(node: Node | null) {
 }
 
 export function useNoteCapture({ active, source, agents }: { active: boolean, source: NoteSource, agents: string[] }) {
-  const { store, captureGroup, setCaptureGroup, announce } = useNotes()
+  const { store, notes, announce } = useNotes()
   const containerRef = useRef<HTMLElement>(null)
-  const chipRef = useRef<HTMLButtonElement>(null)
-  const [capture, setCapture] = useState<Capture | null>(null)
-  const [comment, setComment] = useState('')
-  const [expanded, setExpanded] = useState(false)
+  const pointer = useRef(false)
+  const keyboardSelecting = useRef(false)
+  const fileResolutionSelection = useRef<ReservedSelection>(null)
+  const [capture, setCapture] = useState<NoteCaptureDraft | null>(null)
+  const scheduleFrame = useScheduledFrame()
 
-  const close = useCallback(() => { setCapture(null); setComment(''); setExpanded(false) }, [])
+  const close = useCallback(() => setCapture(null), [])
   const show = useCallback(() => {
     if (!active || !containerRef.current) return false
-    if (capture && comment) return false
-    const selection = document.getSelection()
+    const selection = activeSelection(containerRef.current)
     if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !belongsTo(containerRef.current, selection.anchorNode) || !belongsTo(containerRef.current, selection.focusNode)) return false
+    if (isReservedFileResolutionSelection(selection, fileResolutionSelection.current)) return false
+    if (selectionElement(selection.anchorNode)?.closest('.note-capture-popover') || selectionElement(selection.focusNode)?.closest('.note-capture-popover')) return false
     const quote = selection.toString().trim()
     if (!quote) return false
     const range = selection.getRangeAt(0)
     const rect = range.getBoundingClientRect()
     const position = capturePosition(rect, window.innerWidth, window.innerHeight)
     const provenSource = captureSourceWithRange(source, selectedLine(range.startContainer), range.endOffset === 0 ? undefined : selectedLine(range.endContainer))
-    setCapture({ quote, source: provenSource, ...position, group: source.kind === 'transcript' ? source.agent : captureGroup })
-    setComment('')
-    setExpanded(false)
-    window.requestAnimationFrame(() => chipRef.current?.focus())
+    setCapture({ quote, source: provenSource, ...position, group: source.kind === 'transcript' ? source.agent : 'general' })
     return true
-  }, [active, capture, captureGroup, comment, source])
+  }, [active, source])
 
-  useEffect(() => {
-    if (!active) close()
-  }, [active, close])
-  useEffect(() => {
-    if (!active) return
-    const shortcut = (event: Event) => {
-      if (show()) (event as CustomEvent<NoteCaptureShortcutDetail>).detail.claimed = true
+  useEffect(() => { if (!active) close() }, [active, close])
+  useDOMEvent<KeyboardEvent>(document, 'keydown', (event) => {
+    if (event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown')) keyboardSelecting.current = true
+  }, undefined, active)
+  useDOMEvent<KeyboardEvent>(document, 'keyup', (event) => {
+    if (event.key === 'Shift' && keyboardSelecting.current) {
+      keyboardSelecting.current = false
+      scheduleFrame(show)
     }
-    window.addEventListener(noteCaptureShortcutEvent, shortcut)
-    return () => window.removeEventListener(noteCaptureShortcutEvent, shortcut)
-  }, [active, show])
-  useEffect(() => {
-    if (!capture) return
-    const pointer = (event: PointerEvent) => {
-      if (!comment && !(event.target as Element).closest('.note-capture-popover')) close()
-    }
-    window.addEventListener('pointerdown', pointer)
-    return () => window.removeEventListener('pointerdown', pointer)
-  }, [capture, close, comment])
-
-  const save = () => {
-    if (!capture) return
-    const result = store.add({ group: capture.group, text: captureNoteText(capture.quote, comment), source: capture.source })
-    if (!result.ok) { announce(result.reason); return }
-    announce(`Saved a note in ${capture.group}.`)
+  }, undefined, active)
+  useDOMEvent<Event>(document, 'selectionchange', () => {
+    if (!active || pointer.current || keyboardSelecting.current) return
+    scheduleFrame(() => { if (!pointer.current && !keyboardSelecting.current) show() })
+  }, undefined, active)
+  useDOMEvent<CustomEvent>(window, fileResolveGestureEvent, close, undefined, active)
+  useDOMEvent<PointerEvent>(window, 'pointerup', () => {
+    if (!pointer.current) return
+    pointer.current = false
+    if (!containerRef.current) return
+    const selection = activeSelection(containerRef.current)
+    if (!isRangeSelection(selection)) return
+    window.dispatchEvent(new CustomEvent(noteCaptureGestureEvent))
+    scheduleFrame(show)
+  }, undefined, active)
+  useDOMEvent<PointerEvent>(window, 'pointercancel', () => { pointer.current = false }, undefined, active)
+  useDOMEvent<PointerEvent>(window, 'pointerdown', (event) => {
+    pointer.current = false
+    const path = event.composedPath()
+    const target = path.find((item): item is Element => item instanceof Element)
+    if (capture && !target?.closest('.note-capture-popover')) close()
+    if (!containerRef.current || !path.includes(containerRef.current)) return
+    if (target?.closest('button, input, textarea, select, a, .note-capture-popover')) return
+    pointer.current = true
+  }, undefined, active)
+  const onDoubleClick = () => {
+    const selection = containerRef.current ? activeSelection(containerRef.current) : document.getSelection()
+    fileResolutionSelection.current = reserveSelectionForFileResolution(selection, () => {
+      window.dispatchEvent(new CustomEvent(fileResolveGestureEvent))
+    })
     close()
   }
-  const onPointerUp = (event: ReactPointerEvent<HTMLElement>) => {
-    const target = event.nativeEvent.composedPath().find((item): item is Element => item instanceof Element)
-    if (target?.closest('button, input, textarea, select, a, .note-capture-popover')) return
-    window.setTimeout(show, 0)
+  const save = (group: string, comment: string) => {
+    if (!capture) return
+    const result = store.add({ group, text: captureNoteText(capture.quote, comment), source: capture.source })
+    if (!result.ok) { announce(result.reason); return }
+    announce(`Saved a note in ${group === 'general' ? 'unassigned' : group}.`)
+    close()
   }
-  const groups = [...new Set(['general', ...agents, capture?.group ?? captureGroup])]
-  const element = capture ? <aside className={`note-capture-popover${expanded ? ' expanded' : ''}`} role="dialog" aria-label="Capture selected text" style={{ left: capture.left, top: capture.top }}
-    onKeyDown={(event) => {
-      if (event.key === 'Escape') { close(); event.preventDefault(); return }
-      if (!expanded && event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
-        setExpanded(true); setComment(event.key); event.preventDefault()
-      }
-    }}>
-    <div className="note-capture-chip"><button ref={chipRef} type="button" onClick={save} aria-label={`Capture quote in ${capture.group}`}>+ → {capture.group}</button>
-      <select aria-label="Note destination" value={capture.group} onChange={(event) => {
-        const group = event.target.value
-        setCapture((current) => current ? { ...current, group } : current)
-        setCaptureGroup(group)
-      }}>{groups.map((group) => <option value={group} key={group}>{group}</option>)}</select></div>
-    {expanded && <textarea autoFocus aria-label="Comment on selected text" value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Add a comment…"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') { close(); event.preventDefault(); return }
-        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { save(); event.preventDefault() }
-      }} />}
-  </aside> : null
-  return { containerRef, onPointerUp, element, show }
+  const element = capture ? <NoteCaptureChip capture={capture} notes={notes} agents={agents} onSave={save} onAbandon={close} /> : null
+  return { containerRef, onDoubleClick, element, show, close }
 }

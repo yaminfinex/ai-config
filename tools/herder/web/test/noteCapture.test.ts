@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { captureNoteText, capturePosition, captureSourceWithRange } from '../src/features/notes/noteCaptureModel.ts'
+import {
+  captureNoteText,
+  capturePosition,
+  captureSourceWithRange,
+  isRangeSelection,
+  isReservedFileResolutionSelection,
+  placeCaretAtEnd,
+  reserveSelectionForFileResolution,
+} from '../src/features/notes/noteCaptureModel.ts'
+import { fileResolveGestureEvent } from '../src/shared/selectionPopoverEvents.ts'
 
 test('capture always keeps the quote and appends an optional comment', () => {
   assert.equal(captureNoteText('  selected text  ', ''), 'selected text')
@@ -11,6 +20,7 @@ test('capture always keeps the quote and appends an optional comment', () => {
 test('capture position stays inside the viewport', () => {
   assert.deepEqual(capturePosition({ left: -20, bottom: 900 }, 800, 600), { left: 8, top: 272 })
   assert.deepEqual(capturePosition({ left: 120, bottom: 80 }, 800, 600), { left: 120, top: 86 })
+  assert.deepEqual(capturePosition({ left: 790, bottom: 80 }, 800, 600), { left: 460, top: 86 })
 })
 
 test('line facts are added only when both ends are proved', () => {
@@ -20,6 +30,61 @@ test('line facts are added only when both ends are proved', () => {
 
 test('capture hook preserves prior shortcut claims and does not attribute an empty end line', () => {
   const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
-  assert.match(hook, /if \(show\(\)\).*detail\.claimed = true/)
   assert.match(hook, /range\.endOffset === 0 \? undefined/)
+  assert.doesNotMatch(hook, /noteCaptureShortcutEvent|captureGroup|setCaptureGroup/)
+})
+
+test('keyboard range selection waits for Shift release before focusing the chip', () => {
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  assert.match(hook, /keyboardSelecting/)
+  assert.match(hook, /event\.shiftKey && \(event\.key === 'ArrowLeft' \|\| event\.key === 'ArrowRight'/)
+  assert.match(hook, /event\.key === 'Shift'/)
+  assert.match(hook, /if \(!active \|\| pointer\.current \|\| keyboardSelecting\.current\) return/)
+})
+
+test('drag selection stays passive and leaves native double-click routing untouched', () => {
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  const agent = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  const file = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(hook, /setPointerCapture|releasePointerCapture/)
+  assert.match(hook, /useDOMEvent<PointerEvent>\(window, 'pointerdown'/)
+  assert.match(hook, /useDOMEvent<PointerEvent>\(window, 'pointerup'/)
+  assert.match(hook, /event\.composedPath\(\)/)
+  assert.match(hook, /shadowRoot\.getSelection\?\.\(\)/)
+  assert.doesNotMatch(`${agent}\n${file}`, /onPointerDown=\{noteCapture/)
+  assert.match(agent, /onDoubleClickCapture=\{noteCapture\.onDoubleClick\}/)
+  assert.match(file, /onDoubleClickCapture=\{noteCapture\.onDoubleClick\}/)
+})
+
+test('synthetic transcript double-click dispatches file resolution and cannot open the chip', () => {
+  const node = {}
+  const selection = { isCollapsed: false, anchorNode: node, anchorOffset: 0, focusNode: node, focusOffset: 8 }
+  const events = new EventTarget()
+  let fileResolutions = 0
+  let chipOpens = 0
+  events.addEventListener(fileResolveGestureEvent, () => { fileResolutions += 1 })
+  const reserved = reserveSelectionForFileResolution(selection, () => events.dispatchEvent(new Event(fileResolveGestureEvent)))
+  if (isRangeSelection(selection) && !isReservedFileResolutionSelection(selection, reserved)) chipOpens += 1
+  assert.equal(fileResolutions, 1)
+  assert.equal(chipOpens, 0)
+})
+
+test('reselection preserves a comment and cannot capture the chip preview itself', () => {
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  assert.match(hook, /closest\('\.note-capture-popover'\)/)
+  assert.doesNotMatch(hook, /<NoteCaptureChip key=/)
+})
+
+test('typing to expand places the caret after the seeded first character', () => {
+  const calls: Array<[number, number]> = []
+  const field = { value: 'h', focus: () => undefined, setSelectionRange: (start: number, end: number) => calls.push([start, end]) }
+  placeCaretAtEnd(field)
+  assert.deepEqual(calls, [[1, 1]])
+})
+
+test('the one capture chip keeps target talk out of its minimal state', () => {
+  const chip = readFileSync(new URL('../src/features/notes/NoteCaptureChip.tsx', import.meta.url), 'utf8')
+  assert.match(chip, />＋ Add note</)
+  const minimal = chip.slice(chip.indexOf('if (!expanded)'), chip.indexOf('return <aside'))
+  assert.doesNotMatch(minimal, /capture\.group|unassigned|<NotesSelector/)
 })

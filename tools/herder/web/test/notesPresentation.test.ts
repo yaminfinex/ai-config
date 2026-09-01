@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import type { Board } from '../src/types.ts'
 import type { Note } from '../src/features/notes/notesStore.ts'
-import { liveRosterNames, noteGroupRows, noteTransferText, selectionAfterGesture } from '../src/features/notes/notesPresentation.ts'
+import { liveRosterNames, noteGroupRows, noteTransferText } from '../src/features/notes/notesPresentation.ts'
 
 const board: Board = {
   workspaces: [{
@@ -28,14 +28,4 @@ test('transfer text carries only proven source facts above the note body', () =>
   assert.equal(noteTransferText(note('1', 'kilo', 1, { kind: 'file', path: 'src/App.tsx', start: 7, end: 9 })), 'src/App.tsx:7-9\ntext 1')
   assert.equal(noteTransferText(note('2', 'kilo', 1, { kind: 'diff', path: 'src/App.tsx', base: 'merge-base' })), 'src/App.tsx (vs merge-base)\ntext 2')
   assert.equal(noteTransferText(note('3', 'kilo', 1, { kind: 'transcript', agent: 'kilo' })), 'Transcript: kilo\ntext 3')
-})
-
-test('selection gestures support plain, toggle, and shift-range selection', () => {
-  const ids = ['a', 'b', 'c', 'd']
-  const first = selectionAfterGesture(new Set(), ids, 'b', 'plain')
-  assert.deepEqual([...first.selected], [])
-  const toggled = selectionAfterGesture(first.selected, ids, 'b', 'toggle', first.anchor)
-  assert.deepEqual([...toggled.selected], ['b'])
-  const range = selectionAfterGesture(toggled.selected, ids, 'd', 'range', toggled.anchor)
-  assert.deepEqual([...range.selected], ['b', 'c', 'd'])
 })

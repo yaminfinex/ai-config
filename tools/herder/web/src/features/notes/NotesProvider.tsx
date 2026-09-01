@@ -6,8 +6,6 @@ type NotesContextValue = {
   store: NotesStore
   notes: Note[]
   status: NotesStatus
-  captureGroup: string
-  setCaptureGroup: (group: string) => void
   announce: (message: string) => void
   handOffGuard: NoteHandOffGuard
 }
@@ -19,7 +17,6 @@ export function NotesProvider({ children }: { children: ReactNode }) {
   const [handOffGuard] = useState(createNoteHandOffGuard)
   const [notes, setNotes] = useState(() => store.list())
   const [status, setStatus] = useState(() => store.status())
-  const [captureGroup, setCaptureGroup] = useState('general')
   const [toast, setToast] = useState('')
   const toastTimer = useRef<number | undefined>(undefined)
   const disposeTimer = useRef<number | undefined>(undefined)
@@ -39,7 +36,7 @@ export function NotesProvider({ children }: { children: ReactNode }) {
     toastTimer.current = window.setTimeout(() => { setToast(''); toastTimer.current = undefined }, 1_800)
   }, [])
   useEffect(() => () => { if (toastTimer.current !== undefined) window.clearTimeout(toastTimer.current) }, [])
-  const value = useMemo(() => ({ store, notes, status, captureGroup, setCaptureGroup, announce, handOffGuard }), [announce, captureGroup, handOffGuard, notes, status, store])
+  const value = useMemo(() => ({ store, notes, status, announce, handOffGuard }), [announce, handOffGuard, notes, status, store])
 
   return <NotesContext.Provider value={value}>{children}{toast && <div className="notes-toast" role="status" aria-live="polite">{toast}</div>}</NotesContext.Provider>
 }

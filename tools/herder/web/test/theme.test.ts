@@ -45,7 +45,7 @@ function rule(css: string, selector: string, last = false) {
 }
 
 function token(block: string, property: string) {
-  const name = block.match(new RegExp(`${property}: var\\(--([\\w-]+)\\)`))?.[1]
+  const name = block.match(new RegExp(`(?:^|;)\\s*${property}: var\\(--([\\w-]+)\\)`))?.[1]
   assert.ok(name, `${property} must use a theme token`)
   return name
 }
@@ -165,22 +165,52 @@ test('inline link text token meets WCAG AA across both theme surfaces', () => {
   }
 })
 
-test('notes action labels, count badges, and orphan flags meet WCAG AA in both themes', () => {
+test('every measured notes text pairing meets WCAG AA in both themes', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   const pairs = [
-    ['action-bar labels', token(rule(css, '.notes-action-bar label'), 'color'), token(rule(css, '.notes-action-bar'), 'background')],
-    ['group-count badge', token(rule(css, '.notes-group-heading span'), 'color'), token(rule(css, '.notes-group-heading span'), 'background')],
-    ['orphan flag', token(rule(css, '.notes-group-heading em'), 'color'), token(rule(css, '.notes-group-heading'), 'background')],
+    ['card text', token(rule(css, '.note-card'), 'color'), token(rule(css, '.note-card'), 'background')],
+    ['selected card text', token(rule(css, '.note-card.selected'), 'color'), token(rule(css, '.note-card.selected'), 'background')],
+    ['selector text', token(rule(css, '.notes-selector'), 'color'), token(rule(css, '.notes-selector'), 'background')],
+    ['selector highlight text', token(rule(css, ".notes-selector [role='option']"), 'color'), token(rule(css, ".notes-selector [role='option'].highlighted"), 'background')],
+    ['capture text', token(rule(css, '.note-capture-popover'), 'color'), token(rule(css, '.note-capture-popover'), 'background')],
+    ['hint text', token(rule(css, '.notes-hint-line'), 'color'), token(rule(css, '.notes-hint-line'), 'background')],
+    ['anchored source line', token(rule(css, '.note-card-content small'), 'color'), token(rule(css, '.note-card'), 'background')],
+    ['selected anchored source line', token(rule(css, '.note-card-content small'), 'color'), token(rule(css, '.note-card.selected'), 'background')],
+    ['group count badge', token(rule(css, '.notes-group-heading span'), 'color'), token(rule(css, '.notes-group-heading span'), 'background')],
+    ['capture Add button', token(rule(css, '.note-capture-add'), 'color'), token(rule(css, '.note-capture-add'), 'background')],
+    ['capture target', token(rule(css, '.note-capture-target'), 'color'), 'bg3'],
+    ['orphan flag', token(rule(css, '.notes-group-heading button'), 'color'), 'sidebar'],
   ]
+  const failures: string[] = []
   for (const block of themeBlocks(css)) {
     for (const [label, foregroundName, backgroundName] of pairs) {
       const foreground = block.match(new RegExp(`--${foregroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
       const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
       assert.ok(foreground && background, `${label} tokens must be concrete theme declarations`)
       const ratio = contrast(foreground, background)
-      assert.ok(ratio >= 4.5, `${label} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
+      if (ratio < 4.5) failures.push(`${label}: ${ratio.toFixed(2)}`)
     }
   }
+  assert.deepEqual(failures, [], `notes text contrast failures: ${failures.join(', ')}`)
+})
+
+test('the measured anchored-card bar meets WCAG UI contrast in both themes', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(rule(css, '.note-card.anchored'), /var\(--note-anchor\)/)
+  for (const block of themeBlocks(css)) {
+    const foreground = block.match(/--note-anchor: (#[\da-f]{6})/i)?.[1]
+    const background = block.match(/--note-card: (#[\da-f]{6})/i)?.[1]
+    assert.ok(foreground && background)
+    const ratio = contrast(foreground, background)
+    assert.ok(ratio >= 3, `anchor bar contrast ${ratio.toFixed(2)} must meet WCAG UI contrast`)
+  }
+})
+
+test('notes spacing uses the app 4px token grid', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(css, /--space-1: 4px; --space-2: 8px; --space-3: 12px;/)
+  const notes = css.slice(css.indexOf('.notes-rail-view'), css.indexOf('.notes-toast'))
+  assert.doesNotMatch(notes, /(?:margin|padding|gap|top|right|bottom|left):[^;]*(?:3|5|6|7|9|10|14)px/)
 })
 
 test('space reopen chips meet WCAG AA against the status-bar surface in both themes', () => {

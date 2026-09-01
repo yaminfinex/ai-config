@@ -70,6 +70,10 @@ export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlK
   return event.key === 'Enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)
 }
 
+export function isComposerQueueShortcut(event: Pick<KeyboardEvent, 'key' | 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>) {
+  return event.code === 'Enter' && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
+}
+
 type ComposerResizeTarget = {
   offsetWidth: number
   style: Pick<CSSStyleDeclaration, 'height' | 'overflowY'>
