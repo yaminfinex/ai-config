@@ -11,7 +11,6 @@ export type ShellShortcutActions = {
   switchSpace: (direction: TabDirection) => boolean | void
   focusFleet: () => boolean | void
   toggleNotesRail: () => boolean | void
-  captureNote: () => boolean | void
   focusComposer: () => boolean | void
   goToTop: () => boolean | void
   goToBottom: () => boolean | void
@@ -25,7 +24,6 @@ export type ShortcutLabels = {
   switchSpaces: string
   focusFleet: string
   toggleNotesRail: string
-  captureNote: string
   focusComposer: string
   sendRequest: string
   leaveComposer: string
@@ -47,7 +45,6 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     switchSpaces: '⇧⌥← / ⇧⌥→',
     focusFleet: '⌥1',
     toggleNotesRail: '⌥3',
-    captureNote: '⌥4',
     focusComposer: '⌥2',
     sendRequest: '⌘Enter',
     leaveComposer: 'Esc',
@@ -62,7 +59,6 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     switchSpaces: 'Shift+Alt+Left / Shift+Alt+Right',
     focusFleet: 'Alt+1',
     toggleNotesRail: 'Alt+3',
-    captureNote: 'Alt+4',
     focusComposer: 'Alt+2',
     sendRequest: 'Ctrl+Enter',
     leaveComposer: 'Esc',
@@ -105,7 +101,6 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     'Alt+Digit1': claimed(actions.focusFleet, true),
     'Alt+Digit2': claimed(actions.focusComposer, true),
     'Alt+Digit3': claimed(actions.toggleNotesRail, true),
-    'Alt+Digit4': claimed(actions.captureNote, true),
     ...(isMacPlatform(userAgent) ? { 'Meta+Slash': quickOpen } : {}),
   }
   return tinykeys(target, bindings, {

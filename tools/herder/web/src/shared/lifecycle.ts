@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useCallback, useEffect, useRef, type RefObject } from 'react'
 
 type EventTargetRef = RefObject<EventTarget | null>
 type Target = EventTarget | EventTargetRef | null | undefined
@@ -33,6 +33,20 @@ export function useDOMEvent<E extends Event>(
     if (!enabled || !resolved) return
     return subscribeDOMEvent<E>(resolved, type, (event) => handlerRef.current(event), options)
   }, [capture, enabled, target, type])
+}
+
+export function useScheduledFrame() {
+  const frame = useRef<number | undefined>(undefined)
+  useEffect(() => () => {
+    if (frame.current !== undefined) window.cancelAnimationFrame(frame.current)
+  }, [])
+  return useCallback((callback: () => void) => {
+    if (frame.current !== undefined) window.cancelAnimationFrame(frame.current)
+    frame.current = window.requestAnimationFrame(() => {
+      frame.current = undefined
+      callback()
+    })
+  }, [])
 }
 
 export function useSizeObserver<T extends Element>(

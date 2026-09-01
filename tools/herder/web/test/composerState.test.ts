@@ -7,6 +7,7 @@ import {
   composerFieldId,
   composerDraftKey,
   blurComposerOnEscape,
+  isComposerQueueShortcut,
   isComposerSendShortcut,
   persistComposerDraft,
   readComposerDraft,
@@ -82,6 +83,14 @@ test('only Ctrl+Enter and Cmd+Enter are send shortcuts', () => {
   assert.equal(isComposerSendShortcut({ key: 'a', ctrlKey: true, metaKey: false }), false)
 })
 
+test('only physical Option+Enter queues a note without stealing send or newline keys', () => {
+  assert.equal(isComposerQueueShortcut({ key: 'Dead', code: 'Enter', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false }), true)
+  assert.equal(isComposerQueueShortcut({ key: 'Enter', code: 'Enter', altKey: true, ctrlKey: false, metaKey: false, shiftKey: false }), true)
+  assert.equal(isComposerQueueShortcut({ key: 'Enter', code: 'Enter', altKey: true, ctrlKey: false, metaKey: true, shiftKey: false }), false)
+  assert.equal(isComposerQueueShortcut({ key: 'Enter', code: 'Enter', altKey: false, ctrlKey: false, metaKey: false, shiftKey: false }), false)
+  assert.equal(isComposerQueueShortcut({ key: 'Enter', code: 'Enter', altKey: true, ctrlKey: false, metaKey: false, shiftKey: true }), false)
+})
+
 test('each open agent composer gets a unique DOM id', () => {
   assert.equal(composerFieldId('agent one'), 'message-agent%20one')
   assert.notEqual(composerFieldId('agent one'), composerFieldId('agent two'))
@@ -101,6 +110,18 @@ test('send success refetches the transcript immediately, not just agent status',
   const success = composer.slice(composer.indexOf('const sendRefresh'), composer.indexOf('} catch'))
   assert.match(success, /queryKeys\.agent\(name\)/)
   assert.match(success, /queryKeys\.entries\(name\)/)
+})
+
+test('composer queue clears only after the notes persistence path proves success', () => {
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  const queue = composer.slice(composer.indexOf('if (isComposerQueueShortcut'), composer.indexOf('if (!isComposerSendShortcut'))
+  assert.match(queue, /const queued = onQueue\(message\)/)
+  assert.ok(queue.indexOf('if (!queued.ok)') < queue.indexOf("persistComposerDraft(name, '')"))
+  assert.ok(queue.indexOf("persistComposerDraft(name, '')") < queue.indexOf("setMessage('')"))
+  assert.match(queue, /setSendProblem\(queued\.reason\)/)
+  const panel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /queueComposerNote\(notesStore, name, text\)/)
+  assert.doesNotMatch(panel, /notesStore\.add/)
 })
 
 test('focusComposerWhenReady retries until the composer mounts, then stops quietly', () => {

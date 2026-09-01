@@ -19,3 +19,14 @@ test('shared token lookup pierces Pierre open shadow roots without changing Pier
   assert.match(resolver, /nativeEvent\.composedPath\(\)/u)
   assert.match(resolver, /caretPositionFromPoint\?\.\(x, y, shadowRoots\.length > 0 \? \{ shadowRoots \} : undefined\)/u)
 })
+
+test('note capture aborts any in-flight resolver request before closing it', () => {
+  const cancelStart = resolver.indexOf('const cancel = useCallback')
+  const cancelEnd = resolver.indexOf('\n  }', cancelStart)
+  const cancel = resolver.slice(cancelStart, cancelEnd)
+  assert.ok(cancelStart >= 0)
+  assert.match(cancel, /request\.current\?\.abort\(\)/)
+  assert.match(cancel, /request\.current = null/)
+  assert.match(cancel, /close\(\)/)
+  assert.match(resolver, /useDOMEvent\(window, noteCaptureGestureEvent, cancel/)
+})

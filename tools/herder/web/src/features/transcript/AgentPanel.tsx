@@ -21,6 +21,8 @@ import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../
 import { PanelState } from '../../shared/PanelState'
 import { AgentNotesStrip } from '../notes/AgentNotesStrip'
 import { useNoteCapture } from '../notes/useNoteCapture'
+import { useNotes } from '../notes/NotesProvider'
+import { queueComposerNote } from '../notes/noteQueue'
 
 export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
   const queryClient = useQueryClient()
@@ -48,6 +50,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
   }
   const fileResolver = useTranscriptFileResolver(name, active && !screenMode, onOpenFile, onOpenFolder)
   const noteCapture = useNoteCapture({ active: active && !screenMode, source: { kind: 'transcript', agent: name }, agents })
+  const { store: notesStore, announce: announceNote } = useNotes()
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
@@ -71,7 +74,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
   </main>
 
   const retired = agent?.bus_status === 'retired'
-  return <main className="agent-page" ref={noteCapture.containerRef} onPointerUp={noteCapture.onPointerUp}>
+  return <main className="agent-page" ref={noteCapture.containerRef} onPointerDown={noteCapture.onPointerDown} onPointerUp={noteCapture.onPointerUp} onPointerCancel={noteCapture.onPointerCancel}>
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
       <ToolBadge tool={agent?.tool} />
@@ -107,7 +110,12 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />
     {agent && <AgentNotesStrip agent={name} agents={agents} />}
-    {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} />}
+    {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} onQueue={(text) => {
+      const result = queueComposerNote(notesStore, name, text)
+      if (!result.ok) return result
+      announceNote(`Queued a note for ${name}.`)
+      return { ok: true }
+    }} />}
     {noteCapture.element}
   </main>
 }

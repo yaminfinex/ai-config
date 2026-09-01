@@ -1,15 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
-import { blurComposerOnEscape, composerFieldId, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
+import { blurComposerOnEscape, composerFieldId, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
 import { beginSendRefresh, settleSendRefresh } from '../../sendRefresh'
 
-export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }: {
+export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend, onQueue }: {
   name: string
   identityReadOnly: string
   onViewer: (viewer: string) => void
   onProblem: (detail: string) => void
   onSend: () => void
+  onQueue: (text: string) => { ok: true } | { ok: false, reason: string }
 }) {
   const [message, setMessage] = useState(() => readComposerDraft(name))
   const [sendProblem, setSendProblem] = useState('')
@@ -70,6 +71,16 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
       onChange={(event) => setMessage(event.target.value)}
       onKeyDown={(event) => {
         if (blurComposerOnEscape(event)) return
+        if (isComposerQueueShortcut(event) && !event.nativeEvent.isComposing) {
+          event.preventDefault()
+          if (!message.trim()) return
+          const queued = onQueue(message)
+          if (!queued.ok) { setSendProblem(queued.reason); return }
+          persistComposerDraft(name, '')
+          setMessage('')
+          setSendProblem('')
+          return
+        }
         if (!isComposerSendShortcut(event) || event.nativeEvent.isComposing) return
         event.preventDefault()
         event.currentTarget.form?.requestSubmit()
@@ -87,6 +98,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
     />
     <div className="send-footer">
       <div>{sendProblem && <p className="inline-error" role="alert">{sendProblem}</p>}</div>
+      <span className="composer-key-hints"><span><kbd>⌘⏎</kbd> send</span><span><kbd>⌥⏎</kbd> queue as note</span></span>
       <button type="submit" disabled={!message.trim() || mutation.isPending || Boolean(effectiveReadOnly)}>{mutation.isPending ? 'Sending…' : 'Send request'}</button>
     </div>
   </form>

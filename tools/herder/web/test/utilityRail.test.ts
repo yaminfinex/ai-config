@@ -46,7 +46,9 @@ test('open rails shrink before the centre can collapse at the minimum viewport',
   assert.match(styles, /\.shell-main \{[^}]*min-width: 200px/)
 })
 
-test('notes empty-state copy uses the accessible secondary text colour', () => {
+test('notes empty states render no explanatory copy', () => {
   const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
-  assert.match(styles, /\.notes-rail-empty \{[^}]*color: var\(--dim\)/)
+  const rail = readFileSync(new URL('../src/features/notes/NotesRail.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(styles, /\.notes-(?:rail-)?empty/)
+  assert.doesNotMatch(rail, /No notes|empty/i)
 })

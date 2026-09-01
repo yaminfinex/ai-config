@@ -14,7 +14,7 @@ export function liveRosterNames(board: Board | undefined) {
 
 export function noteGroupRows(notes: Note[], roster: string[]) {
   const rosterSet = new Set(roster)
-  const updated = new Map<string, number>([['general', Number.POSITIVE_INFINITY]])
+  const updated = new Map<string, number>()
   for (const note of notes) updated.set(note.group, Math.max(updated.get(note.group) ?? 0, note.updated))
   return [...updated].sort(([leftGroup, leftTime], [rightGroup, rightTime]) => {
     if (leftGroup === 'general') return -1
@@ -34,22 +34,6 @@ export function noteSourceLabel(source: NoteSource | undefined) {
 export function noteTransferText(note: Note) {
   const source = noteSourceLabel(note.source)
   return source ? `${source}\n${note.text}` : note.text
-}
-
-export type SelectionGesture = 'plain' | 'toggle' | 'range'
-
-export function selectionAfterGesture(selected: Set<string>, ordered: string[], id: string, gesture: SelectionGesture, anchor?: string) {
-  if (gesture === 'plain') return { selected, anchor }
-  const next = new Set(selected)
-  if (gesture === 'toggle') {
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    return { selected: next, anchor: id }
-  }
-  const from = Math.max(0, ordered.indexOf(anchor ?? id))
-  const to = Math.max(0, ordered.indexOf(id))
-  for (const ranged of ordered.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(ranged)
-  return { selected: next, anchor: anchor ?? id }
 }
 
 export const notesStripPreferencePrefix = `${'herder.web.notes.v1:'}strip:`

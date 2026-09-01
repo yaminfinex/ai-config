@@ -124,7 +124,7 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
   const refreshing = statusQuery.isFetching || gitState.mode === 'current' && !gitState.revision && fileQuery.isFetching || gitState.mode === 'diff' && diffQuery.isFetching || gitState.mode === 'history' && historyQuery.isFetching
   const containingFolder = parentFolderPath(target.path) ?? ''
   const absolutePath = rootJoinedAbsolutePath(target.root, target.path)
-  return <main className="file-panel" ref={noteCapture.containerRef} onPointerUp={noteCapture.onPointerUp}>
+  return <main className="file-panel" ref={noteCapture.containerRef} onPointerDown={noteCapture.onPointerDown} onPointerUp={noteCapture.onPointerUp} onPointerCancel={noteCapture.onPointerCancel}>
     <header className="file-header">
       <div className="file-title"><div className="path-name"><strong>{rootLabel(target.path)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><button type="button" className={`header-refresh${refreshing ? ' busy' : ''}`}
         title={refreshing ? 'Refreshing…' : 'Refresh'} aria-label="Refresh" onClick={refresh} disabled={refreshing}>

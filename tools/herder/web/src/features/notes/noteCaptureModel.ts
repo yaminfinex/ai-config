@@ -8,7 +8,7 @@ export function captureNoteText(quote: string, comment: string) {
 
 export function capturePosition(rect: Pick<DOMRect, 'left' | 'bottom'>, viewportWidth: number, viewportHeight: number) {
   return {
-    left: Math.max(8, Math.min(rect.left, viewportWidth - 260)),
+    left: Math.max(8, Math.min(rect.left, viewportWidth - 340)),
     top: Math.max(8, Math.min(rect.bottom + 6, viewportHeight - 328)),
   }
 }
@@ -16,4 +16,9 @@ export function capturePosition(rect: Pick<DOMRect, 'left' | 'bottom'>, viewport
 export function captureSourceWithRange(source: NoteSource, start?: number, end?: number): NoteSource {
   if (source.kind === 'transcript' || start === undefined || end === undefined) return source
   return { ...source, start: Math.min(start, end), end: Math.max(start, end) }
+}
+
+export function placeCaretAtEnd(field: Pick<HTMLTextAreaElement, 'value' | 'focus' | 'setSelectionRange'>) {
+  field.focus()
+  field.setSelectionRange(field.value.length, field.value.length)
 }

@@ -6,6 +6,7 @@ import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useDOMEvent } from '../../shared/lifecycle'
+import { fileResolveGestureEvent, noteCaptureGestureEvent } from '../../shared/selectionPopoverEvents'
 
 type PopoverState = { left: number, top: number, mention: string, resolution: ResolveResponse }
 
@@ -40,22 +41,25 @@ export function useTranscriptFileResolver(context: ResolveContext, enabled: bool
   const request = useRef<AbortController | null>(null)
 
   const close = useCallback(() => setPopover(null), [])
-  useEffect(() => () => request.current?.abort(), [])
-  useEffect(() => {
-    if (enabled) return
+  const cancel = useCallback(() => {
     request.current?.abort()
     request.current = null
     close()
-  }, [close, enabled])
+  }, [close])
+  useEffect(() => () => request.current?.abort(), [])
+  useEffect(() => {
+    if (enabled) return
+    cancel()
+  }, [cancel, enabled])
   useDOMEvent<KeyboardEvent>(window, 'keydown', (event) => { if (event.key === 'Escape') close() }, undefined, Boolean(popover))
   useDOMEvent<PointerEvent>(window, 'pointerdown', (event) => {
     if (!(event.target as Element).closest('.selection-file-popover')) close()
   }, undefined, Boolean(popover))
+  useDOMEvent(window, noteCaptureGestureEvent, cancel, undefined, enabled)
 
   const onDoubleClick = useCallback(async (event: React.MouseEvent<HTMLElement>) => {
-    request.current?.abort()
-    request.current = null
-    close()
+    window.dispatchEvent(new CustomEvent(fileResolveGestureEvent))
+    cancel()
     const target = event.nativeEvent.composedPath().find((item): item is Element => item instanceof Element) ?? event.target as Element
     if (target.closest('a, button, header, summary, .window-note, .entry-time')) return
     const point = textPoint(event)
@@ -96,7 +100,7 @@ export function useTranscriptFileResolver(context: ResolveContext, enabled: bool
     } finally {
       if (request.current === controller) request.current = null
     }
-  }, [close, context, enabled, onOpenFile, onOpenFolder])
+  }, [cancel, close, context, enabled, onOpenFile, onOpenFolder])
 
   const choose = (candidate: FileCandidate, event: React.MouseEvent<HTMLButtonElement>) => {
     if (!popover) return

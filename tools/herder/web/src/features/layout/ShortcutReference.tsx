@@ -11,7 +11,6 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
     [labels.switchSpaces, 'Switch spaces'],
     [labels.focusFleet, 'Focus fleet sidebar'],
     [labels.toggleNotesRail, 'Toggle notes rail'],
-    [labels.captureNote, 'Capture selected text as a note'],
     [labels.focusComposer, 'Focus active composer'],
     [labels.sendRequest, 'Send request'],
     [labels.leaveComposer, 'Leave text box'],

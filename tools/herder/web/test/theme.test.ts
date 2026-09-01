@@ -165,12 +165,14 @@ test('inline link text token meets WCAG AA across both theme surfaces', () => {
   }
 })
 
-test('notes action labels, count badges, and orphan flags meet WCAG AA in both themes', () => {
+test('notes cards, selected cards, selector, chip, and hint line meet WCAG AA in both themes', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   const pairs = [
-    ['action-bar labels', token(rule(css, '.notes-action-bar label'), 'color'), token(rule(css, '.notes-action-bar'), 'background')],
-    ['group-count badge', token(rule(css, '.notes-group-heading span'), 'color'), token(rule(css, '.notes-group-heading span'), 'background')],
-    ['orphan flag', token(rule(css, '.notes-group-heading em'), 'color'), token(rule(css, '.notes-group-heading'), 'background')],
+    ['card text', token(rule(css, '.note-card'), 'color'), token(rule(css, '.note-card'), 'background')],
+    ['selected card text', token(rule(css, '.note-card.selected'), 'color'), token(rule(css, '.note-card.selected'), 'background')],
+    ['selector text', token(rule(css, '.notes-selector'), 'color'), token(rule(css, '.notes-selector'), 'background')],
+    ['capture text', token(rule(css, '.note-capture-popover'), 'color'), token(rule(css, '.note-capture-popover'), 'background')],
+    ['hint text', token(rule(css, '.notes-hint-line'), 'color'), token(rule(css, '.notes-hint-line'), 'background')],
   ]
   for (const block of themeBlocks(css)) {
     for (const [label, foregroundName, backgroundName] of pairs) {
@@ -181,6 +183,13 @@ test('notes action labels, count badges, and orphan flags meet WCAG AA in both t
       assert.ok(ratio >= 4.5, `${label} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
     }
   }
+})
+
+test('notes spacing uses the app 4px token grid', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(css, /--space-1: 4px; --space-2: 8px; --space-3: 12px;/)
+  const notes = css.slice(css.indexOf('.notes-rail-view'), css.indexOf('.notes-toast'))
+  assert.doesNotMatch(notes, /(?:margin|padding|gap|top|right|bottom|left):[^;]*(?:3|5|6|7|9|10|14)px/)
 })
 
 test('space reopen chips meet WCAG AA against the status-bar surface in both themes', () => {
