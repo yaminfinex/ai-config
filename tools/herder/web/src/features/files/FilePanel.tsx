@@ -168,8 +168,8 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
         : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`} onDoubleClick={fileResolver.onDoubleClick}>
           {data.truncated && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
           {html && effectiveViewMode === 'rendered' ? <iframe className="file-html-preview" title="Rendered HTML preview. Scripts do not run." sandbox="" srcDoc={data.content} />
-            : markdown && effectiveViewMode === 'rendered' ? <div className="markdown file-markdown"><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
-            : <div className="file-source"><PierreFile path={gitState.revision?.path ?? data.path} content={data.content} selectedLines={gitState.revision ? null : selectedCurrentLines(target.line)} /></div>
+            : markdown && effectiveViewMode === 'rendered' ? <div className="markdown file-markdown" data-note-capture-content><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
+            : <div className="file-source" data-note-capture-content><PierreFile path={gitState.revision?.path ?? data.path} content={data.content} selectedLines={gitState.revision ? null : selectedCurrentLines(target.line)} /></div>
           }
         </div>}
     </>}
@@ -206,7 +206,7 @@ function DiffView({ query, base, commit, branchAvailable, onBase }: {
       <DiffFacts data={data} />
       {data.facts.binary ? <PanelState className="file-state binary" title="Binary change" detail="Git reports this file as binary; no text patch is available." />
         : data.patch.length === 0 ? <PanelState className="file-state" title="No changes vs this base" detail={<>The selected file has no patch against {data.base.label}.</>} />
-          : <div className="git-diff-content"><PierrePatch patch={data.patch} /></div>}
+          : <div className="git-diff-content" data-note-capture-content><PierrePatch patch={data.patch} /></div>}
     </>}
   </section>
 }

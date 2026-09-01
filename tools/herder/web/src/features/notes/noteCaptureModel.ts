@@ -33,10 +33,9 @@ export function isReservedFileResolutionSelection(selection: SelectionLike | nul
     && selection.focusOffset === reserved.focusOffset)
 }
 
-export function captureNoteText(quote: string, comment: string) {
-  const selected = quote.trim()
-  const aside = comment.trim()
-  return aside ? `${selected}\n\n${aside}` : selected
+export function sharedCaptureSurface<NodeType, SurfaceType>(start: NodeType, end: NodeType, resolve: (node: NodeType) => SurfaceType | null) {
+  const surface = resolve(start)
+  return surface !== null && surface === resolve(end) ? surface : null
 }
 
 export function capturePosition(rect: Pick<DOMRect, 'left' | 'bottom'>, viewportWidth: number, viewportHeight: number) {

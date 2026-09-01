@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useDOMEvent, useScheduledFrame } from '../../shared/lifecycle.ts'
 import { fileResolveGestureEvent, noteCaptureGestureEvent } from '../../shared/selectionPopoverEvents.ts'
 import {
-  captureNoteText,
   capturePosition,
   captureSourceWithRange,
   isRangeSelection,
   isReservedFileResolutionSelection,
   reserveSelectionForFileResolution,
+  sharedCaptureSurface,
   type ReservedSelection,
 } from './noteCaptureModel.ts'
 import { NoteCaptureChip, type NoteCaptureDraft } from './NoteCaptureChip.tsx'
@@ -26,24 +26,53 @@ function belongsTo(container: HTMLElement, node: Node | null) {
   return root instanceof ShadowRoot && container.contains(root.host)
 }
 
-function shadowSelection(root: ParentNode): Selection | null {
+function openShadowRoots(root: ParentNode, found: ShadowRoot[] = []) {
   for (const element of root.querySelectorAll('*')) {
-    const shadowRoot = element.shadowRoot as ShadowRoot & { getSelection?: () => Selection | null } | null
+    const shadowRoot = element.shadowRoot
     if (!shadowRoot) continue
-    const selection = shadowRoot.getSelection?.()
-    if (selection?.toString().trim()) return selection
-    const nested = shadowSelection(shadowRoot)
-    if (nested) return nested
+    found.push(shadowRoot)
+    openShadowRoots(shadowRoot, found)
+  }
+  return found
+}
+
+function activeSelection(container: HTMLElement) {
+  const roots = openShadowRoots(container)
+  for (const shadowRoot of roots) {
+    const selection = (shadowRoot as ShadowRoot & { getSelection?: () => Selection | null }).getSelection?.()
+    if (selection?.toString().trim()) return { selection, roots }
+  }
+  return { selection: document.getSelection(), roots }
+}
+
+function composedRange(selection: Selection, roots: ShadowRoot[]) {
+  const composed = (selection as Selection & {
+    getComposedRanges?: (options: { shadowRoots: ShadowRoot[] }) => StaticRange[]
+  }).getComposedRanges?.({ shadowRoots: roots })[0]
+  if (!composed) return selection.getRangeAt(0)
+  const range = document.createRange()
+  range.setStart(composed.startContainer, composed.startOffset)
+  range.setEnd(composed.endContainer, composed.endOffset)
+  return range
+}
+
+function closestComposed(node: Node | null, selector: string) {
+  let element = selectionElement(node)
+  while (element) {
+    const match = element.closest<HTMLElement>(selector)
+    if (match) return match
+    const root = element.getRootNode()
+    element = root instanceof ShadowRoot ? root.host : null
   }
   return null
 }
 
-function activeSelection(container: HTMLElement) {
-  return shadowSelection(container) ?? document.getSelection()
+function captureSurface(node: Node) {
+  return closestComposed(node, '[data-note-capture-content]')
 }
 
 function selectedLine(node: Node | null) {
-  const raw = selectionElement(node)?.closest<HTMLElement>('[data-line]')?.dataset.line
+  const raw = closestComposed(node, '[data-line]')?.dataset.line
   if (!raw || !/^\d+$/.test(raw)) return undefined
   return Number(raw)
 }
@@ -60,13 +89,14 @@ export function useNoteCapture({ active, source, agents }: { active: boolean, so
   const close = useCallback(() => setCapture(null), [])
   const show = useCallback(() => {
     if (!active || !containerRef.current) return false
-    const selection = activeSelection(containerRef.current)
-    if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !belongsTo(containerRef.current, selection.anchorNode) || !belongsTo(containerRef.current, selection.focusNode)) return false
+    const { selection, roots } = activeSelection(containerRef.current)
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return false
     if (isReservedFileResolutionSelection(selection, fileResolutionSelection.current)) return false
-    if (selectionElement(selection.anchorNode)?.closest('.note-capture-popover') || selectionElement(selection.focusNode)?.closest('.note-capture-popover')) return false
-    const quote = selection.toString().trim()
+    const range = composedRange(selection, roots)
+    const surface = sharedCaptureSurface(range.startContainer, range.endContainer, captureSurface)
+    if (!surface || !belongsTo(containerRef.current, surface)) return false
+    const quote = range.toString().trim()
     if (!quote) return false
-    const range = selection.getRangeAt(0)
     const rect = range.getBoundingClientRect()
     const position = capturePosition(rect, window.innerWidth, window.innerHeight)
     const provenSource = captureSourceWithRange(source, selectedLine(range.startContainer), range.endOffset === 0 ? undefined : selectedLine(range.endContainer))
@@ -93,7 +123,7 @@ export function useNoteCapture({ active, source, agents }: { active: boolean, so
     if (!pointer.current) return
     pointer.current = false
     if (!containerRef.current) return
-    const selection = activeSelection(containerRef.current)
+    const { selection } = activeSelection(containerRef.current)
     if (!isRangeSelection(selection)) return
     window.dispatchEvent(new CustomEvent(noteCaptureGestureEvent))
     scheduleFrame(show)
@@ -109,7 +139,7 @@ export function useNoteCapture({ active, source, agents }: { active: boolean, so
     pointer.current = true
   }, undefined, active)
   const onDoubleClick = () => {
-    const selection = containerRef.current ? activeSelection(containerRef.current) : document.getSelection()
+    const selection = containerRef.current ? activeSelection(containerRef.current).selection : document.getSelection()
     fileResolutionSelection.current = reserveSelectionForFileResolution(selection, () => {
       window.dispatchEvent(new CustomEvent(fileResolveGestureEvent))
     })
@@ -117,7 +147,7 @@ export function useNoteCapture({ active, source, agents }: { active: boolean, so
   }
   const save = (group: string, comment: string) => {
     if (!capture) return
-    const result = store.add({ group, text: captureNoteText(capture.quote, comment), source: capture.source })
+    const result = store.add({ group, quote: capture.quote, text: comment, source: capture.source })
     if (!result.ok) { announce(result.reason); return }
     announce(`Saved a note in ${group === 'general' ? 'unassigned' : group}.`)
     close()

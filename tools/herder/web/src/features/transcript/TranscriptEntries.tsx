@@ -94,7 +94,7 @@ function ToolEntry({ entry, result, now }: { entry: TranscriptEntry, result?: Tr
     <span className={`tool-status ${result ? outcome.is_error === true ? 'error' : 'success' : 'running'}`} />
     <strong>{name}</strong><span className="tool-summary">{toolSummary(name, input)}</span>
     <span className="tool-duration">{duration}</span><Timestamp timestamp={result?.timestamp ?? entry.timestamp} now={now} />
-  </summary><div className="entry-detail">
+  </summary><div className="entry-detail" data-note-capture-content>
     <h4>Input</h4><pre>{JSON.stringify(input, null, 2)}</pre>
     {result && <><h4>Output</h4>{output && <pre>{output}</pre>}
       {imageCount > 0 && <div className="image-placeholder">▧ {imageCount} image result{imageCount === 1 ? '' : 's'} present (not served)</div>}
@@ -153,7 +153,7 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
   const visibleValues = selected.filter(({ raw, index }) => !duplicates?.has(index) && (!cleanView || isCleanConversationDelivery(objectValue(raw))))
   if (visibleValues.length === 0) return null
   const parsed = visibleValues.some(({ raw }) => Boolean(valueText(objectValue(raw).sender) && valueText(objectValue(raw).message_id)))
-  if (!parsed) return showSystem ? <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{visibleValues.map(({ raw }) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details> : null
+  if (!parsed) return showSystem ? <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{visibleValues.map(({ raw }) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details> : null
   return <>{visibleValues.map(({ raw, index }) => {
     const delivery = objectValue(raw)
     const text = valueText(delivery.text)
@@ -164,7 +164,7 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
         {valueText(delivery.message_id) && <span className="message-id">#{valueText(delivery.message_id)}</span>}
         {valueText(delivery.thread) && <span className="thread-chip">{valueText(delivery.thread)}</span>}
         <Timestamp timestamp={entry.timestamp} now={now} />
-      </header><div><MentionText>{polishHcomDeliveryText(text) || '(delivery body unavailable)'}</MentionText></div>
+      </header><div data-note-capture-content><MentionText>{polishHcomDeliveryText(text) || '(delivery body unavailable)'}</MentionText></div>
     </article>
   })}</>
 }
@@ -193,11 +193,11 @@ function LatestActivity({ activity, entries, relationships, agentName, now }: { 
 
 function AssistantText({ content, agentName, timestamp, now, showSystem }: { content: string, agentName: string, timestamp?: string, now: number, showSystem: boolean }) {
   const fencing = parseAssistantFencing(content)
-  if (!fencing.fenced) return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={timestamp} now={now} /></header><div className="markdown"><MentionMarkdown>{content}</MentionMarkdown></div></article>
+  if (!fencing.fenced) return <article className="assistant-entry"><header><strong>{agentName}</strong><Timestamp timestamp={timestamp} now={now} /></header><div className="markdown" data-note-capture-content><MentionMarkdown>{content}</MentionMarkdown></div></article>
 
   const segments = <div className="assistant-fenced-content">{fencing.segments.map((segment, index) => {
-    if (segment.kind === 'text') return segment.content.trim() && <div className="markdown" key={index}><MentionMarkdown>{segment.content}</MentionMarkdown></div>
-    if (segment.kind === 'internal') return <details className="internal-note" open={showSystem} onToggle={event => { if (showSystem) event.currentTarget.open = true }} key={index}><summary className="activity-pill thinking">internal note · {segment.wordCount} {segment.wordCount === 1 ? 'word' : 'words'}</summary><div className="entry-detail markdown"><MentionMarkdown>{segment.content}</MentionMarkdown></div></details>
+    if (segment.kind === 'text') return segment.content.trim() && <div className="markdown" data-note-capture-content key={index}><MentionMarkdown>{segment.content}</MentionMarkdown></div>
+    if (segment.kind === 'internal') return <details className="internal-note" open={showSystem} onToggle={event => { if (showSystem) event.currentTarget.open = true }} key={index}><summary className="activity-pill thinking">internal note · {segment.wordCount} {segment.wordCount === 1 ? 'word' : 'words'}</summary><div className="entry-detail markdown" data-note-capture-content><MentionMarkdown>{segment.content}</MentionMarkdown></div></details>
     return <span className="activity-pill assistant-status" key={index}><MentionText>{segment.content}</MentionText></span>
   })}</div>
 
@@ -216,31 +216,31 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   }
   if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} />
   if (entry.kind === 'tool_use') return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
-  if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><pre>{resultText(payload.content)}</pre></div></details>
+  if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail" data-note-capture-content><pre>{resultText(payload.content)}</pre></div></details>
   if (entry.kind === 'assistant_text') return <AssistantText content={content} agentName={agentName} timestamp={entry.timestamp} now={now} showSystem={showSystem} />
   if (entry.kind === 'thinking') {
     const nextTime = relationships.nextTimestamps.get(index)
     const duration = nextTime && entry.timestamp ? formatDuration(Date.parse(nextTime) - Date.parse(entry.timestamp)) : 'duration unknown'
-    return <details className="entry-expander thinking-entry"><summary>thinking · {duration}<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail"><MentionText>{content || 'Thinking content unavailable.'}</MentionText></div></details>
+    return <details className="entry-expander thinking-entry"><summary>thinking · {duration}<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail" data-note-capture-content><MentionText>{content || 'Thinking content unavailable.'}</MentionText></div></details>
   }
-  if (entry.kind === 'human_prompt') return <article className="entry-card human-entry"><header><strong>owner (terminal)</strong><Timestamp timestamp={entry.timestamp} now={now} absolute /></header><div><MentionText>{content || 'Prompt body unavailable.'}</MentionText></div></article>
+  if (entry.kind === 'human_prompt') return <article className="entry-card human-entry"><header><strong>owner (terminal)</strong><Timestamp timestamp={entry.timestamp} now={now} absolute /></header><div data-note-capture-content><MentionText>{content || 'Prompt body unavailable.'}</MentionText></div></article>
   if (entry.kind === 'command_stdout') {
     const command = content.match(/<command-name>([\s\S]*?)<\/command-name>/)?.[1] ?? 'slash command'
     const args = content.match(/<command-args>([\s\S]*?)<\/command-args>/)?.[1] ?? ''
     const outputContent = messageText(relationships.commandOutputs.get(index)?.payload) || content
     const output = outputContent.match(/<local-command-stdout>([\s\S]*?)<\/local-command-stdout>/)?.[1] ?? ''
-    return <details className="entry-expander command-entry"><summary><span className="command-chip">{command}</span>{args && <span className="tool-summary">{args}</span>}<Timestamp timestamp={relationships.commandOutputs.get(index)?.timestamp ?? entry.timestamp} now={now} /></summary>{(args || output) && <div className="entry-detail">{args && <><h4>Arguments</h4><pre>{args}</pre></>}{output && <><h4>Output</h4><pre>{output}</pre></>}</div>}</details>
+    return <details className="entry-expander command-entry"><summary><span className="command-chip">{command}</span>{args && <span className="tool-summary">{args}</span>}<Timestamp timestamp={relationships.commandOutputs.get(index)?.timestamp ?? entry.timestamp} now={now} /></summary>{(args || output) && <div className="entry-detail" data-note-capture-content>{args && <><h4>Arguments</h4><pre>{args}</pre></>}{output && <><h4>Output</h4><pre>{output}</pre></>}</div>}</details>
   }
   if (entry.kind === 'compact_divider') {
     const metadata = objectValue(payload.compactMetadata)
     if (Object.keys(metadata).length > 0) return <div className="compaction-divider"><span>context compacted ({valueText(metadata.trigger) || 'unknown'}, {Number(metadata.preTokens).toLocaleString()} → {Number(metadata.postTokens).toLocaleString()} tokens)</span><Timestamp timestamp={entry.timestamp} now={now} /></div>
-    return <details className="entry-expander compact-summary"><summary>compaction summary<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail markdown"><MentionMarkdown>{content || valueText(payload.content)}</MentionMarkdown></div></details>
+    return <details className="entry-expander compact-summary"><summary>compaction summary<Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail markdown" data-note-capture-content><MentionMarkdown>{content || valueText(payload.content)}</MentionMarkdown></div></details>
   }
   if (entry.kind === 'turn_duration') return <div className="turn-footer">turn · {formatDuration(Number(payload.durationMs))}{payload.messageCount != null ? ` · ${Number(payload.messageCount)} messages` : ''} · <Timestamp timestamp={entry.timestamp} now={now} /></div>
-  if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div><MentionText>{content || JSON.stringify(payload)}</MentionText></div></details>
-  if (entry.kind === 'system_chip') return !showSystem && payload.subtype !== 'scheduled_task_fire' ? null : <details className="system-chip"><summary>{valueText(payload.subtype) || 'system entry'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(payload, null, 2)}</pre></details>
+  if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div data-note-capture-content><MentionText>{content || JSON.stringify(payload)}</MentionText></div></details>
+  if (entry.kind === 'system_chip') return !showSystem && payload.subtype !== 'scheduled_task_fire' ? null : <details className="system-chip"><summary>{valueText(payload.subtype) || 'system entry'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{JSON.stringify(payload, null, 2)}</pre></details>
   if (!showSystem) return null
-  return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : `unknown entry · ${entry.kind}`} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre>{JSON.stringify(entry.payload, null, 2)}</pre></details>
+  return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : `unknown entry · ${entry.kind}`} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{JSON.stringify(entry.payload, null, 2)}</pre></details>
 }
 
 export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView, mentionMatcher, onOpenAgent, sideHint }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void, sideHint: string }) {

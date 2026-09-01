@@ -6,6 +6,7 @@ import {
   filterSelectorRows,
   selectorBackspace,
   selectorInitialValue,
+  selectorMove,
   selectorRows,
 } from '../src/features/notes/notesSelectorModel.ts'
 
@@ -37,4 +38,11 @@ test('typing filters names and empty-query Backspace highlights unassigned witho
   assert.deepEqual(selectorBackspace('', 'kilo', 'assign'), { handled: true, highlighted: 'general' })
   assert.deepEqual(selectorBackspace('k', 'kilo', 'assign'), { handled: false, highlighted: 'kilo' })
   assert.deepEqual(selectorBackspace('', 'kilo', 'destination'), { handled: false, highlighted: 'kilo' })
+})
+
+test('selector arrows wrap at both ends like quick-open', () => {
+  const rows = selectorRows([], ['anta', 'kilo', 'muro'], 'destination')
+  assert.equal(selectorMove(rows, 'muro', 1), 'anta')
+  assert.equal(selectorMove(rows, 'anta', -1), 'muro')
+  assert.equal(selectorMove(rows, 'kilo', 1), 'muro')
 })
