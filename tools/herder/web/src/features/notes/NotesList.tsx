@@ -9,6 +9,8 @@ import {
   pruneNoteSelection,
   selectionAfterArrow,
   selectionAfterClick,
+  selectionAfterRemoval,
+  shouldPreventNoteCardMouseDown,
   type NoteSelection,
 } from './notesListModel.ts'
 import { noteSourceLabel, noteTransferText } from './notesPresentation.ts'
@@ -44,6 +46,13 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
   }
   const clear = () => { setSelection(emptySelection()); setEditing(undefined); setSelector(undefined) }
   const edit = (id?: string) => { if (id) setEditing(id) }
+  const applyRemovalSelection = (removedIDs: string[]) => {
+    const next = selectionAfterRemoval(selection, ids, removedIDs)
+    setSelection(next)
+    setEditing(undefined)
+    setSelector(undefined)
+    focus(next.cursor)
+  }
   const move = (destination: string, moving = selectedNotes) => {
     const changed = moving.filter((note) => note.group !== destination)
     if (changed.length === 0) { setSelector(undefined); return }
@@ -57,10 +66,14 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
   }
   const handOff = (target: string) => {
     const pending = selectedNotes
-    const result = handOffSelectedNotes({ target, notes: pending, guard: handOffGuard, append: onHandOff, remove: store.delete, flush: store.flush, status: store.status })
+    const removeHandedOff = (removedIDs: string[]) => {
+      const result = store.delete(removedIDs)
+      if (result.ok) applyRemovalSelection(removedIDs)
+      return result
+    }
+    const result = handOffSelectedNotes({ target, notes: pending, guard: handOffGuard, append: onHandOff, remove: removeHandedOff, flush: store.flush, status: store.status })
     if (!result.ok) { setProblem(result.reason); return }
     announce(`Moved ${pending.length} ${pending.length === 1 ? 'note' : 'notes'} to ${target}’s composer.`)
-    clear()
     setProblem('')
   }
   const beginHandOff = () => {
@@ -75,10 +88,11 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
     else setProblem('These notes could not be copied. They were left unchanged.')
   }
   const remove = () => {
-    const result = store.delete(selectedNotes.map((note) => note.id))
+    const removedIDs = selectedNotes.map((note) => note.id)
+    const result = store.delete(removedIDs)
     if (!result.ok) { setProblem(result.reason); return }
+    applyRemovalSelection(removedIDs)
     announce(`Deleted ${result.value} ${result.value === 1 ? 'note' : 'notes'}.`)
-    clear()
   }
   const runAction = (action: ReturnType<typeof noteListAction>) => {
     if (!action || selection.selected.size === 0) return
@@ -119,10 +133,15 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
           return <article className={`note-card${note.source ? ' anchored' : ''}${selected ? ' selected' : ''}`} role="option" aria-selected={selected}
             data-note-id={note.id} draggable={groups.length > 1 && editing !== note.id} tabIndex={selection.cursor === note.id || !selection.cursor && note.id === ids[0] ? 0 : -1} key={note.id}
             onDragStart={(event) => event.dataTransfer.setData('application/x-herder-notes', JSON.stringify(dragNoteIDs(note.id, selection.selected)))}
+            onMouseDown={(event) => {
+              if ((event.target as Element).closest('textarea, input, button')) return
+              if (shouldPreventNoteCardMouseDown(event)) event.preventDefault()
+            }}
             onClick={(event) => {
               if ((event.target as Element).closest('textarea, input, button')) return
               const next = selectionAfterClick(selection, ids, note.id, { command: event.metaKey || event.ctrlKey, shift: event.shiftKey })
               setSelection(next)
+              if (event.shiftKey) focus(next.cursor)
             }} onDoubleClick={() => edit(note.id)}>
             <div className="note-card-content">
               {note.source && <small>{noteSourceLabel(note.source)}</small>}
