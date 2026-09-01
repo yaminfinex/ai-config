@@ -6,7 +6,7 @@ import { Banner } from '../../shared/presentation'
 import { fileMarkdownComponents, Markdown } from '../../shared/Markdown'
 import { FileResults } from './FileResults'
 import { fileFailureKind, rootLabel } from './fileResolution'
-import { isMarkdownPath, type FileViewMode } from './fileTabs'
+import { isHtmlPath, isMarkdownPath, type FileViewMode } from './fileTabs'
 import { candidateDestination, missionFacts, missionMarkdownBody, parentFolderPath, rootJoinedAbsolutePath } from '../folders/folderModel'
 import { PierreFile, PierrePatch } from '../git/PierreView'
 import { selectGitFileMode, selectHistoricalDiff, selectHistoricalFile, selectedCurrentLines, type GitBase, type GitFileState } from '../git/gitViewModel'
@@ -105,6 +105,10 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
 
   const data = gitState.revision ? revisionQuery.data : fileQuery.data
   const markdown = isMarkdownPath(viewedPath)
+  const html = isHtmlPath(viewedPath)
+  const renderable = markdown || html
+  const truncated = Boolean(data && !data.binary && data.truncated)
+  const effectiveViewMode = html && truncated ? 'source' : viewMode
   const missionMarkdown = Boolean(data && !data.binary && /(?:^|\/)mission\.md$/iu.test(viewedPath))
   const facts = data && !data.binary && missionMarkdown ? missionFacts(data.content) : null
   const hasFacts = facts && Object.keys(facts).length > 0
@@ -135,9 +139,10 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
           disabled={mode !== 'current' && !gitAvailable} title={mode !== 'current' && gitReason ? gitReason : undefined}
           onClick={() => onGitState(selectGitFileMode(gitState, mode))}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}
       </div>
-      {gitState.mode === 'current' && markdown && <div className="detail-toggle file-view-toggle" aria-label="Markdown view">
-        <button type="button" className={viewMode === 'rendered' ? 'active' : ''} aria-pressed={viewMode === 'rendered'} onClick={() => onViewMode('rendered')}>Rendered</button>
-        <button type="button" className={viewMode === 'source' ? 'active' : ''} aria-pressed={viewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
+      {gitState.mode === 'current' && renderable && <div className="detail-toggle file-view-toggle" aria-label={`${html ? 'HTML' : 'Markdown'} view`}>
+        <button type="button" className={effectiveViewMode === 'rendered' ? 'active' : ''} aria-pressed={effectiveViewMode === 'rendered'} disabled={html && truncated}
+          title={html ? truncated ? 'Rendered view is unavailable because this file is truncated.' : 'Render HTML. Scripts do not run.' : undefined} onClick={() => onViewMode('rendered')}>Rendered</button>
+        <button type="button" className={effectiveViewMode === 'source' ? 'active' : ''} aria-pressed={effectiveViewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
       </div>}
     </header>
     {gitState.mode === 'current' && (gitState.revision ? revisionQuery.isPending : fileQuery.isPending) && <PanelState as="div" className="file-state">Reading {gitState.revision ? 'historical revision' : 'current file'}…</PanelState>}
@@ -162,7 +167,8 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
       {data.binary ? <PanelState className="file-state binary" title="Binary file" detail={<>No text content is available for this {formattedBytes(data.size)} file.</>} />
         : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`} onDoubleClick={fileResolver.onDoubleClick}>
           {data.truncated && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
-          {markdown && viewMode === 'rendered' ? <div className="markdown file-markdown"><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
+          {html && effectiveViewMode === 'rendered' ? <iframe className="file-html-preview" title="Rendered HTML preview. Scripts do not run." sandbox="" srcDoc={data.content} />
+            : markdown && effectiveViewMode === 'rendered' ? <div className="markdown file-markdown"><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
             : <div className="file-source"><PierreFile path={gitState.revision?.path ?? data.path} content={data.content} selectedLines={gitState.revision ? null : selectedCurrentLines(target.line)} /></div>
           }
         </div>}

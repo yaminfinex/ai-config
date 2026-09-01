@@ -7,8 +7,12 @@ export function isMarkdownPath(path: string) {
   return /\.(?:md|markdown)$/iu.test(path)
 }
 
-function initialFileViewMode(target: FileTarget): FileViewMode {
-  return isMarkdownPath(target.path) && !target.line ? 'rendered' : 'source'
+export function isHtmlPath(path: string) {
+  return /\.html?$/iu.test(path)
+}
+
+export function initialFileViewMode(target: FileTarget): FileViewMode {
+  return (isMarkdownPath(target.path) || isHtmlPath(target.path)) && !target.line ? 'rendered' : 'source'
 }
 
 function updateFileTab(tab: FileTab, target: FileTarget): FileTab {

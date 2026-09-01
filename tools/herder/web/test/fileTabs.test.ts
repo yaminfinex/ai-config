@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { closeFileTab, fileTabID, isMarkdownPath, pinFileTab, previewFileTab, setFileTabViewMode } from '../src/features/files/fileTabs.ts'
+import { closeFileTab, fileTabID, isHtmlPath, isMarkdownPath, pinFileTab, previewFileTab, setFileTabViewMode } from '../src/features/files/fileTabs.ts'
 
 const first = { root: '/repo', path: 'src/App.tsx', line: 14 }
 const second = { root: '/repo', path: 'README.md' }
@@ -30,6 +30,12 @@ test('markdown detection is case-insensitive and includes long extensions', () =
   assert.equal(isMarkdownPath('src/App.tsx'), false)
 })
 
+test('HTML detection is case-insensitive and excludes compound suffixes', () => {
+  assert.equal(isHtmlPath('notes-v1-mockup.html'), true)
+  assert.equal(isHtmlPath('legacy.HTM'), true)
+  assert.equal(isHtmlPath('preview.html.txt'), false)
+})
+
 test('markdown tabs default rendered while line targets force source', () => {
   const rendered = previewFileTab([], second)
   assert.equal(rendered[0].viewMode, 'rendered')
@@ -37,6 +43,15 @@ test('markdown tabs default rendered while line targets force source', () => {
   const targeted = previewFileTab(rendered, { ...second, line: 12 })
   assert.equal(targeted[0].viewMode, 'source')
   assert.equal(targeted[0].line, 12)
+})
+
+test('HTML tabs default rendered while line targets force source', () => {
+  const html = { root: '/repo', path: 'notes-v1-mockup.html' }
+  const rendered = previewFileTab([], html)
+  assert.equal(rendered[0].viewMode, 'rendered')
+
+  const targeted = previewFileTab(rendered, { ...html, line: 12 })
+  assert.equal(targeted[0].viewMode, 'source')
 })
 
 test('file view mode is per-tab and closing drops its state', () => {

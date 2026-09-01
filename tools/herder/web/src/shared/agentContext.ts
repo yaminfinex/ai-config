@@ -8,7 +8,13 @@ export function hasRightOverflow(scrollWidth: number, clientWidth: number, scrol
 export type AgentContextPresentation = {
   status: string
   cwd?: { display: string, full: string }
-  repository?: { display: string, remote?: string }
+  repository?: {
+    display: string
+    remote?: string
+    repo?: string
+    branch?: string
+    links?: { repository: string, branch?: string }
+  }
   details: string[]
   vitals: string[]
 }
@@ -41,6 +47,51 @@ export function repoNameFromRemote(remote: string | undefined) {
   return name && name !== '.' && name !== '..' ? name : undefined
 }
 
+function encodedPathSegment(segment: string) {
+  try {
+    return encodeURIComponent(decodeURIComponent(segment))
+  } catch {
+    return encodeURIComponent(segment)
+  }
+}
+
+function remoteHTTPSBase(remote: string | undefined) {
+  const value = remote?.trim()
+  if (!value) return undefined
+  let host = ''
+  let path = ''
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    try {
+      const parsed = new URL(value)
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'ssh:') return undefined
+      host = parsed.host
+      path = parsed.pathname
+    } catch {
+      return undefined
+    }
+  } else {
+    const scp = value.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/)
+    if (!scp) return undefined
+    host = scp[1]
+    path = scp[2]
+  }
+  const segments = path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+  if (!host || segments.length < 2) return undefined
+  segments[segments.length - 1] = segments.at(-1)!.replace(/\.git$/i, '')
+  if (!segments.at(-1)) return undefined
+  return `https://${host}/${segments.map(encodedPathSegment).join('/')}`
+}
+
+export function repositoryBrowseLinks(remote: string | undefined, branch: string | undefined) {
+  const repository = remoteHTTPSBase(remote)
+  if (!repository) return undefined
+  const branchPath = branch?.split('/').map((segment) => encodeURIComponent(segment)).join('/')
+  return {
+    repository,
+    ...(branchPath ? { branch: `${repository}/tree/${branchPath}` } : {}),
+  }
+}
+
 function gapLabel(gap: string) {
   return gap.toLowerCase().includes('pane') ? 'no pane' : 'gap'
 }
@@ -55,8 +106,15 @@ export function agentContextPresentation(agent: AgentDetail, liveStatus: string)
   ].filter(Boolean)
   const repo = repoNameFromRemote(agent.git?.remote_url)
   const branch = agent.git?.branch
+  const links = repo ? repositoryBrowseLinks(agent.git?.remote_url, branch) : undefined
   const repository = repo || branch
-    ? { display: [repo, branch].filter(Boolean).join(' · '), remote: agent.git?.remote_url }
+    ? {
+        display: [repo, branch].filter(Boolean).join(' · '),
+        remote: agent.git?.remote_url,
+        ...(repo ? { repo } : {}),
+        ...(branch ? { branch } : {}),
+        ...(links ? { links } : {}),
+      }
     : undefined
   return {
     status,

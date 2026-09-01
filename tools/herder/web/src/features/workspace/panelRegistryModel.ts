@@ -1,6 +1,6 @@
 import type { Pane } from '../../types.ts'
 import { agentTabID } from '../../previewTabs.ts'
-import { fileTabID, isMarkdownPath } from '../files/fileTabs.ts'
+import { fileTabID, initialFileViewMode } from '../files/fileTabs.ts'
 import { rootLabel } from '../files/fileResolution.ts'
 import { folderTabID } from '../folders/folderModel.ts'
 import { changesPanelID } from '../git/changesModel.ts'
@@ -176,7 +176,7 @@ const panelModels: Record<PanelKind, RegisteredPanelModel> = {
         const line = rawLine === null || rawLine === undefined ? undefined : Number(rawLine)
         return {
           kind: 'file', root, path, ...(line === undefined ? {} : { line }), preview: true,
-          viewMode: isMarkdownPath(path) && line === undefined ? 'rendered' : 'source',
+          viewMode: initialFileViewMode({ root, path, ...(line === undefined ? {} : { line }) }),
         }
       },
     },

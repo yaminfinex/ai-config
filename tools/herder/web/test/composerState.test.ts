@@ -98,7 +98,7 @@ test('Escape blurs the composer without claiming the event', () => {
 
 test('send success refetches the transcript immediately, not just agent status', () => {
   const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
-  const success = composer.slice(composer.indexOf('setSendNotice'), composer.indexOf('} catch'))
+  const success = composer.slice(composer.indexOf('const sendRefresh'), composer.indexOf('} catch'))
   assert.match(success, /queryKeys\.agent\(name\)/)
   assert.match(success, /queryKeys\.entries\(name\)/)
 })

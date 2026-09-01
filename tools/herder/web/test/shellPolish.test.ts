@@ -21,6 +21,8 @@ test('shell facts and global controls live only in the bottom status bar', () =>
 test('owner-ruled composer noise is removed without dropping accessibility or attribution truth', () => {
   const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(composer, /Enter for newline|attribution-copy|web senders are not addressable bus peers/)
+  assert.doesNotMatch(composer, /sendNotice|send-notice|Waiting for the live reply/)
+  assert.match(composer, /sendProblem/)
   assert.match(composer, /aria-label=\{`Message \$\{name\}`\}/)
 
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')

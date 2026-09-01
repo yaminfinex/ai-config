@@ -151,6 +151,7 @@ test('dock tab text uses AA theme token pairs with no stock skin colors', () => 
 
 test('inline link text token meets WCAG AA across both theme surfaces', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(css, /\.context-repository a \{[^}]*color: var\(--accent-text\);[^}]*text-decoration[^}]*solid/s)
   for (const block of themeBlocks(css)) {
     const foreground = block.match(/--accent-text: (#[\da-f]{6})/i)?.[1]
     assert.ok(foreground, 'inline links must use a concrete theme token')

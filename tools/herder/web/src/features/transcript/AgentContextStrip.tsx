@@ -34,12 +34,16 @@ export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChang
   useEffect(() => { if (!agent) setOverflowing(false) }, [agent])
   return <section className="agent-context-strip" data-overflow-right={overflowing || undefined} aria-label="Agent context" aria-busy={!agent}>
     {context && <div className="agent-context-strip-inner" ref={innerRef}>
+      {context.vitals.map((vital, index) => <span className="context-vital" key={`${index}:${vital}`}>{vital}</span>)}
       {context.cwd && <span className="context-cwd-wrap" title={`${cwdReason} · ${sideHint}`}><button type="button" className="context-fact context-cwd" disabled={!cwdTarget} onClick={(event) => { if (cwdTarget) onOpenFolder(cwdTarget, placementFromModifiers(event)) }}><span>cwd</span>{context.cwd.display}<span aria-hidden="true">↗</span></button></span>}
-      {context.repository && <span className="context-fact context-repository" title={context.repository.remote}><span>repo</span>{context.repository.display}</span>}
+      {context.repository && <span className="context-fact context-repository" title={context.repository.remote}><span>repo</span>{context.repository.links && context.repository.repo
+        ? <><a href={context.repository.links.repository} target="_blank" rel="noreferrer">{context.repository.repo}</a>{context.repository.branch && <> · {context.repository.links.branch
+          ? <a href={context.repository.links.branch} target="_blank" rel="noreferrer">{context.repository.branch}</a>
+          : context.repository.branch}</>}</>
+        : context.repository.display}</span>}
       {context.repository && <span title={`${changesReason} · ${sideHint}`}><button type="button" className="context-fact context-changes" disabled={!changesRoot} onClick={(event) => { if (changesRoot) onOpenChanges(changesRoot, placementFromModifiers(event)) }}><span aria-hidden="true">±</span>changes</button></span>}
       <span className="context-status" title={`Bus status: ${context.status !== '-' ? context.status : 'unknown'}`}><AgentStatusDot status={context.status} /></span>
       {context.details.map((detail, index) => <span className="context-detail" key={`${index}:${detail}`}>{detail}</span>)}
-      {context.vitals.map((vital, index) => <span className="context-vital" key={`${index}:${vital}`}>{vital}</span>)}
     </div>}
   </section>
 }

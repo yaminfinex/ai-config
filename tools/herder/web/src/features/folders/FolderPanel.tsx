@@ -4,7 +4,7 @@ import { getBacklog, getFileTree, queryKeys } from '../../api/client'
 import type { BacklogRead, FileTarget, FileTreeEntry, FolderTarget } from '../../types'
 import { Banner } from '../../shared/presentation'
 import { FilePanel } from '../files/FilePanel'
-import { isMarkdownPath, type FileViewMode } from '../files/fileTabs'
+import { initialFileViewMode, type FileViewMode } from '../files/fileTabs'
 import { rootLabel } from '../files/fileResolution'
 import { boardColumns, folderSelectionTarget, parentFolderPath, rootJoinedAbsolutePath, taskFileTarget } from './folderModel'
 import { initialGitFileState } from '../git/gitViewModel'
@@ -183,7 +183,7 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
     if (!hintedFile) return
     setCurrentDir(target.path)
     setSelected(hintedFile)
-    setViewMode(isMarkdownPath(hintedFile.path) && !hintedFile.line ? 'rendered' : 'source')
+    setViewMode(initialFileViewMode(hintedFile))
     setGitState(initialGitFileState())
     setBoardView(false)
   }, [onSelectionHintConsumed, selectionHint, target.path, target.root])
@@ -204,7 +204,7 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
   }
   const chooseFile = (file: FileTarget) => {
     setSelected(file)
-    setViewMode(isMarkdownPath(file.path) && !file.line ? 'rendered' : 'source')
+    setViewMode(initialFileViewMode(file))
     setGitState(initialGitFileState())
     setBoardView(false)
   }

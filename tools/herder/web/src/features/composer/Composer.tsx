@@ -13,7 +13,6 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
 }) {
   const [message, setMessage] = useState(() => readComposerDraft(name))
   const [sendProblem, setSendProblem] = useState('')
-  const [sendNotice, setSendNotice] = useState('')
   const [readOnly, setReadOnly] = useState('')
   const queryClient = useQueryClient()
   const composerRef = useRef<HTMLTextAreaElement>(null)
@@ -37,7 +36,6 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
     if (!message.trim() || mutation.isPending || effectiveReadOnly) return
     onSend()
     setSendProblem('')
-    setSendNotice('')
     const sendRefresh = beginSendRefresh(queryClient, name)
     const refresh = () => Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true }),
@@ -48,7 +46,6 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
       onViewer(result.from)
       persistComposerDraft(name, '')
       setMessage('')
-      setSendNotice(`Sent to ${result.to} as ${result.from}. Waiting for the live reply…`)
       await settleSendRefresh(sendRefresh, true, refresh)
       onProblem('')
     } catch (error: unknown) {
@@ -89,7 +86,7 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend }
       value={message}
     />
     <div className="send-footer">
-      <div>{sendProblem && <p className="inline-error" role="alert">{sendProblem}</p>}{sendNotice && <p className="send-notice">{sendNotice}</p>}</div>
+      <div>{sendProblem && <p className="inline-error" role="alert">{sendProblem}</p>}</div>
       <button type="submit" disabled={!message.trim() || mutation.isPending || Boolean(effectiveReadOnly)}>{mutation.isPending ? 'Sending…' : 'Send request'}</button>
     </div>
   </form>

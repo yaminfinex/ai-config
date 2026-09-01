@@ -3,7 +3,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import type { DockviewApi } from 'dockview-react'
 import { focusComposerWhenReady } from '../../composerState'
 import type { Board, FileTarget, FolderTarget, Pane } from '../../types'
-import { fileTabID, isMarkdownPath, type FileViewMode } from '../files/fileTabs'
+import { fileTabID, initialFileViewMode, type FileViewMode } from '../files/fileTabs'
 import { gitStateForFileOpen, type GitBase, type GitFileState } from '../git/gitViewModel'
 import { dockOpenTarget, type OpenPlacement } from '../layout/openPlacement'
 import { screenPanelParams, type DockPanelParams } from '../layout/dockLayout'
@@ -137,7 +137,7 @@ export function useWorkspaceActions({
     const result = openPanel({
       kind: 'file', root: target.root, path: target.path,
       ...(target.line ? { line: target.line } : {}), preview: true,
-      viewMode: isMarkdownPath(target.path) && !target.line ? 'rendered' : 'source',
+      viewMode: initialFileViewMode(target),
     }, placement)
     if (result === 'existing' && target.line) setFileGitState(id, (current) => gitStateForFileOpen(current, target.line as number))
   }, [openPanel, setFileGitState])

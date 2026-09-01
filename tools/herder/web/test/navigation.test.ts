@@ -42,6 +42,16 @@ test('every addressable panel kind has a canonical URL and round-trips through i
   }
 })
 
+test('HTML deep links default rendered unless a line anchor requests source', () => {
+  const rendered = routeFromLocation('/file', '?root=%2Frepo&path=mockup.html')
+  assert.equal(rendered.page, 'panel')
+  if (rendered.page === 'panel') assert.equal(rendered.params.kind === 'file' ? rendered.params.viewMode : undefined, 'rendered')
+
+  const source = routeFromLocation('/file', '?root=%2Frepo&path=mockup.html&line=8')
+  assert.equal(source.page, 'panel')
+  if (source.page === 'panel') assert.equal(source.params.kind === 'file' ? source.params.viewMode : undefined, 'source')
+})
+
 test('screen entries keep their validated subject in state while the URL asserts only the workspace', () => {
   const entry = historyEntryForPanel(screen())
   assert.equal(entry.path, '/')
