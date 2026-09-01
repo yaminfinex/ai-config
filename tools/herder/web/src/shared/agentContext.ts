@@ -64,7 +64,7 @@ function remoteHTTPSBase(remote: string | undefined) {
     try {
       const parsed = new URL(value)
       if (parsed.protocol !== 'https:' && parsed.protocol !== 'ssh:') return undefined
-      host = parsed.host
+      host = parsed.protocol === 'ssh:' ? parsed.hostname : parsed.host
       path = parsed.pathname
     } catch {
       return undefined

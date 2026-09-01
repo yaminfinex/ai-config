@@ -34,6 +34,8 @@ test('HTML detection is case-insensitive and excludes compound suffixes', () => 
   assert.equal(isHtmlPath('notes-v1-mockup.html'), true)
   assert.equal(isHtmlPath('legacy.HTM'), true)
   assert.equal(isHtmlPath('preview.html.txt'), false)
+  assert.equal(isHtmlPath('page.xhtml'), false)
+  assert.equal(isHtmlPath('image.svg'), false)
 })
 
 test('markdown tabs default rendered while line targets force source', () => {

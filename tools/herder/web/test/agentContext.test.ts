@@ -49,6 +49,10 @@ test('repository browse links cover live HTTPS and Git SSH remote shapes', () =>
     repository: 'https://github.com/example/with-space',
     branch: 'https://github.com/example/with-space/tree/main',
   })
+  assert.deepEqual(repositoryBrowseLinks('ssh://git@example.test:49157/odd%20owner/repo.git', 'fuzz/port #1'), {
+    repository: 'https://example.test/odd%20owner/repo',
+    branch: 'https://example.test/odd%20owner/repo/tree/fuzz/port%20%231',
+  })
   assert.deepEqual(repositoryBrowseLinks('https://github.com/example/ai-config.git', undefined), {
     repository: 'https://github.com/example/ai-config',
   })
