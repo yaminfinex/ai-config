@@ -42,6 +42,24 @@ export function selectionAfterArrow(state: NoteSelection, ordered: string[], dir
   return { selected: range(ordered, anchor, cursor), anchor, cursor }
 }
 
+export function shouldPreventNoteCardMouseDown(event: { shiftKey: boolean }) {
+  return event.shiftKey
+}
+
+export function selectionAfterRemoval(state: NoteSelection, ordered: string[], removedIDs: Iterable<string>): NoteSelection {
+  const removed = new Set(removedIDs)
+  const remaining = ordered.filter((id) => !removed.has(id))
+  const lastRemoved = ordered.reduce((last, id, index) => removed.has(id) ? index : last, -1)
+  const removedSelected = [...state.selected].some((id) => removed.has(id))
+  if (!removedSelected || lastRemoved < 0) return pruneNoteSelection(state, remaining)
+
+  const successor = ordered.slice(lastRemoved + 1).find((id) => !removed.has(id))
+    ?? ordered.slice(0, lastRemoved).reverse().find((id) => !removed.has(id))
+  return successor
+    ? { selected: new Set([successor]), anchor: successor, cursor: successor }
+    : { selected: new Set(), anchor: undefined, cursor: undefined }
+}
+
 export function pruneNoteSelection(state: NoteSelection, ordered: string[]): NoteSelection {
   const present = new Set(ordered)
   const selected = new Set([...state.selected].filter((id) => present.has(id)))

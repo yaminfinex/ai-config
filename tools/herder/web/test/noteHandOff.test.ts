@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createNoteHandOffGuard, handOffSelectedNotes } from '../src/features/notes/noteHandOff.ts'
+import { selectionAfterClick, selectionAfterRemoval, type NoteSelection } from '../src/features/notes/notesListModel.ts'
 import type { Note, NotesStatus } from '../src/features/notes/notesStore.ts'
 
 const note: Note = { id: 'note-1', group: 'general', text: 'owner text', created: 1, updated: 1 }
@@ -45,4 +46,48 @@ test('an append refusal does not arm the retry guard', () => {
   assert.equal(attempt().ok, false)
   assert.equal(attempt().ok, false)
   assert.equal(appends, 2)
+})
+
+test('successful removal moves selection after append even when durability later fails', () => {
+  const order: string[] = []
+  const ids = ['before', note.id, 'after']
+  let selection: NoteSelection = selectionAfterClick({ selected: new Set() }, ids, note.id, {})
+  const result = handOffSelectedNotes({
+    target: 'kilo', notes: [note], guard: createNoteHandOffGuard(),
+    append: () => { order.push('append'); return { ok: true } },
+    remove: (removedIDs) => {
+      order.push('remove')
+      selection = selectionAfterRemoval(selection, ids, removedIDs)
+      return { ok: true, value: removedIDs.length }
+    },
+    flush: () => { order.push('flush'); return false },
+    status: () => { order.push('status'); return unavailable },
+  })
+  assert.equal(result.ok, false)
+  assert.deepEqual(order, ['append', 'remove', 'flush', 'status'])
+  assert.deepEqual([...selection.selected], ['after'])
+  assert.equal(selection.anchor, 'after')
+  assert.equal(selection.cursor, 'after')
+})
+
+test('append or removal refusal leaves selection in place', () => {
+  const ids = ['before', note.id, 'after']
+  const initial = selectionAfterClick({ selected: new Set() }, ids, note.id, {})
+  for (const refusal of ['append', 'remove'] as const) {
+    let selection = initial
+    handOffSelectedNotes({
+      target: 'kilo', notes: [note], guard: createNoteHandOffGuard(),
+      append: () => refusal === 'append' ? { ok: false, reason: 'no append' } : { ok: true },
+      remove: (removedIDs) => {
+        if (refusal === 'remove') return { ok: false, reason: 'no removal' }
+        selection = selectionAfterRemoval(selection, ids, removedIDs)
+        return { ok: true, value: removedIDs.length }
+      },
+      flush: () => true,
+      status: () => ({ ...unavailable, persistent: true }),
+    })
+    assert.deepEqual([...selection.selected], [note.id])
+    assert.equal(selection.anchor, note.id)
+    assert.equal(selection.cursor, note.id)
+  }
 })

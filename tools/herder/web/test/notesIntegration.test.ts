@@ -52,6 +52,34 @@ test('list shortcuts yield to every native interactive control', () => {
   assert.doesNotMatch(list, /noteListAction\(event, false\)/)
 })
 
+test('shift-mousedown suppression is scoped to card chrome and preserves native plain selection', () => {
+  const list = read('../src/features/notes/NotesList.tsx')
+  const model = read('../src/features/notes/notesListModel.ts')
+  const styles = read('../src/styles.css')
+  assert.match(list, /onMouseDown=\{\(event\) => \{[\s\S]*shouldPreventNoteCardMouseDown[\s\S]*event\.preventDefault\(\)/)
+  assert.match(list, /closest\('textarea, input, button'\)/)
+  assert.match(model, /shouldPreventNoteCardMouseDown/)
+  assert.doesNotMatch(styles, /\.note-card[^}]*user-select\s*:\s*none/)
+})
+
+test('delete and hand-off share the model-owned post-removal selection transition', () => {
+  const list = read('../src/features/notes/NotesList.tsx')
+  const model = read('../src/features/notes/notesListModel.ts')
+  assert.match(model, /export function selectionAfterRemoval/)
+  assert.equal((list.match(/selectionAfterRemoval\(/g) ?? []).length, 1)
+  assert.match(list, /const applyRemovalSelection/)
+  assert.match(list, /remove: removeHandedOff/)
+  assert.match(list, /if \(result\.ok\) applyRemovalSelection\(removedIDs\)/)
+})
+
+test('shift-click restores focus to the range cursor after mousedown default is suppressed', () => {
+  const list = read('../src/features/notes/NotesList.tsx')
+  const clickStart = list.indexOf('onClick={(event) => {')
+  const clickEnd = list.indexOf('onDoubleClick', clickStart)
+  const click = list.slice(clickStart, clickEnd)
+  assert.match(click, /event\.shiftKey[\s\S]*focus\(next\.cursor\)/)
+})
+
 test('selector Enter leaves a focused option to its native button activation', () => {
   const selector = read('../src/features/notes/NotesSelector.tsx')
   assert.match(selector, /closest\('\[role="option"\]'\)/)

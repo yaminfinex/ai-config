@@ -7,8 +7,10 @@ import {
   dragNoteIDs,
   handOffRoute,
   noteListAction,
+  selectionAfterRemoval,
   selectionAfterArrow,
   selectionAfterClick,
+  shouldPreventNoteCardMouseDown,
   type NoteSelection,
 } from '../src/features/notes/notesListModel.ts'
 
@@ -35,6 +37,67 @@ test('arrows move selection and shift-arrows extend it from the anchor', () => {
   assert.deepEqual([...extended.selected], ['c', 'd'])
   const shrunk = selectionAfterArrow(extended, ids, -1, true)
   assert.deepEqual([...shrunk.selected], ['c'])
+})
+
+test('only shift-modified note-card mousedown suppresses the browser default', () => {
+  assert.equal(shouldPreventNoteCardMouseDown({ shiftKey: true }), true)
+  assert.equal(shouldPreventNoteCardMouseDown({ shiftKey: false }), false)
+})
+
+test('removing a selected note moves selection, anchor, and cursor to its successor', () => {
+  const state = selectionAfterClick(empty(), ['a', 'b', 'c'], 'b', {})
+  const next = selectionAfterRemoval(state, ['a', 'b', 'c'], ['b'])
+  assert.deepEqual([...next.selected], ['c'])
+  assert.equal(next.anchor, 'c')
+  assert.equal(next.cursor, 'c')
+})
+
+test('removing the final selected note falls back to the previous note', () => {
+  const state = selectionAfterClick(empty(), ['a', 'b', 'c'], 'c', {})
+  const next = selectionAfterRemoval(state, ['a', 'b', 'c'], ['c'])
+  assert.deepEqual([...next.selected], ['b'])
+  assert.equal(next.anchor, 'b')
+  assert.equal(next.cursor, 'b')
+})
+
+test('batch removal chooses the survivor after the last removed position', () => {
+  const state = { selected: new Set(['b', 'd']), anchor: 'b', cursor: 'd' }
+  const middle = selectionAfterRemoval(state, ['a', 'b', 'c', 'd', 'e'], ['b', 'd'])
+  assert.deepEqual([...middle.selected], ['e'])
+
+  const tail = selectionAfterRemoval({ ...state, selected: new Set(['b', 'd', 'e']) }, ['a', 'b', 'c', 'd', 'e'], ['b', 'd', 'e'])
+  assert.deepEqual([...tail.selected], ['c'])
+  assert.equal(tail.anchor, 'c')
+  assert.equal(tail.cursor, 'c')
+})
+
+test('removing unselected notes only prunes the existing selection', () => {
+  const state = { selected: new Set(['b', 'stale']), anchor: 'b', cursor: 'b' }
+  const next = selectionAfterRemoval(state, ['a', 'b', 'c', 'd'], ['c'])
+  assert.deepEqual([...next.selected], ['b'])
+  assert.equal(next.anchor, 'b')
+  assert.equal(next.cursor, 'b')
+})
+
+test('removal crosses rendered group boundaries and empties only with the list', () => {
+  const ids = ['group-one-a', 'group-one-b', 'group-two-a']
+  const boundary = selectionAfterRemoval(selectionAfterClick(empty(), ids, 'group-one-b', {}), ids, ['group-one-b'])
+  assert.deepEqual([...boundary.selected], ['group-two-a'])
+
+  const emptied = selectionAfterRemoval(selectionAfterClick(empty(), ['only'], 'only', {}), ['only'], ['only'])
+  assert.deepEqual([...emptied.selected], [])
+  assert.equal(emptied.anchor, undefined)
+  assert.equal(emptied.cursor, undefined)
+})
+
+test('shift-arrow extends from the successor after removal', () => {
+  const ids = ['a', 'b', 'c', 'd']
+  const removed = selectionAfterRemoval(selectionAfterClick(empty(), ids, 'b', {}), ids, ['b'])
+  const remaining = ids.filter((id) => id !== 'b')
+  const extended = selectionAfterArrow(removed, remaining, 1, true)
+  assert.deepEqual([...extended.selected], ['c', 'd'])
+  assert.equal(extended.anchor, 'c')
+  assert.equal(extended.cursor, 'd')
 })
 
 test('card shortcuts never claim native keys from an editor, chip comment, or selector control', () => {
