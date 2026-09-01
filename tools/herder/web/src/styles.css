@@ -241,7 +241,7 @@ h2, h3, p { margin-top: 0; }
 .space-name[aria-pressed='true'] { color: var(--text); }
 .space-close { width: 18px; padding: 0 2px 1px; color: var(--dim); font-size: 13px; }
 .space-create { width: 20px; border: 1px solid var(--border2); background: var(--chip); font-size: 13px; }
-.space-reopen { border: 1px dashed var(--border2); color: var(--dim); }
+.space-reopen { border: 1px dashed var(--border2); color: var(--status-bar-text); }
 .space-name:hover, .space-close:hover, .space-create:hover, .space-reopen:hover { background: var(--accent-dim); color: var(--text); }
 .space-chip input { width: 92px; height: 18px; padding: 0 5px; border: 0; outline: 1px solid var(--accent); background: var(--bg); color: var(--text); font: 10px var(--mono); }
 .rail-status-toggle { display: grid; width: 22px; height: 20px; flex: 0 0 22px; place-items: center; padding: 0; border-color: transparent; background: transparent; color: var(--status-bar-text); }

@@ -25,6 +25,7 @@ export type SpacesStore = {
   rename: (id: string, name: string) => SpaceResult<SpaceDefinition>
   close: (id: string) => SpaceResult<SpaceDefinition>
   reopen: (id: string) => SpaceResult<SpaceDefinition>
+  rollbackCreate: (id: string) => boolean
   subscribe: (listener: () => void) => () => void
   status: () => SpacesStatus
   flush: () => boolean
@@ -274,6 +275,18 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       put({ version: 1, writeID: randomID(), record: space })
       return { ok: true, value: space }
     }),
+    rollbackCreate: (id) => {
+      const current = records.get(id)
+      if (!current || current.record.deleted || !dirty.has(id)) return false
+      records.delete(id)
+      dirty.delete(id)
+      if (dirty.size === 0 && timer !== undefined) {
+        cancel(timer)
+        timer = undefined
+      }
+      notify()
+      return true
+    },
     subscribe: (subscriber) => {
       listeners.add(subscriber)
       attach()

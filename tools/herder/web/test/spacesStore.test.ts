@@ -81,6 +81,18 @@ test('create, rename, close, and reopen preserve identity and ordering', () => {
   assert.deepEqual(subject.store.list().map((space) => space.name), ['main', 'review'])
 })
 
+test('a pending create can roll back without becoming recently closed', () => {
+  const subject = harness()
+  const created = subject.store.create()
+  assert.equal(created.ok, true)
+  if (!created.ok) return
+  assert.equal(subject.store.rollbackCreate(created.value.id), true)
+  assert.deepEqual(subject.store.list().map((space) => space.name), ['main'])
+  assert.deepEqual(subject.store.recentlyClosed(), [])
+  subject.flushScheduled()
+  assert.equal(subject.storage.getItem(spaceRecordKey(created.value.id)), null)
+})
+
 test('the active cap refuses create and reopen without evicting spaces', () => {
   const subject = harness({ maxSpaces: 2 })
   const second = subject.store.create()
