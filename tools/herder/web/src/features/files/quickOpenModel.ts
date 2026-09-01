@@ -5,6 +5,8 @@ export type QuickOpenActionRow =
   | { kind: 'agent', name: string, label: string }
   | { kind: 'create', name: string, label: string }
 
+export type QuickOpenEnterTarget = { kind: 'action', index: number } | { kind: 'file' }
+
 function matchRank(label: string, query: string) {
   const normalized = label.toLocaleLowerCase()
   if (!query) return 1
@@ -45,8 +47,19 @@ export function quickOpenActionRows(
 
 export function quickOpenDefaultActionIndex(rows: QuickOpenActionRow[], rawQuery: string) {
   const query = rawQuery.trim().toLocaleLowerCase()
-  const exact = rows.findIndex((row) => row.kind !== 'create' && row.label.toLocaleLowerCase() === query)
-  if (exact >= 0) return exact
-  const matched = rows.findIndex((row) => row.kind !== 'create')
-  return matched >= 0 ? matched : rows.findIndex((row) => row.kind === 'create')
+  return query ? rows.findIndex((row) => row.kind !== 'create' && row.label.toLocaleLowerCase() === query) : -1
+}
+
+export function quickOpenEnterTarget(
+  rows: QuickOpenActionRow[],
+  rawQuery: string,
+  activeIndex: number,
+  fileAvailable: boolean,
+): QuickOpenEnterTarget | null {
+  if (activeIndex >= 0) return activeIndex < rows.length
+    ? { kind: 'action', index: activeIndex }
+    : fileAvailable ? { kind: 'file' } : null
+  const exact = quickOpenDefaultActionIndex(rows, rawQuery)
+  if (exact >= 0) return { kind: 'action', index: exact }
+  return fileAvailable ? { kind: 'file' } : null
 }

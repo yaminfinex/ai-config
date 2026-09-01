@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { DockPanelParams } from '../layout/dockLayout.ts'
-import { dockTabMenuItems, isDockTabMenuKey } from './dockTabMenuModel.ts'
+import { dockTabMenuItems, dockTabMenuNavigationIndex, isDockTabMenuKey } from './dockTabMenuModel.ts'
 import { useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext.tsx'
 
 type MenuPosition = { x: number, y: number }
@@ -45,7 +45,15 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
       if (event.type === 'pointerdown' && menuRef.current?.contains(event.target as Node)) return
       close(event.type !== 'pointerdown')
     }
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); close() } }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); close(); return }
+      const items = [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+      const next = dockTabMenuNavigationIndex(event.key, items.indexOf(document.activeElement as HTMLElement), items.length)
+      if (next === null) return
+      event.preventDefault()
+      event.stopPropagation()
+      items[next]?.focus()
+    }
     document.addEventListener('pointerdown', dismiss, true)
     document.addEventListener('dragstart', dismiss, true)
     document.addEventListener('scroll', dismiss, true)

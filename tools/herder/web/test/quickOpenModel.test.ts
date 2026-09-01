@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { quickOpenActionRows, quickOpenDefaultActionIndex } from '../src/features/files/quickOpenModel.ts'
+import { quickOpenActionRows, quickOpenEnterTarget } from '../src/features/files/quickOpenModel.ts'
 
 const spaces = [
   { id: 'main', name: 'main', order: 0, created: 0, updated: 0 },
@@ -10,7 +10,7 @@ const spaces = [
 ]
 
 test('quick open ranks exact, prefix, then substring within spaces before agents', () => {
-  assert.deepEqual(quickOpenActionRows('review', spaces, ['review', 'reviewer', 'my-review-agent'], false), [
+  assert.deepEqual(quickOpenActionRows('review', spaces, ['reviewer', 'my-review-agent', 'review'], false), [
     { kind: 'space', id: 'review', label: 'review queue' },
     { kind: 'space', id: 'notes', label: 'weekly review' },
     { kind: 'create', name: 'review', label: 'Create space “review”' },
@@ -28,5 +28,29 @@ test('an exact space suppresses create and the cap suppresses it deterministical
 
 test('Enter prefers an exact live agent over the synthetic create command', () => {
   const rows = quickOpenActionRows('podi', spaces, ['podi'], false)
-  assert.equal(rows[quickOpenDefaultActionIndex(rows, 'podi')]?.kind, 'agent')
+  const target = quickOpenEnterTarget(rows, 'podi', -1, true)
+  assert.deepEqual(target, { kind: 'action', index: rows.findIndex((row) => row.kind === 'agent') })
+})
+
+test('reflexive Enter falls through substring action matches to the file candidate', () => {
+  const rows = quickOpenActionRows('review', spaces, ['my-review-agent'], false)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', -1, true), { kind: 'file' })
+})
+
+test('reflexive Enter switches only an exact space or opens only an exact agent', () => {
+  const spaceRows = quickOpenActionRows('main', spaces, ['main-agent'], false)
+  assert.deepEqual(quickOpenEnterTarget(spaceRows, 'main', -1, false), { kind: 'action', index: 0 })
+
+  const agentRows = quickOpenActionRows('podi', spaces, ['podi'], false)
+  assert.deepEqual(quickOpenEnterTarget(agentRows, 'podi', -1, false), {
+    kind: 'action', index: agentRows.findIndex((row) => row.kind === 'agent'),
+  })
+})
+
+test('create is arrow-select only and an empty reflexive Enter does nothing', () => {
+  const rows = quickOpenActionRows('new place', spaces, [], false)
+  const createIndex = rows.findIndex((row) => row.kind === 'create')
+  assert.equal(quickOpenEnterTarget(rows, 'new place', -1, false), null)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'new place', createIndex, false), { kind: 'action', index: createIndex })
+  assert.equal(quickOpenEnterTarget(quickOpenActionRows('', spaces, [], false), '', -1, false), null)
 })

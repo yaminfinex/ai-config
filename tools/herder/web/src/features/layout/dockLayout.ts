@@ -255,6 +255,23 @@ export type StoredPanelWriteResult =
   | { ok: true, duplicate: boolean }
   | { ok: false, reason: 'corrupt' | 'recovering' | 'canonical' | 'write' }
 
+export function catchUpExternalPanels(raw: string | null, target: {
+  hasPanel: (id: string) => boolean
+  addPanel: (id: string, params: DockPanelParams) => void
+}) {
+  const dock = parseStoredSpaceLayout(raw)?.layout.dock
+  if (!dock) return []
+  const added: string[] = []
+  for (const [id, serialized] of Object.entries(dock.panels)) {
+    if (target.hasPanel(id)) continue
+    const params = panelParams(serialized.params)
+    if (!params) continue
+    target.addPanel(id, params)
+    added.push(id)
+  }
+  return added
+}
+
 function activatePanelInGrid(node: GridNode, groupID: string, id: string): { node: GridNode, found: boolean } {
   if (node.type === 'leaf') {
     const data = node.data as UnknownRecord

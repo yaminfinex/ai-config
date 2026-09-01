@@ -6,7 +6,7 @@ import { keyboardCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
-import { quickOpenActionRows, quickOpenDefaultActionIndex, type QuickOpenActionRow } from './quickOpenModel.ts'
+import { quickOpenActionRows, quickOpenEnterTarget, type QuickOpenActionRow } from './quickOpenModel.ts'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 
 const QUICK_OPEN_RESULT_LIMIT = 100
@@ -93,12 +93,12 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
               return (index + (event.key === 'ArrowDown' ? 1 : -1) + totalRows) % totalRows
             })
           } else if (event.key === 'Enter') {
-            const action = actions[activeIndex < 0 ? quickOpenDefaultActionIndex(actions, query) : activeIndex]
-            if (action) chooseAction(action)
-            else if (settledResolution) {
-              const candidate = keyboardCandidate(settledResolution, candidates, activeIndex - actions.length)
-              if (candidate) choose(candidate, placementFromModifiers(event, groupID))
-            }
+            const candidate = settledResolution
+              ? keyboardCandidate(settledResolution, candidates, activeIndex - actions.length)
+              : null
+            const target = quickOpenEnterTarget(actions, query, activeIndex, Boolean(candidate))
+            if (target?.kind === 'action') chooseAction(actions[target.index])
+            else if (target?.kind === 'file' && candidate) choose(candidate, placementFromModifiers(event, groupID))
           } else return
           event.preventDefault()
         }} />

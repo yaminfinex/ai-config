@@ -9,6 +9,7 @@ import {
   pinMovedPreview,
   persistableDockLayout,
   readStoredLayout,
+  catchUpExternalPanels,
   readStoredSpaceLayout,
   restoreDockLayout,
   screenIdentityState,
@@ -203,8 +204,44 @@ test('corrupt, recovering, and failed-write targets are refused unchanged', () =
   }
 
   const raw = JSON.stringify({ version: 4, dock: singleGroupDock })
-  const storage = { getItem: () => raw, setItem: () => { throw new Error('quota') } }
+  let wrote = false
+  const storage = {
+    getItem: (key: string) => key === 'herder.web.layout.v4:target' ? raw : null,
+    setItem: () => { wrote = true },
+  }
   assert.deepEqual(writePanelToStoredSpace(storage, 'target', { kind: 'agent', name: 'ziru', preview: false }), { ok: false, reason: 'write' })
+  assert.equal(wrote, true, 'the write was accepted; only the mismatched read-back detects failure')
+})
+
+test('external pane catch-up survives a stale live-tab flush before its storage event', () => {
+  const values = new Map<string, string>([[
+    'herder.web.layout.v4:target', JSON.stringify({ version: 4, dock: singleGroupDock }),
+  ]])
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  assert.equal(writePanelToStoredSpace(storage, 'target', { kind: 'agent', name: 'ziru', preview: false }).ok, true)
+  const externalEventValue = values.get('herder.web.layout.v4:target') ?? null
+
+  const stale = JSON.stringify({ version: 4, dock: singleGroupDock })
+  storage.setItem('herder.web.layout.v4:target', stale)
+  const livePanels = new Map(Object.entries(singleGroupDock.panels))
+  const added = catchUpExternalPanels(externalEventValue, {
+    hasPanel: (id) => livePanels.has(id),
+    addPanel: (id, params) => { livePanels.set(id, { id, contentComponent: params.kind, params }) },
+  })
+  assert.deepEqual(added, ['agent:ziru'])
+
+  const mergedDock = {
+    ...singleGroupDock,
+    panels: Object.fromEntries(livePanels),
+    grid: { root: { type: 'branch', data: [{
+      type: 'leaf', data: { id: 'group-main', views: [...livePanels.keys()], activeView: 'agent:mavu' },
+    }] } },
+  }
+  storage.setItem('herder.web.layout.v4:target', JSON.stringify({ version: 4, dock: mergedDock }))
+  assert.ok(readStoredSpaceLayout(storage, 'target').stored?.dock?.panels['agent:ziru'])
 })
 
 test('an invalid v3 rail preference falls back to the last-good layout', () => {

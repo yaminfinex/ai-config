@@ -18,3 +18,12 @@ export function dockTabMenuItems(spaces: SpaceDefinition[], activeSpaceID: strin
 export function isDockTabMenuKey(event: Pick<KeyboardEvent, 'key' | 'shiftKey'>) {
   return event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey
 }
+
+export function dockTabMenuNavigationIndex(key: string, current: number, count: number) {
+  if (count <= 0) return null
+  if (key === 'ArrowDown') return (Math.max(current, -1) + 1) % count
+  if (key === 'ArrowUp') return current <= 0 ? count - 1 : current - 1
+  if (key === 'Home') return 0
+  if (key === 'End') return count - 1
+  return null
+}
