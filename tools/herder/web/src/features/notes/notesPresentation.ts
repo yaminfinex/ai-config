@@ -31,12 +31,18 @@ export function noteSourceLabel(source: NoteSource | undefined) {
   return source.kind === 'diff' ? `${path} (vs ${source.base})` : path
 }
 
+function fencedQuote(quote: string) {
+  const longestRun = quote.match(/`+/g)?.reduce((longest, run) => Math.max(longest, run.length), 0) ?? 0
+  const fence = '`'.repeat(Math.max(3, longestRun + 1))
+  return `${fence}\n${quote}\n${fence}`
+}
+
 export function noteTransferText(note: Note) {
   if (!note.source) return note.text
   const source = note.source.kind === 'transcript' ? `from ${note.source.agent}'s transcript:` : noteSourceLabel(note.source)
   if (!note.quote) return note.text ? `${source}\n${note.text}` : source
   const quote = note.source.kind === 'transcript'
     ? note.quote.split('\n').map((line) => `> ${line}`).join('\n')
-    : `\`\`\`\n${note.quote}\n\`\`\``
+    : fencedQuote(note.quote)
   return `${source}\n${quote}${note.text ? `\n\n${note.text}` : ''}`
 }

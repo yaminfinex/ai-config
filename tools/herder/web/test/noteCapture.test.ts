@@ -92,7 +92,8 @@ test('the one capture chip keeps target talk out of its minimal state', () => {
   assert.match(chip, />＋ Add note</)
   const minimal = chip.slice(chip.indexOf('if (!expanded)'), chip.indexOf('return <aside'))
   assert.doesNotMatch(minimal, /capture\.group|unassigned|<NotesSelector/)
-  assert.match(chip, /event\.key === 'Enter'[\s\S]*expandWith\(\)[\s\S]*preventDefault/)
+  assert.match(chip, /\(event\.key === 'Enter' \|\| event\.key === ' '\)[\s\S]*expandWith\(\)[\s\S]*preventDefault/)
+  assert.match(chip, /event\.key\.length === 1 && event\.key !== ' '/)
 })
 
 test('capture resolves composed range endpoints against explicit content markers', () => {

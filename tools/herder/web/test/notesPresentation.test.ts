@@ -26,7 +26,7 @@ test('group rows are recent-first and flag groups absent from the roster', () =>
 
 test('transfer text uses one exact quote-aware format for copy and hand-off', () => {
   assert.equal(noteTransferText({ ...note('1', 'kilo', 1, { kind: 'file', path: 'src/App.tsx', start: 7, end: 9 }), quote: 'const one = 1\nconst two = 2', text: 'keep both' }), 'src/App.tsx:7-9\n```\nconst one = 1\nconst two = 2\n```\n\nkeep both')
-  assert.equal(noteTransferText({ ...note('2', 'kilo', 1, { kind: 'diff', path: 'src/App.tsx', base: 'merge-base', start: 12, end: 12 }), quote: '```literal```', text: '' }), 'src/App.tsx:12 (vs merge-base)\n```\n```literal```\n```')
+  assert.equal(noteTransferText({ ...note('2', 'kilo', 1, { kind: 'diff', path: 'src/App.tsx', base: 'merge-base', start: 12, end: 12 }), quote: '```literal```', text: '' }), 'src/App.tsx:12 (vs merge-base)\n````\n```literal```\n````')
   assert.equal(noteTransferText({ ...note('3', 'kilo', 1, { kind: 'transcript', agent: 'kilo' }), quote: 'first line\n\nthird line', text: 'reply' }), "from kilo's transcript:\n> first line\n> \n> third line\n\nreply")
   assert.equal(noteTransferText(note('4', 'kilo', 1)), 'text 4')
 })

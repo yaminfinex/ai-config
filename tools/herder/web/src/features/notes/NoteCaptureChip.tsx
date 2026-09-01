@@ -50,8 +50,8 @@ export function NoteCaptureChip({ capture, notes, agents, onSave, onAbandon }: {
   if (!expanded) return <aside className="note-capture-popover note-capture-minimal" role="dialog" aria-label="Capture selected text" style={{ left: capture.left, top: capture.top }}>
     <button autoFocus type="button" className="note-capture-minimal-button" onClick={() => onSave(group, '')} onKeyDown={(event) => {
       if (event.key === 'Escape') { onAbandon(); event.preventDefault(); return }
-      if (event.key === 'Enter') { expandWith(); event.preventDefault(); return }
-      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) { expandWith(event.key); event.preventDefault() }
+      if (event.key === 'Enter' || event.key === ' ') { expandWith(); event.preventDefault(); return }
+      if (event.key.length === 1 && event.key !== ' ' && !event.metaKey && !event.ctrlKey && !event.altKey) { expandWith(event.key); event.preventDefault() }
     }}>＋ Add note</button>
   </aside>
 
