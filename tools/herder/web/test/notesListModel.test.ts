@@ -71,6 +71,14 @@ test('batch removal chooses the survivor after the last removed position', () =>
   assert.equal(tail.cursor, 'c')
 })
 
+test('removing unselected notes only prunes the existing selection', () => {
+  const state = { selected: new Set(['b', 'stale']), anchor: 'b', cursor: 'b' }
+  const next = selectionAfterRemoval(state, ['a', 'b', 'c', 'd'], ['c'])
+  assert.deepEqual([...next.selected], ['b'])
+  assert.equal(next.anchor, 'b')
+  assert.equal(next.cursor, 'b')
+})
+
 test('removal crosses rendered group boundaries and empties only with the list', () => {
   const ids = ['group-one-a', 'group-one-b', 'group-two-a']
   const boundary = selectionAfterRemoval(selectionAfterClick(empty(), ids, 'group-one-b', {}), ids, ['group-one-b'])
