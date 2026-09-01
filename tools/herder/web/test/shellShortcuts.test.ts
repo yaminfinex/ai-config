@@ -51,6 +51,7 @@ function actions(calls: string[]): ShellShortcutActions {
     openShortcutReference: () => { calls.push('reference') },
     closeShortcutReference: () => { calls.push('escape'); return true },
     switchTab: (direction) => { calls.push(`tab:${direction}`); return true },
+    switchSpace: (direction) => { calls.push(`space:${direction}`); return true },
     focusFleet: () => { calls.push('fleet'); return true },
     toggleNotesRail: () => { calls.push('notes'); return true },
     captureNote: () => { calls.push('capture'); return true },
@@ -126,6 +127,18 @@ test('Option arrows and legacy Control Page aliases switch tabs', () => {
   }
 })
 
+test('Shift-Option arrows switch spaces without replacing tab shortcuts', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true, shiftKey: true })
+    dispatch(target, { key: 'ArrowRight', code: 'ArrowRight', altKey: true, shiftKey: true })
+    dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true })
+    assert.deepEqual(calls, ['space:previous', 'space:next', 'tab:previous'])
+  } finally { unsubscribe() }
+})
+
 test('Option up and down use physical arrow codes for transcript jumps', () => {
   const target = new EventTarget()
   const calls: string[] = []
@@ -164,6 +177,10 @@ test('shortcut reference labels are platform-aware and Escape stays neutral', ()
   assert.equal(shortcutLabels('Linux').toggleNotesRail, 'Alt+3')
   assert.equal(shortcutLabels('Macintosh').captureNote, '⌥4')
   assert.equal(shortcutLabels('Linux').captureNote, 'Alt+4')
+  assert.equal(shortcutLabels('Macintosh').switchSpaces, '⇧⌥← / ⇧⌥→')
+  assert.equal(shortcutLabels('Linux').switchSpaces, 'Shift+Alt+Left / Shift+Alt+Right')
+  assert.doesNotMatch(shortcutLabels('Macintosh').switchTabs, /legacy/i)
+  assert.doesNotMatch(shortcutLabels('Linux').switchTabs, /legacy/i)
 })
 
 test('unclaimed actions do not prevent browser defaults', () => {

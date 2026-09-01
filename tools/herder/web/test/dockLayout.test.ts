@@ -14,6 +14,7 @@ import {
   screenIdentityState,
   writeStoredLayout,
   writeStoredSpaceLayout,
+  writePanelToStoredSpace,
   spaceLayoutRecoveryPrefix,
   type DockPanelParams,
   type ScreenPanelParams,
@@ -131,6 +132,79 @@ test('one corrupt v4 space preserves raw and cannot poison another space', () =>
   assert.equal(readStoredSpaceLayout(storage, 'alpha').stored, null)
   assert.ok(values.has(`${spaceLayoutRecoveryPrefix}alpha`))
   assert.ok(readStoredSpaceLayout(storage, 'beta').stored?.dock)
+})
+
+test('a panel is appended to the target active group with its exact params', () => {
+  const values = new Map<string, string>([[
+    'herder.web.layout.v4:target', JSON.stringify({ version: 4, dock: singleGroupDock }),
+  ]])
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  const params: DockPanelParams = { kind: 'agent', name: 'ziru', preview: true }
+  assert.deepEqual(writePanelToStoredSpace(storage, 'target', params), { ok: true, duplicate: false })
+  const dock = readStoredSpaceLayout(storage, 'target').stored?.dock
+  assert.deepEqual(dock?.panels['agent:ziru']?.params, params)
+  assert.equal(dock?.panels['agent:ziru']?.tabComponent, 'herder-tab')
+  assert.deepEqual(dock?.grid.root.data[0].data.views, [
+    'agent:mavu', 'file:%2Frepo:README.md', 'folder:%2Frepo:src', 'agent:ziru',
+  ])
+  assert.equal(dock?.grid.root.data[0].data.activeView, 'agent:ziru')
+})
+
+test('an empty target receives one canonical branch-root group', () => {
+  const values = new Map<string, string>([[
+    'herder.web.layout.v4:empty', JSON.stringify({ version: 4, dock: null }),
+  ]])
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  const params: DockPanelParams = { kind: 'changes', root: '/repo', preview: false }
+  assert.deepEqual(writePanelToStoredSpace(storage, 'empty', params), { ok: true, duplicate: false })
+  const dock = readStoredSpaceLayout(storage, 'empty').stored?.dock
+  assert.equal(dock?.grid.root.type, 'branch')
+  assert.deepEqual(dock?.grid.root.data[0].data.views, ['changes:%2Frepo'])
+  assert.equal(dock?.activeGroup, dock?.grid.root.data[0].data.id)
+})
+
+test('an existing target panel is activated without duplication', () => {
+  const values = new Map<string, string>([[
+    'herder.web.layout.v4:target', JSON.stringify({ version: 4, dock: singleGroupDock }),
+  ]])
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  const params: DockPanelParams = { kind: 'agent', name: 'mavu', preview: false }
+  assert.deepEqual(writePanelToStoredSpace(storage, 'target', params), { ok: true, duplicate: true })
+  const dock = readStoredSpaceLayout(storage, 'target').stored?.dock
+  assert.equal(Object.keys(dock?.panels ?? {}).filter((id) => id === 'agent:mavu').length, 1)
+  assert.equal(dock?.grid.root.data[0].data.activeView, 'agent:mavu')
+})
+
+test('corrupt, recovering, and failed-write targets are refused unchanged', () => {
+  for (const entries of [
+    [['herder.web.layout.v4:target', '{broken']],
+    [
+      ['herder.web.layout.v4:target', JSON.stringify({ version: 4, dock: { ...singleGroupDock, panels: { ...singleGroupDock.panels, broken: {} } } })],
+      ['herder.web.layout.v4.last-good:target', JSON.stringify({ version: 4, dock: singleGroupDock })],
+    ],
+  ] as Array<Array<[string, string]>>) {
+    const values = new Map<string, string>(entries)
+    const before = values.get('herder.web.layout.v4:target')
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+    }
+    assert.equal(writePanelToStoredSpace(storage, 'target', { kind: 'agent', name: 'ziru', preview: false }).ok, false)
+    assert.equal(values.get('herder.web.layout.v4:target'), before)
+  }
+
+  const raw = JSON.stringify({ version: 4, dock: singleGroupDock })
+  const storage = { getItem: () => raw, setItem: () => { throw new Error('quota') } }
+  assert.deepEqual(writePanelToStoredSpace(storage, 'target', { kind: 'agent', name: 'ziru', preview: false }), { ok: false, reason: 'write' })
 })
 
 test('an invalid v3 rail preference falls back to the last-good layout', () => {

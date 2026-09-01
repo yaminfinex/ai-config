@@ -5,6 +5,7 @@ import {
   closeSpaceLayout,
   clearAllLayoutFamilies,
   initializeSpaces,
+  hasRecoverableSpaceLayout,
   layoutRecoveryKey,
   mainSpaceID,
   migrationMarkerKey,
@@ -107,8 +108,13 @@ test('two first-load migrations converge on one well-known main definition', () 
 
 test('close verifies recovery before removing live layout and reopen restores both copies', () => {
   const storage = new FakeStorage()
-  const primary = JSON.stringify({ version: 4, dock: null })
-  const backup = JSON.stringify({ version: 4, dock: null, marker: 'backup' })
+  const dock = {
+    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'group', views: ['agent:mavu'], activeView: 'agent:mavu' } }] } },
+    panels: { 'agent:mavu': { id: 'agent:mavu', contentComponent: 'agent', params: { kind: 'agent', name: 'mavu', preview: false } } },
+    activeGroup: 'group',
+  }
+  const primary = JSON.stringify({ version: 4, dock })
+  const backup = JSON.stringify({ version: 4, dock })
   storage.values.set(spaceLayoutKey('alpha'), primary)
   storage.values.set(spaceLayoutBackupKey('alpha'), backup)
 
@@ -118,15 +124,31 @@ test('close verifies recovery before removing live layout and reopen restores bo
   const primaryRemove = storage.calls.indexOf(`remove:${spaceLayoutKey('alpha')}`)
   assert.ok(recoverySet >= 0 && recoveryRead > recoverySet && primaryRemove > recoveryRead)
   assert.equal(storage.values.has(spaceLayoutKey('alpha')), false)
+  assert.equal(hasRecoverableSpaceLayout(storage, 'alpha'), true)
 
   assert.equal(reopenSpaceLayout(storage, 'alpha').ok, true)
   assert.equal(storage.values.get(spaceLayoutKey('alpha')), primary)
   assert.equal(storage.values.get(spaceLayoutBackupKey('alpha')), backup)
 })
 
+test('closing an empty space tombstones its layout without a reopen affordance', () => {
+  const storage = new FakeStorage()
+  storage.values.set(spaceLayoutKey('empty'), JSON.stringify({ version: 4, dock: null }))
+  storage.values.set(spaceLayoutBackupKey('empty'), JSON.stringify({ version: 4, dock: null }))
+
+  assert.equal(closeSpaceLayout(storage, 'empty', 1_000).ok, true)
+  assert.equal(storage.values.has(layoutRecoveryKey('empty')), false)
+  assert.equal(hasRecoverableSpaceLayout(storage, 'empty'), false)
+  assert.equal(storage.values.has(spaceLayoutKey('empty')), false)
+})
+
 test('a recovery write failure refuses close and leaves the live layout untouched', () => {
   const storage = new FakeStorage()
-  storage.values.set(spaceLayoutKey('alpha'), JSON.stringify({ version: 4, dock: null }))
+  storage.values.set(spaceLayoutKey('alpha'), JSON.stringify({ version: 4, dock: {
+    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'group', views: ['agent:mavu'], activeView: 'agent:mavu' } }] } },
+    panels: { 'agent:mavu': { id: 'agent:mavu', contentComponent: 'agent', params: { kind: 'agent', name: 'mavu', preview: false } } },
+    activeGroup: 'group',
+  } }))
   storage.failKey = layoutRecoveryKey('alpha')
 
   const result = closeSpaceLayout(storage, 'alpha', 1_000)

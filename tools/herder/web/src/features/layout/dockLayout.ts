@@ -2,7 +2,7 @@ import type { DockviewApi, SerializedDockview } from 'dockview-react'
 import type { Board, Pane } from '../../types'
 import type { FileViewMode } from '../files/fileTabs.ts'
 import { agentTabID } from '../../previewTabs.ts'
-import { panelID, panelParams } from '../workspace/panelRegistryModel.ts'
+import { panelID, panelParams, panelPresentation } from '../workspace/panelRegistryModel.ts'
 import { clampRailWidth, defaultRailPreferences, type RailPreferences } from './utilityRailModel.ts'
 
 export const layoutStorageKey = 'herder.web.layout.v3'
@@ -249,6 +249,84 @@ export function writeStoredSpaceLayout(
   } catch {
     return state
   }
+}
+
+export type StoredPanelWriteResult =
+  | { ok: true, duplicate: boolean }
+  | { ok: false, reason: 'corrupt' | 'recovering' | 'canonical' | 'write' }
+
+function activatePanelInGrid(node: GridNode, groupID: string, id: string): { node: GridNode, found: boolean } {
+  if (node.type === 'leaf') {
+    const data = node.data as UnknownRecord
+    if (data.id !== groupID) return { node, found: false }
+    const views = strings(data.views) ? data.views : []
+    return {
+      node: { ...node, data: { ...data, views: views.includes(id) ? views : [...views, id], activeView: id } },
+      found: true,
+    }
+  }
+  let found = false
+  const data = (node.data as GridNode[]).map((child) => {
+    if (found) return child
+    const activated = activatePanelInGrid(child, groupID, id)
+    found = activated.found
+    return activated.node
+  })
+  return { node: { ...node, data }, found }
+}
+
+export function writePanelToStoredSpace(
+  storage: Pick<Storage, 'getItem' | 'setItem'>,
+  spaceID: string,
+  params: DockPanelParams,
+): StoredPanelWriteResult {
+  const target = readStoredSpaceLayout(storage, spaceID)
+  if (target.problem) return { ok: false, reason: 'corrupt' }
+  if (target.recovering) return { ok: false, reason: 'recovering' }
+
+  const id = panelID(params)
+  const presentation = panelPresentation(params)
+  const serialized = {
+    id,
+    contentComponent: params.kind,
+    tabComponent: 'herder-tab',
+    title: presentation.title,
+    params,
+  }
+  const duplicate = Boolean(target.stored?.dock?.panels[id])
+  let candidate: unknown
+  if (!target.stored?.dock) {
+    const groupID = `space-${encodeURIComponent(spaceID)}-main`
+    candidate = {
+      grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: groupID, views: [id], activeView: id } }] } },
+      panels: { [id]: serialized },
+      activeGroup: groupID,
+    }
+  } else {
+    const dock = target.stored.dock
+    const root = dock.grid.root as GridNode
+    const groupID = typeof dock.activeGroup === 'string' && groupIDs(root).has(dock.activeGroup)
+      ? dock.activeGroup
+      : firstGroupID(root)
+    if (!groupID) return { ok: false, reason: 'canonical' }
+    const activated = activatePanelInGrid(root, groupID, id)
+    if (!activated.found) return { ok: false, reason: 'canonical' }
+    candidate = {
+      ...dock,
+      panels: { ...dock.panels, [id]: serialized },
+      grid: { ...dock.grid, root: activated.node },
+      activeGroup: groupID,
+    }
+  }
+
+  const dock = persistableDockLayout(candidate)
+  if (!dock) return { ok: false, reason: 'canonical' }
+  const state: LayoutWriteState = { recovering: false, lastGoodRaw: target.lastGoodRaw }
+  const raw = JSON.stringify({ version: 4, dock })
+  if (writeStoredSpaceLayout(storage, spaceID, raw, state) === state) return { ok: false, reason: 'write' }
+  const verified = readStoredSpaceLayout(storage, spaceID)
+  if (verified.problem || verified.recovering || !verified.stored?.dock?.panels[id]) return { ok: false, reason: 'write' }
+  return { ok: true, duplicate }
 }
 
 export function parseLegacyLayout(raw: string | null): LegacyLayout | null {

@@ -3,6 +3,7 @@ import type { DockviewApi } from 'dockview-react'
 import { followScrollCommandEvent, type FollowScrollCommand } from '../../shared/useFollowScroll'
 import { bindShellShortcuts } from '../layout/shellShortcuts'
 import { noteCaptureShortcutEvent, type NoteCaptureShortcutDetail } from '../../shared/noteCaptureEvent'
+import { spaceIDInDirection, type SpaceDefinition } from '../spaces/index.ts'
 
 export function useWorkspaceShortcuts({
   apiRef,
@@ -11,6 +12,9 @@ export function useWorkspaceShortcuts({
   showQuickOpen,
   closePanel,
   toggleNotesRail,
+  spaces,
+  activeSpaceID,
+  switchSpace,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   shortcutReference: boolean
@@ -18,6 +22,9 @@ export function useWorkspaceShortcuts({
   showQuickOpen: () => void
   closePanel: (id: string) => void
   toggleNotesRail: () => void
+  spaces: SpaceDefinition[]
+  activeSpaceID: string | null
+  switchSpace: (id: string) => boolean
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
@@ -49,6 +56,10 @@ export function useWorkspaceShortcuts({
         return true
       },
       switchTab,
+      switchSpace: (direction) => {
+        const target = spaceIDInDirection(spaces, activeSpaceID, direction)
+        return target ? switchSpace(target) : false
+      },
       focusFleet: () => {
         const item = document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')
         if (!item) return false
@@ -77,5 +88,5 @@ export function useWorkspaceShortcuts({
         return true
       },
     }, navigator.userAgent)
-  }, [apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen, toggleNotesRail])
+  }, [activeSpaceID, apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail])
 }

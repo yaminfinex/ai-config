@@ -8,6 +8,7 @@ export type ShellShortcutActions = {
   openShortcutReference: () => boolean | void
   closeShortcutReference: () => boolean | void
   switchTab: (direction: TabDirection) => boolean | void
+  switchSpace: (direction: TabDirection) => boolean | void
   focusFleet: () => boolean | void
   toggleNotesRail: () => boolean | void
   captureNote: () => boolean | void
@@ -21,6 +22,7 @@ export type ShortcutLabels = {
   closePanel: string
   quickOpen: string
   switchTabs: string
+  switchSpaces: string
   focusFleet: string
   toggleNotesRail: string
   captureNote: string
@@ -41,7 +43,8 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
   return isMacPlatform(userAgent) ? {
     closePanel: '⌥W',
     quickOpen: '⌘K',
-    switchTabs: '⌥← / ⌥→ (legacy: ⌘PageUp / ⌘PageDown)',
+    switchTabs: '⌥← / ⌥→',
+    switchSpaces: '⇧⌥← / ⇧⌥→',
     focusFleet: '⌥1',
     toggleNotesRail: '⌥3',
     captureNote: '⌥4',
@@ -55,7 +58,8 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
   } : {
     closePanel: 'Alt+W',
     quickOpen: 'Ctrl+K',
-    switchTabs: 'Alt+Left / Alt+Right (legacy: Ctrl+PageUp / Ctrl+PageDown)',
+    switchTabs: 'Alt+Left / Alt+Right',
+    switchSpaces: 'Shift+Alt+Left / Shift+Alt+Right',
     focusFleet: 'Alt+1',
     toggleNotesRail: 'Alt+3',
     captureNote: 'Alt+4',
@@ -91,6 +95,8 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     'Escape': claimed(actions.closeShortcutReference),
     'Alt+ArrowLeft': claimed(() => actions.switchTab('previous'), true),
     'Alt+ArrowRight': claimed(() => actions.switchTab('next'), true),
+    'Shift+Alt+ArrowLeft': claimed(() => actions.switchSpace('previous'), true),
+    'Shift+Alt+ArrowRight': claimed(() => actions.switchSpace('next'), true),
     'Alt+ArrowUp': claimed(actions.goToTop, true),
     'Alt+ArrowDown': claimed(actions.goToBottom, true),
     'Alt+Enter': claimed(actions.toggleMaximize, true),

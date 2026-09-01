@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
-import { eventStreamURL, recordBuildIdentity, streamAlerts, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
+import { deferFleetSubscription, eventStreamURL, recordBuildIdentity, streamAlerts, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
 import { beginSendRefresh, settleSendRefresh } from '../src/sendRefresh.ts'
 
@@ -77,6 +77,65 @@ test('closing an agent subscription prunes only that transcript fault', () => {
     stream: 'reconnecting',
     'transcript:still-open': 'unreadable',
   })
+})
+
+test('switch-settling cancels the stale subscription before it opens', () => {
+  const scheduled = new Map<number, () => void>()
+  let next = 0
+  const starts: string[] = []
+  const schedule = (callback: () => void) => {
+    const id = ++next
+    scheduled.set(id, () => { scheduled.delete(id); callback() })
+    return id
+  }
+  const cancel = (id: number) => scheduled.delete(id)
+  const stale = deferFleetSubscription(() => { starts.push('stale'); return () => undefined }, schedule, cancel, schedule, cancel)
+  stale()
+  const settled = deferFleetSubscription(() => { starts.push('settled'); return () => undefined }, schedule, cancel, schedule, cancel)
+  for (const callback of [...scheduled.values()]) callback()
+  assert.deepEqual(starts, [], 'one frame is reserved for child watch registrations to settle')
+  for (const callback of [...scheduled.values()]) callback()
+  assert.deepEqual(starts, ['settled'])
+  settled()
+})
+
+test('first open skips catch-up invalidations but an established reconnect keeps them', async () => {
+  const queryClient = new QueryClient()
+  const sources: FakeEventSource[] = []
+  const timeouts = new Map<number, () => void>()
+  let timerID = 0
+  const timers = {
+    setTimeout: ((callback: () => void) => { const id = ++timerID; timeouts.set(id, callback); return id }) as typeof window.setTimeout,
+    clearTimeout: ((id: number) => timeouts.delete(id)) as typeof window.clearTimeout,
+    setInterval: (() => 99) as typeof window.setInterval,
+    clearInterval: (() => undefined) as typeof window.clearInterval,
+  }
+  const clean = async () => {
+    await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
+    await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
+    await queryClient.fetchQuery({ queryKey: queryKeys.file('/repo', 'README.md'), queryFn: async () => ({ content: 'old' }) })
+  }
+  await clean()
+  const stop = subscribeToFleet(queryClient, ['vile'], [], [{ kind: 'file', root: '/repo', path: 'README.md' }], undefined, () => {
+    const source = new FakeEventSource(); sources.push(source); return source
+  }, timers)
+  sources[0].onopen?.(new Event('open'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, false)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false)
+  assert.equal(queryClient.getQueryState(queryKeys.file('/repo', 'README.md'))?.isInvalidated, false)
+
+  sources[0].onerror?.(new Event('error'))
+  const reconnect = [...timeouts.values()][0]
+  assert.ok(reconnect)
+  reconnect()
+  assert.equal(sources.length, 2)
+  sources[1].onopen?.(new Event('open'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.file('/repo', 'README.md'))?.isInvalidated, true)
+  stop()
 })
 
 test('multiplexed frames update and invalidate the shared query cache', async () => {
@@ -195,8 +254,8 @@ test('an own-send marker suppresses only the duplicate message invalidation', as
 
   source.onopen?.(new Event('open'))
   await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, false)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false)
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
   await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
   source.emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))

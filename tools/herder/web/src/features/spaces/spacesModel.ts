@@ -3,6 +3,7 @@ import {
   layoutStorageBackupKey,
   layoutStorageKey,
   parseLegacyLayout,
+  parseStoredSpaceLayout,
   parseStoredLayout,
   readStoredLayout,
   spaceLayoutBackupPrefix,
@@ -174,13 +175,24 @@ export type SpaceResult<T> = { ok: true, value: T } | { ok: false, reason: strin
 
 export function closeSpaceLayout(storage: MigrationStorage, id: string, now = Date.now()): SpaceResult<void> {
   try {
+    const primaryRaw = storage.getItem(spaceLayoutKey(id))
+    const backupRaw = storage.getItem(spaceLayoutBackupKey(id))
+    const primary = parseStoredSpaceLayout(primaryRaw)
+    const backup = parseStoredSpaceLayout(backupRaw)
+    const empty = primary ? primary.layout.dock === null : !primaryRaw && (!backup || backup.layout.dock === null)
+    if (empty) {
+      storage.removeItem(layoutRecoveryKey(id))
+      storage.removeItem(spaceLayoutKey(id))
+      storage.removeItem(spaceLayoutBackupKey(id))
+      return { ok: true, value: undefined }
+    }
     const recoveryKey = layoutRecoveryKey(id)
     const existing = parseRecovery(storage.getItem(recoveryKey))
     const recovery: LayoutRecovery = {
       version: 1,
       kind: 'closed',
-      primaryRaw: storage.getItem(spaceLayoutKey(id)) ?? existing?.primaryRaw ?? null,
-      backupRaw: storage.getItem(spaceLayoutBackupKey(id)) ?? existing?.backupRaw ?? null,
+      primaryRaw: primaryRaw ?? existing?.primaryRaw ?? null,
+      backupRaw: backupRaw ?? existing?.backupRaw ?? null,
       updated: now,
     }
     const raw = JSON.stringify(recovery)
@@ -191,6 +203,11 @@ export function closeSpaceLayout(storage: MigrationStorage, id: string, now = Da
   } catch {
     return { ok: false, reason: 'This space could not be closed because its layout could not be kept for recovery. Nothing was discarded.' }
   }
+}
+
+export function hasRecoverableSpaceLayout(storage: Pick<Storage, 'getItem'>, id: string) {
+  try { return parseRecovery(storage.getItem(layoutRecoveryKey(id)))?.kind === 'closed' }
+  catch { return false }
 }
 
 export function reopenSpaceLayout(storage: MigrationStorage, id: string): SpaceResult<void> {
