@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Note } from './notesStore.ts'
-import { filterSelectorRows, selectorBackspace, selectorInitialValue, selectorRows, type NotesSelectorMode } from './notesSelectorModel.ts'
+import { filterSelectorRows, selectorBackspace, selectorInitialValue, selectorMove, selectorRows, type NotesSelectorMode } from './notesSelectorModel.ts'
 
 export function NotesSelector({ notes, selected, agents, mode = 'assign', initialValue, initialQuery = '', onChoose, onCancel }: {
   notes: Note[]
@@ -17,17 +17,20 @@ export function NotesSelector({ notes, selected, agents, mode = 'assign', initia
   const [query, setQuery] = useState(initialQuery)
   const [highlighted, setHighlighted] = useState(initial)
   const filtered = filterSelectorRows(rows, query)
+  const effectiveHighlight = filtered.some((row) => row.value === highlighted) ? highlighted : filtered[0]?.value ?? ''
+  const inputRef = useRef<HTMLInputElement>(null)
+  const optionRefs = useRef(new Map<string, HTMLButtonElement>())
 
   useEffect(() => {
-    if (filtered.some((row) => row.value === highlighted)) return
-    setHighlighted(filtered[0]?.value ?? '')
-  }, [filtered, highlighted])
+    if (effectiveHighlight !== highlighted) setHighlighted(effectiveHighlight)
+  }, [effectiveHighlight, highlighted])
+  useLayoutEffect(() => { inputRef.current?.focus() }, [])
+  useLayoutEffect(() => {
+    optionRefs.current.get(effectiveHighlight)?.scrollIntoView({ block: 'nearest' })
+  }, [effectiveHighlight, query])
 
   const move = (direction: -1 | 1) => {
-    if (filtered.length === 0) return
-    const index = filtered.findIndex((row) => row.value === highlighted)
-    const next = Math.max(0, Math.min(filtered.length - 1, (index < 0 ? 0 : index) + direction))
-    setHighlighted(filtered[next]?.value ?? '')
+    setHighlighted(selectorMove(filtered, effectiveHighlight, direction))
   }
 
   return <div className="notes-selector" role="dialog" aria-label={mode === 'destination' ? 'Choose composer destination' : 'Assign notes'}
@@ -36,19 +39,19 @@ export function NotesSelector({ notes, selected, agents, mode = 'assign', initia
       if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onCancel(); return }
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); move(event.key === 'ArrowDown' ? 1 : -1); return }
       if (event.key === 'Backspace') {
-        const result = selectorBackspace(query, highlighted, mode)
+        const result = selectorBackspace(query, effectiveHighlight, mode)
         if (result.handled) { event.preventDefault(); setHighlighted(result.highlighted); return }
       }
-      if (event.key === 'Enter' && highlighted && !focusedOption) { event.preventDefault(); onChoose(highlighted) }
+      if (event.key === 'Enter' && effectiveHighlight && !focusedOption) { event.preventDefault(); onChoose(effectiveHighlight) }
     }}>
-    <input autoFocus aria-label="Filter agents" placeholder={mode === 'destination' ? 'send to…' : 'assign to…'} value={query} onChange={(event) => {
+    <input ref={inputRef} autoFocus aria-label="Filter agents" placeholder={mode === 'destination' ? 'send to…' : 'assign to…'} value={query} onChange={(event) => {
       const next = event.target.value
       setQuery(next)
       const match = filterSelectorRows(rows, next)[0]
       if (match) setHighlighted(match.value)
     }} />
     <div role="listbox" aria-label="Agents">
-      {filtered.map((row) => <button type="button" role="option" aria-selected={row.value === highlighted} className={row.value === highlighted ? 'highlighted' : ''}
+      {filtered.map((row) => <button ref={(node) => { if (node) optionRefs.current.set(row.value, node); else optionRefs.current.delete(row.value) }} type="button" role="option" aria-selected={row.value === effectiveHighlight} className={row.value === effectiveHighlight ? 'highlighted' : ''}
         key={row.value} onPointerMove={() => setHighlighted(row.value)} onClick={() => onChoose(row.value)}>
         <span>{row.label}</span>{row.value === 'general' && <kbd>⌫</kbd>}
       </button>)}

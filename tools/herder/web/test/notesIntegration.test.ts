@@ -107,17 +107,34 @@ test('hand-off persists the composer append before deleting selected notes', () 
   assert.ok(rail.indexOf('appendComposerDraft') < rail.indexOf('onOpenAgent'))
 })
 
-test('empty and collapsed strips keep only the header plus on-demand add affordance', () => {
+test('the strip materializes only for notes and collapse is panel-lifetime state', () => {
   const strip = read('../src/features/notes/AgentNotesStrip.tsx')
-  const quick = read('../src/features/notes/NoteQuickAdd.tsx')
   const rail = read('../src/features/notes/NotesRail.tsx')
-  assert.match(strip, /count > 0 \? <button[\s\S]*: <span className="agent-notes-label">Notes<\/span>/)
+  assert.match(strip, /useState\(true\)/)
+  assert.match(strip, /if \(count === 0\) return null/)
+  assert.doesNotMatch(strip, /readNotesStripCollapsed|persistNotesStripCollapsed|localStorage/)
   assert.match(strip, /<NoteQuickAdd group=\{agent\}/)
-  assert.match(strip, /!collapsed && count > 0 && <NotesList/)
-  assert.match(quick, /event\.key === 'Escape'/)
-  assert.match(quick, /event\.key === 'Enter'/)
-  assert.match(quick, /onBlur=.*!event\.currentTarget\.value\.trim\(\)/)
+  assert.match(strip, /!collapsed && <NotesList/)
   assert.doesNotMatch(`${strip}\n${rail}`, /No notes|notes-empty|zero/i)
+})
+
+test('selector owns an internally scrolling list and keeps its highlight visible', () => {
+  const selector = read('../src/features/notes/NotesSelector.tsx')
+  const styles = read('../src/styles.css')
+  assert.match(selector, /scrollIntoView\(\{ block: 'nearest' \}\)/)
+  assert.match(selector, /selectorMove/)
+  assert.match(selector, /inputRef\.current\?\.focus\(\)/)
+  assert.match(styles, /\.notes-selector \[role='listbox'\][^}]*max-height: 192px;[^}]*overflow-y: auto;/)
+})
+
+test('capture allowlist markers are content-local, never panel-wide', () => {
+  const agent = read('../src/features/transcript/TranscriptEntries.tsx')
+  const panel = read('../src/features/transcript/AgentPanel.tsx')
+  const file = read('../src/features/files/FilePanel.tsx')
+  assert.match(agent, /data-note-capture-content/)
+  assert.match(file, /data-note-capture-content/)
+  assert.doesNotMatch(panel, /<main[^>]+data-note-capture-content/)
+  assert.doesNotMatch(file, /<main[^>]+data-note-capture-content/)
 })
 
 test('notes storage families share one versioned namespace and stay disjoint from drafts and layout', () => {

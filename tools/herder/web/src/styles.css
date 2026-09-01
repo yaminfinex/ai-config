@@ -109,6 +109,7 @@ h2, h3, p { margin-top: 0; }
 .note-card-content { min-width: 0; }
 .note-card-content small { display: block; overflow: hidden; color: var(--note-source); font: 9px/16px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .note-card-content p { margin: 0; font-size: 11px; line-height: 16px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.note-card-content .note-card-quote + p:not(:empty), .note-card-content .note-card-quote + textarea { margin-top: var(--space-2); }
 .note-card-content textarea { display: block; width: 100%; min-height: 64px; resize: vertical; padding: var(--space-1); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; background: var(--bg); color: var(--text); }
 .notes-problem { margin: var(--space-1) var(--space-2); color: var(--error-text); font-size: 10px; }
 .notes-hint-line { display: flex; align-items: center; gap: var(--space-3); overflow-x: auto; padding: var(--space-1) var(--space-3); border-top: 1px solid var(--border); background: var(--note-hint-bg); color: var(--dim); font-size: 10px; white-space: nowrap; }
@@ -117,7 +118,7 @@ h2, h3, p { margin-top: 0; }
 .notes-hint-line kbd, .note-capture-popover kbd { font: 9px var(--mono); }
 .notes-selector { position: absolute; z-index: 30; right: var(--space-2); bottom: var(--space-3); width: min(232px, calc(100% - 16px)); padding: var(--space-1); border: 1px solid var(--border2); border-radius: var(--space-1); background: var(--note-selector-bg); color: var(--text); box-shadow: 0 8px 24px var(--floating-shadow); }
 .notes-selector > input { width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; background: var(--bg); color: var(--text); }
-.notes-selector [role='listbox'] { padding-top: var(--space-1); }
+.notes-selector [role='listbox'] { max-height: 192px; overflow-y: auto; padding-top: var(--space-1); }
 .notes-selector [role='option'] { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: var(--space-1) var(--space-2); border: 0; background: transparent; color: var(--text); text-align: left; }
 .notes-selector [role='option'].highlighted { background: var(--note-selected); }
 .notes-selector [role='option'] kbd { color: var(--dim); }

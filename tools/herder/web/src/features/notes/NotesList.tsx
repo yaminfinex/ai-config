@@ -126,7 +126,8 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
             }} onDoubleClick={() => edit(note.id)}>
             <div className="note-card-content">
               {note.source && <small>{noteSourceLabel(note.source)}</small>}
-              {editing === note.id ? <textarea autoFocus defaultValue={note.text} aria-label="Edit note" onBlur={(event) => {
+              {note.quote && <p className="note-card-quote">{note.quote}</p>}
+              {editing === note.id ? <textarea autoFocus defaultValue={note.text} aria-label="Edit note comment" onBlur={(event) => {
                 const result = store.edit(note.id, { text: event.currentTarget.value })
                 if (!result.ok) setProblem(result.reason)
                 else { setProblem(''); setEditing(undefined) }

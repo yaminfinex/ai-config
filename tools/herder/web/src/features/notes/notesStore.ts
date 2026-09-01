@@ -14,6 +14,7 @@ export type Note = {
   id: string
   group: string
   text: string
+  quote?: string
   source?: NoteSource
   created: number
   updated: number
@@ -38,7 +39,7 @@ export type NotesStatus = { persistent: boolean, recovered: boolean, problem: st
 export type NotesStore = {
   list: () => Note[]
   listGroup: (group: string) => Note[]
-  add: (input: { group: string, text: string, source?: NoteSource }) => NotesResult<Note>
+  add: (input: { group: string, text: string, quote?: string, source?: NoteSource }) => NotesResult<Note>
   edit: (id: string, changes: { text?: string, group?: string }) => NotesResult<Note>
   delete: (ids: string[]) => NotesResult<number>
   subscribe: (listener: () => void) => () => void
@@ -85,6 +86,7 @@ function parseStored(raw: string | null): StoredRecord | null {
     if ('deleted' in record) return record.deleted === true ? stored as StoredRecord : null
     const note = record as Partial<Note>
     if (typeof note.group !== 'string' || typeof note.text !== 'string' || typeof note.created !== 'number' || !Number.isFinite(note.created)) return null
+    if (note.quote !== undefined && typeof note.quote !== 'string') return null
     return stored as StoredRecord
   } catch {
     return null
@@ -100,8 +102,8 @@ function active(record: NoteRecord): record is Note {
   return !('deleted' in record)
 }
 
-function noteBytes(note: Pick<Note, 'text'>) {
-  return new TextEncoder().encode(note.text).byteLength
+function noteBytes(note: Pick<Note, 'text' | 'quote'>) {
+  return new TextEncoder().encode(`${note.quote ?? ''}${note.text}`).byteLength
 }
 
 function storedBytes(records: Iterable<StoredRecord>) {
@@ -317,11 +319,12 @@ export function createNotesStore(options: Options = {}): NotesStore {
   return {
     list: currentNotes,
     listGroup: (group) => currentNotes().filter((note) => note.group === group),
-    add: ({ group, text, source }) => guarded(() => {
+    add: ({ group, text, quote, source }) => guarded(() => {
       const value = text.trim()
-      if (!value) return { ok: false, reason: 'Write something before saving this note.' }
+      const captured = quote?.trim()
+      if (!value && !captured) return { ok: false, reason: 'Write something before saving this note.' }
       const timestamp = now()
-      const note: Note = { id: randomID(), group, text: value, ...(source ? { source } : {}), created: timestamp, updated: timestamp }
+      const note: Note = { id: randomID(), group, text: value, ...(captured ? { quote: captured } : {}), ...(source ? { source } : {}), created: timestamp, updated: timestamp }
       const stored: StoredRecord = { version: 1, writeID: randomID(), record: note }
       const reason = refuseCandidate(stored, true)
       if (reason) return { ok: false, reason }
@@ -332,8 +335,8 @@ export function createNotesStore(options: Options = {}): NotesStore {
       const current = reconcile(id)
       if (!current || !active(current.record)) return { ok: false, reason: 'This note no longer exists.' }
       const text = changes.text === undefined ? current.record.text : changes.text.trim()
-      if (!text) return { ok: false, reason: 'A note cannot be empty.' }
-      const note: Note = { ...current.record, ...changes, text, updated: now() }
+      if (!text && !current.record.quote) return { ok: false, reason: 'A note cannot be empty.' }
+      const note: Note = { ...current.record, ...(changes.group === undefined ? {} : { group: changes.group }), text, updated: now() }
       const stored: StoredRecord = { version: 1, writeID: randomID(), record: note }
       const reason = refuseCandidate(stored, false)
       if (reason) return { ok: false, reason }

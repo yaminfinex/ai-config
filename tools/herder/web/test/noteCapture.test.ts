@@ -2,19 +2,24 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
-  captureNoteText,
   capturePosition,
   captureSourceWithRange,
   isRangeSelection,
   isReservedFileResolutionSelection,
   placeCaretAtEnd,
   reserveSelectionForFileResolution,
+  sharedCaptureSurface,
 } from '../src/features/notes/noteCaptureModel.ts'
 import { fileResolveGestureEvent } from '../src/shared/selectionPopoverEvents.ts'
 
-test('capture always keeps the quote and appends an optional comment', () => {
-  assert.equal(captureNoteText('  selected text  ', ''), 'selected text')
-  assert.equal(captureNoteText('selected text', '  investigate this  '), 'selected text\n\ninvestigate this')
+test('capture membership requires the same nearest allowlisted content surface', () => {
+  const transcriptOne = {}
+  const transcriptTwo = {}
+  const surfaces = new Map<unknown, unknown>([['one', transcriptOne], ['two', transcriptTwo], ['chrome', null]])
+  const resolve = (node: unknown) => surfaces.get(node) ?? null
+  assert.equal(sharedCaptureSurface('one', 'one', resolve), transcriptOne)
+  assert.equal(sharedCaptureSurface('one', 'two', resolve), null)
+  assert.equal(sharedCaptureSurface('one', 'chrome', resolve), null)
 })
 
 test('capture position stays inside the viewport', () => {
@@ -50,7 +55,7 @@ test('drag selection stays passive and leaves native double-click routing untouc
   assert.match(hook, /useDOMEvent<PointerEvent>\(window, 'pointerdown'/)
   assert.match(hook, /useDOMEvent<PointerEvent>\(window, 'pointerup'/)
   assert.match(hook, /event\.composedPath\(\)/)
-  assert.match(hook, /shadowRoot\.getSelection\?\.\(\)/)
+  assert.match(hook, /getSelection\?\.\(\)/)
   assert.doesNotMatch(`${agent}\n${file}`, /onPointerDown=\{noteCapture/)
   assert.match(agent, /onDoubleClickCapture=\{noteCapture\.onDoubleClick\}/)
   assert.match(file, /onDoubleClickCapture=\{noteCapture\.onDoubleClick\}/)
@@ -87,4 +92,13 @@ test('the one capture chip keeps target talk out of its minimal state', () => {
   assert.match(chip, />＋ Add note</)
   const minimal = chip.slice(chip.indexOf('if (!expanded)'), chip.indexOf('return <aside'))
   assert.doesNotMatch(minimal, /capture\.group|unassigned|<NotesSelector/)
+  assert.match(chip, /event\.key === 'Enter'[\s\S]*expandWith\(\)[\s\S]*preventDefault/)
+})
+
+test('capture resolves composed range endpoints against explicit content markers', () => {
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  assert.match(hook, /getComposedRanges/)
+  assert.match(hook, /data-note-capture-content/)
+  assert.match(hook, /sharedCaptureSurface/)
+  assert.doesNotMatch(hook, /anchorNode\).*focusNode/)
 })

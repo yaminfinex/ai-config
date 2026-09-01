@@ -36,6 +36,13 @@ export function filterSelectorRows(rows: NotesSelectorRow[], query: string) {
   return needle ? rows.filter((row) => row.label.toLocaleLowerCase().includes(needle)) : rows
 }
 
+export function selectorMove(rows: NotesSelectorRow[], highlighted: string, direction: -1 | 1) {
+  if (rows.length === 0) return ''
+  const current = rows.findIndex((row) => row.value === highlighted)
+  const index = current < 0 ? direction === 1 ? 0 : rows.length - 1 : (current + direction + rows.length) % rows.length
+  return rows[index]?.value ?? ''
+}
+
 export function selectorBackspace(query: string, highlighted: string, mode: NotesSelectorMode) {
   if (query || mode !== 'assign') return { handled: false, highlighted }
   return { handled: true, highlighted: 'general' }

@@ -90,6 +90,29 @@ test('notes list by group, sort by recent update, notify subscribers, and deboun
   assert.equal((subject.storage as FakeStorage).writes.filter((key) => key.includes(':record:')).length, 2)
 })
 
+test('captured quote is immutable provenance while only its comment is edited', () => {
+  const subject = harness()
+  const added = subject.store.add({ group: 'kilo', quote: 'selected code', text: '', source: { kind: 'file', path: 'src/App.tsx' } })
+  assert.equal(added.ok, true)
+  if (!added.ok) return
+  assert.equal(added.value.quote, 'selected code')
+  const edited = subject.store.edit(added.value.id, { text: 'owner comment' })
+  assert.equal(edited.ok, true)
+  if (!edited.ok) return
+  assert.equal(edited.value.quote, 'selected code')
+  assert.equal(edited.value.text, 'owner comment')
+})
+
+test('legacy anchored records load without inventing a quote field', () => {
+  const seed = harness()
+  const added = seed.store.add({ group: 'kilo', text: 'legacy quote\n\nlegacy comment', source: { kind: 'transcript', agent: 'kilo' } })
+  assert.equal(added.ok, true)
+  seed.flushScheduled()
+  const loaded = harness({ storage: seed.storage })
+  assert.equal(loaded.store.list()[0]?.quote, undefined)
+  assert.equal(loaded.store.list()[0]?.text, 'legacy quote\n\nlegacy comment')
+})
+
 test('different-record writes from two tabs cannot clobber each other', () => {
   const storage = new FakeStorage()
   let aID = 0
@@ -244,6 +267,9 @@ test('bounds refuse new writing and never evict older notes', () => {
   const byteRefusal = bytes.store.add({ group: 'general', text: 'too long' })
   assert.equal(byteRefusal.ok, false)
   assert.match(byteRefusal.reason, /long/i)
+  const quoteRefusal = bytes.store.add({ group: 'kilo', quote: 'too long', text: '', source: { kind: 'transcript', agent: 'kilo' } })
+  assert.equal(quoteRefusal.ok, false)
+  assert.match(quoteRefusal.reason, /long/i)
 })
 
 test('old tombstones purge after 30 days without returning deleted notes', () => {
