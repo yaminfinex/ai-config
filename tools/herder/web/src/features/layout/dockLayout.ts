@@ -9,6 +9,9 @@ export const layoutStorageKey = 'herder.web.layout.v3'
 export const layoutStorageBackupKey = 'herder.web.layout.v3.last-good'
 export const v2LayoutStorageKey = 'herder.web.layout.v2'
 export const legacyLayoutStorageKey = 'herder.web.layout.v1'
+export const spaceLayoutPrefix = 'herder.web.layout.v4:'
+export const spaceLayoutBackupPrefix = 'herder.web.layout.v4.last-good:'
+export const spaceLayoutRecoveryPrefix = 'herder.web.layout.v4.recovery:'
 
 export type AgentPanelParams = { kind: 'agent', name: string, preview: boolean }
 export type ScreenIdentity = { paneID: string, workspaceID: string, tabID: string, agent: string, sessionID?: string }
@@ -33,6 +36,11 @@ export type StoredLayout = {
   rails: RailPreferences
   expandedItems?: string[]
   knownWorkspaceItems?: string[]
+}
+
+export type StoredSpaceLayout = {
+  version: 4
+  dock: SerializedDockview | null
 }
 
 export type LegacyLayout = {
@@ -157,6 +165,17 @@ export function parseStoredLayout(raw: string | null): StoredLayout | null {
   return parseStoredLayoutResult(raw)?.layout ?? null
 }
 
+export function parseStoredSpaceLayout(raw: string | null): { layout: StoredSpaceLayout, salvaged: boolean } | null {
+  try {
+    const value: unknown = JSON.parse(raw ?? '')
+    if (!record(value) || value.version !== 4) return null
+    const result = sanitizeStoredDock(value.dock)
+    return result ? { layout: { version: 4, dock: result.dock }, salvaged: result.salvaged } : null
+  } catch {
+    return null
+  }
+}
+
 export function readStoredLayout(storage: Pick<Storage, 'getItem'>) {
   const primaryRaw = storage.getItem(layoutStorageKey)
   const backupRaw = storage.getItem(layoutStorageBackupKey)
@@ -178,6 +197,54 @@ export function writeStoredLayout(storage: Pick<Storage, 'setItem'>, raw: string
   try {
     if (!state.recovering) storage.setItem(layoutStorageBackupKey, state.lastGoodRaw ?? raw)
     storage.setItem(layoutStorageKey, raw)
+    return { recovering: false, lastGoodRaw: raw }
+  } catch {
+    return state
+  }
+}
+
+export function readStoredSpaceLayout(storage: Pick<Storage, 'getItem'> & Partial<Pick<Storage, 'setItem'>>, spaceID: string) {
+  const encoded = encodeURIComponent(spaceID)
+  const primaryRaw = storage.getItem(`${spaceLayoutPrefix}${encodeURIComponent(spaceID)}`)
+  const backupRaw = storage.getItem(`${spaceLayoutBackupPrefix}${encodeURIComponent(spaceID)}`)
+  const primary = parseStoredSpaceLayout(primaryRaw)
+  const backup = parseStoredSpaceLayout(backupRaw)
+  if (storage.setItem && ((primaryRaw && !primary) || (backupRaw && !backup))) {
+    try {
+      const recoveryKey = `${spaceLayoutRecoveryPrefix}${encoded}`
+      const existing = storage.getItem(recoveryKey)
+      let closed = false
+      try { closed = (JSON.parse(existing ?? '') as { kind?: unknown }).kind === 'closed' } catch { /* replace malformed recovery */ }
+      if (!closed) storage.setItem(recoveryKey, JSON.stringify({
+        version: 1,
+        kind: 'corrupt',
+        primaryRaw,
+        backupRaw,
+        updated: Date.now(),
+      }))
+    } catch { /* preserving corrupt raw is best effort; restore still stays scoped */ }
+  }
+  const primaryUsable = Boolean(primary && (primary.layout.dock !== null || !primary.salvaged))
+  const selected = primaryUsable ? primary : backup
+  return {
+    stored: selected?.layout ?? primary?.layout ?? null,
+    backup: backup?.layout ?? null,
+    recovering: Boolean((selected === backup && backup) || primary?.salvaged),
+    lastGoodRaw: primary && !primary.salvaged ? primaryRaw : null,
+    problem: Boolean(primaryRaw && !primary) || Boolean(backupRaw && !backup && !primaryUsable),
+  }
+}
+
+export function writeStoredSpaceLayout(
+  storage: Pick<Storage, 'setItem'>,
+  spaceID: string,
+  raw: string,
+  state: LayoutWriteState,
+): LayoutWriteState {
+  try {
+    const encoded = encodeURIComponent(spaceID)
+    if (!state.recovering) storage.setItem(`${spaceLayoutBackupPrefix}${encoded}`, state.lastGoodRaw ?? raw)
+    storage.setItem(`${spaceLayoutPrefix}${encoded}`, raw)
     return { recovering: false, lastGoodRaw: raw }
   } catch {
     return state

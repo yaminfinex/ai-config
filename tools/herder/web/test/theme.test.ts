@@ -36,9 +36,10 @@ function contrast(foreground: string, background: string) {
   return (Math.max(foregroundLuminance, backgroundLuminance) + 0.05) / (Math.min(foregroundLuminance, backgroundLuminance) + 0.05)
 }
 
-function rule(css: string, selector: string) {
+function rule(css: string, selector: string, last = false) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const block = css.match(new RegExp(`${escaped} \\{([^}]*)\\}`))?.[1]
+  const blocks = [...css.matchAll(new RegExp(`${escaped} \\{([^}]*)\\}`, 'g'))]
+  const block = (last ? blocks.at(-1) : blocks[0])?.[1]
   assert.ok(block, `${selector} must have a concrete style rule`)
   return block
 }
@@ -179,5 +180,19 @@ test('notes action labels, count badges, and orphan flags meet WCAG AA in both t
       const ratio = contrast(foreground, background)
       assert.ok(ratio >= 4.5, `${label} contrast ${ratio.toFixed(2)} must meet WCAG AA`)
     }
+  }
+})
+
+test('space reopen chips meet WCAG AA against the status-bar surface in both themes', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const foregroundName = token(rule(css, '.space-reopen', true), 'color')
+  const backgroundName = token(rule(css, '.status-bar'), 'background')
+  assert.equal(foregroundName, 'status-bar-text')
+  for (const block of themeBlocks(css)) {
+    const foreground = block.match(new RegExp(`--${foregroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+    const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+    assert.ok(foreground && background)
+    const ratio = contrast(foreground, background)
+    assert.ok(ratio >= 4.5, `reopen chip contrast ${ratio.toFixed(2)} must meet WCAG AA`)
   }
 })

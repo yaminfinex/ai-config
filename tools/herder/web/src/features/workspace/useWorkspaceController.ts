@@ -27,11 +27,75 @@ import { usePanelRecords } from './usePanelRecords'
 import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
+import {
+  createSpacesStore,
+  closeSpaceLayout,
+  initializeSpaces,
+  defaultMaxSpaces,
+  moveBeforeActiveClose,
+  performSpaceSwitch,
+  readLegacyLayoutFamilies,
+  readActiveSpace,
+  removeLayoutRecovery,
+  reopenSpaceLayout,
+  restoreSpaceDock,
+  writeActiveSpace,
+  type SpaceDefinition,
+  type SpacesStatus,
+  type SpacesStore,
+  type SpacesInitialization,
+  type LegacyLayoutFamilies,
+} from '../spaces/index.ts'
 
 function sameGitFileState(left: GitFileState, right: GitFileState) {
   return left.mode === right.mode && left.base === right.base &&
     left.revision?.sha === right.revision?.sha && left.revision?.path === right.revision?.path &&
     left.commit?.sha === right.commit?.sha && left.commit?.path === right.commit?.path
+}
+
+type SpacesRuntime = {
+  initialization: SpacesInitialization
+  store: SpacesStore | null
+  spaces: SpaceDefinition[]
+  recent: SpaceDefinition[]
+  activeSpaceID: string | null
+  status: SpacesStatus
+  problem: string
+}
+
+function unavailableSpacesRuntime(problem: string, legacy?: LegacyLayoutFamilies): SpacesRuntime {
+  const initialization: SpacesInitialization = {
+    mode: 'legacy', activeSpaceID: null,
+    legacy: legacy ?? { stored: null, backup: null, legacy: null, recovering: false, lastGoodRaw: null },
+    problem,
+  }
+  return {
+    initialization, store: null, spaces: [], recent: [], activeSpaceID: null,
+    status: { persistent: false, recovered: false, problem }, problem,
+  }
+}
+
+function initializeBrowserSpaces(): SpacesRuntime {
+  try {
+    const initialization = initializeSpaces(localStorage)
+    if (initialization.mode === 'legacy') return unavailableSpacesRuntime(initialization.problem, initialization.legacy)
+    const store = createSpacesStore({ onPurge: (id) => removeLayoutRecovery(localStorage, id) })
+    const spaces = store.list()
+    const activeSpaceID = readActiveSpace(spaces, sessionStorage, localStorage)
+    if (!activeSpaceID) return unavailableSpacesRuntime(
+      'Spaces are unavailable because their saved definitions could not be read. Your current layout is still being saved.',
+      readLegacyLayoutFamilies(localStorage),
+    )
+    return { initialization, store, spaces, recent: store.recentlyClosed(), activeSpaceID, status: store.status(), problem: store.status().problem }
+  } catch {
+    const initialization = initializeSpaces({
+      getItem: () => null,
+      setItem: () => { throw new Error('storage unavailable') },
+      removeItem: () => undefined,
+    })
+    const problem = 'Spaces are unavailable in this browser right now. Your current layout is still being saved.'
+    return unavailableSpacesRuntime(problem, initialization.mode === 'legacy' ? initialization.legacy : undefined)
+  }
 }
 
 export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'missing' }>) {
@@ -46,6 +110,12 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [fileWatchTargets, setFileWatchTargets] = useState<FileWatchTarget[]>([])
   const [activePanelID, setActivePanelID] = useState('')
   const [revision, setRevision] = useState(0)
+  const [spacesRuntime] = useState(initializeBrowserSpaces)
+  const [spaces, setSpaces] = useState(spacesRuntime.spaces)
+  const [recentSpaces, setRecentSpaces] = useState(spacesRuntime.recent)
+  const [spacesStatus, setSpacesStatus] = useState(spacesRuntime.status)
+  const [activeSpaceID, setActiveSpaceID] = useState(spacesRuntime.activeSpaceID)
+  const [spaceProblem, setSpaceProblem] = useState(spacesRuntime.problem)
   const [historySuppressor] = useState(() => createHistorySuppressor(
     (callback) => window.requestAnimationFrame(callback),
     (handle) => window.cancelAnimationFrame(handle),
@@ -58,10 +128,22 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const viewerQuery = useQuery(viewerQueryOptions())
   const mentionMatcher = useMemo(() => agentMentionMatcher(boardQuery.data), [boardQuery.data])
   const fileWatchRegistry = useMemo(() => createFileWatchRegistry(setFileWatchTargets), [])
-  const layout = useLayoutPersistence(apiRef, revision)
+  const layout = useLayoutPersistence(apiRef, revision, spacesRuntime.initialization, activeSpaceID)
 
   useEffect(() => () => fileWatchRegistry.dispose(), [fileWatchRegistry])
   useEffect(() => () => historySuppressor.dispose(), [historySuppressor])
+  useEffect(() => {
+    const store = spacesRuntime.store
+    if (!store) return
+    const refresh = () => {
+      setSpaces(store.list())
+      setRecentSpaces(store.recentlyClosed())
+      setSpacesStatus(store.status())
+      if (store.status().problem) setSpaceProblem(store.status().problem)
+    }
+    const unsubscribe = store.subscribe(refresh)
+    return () => unsubscribe()
+  }, [spacesRuntime.store])
 
   const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause) => {
     const update = decideHistoryUpdate(window.history.state, params, cause, historySuppressor.active())
@@ -106,6 +188,43 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     })
   }, [historySuppressor, openPanel, updateHistory])
 
+  const switchSpace = useCallback((spaceID: string) => {
+    const store = spacesRuntime.store
+    if (!store || !store.list().some((space) => space.id === spaceID) || activeSpaceID === spaceID) return false
+    const api = apiRef.current
+    if (!api) return false
+    return performSpaceSwitch(spaceID, {
+      flush: () => {
+        const flushed = layout.flushBeforeSwitch()
+        if (!flushed) setSpaceProblem('This space could not switch because its latest layout was not saved. Nothing was discarded.')
+        return flushed
+      },
+      suspend: layout.beginRestore,
+      read: layout.readSpace,
+      withHistorySuppressed: historySuppressor.run,
+      dock: api,
+      restore: restoreDockLayout,
+      recoveredFromBackup: layout.noteBackupRecovery,
+      complete: (id) => layout.completeRestore(id, false),
+      persistActive: (id) => writeActiveSpace(id, sessionStorage, localStorage),
+      replaceStamp: () => updateHistory(panelParams(api.activePanel?.params) ?? undefined, 'stamp'),
+      finish: ({ restoreFailed, activeSaved }) => {
+        setActiveSpaceID(spaceID)
+        setActivePanelID(api.activePanel?.id ?? '')
+        setSpaceProblem(restoreFailed
+          ? 'This space could not be fully restored. Its unreadable layout was kept for recovery; other spaces were not changed.'
+          : activeSaved ? store.status().problem : 'This tab remembers its active space only while it stays open because browser storage is unavailable.')
+        setRevision((value) => value + 1)
+      },
+    })
+  }, [activeSpaceID, historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
+
+  useEffect(() => {
+    if (!spacesRuntime.store || !activeSpaceID || spaces.some((space) => space.id === activeSpaceID)) return
+    const fallback = spaces[0]
+    if (fallback) switchSpace(fallback.id)
+  }, [activeSpaceID, spaces, spacesRuntime.store, switchSpace])
+
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     disposeDock.current()
     apiRef.current = event.api
@@ -113,15 +232,14 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     let restoreFailed = false
     let restoredLegacy = false
     historySuppressor.run(() => {
-      if (layout.initial.stored?.dock) {
-        restored = restoreDockLayout(event.api, layout.initial.stored.dock)
-        restoreFailed = !restored
-      }
-      if (!restored && layout.initial.backup?.dock && layout.initial.backup !== layout.initial.stored) {
-        restored = restoreDockLayout(event.api, layout.initial.backup.dock)
-        restoreFailed = !restored
-        if (restored) layout.noteBackupRecovery()
-      }
+      const result = restoreSpaceDock(
+        event.api,
+        layout.initial,
+        restoreDockLayout,
+        () => layout.noteBackupRecovery(activeSpaceID ?? undefined),
+      )
+      restored = result.restored
+      restoreFailed = result.restoreFailed
       if (!restored && layout.initial.legacy) {
         layout.initial.legacy.openTabs.forEach((name) => openAgent(name, false))
         const active = layout.initial.legacy.activeTab === 'board' ? event.api.panels[0] : event.api.getPanel(layout.initial.legacy.activeTab)
@@ -148,10 +266,12 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       movePanel: ({ panel }) => { if (pinMovedPreview(panel)) syncDock() },
     })
     updateHistory(panelParams(event.api.activePanel?.params) ?? undefined, 'stamp')
-    layout.completeRestore((replayedRoute && !restoreFailed) || restoredLegacy)
+    layout.completeRestore(activeSpaceID, (replayedRoute && !restoreFailed) || restoredLegacy)
+    if (activeSpaceID) writeActiveSpace(activeSpaceID, sessionStorage, localStorage)
+    if (restoreFailed) setSpaceProblem('This space could not be fully restored. Its unreadable layout was kept for recovery; other spaces were not changed.')
     setActivePanelID(event.api.activePanel?.id ?? '')
     setRevision((value) => value + 1)
-  }, [applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
+  }, [activeSpaceID, applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
 
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
@@ -185,6 +305,69 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setQuickOpenGroup(groupID ?? apiRef.current?.activeGroup?.id)
     setQuickOpen(true)
   }, [])
+  const createSpace = useCallback(() => {
+    const store = spacesRuntime.store
+    if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    const result = store.create()
+    if (!result.ok) { setSpaceProblem(result.reason); return result }
+    store.flush()
+    switchSpace(result.value.id)
+    setSpaceProblem(store.status().problem)
+    return result
+  }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
+  const renameSpace = useCallback((id: string, name: string) => {
+    const store = spacesRuntime.store
+    if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    const result = store.rename(id, name)
+    if (!result.ok) setSpaceProblem(result.reason)
+    else { store.flush(); setSpaceProblem(store.status().problem) }
+    return result
+  }, [spacesRuntime.problem, spacesRuntime.store])
+  const closeSpace = useCallback((id: string) => {
+    const store = spacesRuntime.store
+    if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    const live = store.list()
+    if (!live.some((space) => space.id === id)) return { ok: false as const, reason: 'This space is already closed.' }
+    const movedAside = moveBeforeActiveClose(id, activeSpaceID, live, {
+      create: store.create,
+      rollbackCreate: store.rollbackCreate,
+      switchTo: switchSpace,
+    })
+    if (!movedAside.ok) { setSpaceProblem(movedAside.reason); return movedAside }
+    const moved = closeSpaceLayout(localStorage, id)
+    if (!moved.ok) { setSpaceProblem(moved.reason); return moved }
+    const closed = store.close(id)
+    if (!closed.ok) {
+      reopenSpaceLayout(localStorage, id)
+      setSpaceProblem(closed.reason)
+      return closed
+    }
+    store.flush()
+    setSpaceProblem(store.status().problem)
+    return closed
+  }, [activeSpaceID, spacesRuntime.problem, spacesRuntime.store, switchSpace])
+  const reopenSpace = useCallback((id: string) => {
+    const store = spacesRuntime.store
+    if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    if (store.list().length >= defaultMaxSpaces) {
+      const refusal = { ok: false as const, reason: `This space cannot be reopened while the ${defaultMaxSpaces}-space limit is full.` }
+      setSpaceProblem(refusal.reason)
+      return refusal
+    }
+    const restored = reopenSpaceLayout(localStorage, id)
+    if (!restored.ok) { setSpaceProblem(restored.reason); return restored }
+    const reopened = store.reopen(id)
+    if (!reopened.ok) {
+      closeSpaceLayout(localStorage, id)
+      setSpaceProblem(reopened.reason)
+      return reopened
+    }
+    store.flush()
+    removeLayoutRecovery(localStorage, id)
+    switchSpace(id)
+    setSpaceProblem(store.status().problem)
+    return reopened
+  }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
   const toggleFleetRail = useCallback(() => {
     layout.setFleetRail((rail) => ({ ...rail, collapsed: !rail.collapsed }))
   }, [layout.setFleetRail])
@@ -231,7 +414,21 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     activeAgent: activeParams?.kind === 'agent' ? activeParams.name : undefined,
     activePane: activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined,
     openAgent, openScreen, openFile, openFolder,
-    onDockReady, flushLayout: layout.flushLayout,
+    onDockReady, flushLayout: () => { layout.flushAll(); spacesRuntime.store?.flush() },
+    spaces: {
+      enabled: Boolean(spacesRuntime.store),
+      items: spaces,
+      recent: recentSpaces,
+      activeID: activeSpaceID,
+      status: spacesStatus,
+      problem: spaceProblem,
+      switch: switchSpace,
+      create: createSpace,
+      rename: renameSpace,
+      close: closeSpace,
+      reopen: reopenSpace,
+    },
+    spaceProblem,
     fleetProblem, viewerProblem, viewer, viewerPending: viewerQuery.isPending,
   }
 }
