@@ -181,7 +181,39 @@ grep -Fx 'name=gate-vava' "$TEST_ROOT/spawn.out" >/dev/null || fail "spawn did n
 grep -F 'FLEET_PANE=p-test HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn omitted fleet env contract"
 grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--dangerously-bypass-approvals-and-sandbox.*--go' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "codex launch omitted a required flag"
+if grep -F 'model_reasoning_effort' "$FLEET_TEST_CALLS" >/dev/null || grep -F -- '--effort' "$FLEET_TEST_CALLS" >/dev/null; then
+  fail "spawn added reasoning effort when none was requested"
+fi
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
+
+: >"$FLEET_TEST_CALLS"
+PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --effort high --tag gate --pane p-test >"$TEST_ROOT/codex-effort.out"
+grep -F 'model_reasoning_effort=\"high\"' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "codex effort did not reach the launch argv as a config override"
+
+: >"$FLEET_TEST_CALLS"
+PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" claude --effort max --tag gate --pane p-test >"$TEST_ROOT/claude-effort.out"
+grep -F -- '--effort max' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "claude effort did not reach the launch argv"
+pass "spawn maps reasoning effort to each tool's CLI"
+
+: >"$FLEET_TEST_CALLS"
+if PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --effort max --tag gate --pane p-test \
+  >"$TEST_ROOT/codex-bad-effort.out" 2>"$TEST_ROOT/codex-bad-effort.err"; then
+  fail "spawn accepted an invalid Codex effort"
+fi
+grep -F -- '--effort for codex must be one of: low, medium, high, xhigh' "$TEST_ROOT/codex-bad-effort.err" >/dev/null \
+  || fail "invalid Codex effort refusal was not actionable"
+[[ ! -s $FLEET_TEST_CALLS ]] || fail "invalid Codex effort reached placement or launch"
+
+if PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" claude --effort bogus --tag gate --pane p-test \
+  >"$TEST_ROOT/claude-bad-effort.out" 2>"$TEST_ROOT/claude-bad-effort.err"; then
+  fail "spawn accepted an invalid Claude effort"
+fi
+grep -F -- '--effort for claude must be one of: low, medium, high, xhigh, max' "$TEST_ROOT/claude-bad-effort.err" >/dev/null \
+  || fail "invalid Claude effort refusal was not actionable"
+[[ ! -s $FLEET_TEST_CALLS ]] || fail "invalid Claude effort reached placement or launch"
+pass "spawn refuses unknown effort before placement or launch"
 
 : >"$FLEET_TEST_CALLS"
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --split-from p-source --prompt hello >"$TEST_ROOT/split.out"

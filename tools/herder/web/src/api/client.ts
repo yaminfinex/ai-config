@@ -168,6 +168,7 @@ export function sendMessage(name: string, text: string, fetcher?: Fetcher) {
 export type SpawnRequest = {
   tool: 'claude' | 'codex'
   model?: string
+  effort?: string
   tag: string
   repo?: string
   branch?: string

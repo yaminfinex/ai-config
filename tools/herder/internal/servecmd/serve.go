@@ -245,6 +245,7 @@ type paneInputResponse struct {
 type spawnRequest struct {
 	Tool   *string `json:"tool"`
 	Model  *string `json:"model"`
+	Effort *string `json:"effort"`
 	Tag    *string `json:"tag"`
 	Repo   *string `json:"repo"`
 	Branch *string `json:"branch"`
@@ -253,8 +254,21 @@ type spawnRequest struct {
 var (
 	tagPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	branchPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	effortLevelsByTool = map[string][]string{
+		"claude": {"low", "medium", "high", "xhigh", "max"},
+		"codex":  {"low", "medium", "high", "xhigh"},
+	}
 	errSenderCollision = errors.New("derived web sender collides with a bus agent")
 )
+
+func validEffort(tool, effort string) bool {
+	for _, allowed := range effortLevelsByTool[tool] {
+		if effort == allowed {
+			return true
+		}
+	}
+	return false
+}
 
 func webMessage(sender, text string) string {
 	note := fmt.Sprintf("%s\n[This message came from a web operator named %s via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n%s", webNoteStart, sender, webNoteEnd)
@@ -1035,6 +1049,14 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		}
 	}
+	effort := ""
+	if request.Effort != nil {
+		effort = strings.TrimSpace(*request.Effort)
+		if effort != "" && !validEffort(*request.Tool, effort) {
+			refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("effort for %s must be one of: %s", *request.Tool, strings.Join(effortLevelsByTool[*request.Tool], ", ")))
+			return
+		}
+	}
 	repo := strings.TrimSpace(deps.repoRoot)
 	if request.Repo != nil && strings.TrimSpace(*request.Repo) != "" {
 		repo = filepath.Clean(strings.TrimSpace(*request.Repo))
@@ -1071,6 +1093,9 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	args := []string{*request.Tool}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
 	}
 	args = append(args, "--tag", tag, "--worktree-branch", branch, "--repo", repo)
 	result, err := deps.spawn(r.Context(), args)

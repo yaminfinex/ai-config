@@ -26,17 +26,17 @@ func TestLaunchMapsRepoAndOptionalWorktreeToFleetArgv(t *testing.T) {
 	}{
 		{
 			name: "generated worktree branch",
-			body: `{"tool":"claude","model":"opus","tag":"impl","repo":"/repo/root"}`,
-			want: []string{"claude", "--model", "opus", "--tag", "impl", "--worktree-branch", "launch-claude-20260902-0304", "--repo", "/repo/root"},
+			body: `{"tool":"claude","model":"claude-fable-5-1","effort":"max","tag":"impl","repo":"/repo/root"}`,
+			want: []string{"claude", "--model", "claude-fable-5-1", "--effort", "max", "--tag", "impl", "--worktree-branch", "launch-claude-20260902-0304", "--repo", "/repo/root"},
 		},
 		{
 			name: "new worktree",
-			body: `{"tool":"codex","model":"gpt-5.4-mini","tag":"review","repo":"/repo/root","branch":"feature/web"}`,
-			want: []string{"codex", "--model", "gpt-5.4-mini", "--tag", "review", "--worktree-branch", "feature/web", "--repo", "/repo/root"},
+			body: `{"tool":"codex","model":"gpt-5.4-mini","effort":"xhigh","tag":"review","repo":"/repo/root","branch":"feature/web"}`,
+			want: []string{"codex", "--model", "gpt-5.4-mini", "--effort", "xhigh", "--tag", "review", "--worktree-branch", "feature/web", "--repo", "/repo/root"},
 		},
 		{
 			name: "Codex default model",
-			body: `{"tool":"codex","model":"","tag":"impl","repo":"/repo/root"}`,
+			body: `{"tool":"codex","model":"","effort":" ","tag":"impl","repo":"/repo/root"}`,
 			want: []string{"codex", "--tag", "impl", "--worktree-branch", "launch-codex-20260902-0304", "--repo", "/repo/root"},
 		},
 	} {
@@ -155,6 +155,8 @@ func TestLaunchPinsAttributionValidationAndInfrastructureRefusals(t *testing.T) 
 		{name: "relative repo", body: `{"tool":"codex","repo":"relative"}`, status: http.StatusBadRequest, detail: "absolute path"},
 		{name: "invalid branch", body: `{"tool":"codex","repo":"/repo/root","branch":"bad branch"}`, status: http.StatusBadRequest, detail: "branch must start"},
 		{name: "multiline model", body: `{"tool":"codex","repo":"/repo/root","model":"one\ntwo"}`, status: http.StatusBadRequest, detail: "one non-empty line"},
+		{name: "unknown Claude effort", body: `{"tool":"claude","repo":"/repo/root","effort":"bogus"}`, status: http.StatusBadRequest, detail: "effort for claude must be one of: low, medium, high, xhigh, max"},
+		{name: "unsupported Codex max effort", body: `{"tool":"codex","repo":"/repo/root","effort":"max"}`, status: http.StatusBadRequest, detail: "effort for codex must be one of: low, medium, high, xhigh"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			deps := fixtureDeps()

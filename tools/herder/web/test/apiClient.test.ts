@@ -77,12 +77,12 @@ test('mutations use pinned JSON request shapes', async () => {
   await sendMessage('vile', 'hello', fetcher)
   await sendPaneInput('w1:p/1', { text: '\x03\x1b[A' }, fetcher)
   await sendPaneInput('w1:p/1', { keys: ['ctrl+c', 'up'] }, fetcher)
-  await spawnAgent({ tool: 'codex', model: 'gpt-5.4-mini', tag: 'impl', repo: '/repo root', branch: 'feature/web' }, fetcher)
+  await spawnAgent({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', repo: '/repo root', branch: 'feature/web' }, fetcher)
   assert.deepEqual(requests.map(({ path, init }) => [path, init?.method, init?.body]), [
     ['/api/agents/vile/message', 'POST', JSON.stringify({ text: 'hello' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ text: '\x03\x1b[A' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ keys: ['ctrl+c', 'up'] })],
-    ['/api/spawn', 'POST', JSON.stringify({ tool: 'codex', model: 'gpt-5.4-mini', tag: 'impl', repo: '/repo root', branch: 'feature/web' })],
+    ['/api/spawn', 'POST', JSON.stringify({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', repo: '/repo root', branch: 'feature/web' })],
   ])
 })
 

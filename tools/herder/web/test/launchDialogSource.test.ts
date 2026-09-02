@@ -7,4 +7,6 @@ test('launch dialog restores focus to its launch button when it closes', () => {
   assert.match(component, /ref=\{launchButton\}/)
   assert.match(component, /return \(\) => launchButton\.current\?\.focus\(\)/)
   assert.match(component, /onOpenAgent\(confirmation\.action!\.agent\); close\(\)/)
+  assert.match(component, /<label>Model[\s\S]*<label>Reasoning[\s\S]*<label>Tag/)
+  assert.match(component, /<option value="">default<\/option>/)
 })
