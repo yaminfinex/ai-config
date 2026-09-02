@@ -89,8 +89,7 @@ function verifiedWrite(storage: Pick<Storage, 'getItem' | 'setItem'>, key: strin
 export function initializeSpaces(storage: MigrationStorage): SpacesInitialization {
   try {
     const legacy = readLegacyLayoutFamilies(storage)
-    if (markerValid(storage.getItem(migrationMarkerKey)) && storage.getItem(spaceRecordKey(mainSpaceID)) &&
-      storage.getItem(shellStorageKey) && storage.getItem(spaceLayoutKey(mainSpaceID))) {
+    if (markerValid(storage.getItem(migrationMarkerKey))) {
       return { mode: 'spaces', activeSpaceID: mainSpaceID }
     }
     // The old v1 shape needs Dockview to reconstruct its tabs. Keep the exact
@@ -116,8 +115,10 @@ export function initializeSpaces(storage: MigrationStorage): SpacesInitializatio
     const definitionRaw = JSON.stringify(definition)
     const dockRaw = JSON.stringify(dock)
     const shellRaw = JSON.stringify(shell)
-    verifiedWrite(storage, spaceBackupKey(mainSpaceID), definitionRaw)
-    verifiedWrite(storage, spaceRecordKey(mainSpaceID), definitionRaw)
+    if (!storage.getItem(spaceRecordKey(mainSpaceID))) {
+      verifiedWrite(storage, spaceBackupKey(mainSpaceID), definitionRaw)
+      verifiedWrite(storage, spaceRecordKey(mainSpaceID), definitionRaw)
+    }
     verifiedWrite(storage, spaceLayoutBackupKey(mainSpaceID), dockRaw)
     verifiedWrite(storage, spaceLayoutKey(mainSpaceID), dockRaw)
     verifiedWrite(storage, shellStorageBackupKey, shellRaw)

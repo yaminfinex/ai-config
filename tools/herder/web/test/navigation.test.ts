@@ -153,6 +153,19 @@ test('the history decision table pushes only distinct unsuppressed user activati
   }
 })
 
+test('dock activation after a space switch stamps the current space without changing push-vs-replace semantics', () => {
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  assert.match(controller, /const activeSpaceIDRef = useRef\(activeSpaceID\)/)
+  assert.match(controller, /activeSpaceIDRef\.current = spaceID\s+setActiveSpaceID\(spaceID\)/)
+  assert.match(controller, /spaceID = activeSpaceIDRef\.current/)
+
+  const current = historyEntryForPanel(agent('mavu'), 'main').state
+  const switched = decideHistoryUpdate(current, agent('nilo'), 'activation', false, 'review')
+  assert.equal(switched.entry.path, '/agents/nilo?space=review')
+  assert.equal(switched.method, 'push')
+  assert.equal(decideHistoryUpdate(switched.entry.state, agent('nilo'), 'activation', false, 'review').method, 'replace')
+})
+
 test('file line retargets dedupe by subject identity and replace the current entry', () => {
   const current = historyEntryForPanel(file('README.md', 10)).state
   const update = decideHistoryUpdate(current, file('README.md', 20), 'activation', false)

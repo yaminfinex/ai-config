@@ -132,6 +132,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [recentSpaces, setRecentSpaces] = useState(spacesRuntime.recent)
   const [spacesStatus, setSpacesStatus] = useState(spacesRuntime.status)
   const [activeSpaceID, setActiveSpaceID] = useState(spacesRuntime.activeSpaceID)
+  const activeSpaceIDRef = useRef(activeSpaceID)
   const [spaceProblem, setSpaceProblem] = useState(spacesRuntime.problem)
   const [spaceAnnouncement, setSpaceAnnouncement] = useState('')
   const [pendingLookupSwitchID, setPendingLookupSwitchID] = useState<string>()
@@ -165,10 +166,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     return () => unsubscribe()
   }, [spacesRuntime.store])
 
-  const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause, spaceID = activeSpaceID) => {
+  const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause, spaceID = activeSpaceIDRef.current) => {
     const update = decideHistoryUpdate(window.history.state, params, cause, historySuppressor.active(), spaceID)
     window.history[update.method === 'push' ? 'pushState' : 'replaceState'](update.entry.state, '', update.entry.path)
-  }, [activeSpaceID, historySuppressor])
+  }, [historySuppressor])
 
   const onActivePanelParamsChanged = useCallback((params: DockPanelParams) => {
     updateHistory(params, 'merge')
@@ -229,6 +230,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       persistActive: (id) => writeActiveSpace(id, sessionStorage, localStorage),
       replaceStamp: () => updateHistory(panelParams(api.activePanel?.params) ?? undefined, 'stamp', spaceID),
       finish: ({ restoreFailed, activeSaved }) => {
+        activeSpaceIDRef.current = spaceID
         setActiveSpaceID(spaceID)
         setActivePanelID(api.activePanel?.id ?? '')
         setSpaceProblem(restoreFailed
