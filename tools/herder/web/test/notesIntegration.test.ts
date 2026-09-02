@@ -72,6 +72,30 @@ test('delete and hand-off share the model-owned post-removal selection transitio
   assert.match(list, /if \(result\.ok\) applyRemovalSelection\(removedIDs\)/)
 })
 
+test('remote note disappearance only prunes selection while local gestures own successor movement', () => {
+  const list = read('../src/features/notes/NotesList.tsx')
+  const remoteEffect = list.match(/useEffect\(\(\) => \{ setSelection\(\(current\) => ([^)]+\([^;]+)\) \}, \[ids\]\)/)?.[1] ?? ''
+  assert.match(remoteEffect, /pruneNoteSelection/)
+  assert.doesNotMatch(remoteEffect, /selectionAfterRemoval/)
+  assert.equal((list.match(/selectionAfterRemoval\(/g) ?? []).length, 1)
+})
+
+test('notes sync starts in the provider and shares the one fleet state-changed callback', () => {
+  const provider = read('../src/features/notes/NotesProvider.tsx')
+  const controller = read('../src/features/workspace/useWorkspaceController.ts')
+  assert.match(provider, /createNotesSync/)
+  assert.match(provider, /sync\.start\(\)/)
+  assert.match(controller, /useNotes\(\)/)
+  assert.match(controller, /spacesSyncRef\.current\?\.stateChanged\(namespace, rev\)[\s\S]*onNotesStateChanged\(namespace, rev\)/)
+})
+
+test('editor fallback stays rendered across a remote tombstone and local removal explicitly clears it', () => {
+  const list = read('../src/features/notes/NotesList.tsx')
+  assert.match(list, /noteEditDisplay/)
+  assert.match(list, /editing && !notes\.some/)
+  assert.match(list, /const applyRemovalSelection[\s\S]*setEditing\(undefined\)/)
+})
+
 test('shift-click restores focus to the range cursor after mousedown default is suppressed', () => {
   const list = read('../src/features/notes/NotesList.tsx')
   const clickStart = list.indexOf('onClick={(event) => {')
@@ -139,7 +163,8 @@ test('the strip materializes only for notes and collapse is panel-lifetime state
   const strip = read('../src/features/notes/AgentNotesStrip.tsx')
   const rail = read('../src/features/notes/NotesRail.tsx')
   assert.match(strip, /useState\(true\)/)
-  assert.match(strip, /if \(count === 0\) return null/)
+  assert.match(strip, /if \(count === 0 && !editing\) return null/)
+  assert.match(strip, /onEditingChange=\{setEditing\}/)
   assert.doesNotMatch(strip, /readNotesStripCollapsed|persistNotesStripCollapsed|localStorage/)
   assert.match(strip, /<NoteQuickAdd group=\{agent\}/)
   assert.match(strip, /!collapsed && <NotesList/)

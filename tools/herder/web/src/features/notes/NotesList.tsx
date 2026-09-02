@@ -19,6 +19,7 @@ import { useAllNotes, useNotes, useNotesGroups } from './NotesProvider.tsx'
 import { NotesSelector } from './NotesSelector.tsx'
 import { selectorRows } from './notesSelectorModel.ts'
 import { useScheduledFrame } from '../../shared/lifecycle.ts'
+import { beginNoteEdit, noteEditDisplay, updateNoteEdit, type NoteEditDraft } from './noteEditModel.ts'
 
 export type NotesListGroup = { group: string, label: string, orphaned?: boolean }
 export type NotesHandOff = (target: string, notes: Note[]) => { ok: true } | { ok: false, reason: string }
@@ -38,28 +39,42 @@ function LiveNotesSelector({ selected, agents, mode, initialValue, initialQuery,
   return <NotesSelector notes={notes} selected={selected} agents={agents} mode={mode} initialValue={initialValue} initialQuery={initialQuery} onCancel={onCancel} onChoose={onChoose} />
 }
 
-export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGroup[], agents: string[], onHandOff: NotesHandOff }) {
+export function NotesList({ groups, agents, onHandOff, onEditingChange }: { groups: NotesListGroup[], agents: string[], onHandOff: NotesHandOff, onEditingChange?: (editing: boolean) => void }) {
   const { store, announce, handOffGuard } = useNotes()
   const subscribedNotes = useNotesGroups(groups.map(({ group }) => group))
   const listRef = useRef<HTMLDivElement>(null)
   const scheduleFrame = useScheduledFrame()
-  const notesByGroup = useMemo(() => new Map(groups.map(({ group }) => [group, subscribedNotes.filter((note) => note.group === group)])), [groups, subscribedNotes])
-  const notes = useMemo(() => groups.flatMap(({ group }) => notesByGroup.get(group) ?? []), [groups, notesByGroup])
+  const notes = useMemo(() => groups.flatMap(({ group }) => subscribedNotes.filter((note) => note.group === group)), [groups, subscribedNotes])
   const ids = useMemo(() => notes.map((note) => note.id), [notes])
   const [selection, setSelection] = useState<NoteSelection>(emptySelection)
-  const [editing, setEditing] = useState<string>()
+  const [editing, setEditing] = useState<NoteEditDraft>()
+  const editingActive = Boolean(editing)
   const [problem, setProblem] = useState('')
   const [selector, setSelector] = useState<{ mode: 'assign' | 'destination', initial?: string, query?: string }>()
   const selectedNotes = notes.filter((note) => selection.selected.has(note.id))
+  const displayNotes = editing && !notes.some(({ id }) => id === editing.original.id)
+    ? [...notes, noteEditDisplay(editing, undefined)]
+    : notes
+  const displayGroups = editing && !groups.some(({ group }) => group === editing.original.group)
+    ? [...groups, { group: editing.original.group, label: editing.original.group === 'general' ? 'unassigned' : editing.original.group }]
+    : groups
+  const notesByGroup = useMemo(() => new Map(displayGroups.map(({ group }) => [group, displayNotes.filter((note) => note.group === group)])), [displayGroups, displayNotes])
 
   useEffect(() => { setSelection((current) => pruneNoteSelection(current, ids)) }, [ids])
+  useEffect(() => {
+    onEditingChange?.(editingActive)
+    return () => onEditingChange?.(false)
+  }, [editingActive, onEditingChange])
 
   const focus = (id?: string) => {
     if (!id) return
     scheduleFrame(() => listRef.current?.querySelector<HTMLElement>(`[data-note-id="${CSS.escape(id)}"]`)?.focus())
   }
   const clear = () => { setSelection(emptySelection()); setEditing(undefined); setSelector(undefined) }
-  const edit = (id?: string) => { if (id) setEditing(id) }
+  const edit = (id?: string) => {
+    const note = notes.find((candidate) => candidate.id === id)
+    if (note) setEditing(beginNoteEdit(note))
+  }
   const applyRemovalSelection = (removedIDs: string[]) => {
     const next = selectionAfterRemoval(selection, ids, removedIDs)
     setSelection(next)
@@ -128,7 +143,7 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
     const action = noteListAction(event, editable)
     if (action) { runAction(action); event.preventDefault() }
   }}>
-    {groups.map(({ group, label, orphaned }) => {
+    {displayGroups.map(({ group, label, orphaned }) => {
       const groupNotes = notesByGroup.get(group) ?? []
       if (groupNotes.length === 0) return null
       return <section className="notes-list-group" key={group} aria-label={`${label} notes`}>
@@ -144,8 +159,9 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
         }}>not on the live roster</button>}</header>
         {groupNotes.map((note) => {
           const selected = selection.selected.has(note.id)
+          const isEditing = editing?.original.id === note.id
           return <article className={`note-card${note.source ? ' anchored' : ''}${selected ? ' selected' : ''}`} role="option" aria-selected={selected}
-            data-note-id={note.id} draggable={groups.length > 1 && editing !== note.id} tabIndex={selection.cursor === note.id || !selection.cursor && note.id === ids[0] ? 0 : -1} key={note.id}
+            data-note-id={note.id} draggable={groups.length > 1 && !isEditing} tabIndex={selection.cursor === note.id || !selection.cursor && note.id === ids[0] ? 0 : -1} key={note.id}
             onDragStart={(event) => event.dataTransfer.setData('application/x-herder-notes', JSON.stringify(dragNoteIDs(note.id, selection.selected)))}
             onMouseDown={(event) => {
               if ((event.target as Element).closest('textarea, input, button')) return
@@ -160,13 +176,16 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
             <div className="note-card-content">
               {note.source && <small>{noteSourceLabel(note.source)}</small>}
               {note.quote && <p className="note-card-quote">{note.quote}</p>}
-              {editing === note.id ? <textarea autoFocus defaultValue={note.text} aria-label="Edit note comment" onBlur={(event) => {
-                const result = store.edit(note.id, { text: event.currentTarget.value })
+              {isEditing && editing ? <textarea autoFocus value={editing.text} aria-label="Edit note comment" onChange={(event) => {
+                setEditing((current) => current ? updateNoteEdit(current, event.currentTarget.value) : current)
+              }} onBlur={(event) => {
+                if (event.currentTarget.dataset.cancelled === 'true') return
+                const result = store.edit(note.id, { text: editing.text }, editing.original)
                 if (!result.ok) setProblem(result.reason)
                 else { setProblem(''); setEditing(undefined) }
               }} onKeyDown={(event) => {
                 event.stopPropagation()
-                if (event.key === 'Escape') { setEditing(undefined); event.preventDefault(); return }
+                if (event.key === 'Escape') { event.currentTarget.dataset.cancelled = 'true'; setEditing(undefined); event.preventDefault(); return }
               }} /> : <p>{note.text}</p>}
             </div>
           </article>

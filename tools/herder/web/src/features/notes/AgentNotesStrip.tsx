@@ -10,14 +10,15 @@ export function AgentNotesStrip({ agent, agents }: { agent: string, agents: stri
   const notes = useGroupNotes(agent)
   const scheduleFrame = useScheduledFrame()
   const [collapsed, setCollapsed] = useState(true)
+  const [editing, setEditing] = useState(false)
   const count = notes.length
-  if (count === 0) return null
+  if (count === 0 && !editing) return null
   return <section className="agent-notes-strip" aria-label={`${agent} notes`}>
     <header className="agent-notes-header">
       <button type="button" className="agent-notes-toggle" aria-expanded={!collapsed} onClick={() => setCollapsed((current) => !current)}><span aria-hidden="true">{collapsed ? '▸' : '▾'}</span> Notes <span>{count}</span></button>
       <NoteQuickAdd group={agent} label={agent} />
     </header>
-    {!collapsed && <NotesList groups={[{ group: agent, label: agent }]} agents={agents} onHandOff={(target, notes) => {
+    {!collapsed && <NotesList groups={[{ group: agent, label: agent }]} agents={agents} onEditingChange={setEditing} onHandOff={(target, notes) => {
       const result = appendComposerDraft(target, notes.map((note) => noteTransferText(note)))
       if (result.ok) scheduleFrame(() => document.getElementById(composerFieldId(target))?.focus())
       return result.ok ? { ok: true } : result

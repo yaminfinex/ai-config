@@ -1,3 +1,5 @@
+import { compareStateVersions } from '../../shared/stateVersion.ts'
+
 export const notesStoragePrefix = 'herder.web.notes.v1:'
 
 const recordPrefix = `${notesStoragePrefix}record:`
@@ -20,9 +22,9 @@ export type Note = {
   updated: number
 }
 
-type Tombstone = { id: string, deleted: true, updated: number }
-type NoteRecord = Note | Tombstone
-type StoredRecord = { version: 1, writeID: string, record: NoteRecord }
+export type NoteTombstone = { id: string, deleted: true, updated: number }
+export type NoteRecord = Note | NoteTombstone
+export type StoredNoteRecord = { version: 1, writeID: string, record: NoteRecord }
 
 export type NotesStorage = Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'>
 
@@ -40,8 +42,11 @@ export type NotesStore = {
   list: () => Note[]
   listGroup: (group: string) => Note[]
   add: (input: { group: string, text: string, quote?: string, source?: NoteSource }) => NotesResult<Note>
-  edit: (id: string, changes: { text?: string, group?: string }) => NotesResult<Note>
+  edit: (id: string, changes: { text?: string, group?: string }, fallback?: Note) => NotesResult<Note>
   delete: (ids: string[]) => NotesResult<number>
+  records: () => StoredNoteRecord[]
+  merge: (records: StoredNoteRecord[]) => void
+  subscribeMutations: (listener: (records: StoredNoteRecord[]) => void) => () => void
   subscribe: (listener: () => void) => () => void
   status: () => NotesStatus
   flush: () => boolean
@@ -74,28 +79,27 @@ function browserEvents(): NotesStoreEventTarget | null {
   return typeof window === 'undefined' ? null : window
 }
 
-function parseStored(raw: string | null): StoredRecord | null {
+function parseStored(raw: string | null): StoredNoteRecord | null {
   if (!raw) return null
   try {
     const value: unknown = JSON.parse(raw)
     if (!value || typeof value !== 'object') return null
-    const stored = value as Partial<StoredRecord>
+    const stored = value as Partial<StoredNoteRecord>
     if (stored.version !== 1 || typeof stored.writeID !== 'string' || !stored.record || typeof stored.record !== 'object') return null
     const record = stored.record as Partial<NoteRecord>
     if (typeof record.id !== 'string' || typeof record.updated !== 'number' || !Number.isFinite(record.updated)) return null
-    if ('deleted' in record) return record.deleted === true ? stored as StoredRecord : null
+    if ('deleted' in record) return record.deleted === true ? stored as StoredNoteRecord : null
     const note = record as Partial<Note>
     if (typeof note.group !== 'string' || typeof note.text !== 'string' || typeof note.created !== 'number' || !Number.isFinite(note.created)) return null
     if (note.quote !== undefined && typeof note.quote !== 'string') return null
-    return stored as StoredRecord
+    return stored as StoredNoteRecord
   } catch {
     return null
   }
 }
 
-function newer(left: StoredRecord, right: StoredRecord) {
-  if (left.record.updated !== right.record.updated) return left.record.updated > right.record.updated ? left : right
-  return left.writeID >= right.writeID ? left : right
+function newer(left: StoredNoteRecord, right: StoredNoteRecord) {
+  return compareStateVersions(left.record.updated, left.writeID, right.record.updated, right.writeID) >= 0 ? left : right
 }
 
 function active(record: NoteRecord): record is Note {
@@ -106,7 +110,7 @@ function noteBytes(note: Pick<Note, 'text' | 'quote'>) {
   return new TextEncoder().encode(`${note.quote ?? ''}${note.text}`).byteLength
 }
 
-function storedBytes(records: Iterable<StoredRecord>) {
+function storedBytes(records: Iterable<StoredNoteRecord>) {
   let total = 0
   for (const record of records) total += new TextEncoder().encode(JSON.stringify(record)).byteLength
   return total
@@ -148,9 +152,10 @@ export function createNotesStore(options: Options = {}): NotesStore {
   let storeStatus: NotesStatus = storage
     ? { persistent: true, recovered: false, problem: '' }
     : { persistent: false, recovered: false, problem: 'Notes are kept for this session but are not saved between browser sessions.' }
-  const records = new Map<string, StoredRecord>()
+  const records = new Map<string, StoredNoteRecord>()
   const dirty = new Set<string>()
   const listeners = new Set<() => void>()
+  const mutationListeners = new Set<(records: StoredNoteRecord[]) => void>()
   let timer: unknown
   let eventsAttached = false
 
@@ -224,8 +229,8 @@ export function createNotesStore(options: Options = {}): NotesStore {
     .flatMap((stored) => active(stored.record) ? [stored.record] : [])
     .sort((left, right) => right.updated - left.updated || left.id.localeCompare(right.id))
 
-  const totalWith = (candidate: StoredRecord) => storedBytes([...records.values()].filter((stored) => stored.record.id !== candidate.record.id).concat(candidate))
-  const refuseCandidate = (candidate: StoredRecord, adding: boolean): string => {
+  const totalWith = (candidate: StoredNoteRecord) => storedBytes([...records.values()].filter((stored) => stored.record.id !== candidate.record.id).concat(candidate))
+  const refuseCandidate = (candidate: StoredNoteRecord, adding: boolean): string => {
     if (active(candidate.record) && noteBytes(candidate.record) > maxNoteBytes) return 'This note is too long to save. Shorten it and try again.'
     if (adding && currentNotes().length >= maxActiveNotes) return `There is no room for another note. The ${maxActiveNotes}-note limit refuses new writing rather than deleting older notes.`
     if (totalWith(candidate) > maxTotalBytes) return 'There is no room for this note in browser storage. Existing notes were left untouched.'
@@ -235,12 +240,16 @@ export function createNotesStore(options: Options = {}): NotesStore {
     if (!storage || timer !== undefined) return
     timer = schedule(() => { timer = undefined; flush() }, debounceMs)
   }
-  const put = (stored: StoredRecord) => {
-    records.set(stored.record.id, stored)
-    dirty.add(stored.record.id)
+  const putBatch = (values: StoredNoteRecord[]) => {
+    for (const stored of values) {
+      records.set(stored.record.id, stored)
+      dirty.add(stored.record.id)
+    }
     scheduleFlush()
     notify()
+    for (const listener of mutationListeners) listener(values)
   }
+  const put = (stored: StoredNoteRecord) => putBatch([stored])
   const reconcile = (id: string) => {
     if (!storage) return records.get(id)
     try {
@@ -325,34 +334,55 @@ export function createNotesStore(options: Options = {}): NotesStore {
       if (!value && !captured) return { ok: false, reason: 'Write something before saving this note.' }
       const timestamp = now()
       const note: Note = { id: randomID(), group, text: value, ...(captured ? { quote: captured } : {}), ...(source ? { source } : {}), created: timestamp, updated: timestamp }
-      const stored: StoredRecord = { version: 1, writeID: randomID(), record: note }
+      const stored: StoredNoteRecord = { version: 1, writeID: randomID(), record: note }
       const reason = refuseCandidate(stored, true)
       if (reason) return { ok: false, reason }
       put(stored)
       return { ok: true, value: note }
     }),
-    edit: (id, changes) => guarded(() => {
+    edit: (id, changes, fallback) => guarded(() => {
       const current = reconcile(id)
-      if (!current || !active(current.record)) return { ok: false, reason: 'This note no longer exists.' }
-      const text = changes.text === undefined ? current.record.text : changes.text.trim()
-      if (!text && !current.record.quote) return { ok: false, reason: 'A note cannot be empty.' }
-      const note: Note = { ...current.record, ...(changes.group === undefined ? {} : { group: changes.group }), text, updated: now() }
-      const stored: StoredRecord = { version: 1, writeID: randomID(), record: note }
+      const base = current && active(current.record) ? current.record : fallback?.id === id ? fallback : null
+      if (!base) return { ok: false, reason: 'This note no longer exists.' }
+      const text = changes.text === undefined ? base.text : changes.text.trim()
+      if (!text && !base.quote) return { ok: false, reason: 'A note cannot be empty.' }
+      const updated = Math.max(now(), (current?.record.updated ?? base.updated) + 1)
+      const note: Note = { ...base, ...(changes.group === undefined ? {} : { group: changes.group }), text, updated }
+      const stored: StoredNoteRecord = { version: 1, writeID: randomID(), record: note }
       const reason = refuseCandidate(stored, false)
       if (reason) return { ok: false, reason }
       put(stored)
       return { ok: true, value: note }
     }),
     delete: (ids) => guarded(() => {
-      let deleted = 0
+      const tombstones: StoredNoteRecord[] = []
       for (const id of ids) {
         const current = reconcile(id)
         if (!current || !active(current.record)) continue
-        put({ version: 1, writeID: randomID(), record: { id, deleted: true, updated: now() } })
-        deleted += 1
+        tombstones.push({ version: 1, writeID: randomID(), record: { id, deleted: true, updated: Math.max(now(), current.record.updated + 1) } })
       }
-      return deleted ? { ok: true, value: deleted } : { ok: false, reason: 'These notes no longer exist.' }
+      if (tombstones.length === 0) return { ok: false, reason: 'These notes no longer exist.' }
+      putBatch(tombstones)
+      return { ok: true, value: tombstones.length }
     }),
+    records: () => [...records.values()],
+    merge: (values) => {
+      let changed = false
+      for (const incoming of values) {
+        const current = records.get(incoming.record.id)
+        if (current && newer(current, incoming) === current) continue
+        records.set(incoming.record.id, incoming)
+        dirty.add(incoming.record.id)
+        changed = true
+      }
+      if (!changed) return
+      scheduleFlush()
+      notify()
+    },
+    subscribeMutations: (listener) => {
+      mutationListeners.add(listener)
+      return () => mutationListeners.delete(listener)
+    },
     subscribe: (listener) => {
       listeners.add(listener)
       attachEvents()
@@ -366,6 +396,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
       timer = undefined
       detachEvents()
       listeners.clear()
+      mutationListeners.clear()
     },
   }
 }

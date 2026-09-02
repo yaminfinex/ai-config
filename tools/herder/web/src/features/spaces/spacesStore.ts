@@ -1,4 +1,5 @@
 import { defaultRandomID } from '../notes/notesStore.ts'
+import { compareStateVersions } from '../../shared/stateVersion.ts'
 import {
   spaceBackupKey,
   spaceRecordKey,
@@ -73,11 +74,7 @@ function parseStored(raw: string | null): StoredSpaceRecord | null {
   }
 }
 
-export function compareSpaceVersions(leftUpdated: number, leftWriteID: string, rightUpdated: number, rightWriteID: string) {
-  if (leftUpdated !== rightUpdated) return leftUpdated > rightUpdated ? 1 : -1
-  if (leftWriteID === rightWriteID) return 0
-  return leftWriteID > rightWriteID ? 1 : -1
-}
+export const compareSpaceVersions = compareStateVersions
 
 export function compareStoredSpaceRecords(left: StoredSpaceRecord, right: StoredSpaceRecord) {
   return compareSpaceVersions(left.record.updated, left.writeID, right.record.updated, right.writeID)
