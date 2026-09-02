@@ -283,9 +283,23 @@ pass "selfcompact rejects unsafe log-name input"
 printf '0\n' >"$TEST_ROOT/status-count"
 FLEET_TEST_STATUS_MODE=transient FLEET_TEST_STATUS_COUNT="$TEST_ROOT/status-count" \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/selfcompact.sh" --run vava steer continue
-[[ $(grep -c 'term inject vava' "$FLEET_TEST_CALLS") -eq 2 ]] \
+[[ $(grep -c 'term inject vava' "$FLEET_TEST_CALLS") -eq 4 ]] \
   || fail "selfcompact did not survive one empty status read and inject continuation"
 pass "selfcompact tolerates a transient empty status read"
+
+# Claude Code 2.1.257+ treats one large injected burst as pasted content and
+# never parses "/compact" out of it; the helper must inject the command word
+# alone, then the steer, then the submit — never "/compact <steer>" in one burst.
+inject_lines=$(grep 'term inject vava' "$FLEET_TEST_CALLS")
+[[ $(sed -n 1p <<<"$inject_lines") == *'term inject vava /compact\ ' ]] \
+  || fail "selfcompact did not inject the /compact prefix on its own first"
+[[ $(sed -n 2p <<<"$inject_lines") == *'term inject vava steer' ]] \
+  || fail "selfcompact did not inject the steer as its own burst without the prefix"
+[[ $(sed -n 3p <<<"$inject_lines") == *'term inject vava --enter' ]] \
+  || fail "selfcompact did not submit the compact with a bare enter"
+! grep -F 'term inject vava /compact\ steer' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "selfcompact injected /compact and the steer in one burst"
+pass "selfcompact splits the /compact prefix from the steer (2.1.257 paste parsing)"
 
 : >"$FLEET_TEST_CALLS"
 if FLEET_TEST_STATUS_MODE=terminal PATH="$TEST_ROOT/bin:$PATH" \

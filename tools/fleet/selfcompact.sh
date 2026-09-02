@@ -34,8 +34,18 @@ run_helper() {
     return 1
   }
 
-  log_line "injecting compact request for $name"
-  hcom term inject "$name" "/compact $steer" --enter
+  # Claude Code 2.1.257+ treats a single large injected burst as pasted
+  # content, so a long "/compact <steer>" never reaches the slash-command
+  # parser and lands as plain prose (proven 2026-09-02: 75 chars parsed,
+  # 833+ chars did not; the same steer parsed when the "/compact " prefix
+  # was injected on its own first). Inject the command word alone, then the
+  # steer as a second burst, then the submit.
+  log_line "injecting compact request for $name (${#steer} steer chars, split prefix)"
+  hcom term inject "$name" "/compact "
+  sleep 1
+  hcom term inject "$name" "$steer"
+  sleep 1
+  hcom term inject "$name" --enter
 
   while ((attempts < 900)); do
     status=$(hcom list "$name" status 2>/dev/null || true)
