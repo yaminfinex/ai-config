@@ -3,14 +3,14 @@ import { appendComposerDraft, composerFieldId } from '../../composerState'
 import { NoteQuickAdd } from './NoteQuickAdd.tsx'
 import { NotesList } from './NotesList.tsx'
 import { noteTransferText } from './notesPresentation.ts'
-import { useNotes } from './NotesProvider.tsx'
+import { useGroupNotes } from './NotesProvider.tsx'
 import { useScheduledFrame } from '../../shared/lifecycle.ts'
 
 export function AgentNotesStrip({ agent, agents }: { agent: string, agents: string[] }) {
-  const { notes } = useNotes()
+  const notes = useGroupNotes(agent)
   const scheduleFrame = useScheduledFrame()
   const [collapsed, setCollapsed] = useState(true)
-  const count = notes.filter((note) => note.group === agent).length
+  const count = notes.length
   if (count === 0) return null
   return <section className="agent-notes-strip" aria-label={`${agent} notes`}>
     <header className="agent-notes-header">

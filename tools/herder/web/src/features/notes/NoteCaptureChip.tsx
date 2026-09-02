@@ -1,19 +1,20 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { noteSourceLabel } from './notesPresentation.ts'
 import { placeCaretAtEnd } from './noteCaptureModel.ts'
-import type { Note, NoteSource } from './notesStore.ts'
+import type { NoteSource } from './notesStore.ts'
 import { NotesSelector } from './NotesSelector.tsx'
 import { useScheduledFrame } from '../../shared/lifecycle.ts'
+import { useAllNotes } from './NotesProvider.tsx'
 
 export type NoteCaptureDraft = { quote: string, source: NoteSource, left: number, top: number, group: string }
 
-export function NoteCaptureChip({ capture, notes, agents, onSave, onAbandon }: {
+export function NoteCaptureChip({ capture, agents, onSave, onAbandon }: {
   capture: NoteCaptureDraft
-  notes: Note[]
   agents: string[]
   onSave: (group: string, comment: string) => void
   onAbandon: () => void
 }) {
+  const notes = useAllNotes()
   const [expanded, setExpanded] = useState(false)
   const [comment, setComment] = useState('')
   const [group, setGroup] = useState(capture.group)
