@@ -1,4 +1,4 @@
-import { getState, upsertState, type StateRow } from '../../api/client.ts'
+import { apiProblem, getState, upsertState, viewerReadOnlyMessage, type StateRow } from '../../api/client.ts'
 import { compareSpaceVersions } from './spacesStore.ts'
 import type { StoredSpaceRecord } from './spacesModel.ts'
 
@@ -35,6 +35,7 @@ type SyncOptions = {
 
 const cursorKey = 'herder.web.state.v1:spaces:rev'
 const queueKey = 'herder.web.state.v1:spaces:queue'
+export const browserOnlySpacesMessage = 'Spaces are saved in this browser only.'
 
 function compareRows(left: GenericStateRow, right: GenericStateRow) {
   return compareSpaceVersions(left.updated, left.writeID, right.updated, right.writeID)
@@ -73,6 +74,8 @@ export function createSpacesSync(options: SyncOptions) {
   let backoff = 500
   let pullInFlight: Promise<void> | null = null
   let pullAgain = false
+  let attributionBlocked = false
+  let postRefusedUntilMutation = false
 
   const persistQueue = (next: GenericStateRow[]) => {
     queue = coalesce(next)
@@ -87,6 +90,27 @@ export function createSpacesSync(options: SyncOptions) {
   const showPending = () => {
     if (queue.length > 0) options.onProblem?.(pendingMessage(queue.length))
   }
+  const cancelScheduledRetry = () => {
+    if (retryHandle !== undefined && options.cancelRetry) options.cancelRetry(retryHandle)
+    retryHandle = undefined
+  }
+  const handleFailure = (error: unknown) => {
+    const { response, problem } = apiProblem(error)
+    if (response?.status === 409 && problem.error === 'attribution required') {
+      attributionBlocked = true
+      cancelScheduledRetry()
+      options.onProblem?.(`${browserOnlySpacesMessage} ${viewerReadOnlyMessage(problem, response.status)}`)
+      return
+    }
+    if (response?.status === 413) {
+      postRefusedUntilMutation = true
+      cancelScheduledRetry()
+      options.onProblem?.(`Spaces are saved on this device, but the server refused to sync them: ${problem.detail}`)
+      return
+    }
+    showPending()
+    scheduleRetry()
+  }
   const scheduleRetry = () => {
     if (disposed || retryHandle !== undefined || !options.retry) return
     retryHandle = options.retry(() => {
@@ -97,6 +121,7 @@ export function createSpacesSync(options: SyncOptions) {
   }
   const pullOnce = async () => {
     const result = await options.transport.since(cursor)
+    attributionBlocked = false
     options.store.merge(result.rows)
     options.onRows?.(result.rows)
     cursor = result.rev
@@ -117,10 +142,7 @@ export function createSpacesSync(options: SyncOptions) {
       pullAgain = true
       return pullInFlight
     }
-    pullInFlight = pullOnce().catch(() => {
-      showPending()
-      scheduleRetry()
-    }).finally(() => {
+    pullInFlight = pullOnce().catch(handleFailure).finally(() => {
       pullInFlight = null
       if (pullAgain && !disposed) {
         pullAgain = false
@@ -130,7 +152,7 @@ export function createSpacesSync(options: SyncOptions) {
     return pullInFlight
   }
   const sendQueue = async () => {
-    if (queue.length === 0 || disposed) return
+    if (queue.length === 0 || disposed || attributionBlocked || postRefusedUntilMutation) return
     const sent = [...queue]
     try {
       await options.transport.upsert(sent)
@@ -142,10 +164,8 @@ export function createSpacesSync(options: SyncOptions) {
       backoff = 500
       if (queue.length === 0) options.onProblem?.('')
       await requestPull()
-    } catch {
-      // 409/413/offline all retain the durable queue and remain visible.
-      showPending()
-      scheduleRetry()
+    } catch (error) {
+      handleFailure(error)
     }
   }
   async function retryNow() {
@@ -157,6 +177,7 @@ export function createSpacesSync(options: SyncOptions) {
   }
 
   const unsubscribe = options.store.subscribeMutations?.((rows) => {
+    postRefusedUntilMutation = false
     enqueue(rows)
     void sendQueue()
   })
@@ -168,9 +189,10 @@ export function createSpacesSync(options: SyncOptions) {
     },
     enqueue,
     retryNow,
-    stateChanged(namespace: string, rev: number) {
-      if (namespace !== 'spaces' || rev <= cursor) return Promise.resolve()
-      return requestPull()
+    async stateChanged(namespace: string, rev: number) {
+      if (namespace !== 'spaces' || rev <= cursor) return
+      await requestPull()
+      await sendQueue()
     },
     pending: () => [...queue],
     dispose() {

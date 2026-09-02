@@ -217,6 +217,22 @@ test('storage events merge per-record LWW tombstones without resurrecting a clos
   assert.equal(tabB.store.rename(created.value.id, 'stale').ok, false)
 })
 
+test('server merges notify readers without re-enqueueing mutation listeners', () => {
+  const subject = harness()
+  let mutations = 0
+  let reads = 0
+  subject.store.subscribeMutations(() => { mutations++ })
+  subject.store.subscribe(() => { reads++ })
+  subject.store.merge([{
+    version: 1,
+    writeID: 'server-device',
+    record: { id: 'server-only', name: 'server only', order: 1, created: 1, updated: 2 },
+  }])
+  assert.equal(mutations, 0)
+  assert.equal(reads, 1)
+  assert.deepEqual(subject.store.list().map(({ id }) => id), ['main', 'server-only'])
+})
+
 test('event listeners are lazy and detach after the final subscriber leaves', () => {
   const events = new FakeEvents()
   const subject = harness({ events })

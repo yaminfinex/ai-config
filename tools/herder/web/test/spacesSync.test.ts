@@ -40,6 +40,14 @@ function definition(key: string, updated: number, writeID: string, deleted = fal
   return { key, value: { id: key, name: key, order: 0, created: 0 }, updated, writeID, deleted }
 }
 
+function stateRefusal(status: number, error: string, detail: string) {
+  const problem = { error, detail }
+  return Object.assign(new Error(detail), {
+    response: new Response(JSON.stringify(problem), { status, headers: { 'Content-Type': 'application/json' } }),
+    problem,
+  })
+}
+
 test('boot offline keeps local paint available, persists one outbound row, and pushes it once on reconnect', async () => {
   const local = definition('main', 1, 'device-a')
   const store = new MemoryStore([local])
@@ -161,23 +169,127 @@ test('an unknown URL falls back after the bounded first pull and a later deliver
   assert.deepEqual(switches, ['fallback'])
 })
 
-for (const [status, reason] of [[409, 'attribution required'], [413, 'state limit exceeded']] as const) {
-  test(`${status} writes retain the durable queue and surface honest degradation`, async () => {
-    const remote = definition('shared', 5, 'server')
-    const store = new MemoryStore([definition('main', 1, 'local')])
+test('attribution-required state access stays local-only without scheduling futile retries', async () => {
+  const store = new MemoryStore([definition('main', 1, 'local')])
+  const persistence = new MemoryPersistence()
+  const problems: string[] = []
+  let retries = 0
+  let requests = 0
+  const refused = stateRefusal(409, 'attribution required', 'viewer identity is unavailable on loopback')
+  const transport: StateTransport = {
+    since: async () => { requests++; throw refused },
+    upsert: async () => { requests++; throw refused },
+  }
+  const sync = createSpacesSync({
+    store,
+    persistence,
+    transport,
+    retry: () => { retries++; return retries },
+    onProblem: (problem) => problems.push(problem),
+  })
+  await sync.start()
+  assert.deepEqual(persistence.queue.map((row) => row.key), ['main'])
+  assert.equal(retries, 0)
+  assert.equal(requests, 1)
+  assert.match(problems.at(-1) ?? '', /saved in this browser only/i)
+  assert.match(problems.at(-1) ?? '', /Connect via Tailscale/i)
+  assert.doesNotMatch(problems.at(-1) ?? '', /will retry/i)
+})
+
+test('the first later attributed pull resumes and drains the local-only queue', async () => {
+  const store = new MemoryStore([definition('main', 1, 'local')])
+  const persistence = new MemoryPersistence()
+  let attributed = false
+  let posts = 0
+  const sync = createSpacesSync({
+    store,
+    persistence,
+    transport: {
+      since: async () => {
+        if (!attributed) throw stateRefusal(409, 'attribution required', 'viewer identity is unavailable on loopback')
+        return { rows: [], rev: 1 }
+      },
+      upsert: async (rows) => { posts++; return { accepted: rows.map(({ key }) => key), rev: 2 } },
+    },
+    retry: () => { throw new Error('structural refusal must not schedule a retry') },
+  })
+  await sync.start()
+  attributed = true
+  await sync.stateChanged('spaces', 1)
+  assert.equal(posts, 1)
+  assert.deepEqual(persistence.queue, [])
+})
+
+test('413 retains the queue and reason without retrying until the next local mutation', async () => {
+  const store = new MemoryStore([definition('main', 1, 'local')])
+  const persistence = new MemoryPersistence()
+  const problems: string[] = []
+  let retries = 0
+  let posts = 0
+  const sync = createSpacesSync({
+    store,
+    persistence,
+    transport: {
+      since: async () => ({ rows: [], rev: 0 }),
+      upsert: async () => { posts++; throw stateRefusal(413, 'state refused', '10,000 row limit reached') },
+    },
+    retry: () => { retries++; return retries },
+    onProblem: (problem) => problems.push(problem),
+  })
+  await sync.start()
+  assert.equal(posts, 1)
+  assert.equal(retries, 0)
+  assert.match(problems.at(-1) ?? '', /10,000 row limit reached/i)
+  assert.doesNotMatch(problems.at(-1) ?? '', /will retry/i)
+  await sync.retryNow()
+  assert.equal(posts, 1)
+  store.mutate([definition('review', 2, 'local-edit')])
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(posts, 2)
+  assert.deepEqual(persistence.queue.map((row) => row.key).sort(), ['main', 'review'])
+})
+
+for (const [label, refusal] of [
+  ['offline', new Error('offline')],
+  ['503', stateRefusal(503, 'state unavailable', 'state directory is unavailable')],
+] as const) {
+  test(`${label} failures retain the queue and schedule a transient retry`, async () => {
     const persistence = new MemoryPersistence()
+    let retries = 0
     const problems: string[] = []
-    const transport: StateTransport = {
-      since: async () => ({ rows: [remote], rev: 7 }),
-      upsert: async () => { throw Object.assign(new Error(reason), { status }) },
-    }
-    const sync = createSpacesSync({ store, persistence, transport, retry: () => undefined, onProblem: (problem) => problems.push(problem) })
+    const sync = createSpacesSync({
+      store: new MemoryStore([definition('main', 1, 'local')]),
+      persistence,
+      transport: {
+        since: async () => ({ rows: [], rev: 0 }),
+        upsert: async () => { throw refusal },
+      },
+      retry: () => { retries++; return retries },
+      onProblem: (problem) => problems.push(problem),
+    })
     await sync.start()
-    assert.deepEqual(store.liveIDs().sort(), ['main', 'shared'])
-    assert.deepEqual(persistence.queue.map((row) => row.key), ['main'])
-    assert.match(problems.at(-1) ?? '', /saved on this device/i)
+    assert.equal(retries, 1)
+    assert.deepEqual(persistence.queue.map(({ key }) => key), ['main'])
+    assert.match(problems.at(-1) ?? '', /will retry automatically/i)
   })
 }
+
+test('a state change at or behind the cursor does not pull', async () => {
+  const persistence = new MemoryPersistence()
+  persistence.cursor = 7
+  let pulls = 0
+  const sync = createSpacesSync({
+    store: new MemoryStore(),
+    persistence,
+    transport: {
+      since: async () => { pulls++; return { rows: [], rev: 7 } },
+      upsert: async () => ({ accepted: [], rev: 7 }),
+    },
+  })
+  await sync.stateChanged('spaces', 7)
+  await sync.stateChanged('spaces', 6)
+  assert.equal(pulls, 0)
+})
 
 test('state-changed only nudges a pull for the spaces namespace and coalesces revisions', async () => {
   const store = new MemoryStore()

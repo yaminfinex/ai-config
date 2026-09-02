@@ -1,7 +1,7 @@
 export { SpaceStrip } from './SpaceStrip.tsx'
 export { createAndSwitchSpace, moveBeforeActiveClose, performSpaceSwitch, restoreSpaceDock, sendPanelToExistingSpace, sendPanelToNewSpace, spaceIDInDirection } from './spacesControllerModel.ts'
 export { createSpacesStore, defaultMaxSpaces, type SpacesStatus, type SpacesStore } from './spacesStore.ts'
-export { browserSpacesTransport, createServerSpaceLookup, createSpacesSync, createSpacesSyncPersistence, resetSpacesSyncCursor, serverSpaceLookupMessage, spacesStoreSyncAdapter } from './spacesSync.ts'
+export { browserOnlySpacesMessage, browserSpacesTransport, createServerSpaceLookup, createSpacesSync, createSpacesSyncPersistence, resetSpacesSyncCursor, serverSpaceLookupMessage, spacesStoreSyncAdapter } from './spacesSync.ts'
 export {
   closeSpaceLayout,
   hasRecoverableSpaceLayout,
