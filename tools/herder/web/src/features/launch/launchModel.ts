@@ -6,6 +6,8 @@ export type LaunchFormState = {
   tool: LaunchTool
   model: string
   modelOptions: string[]
+  effort: string
+  effortOptions: string[]
   tag: string
   repo: string
   branch: string
@@ -13,8 +15,23 @@ export type LaunchFormState = {
 }
 
 const models: Record<LaunchTool, string[]> = {
-  claude: ['opus', 'sonnet', 'haiku'],
+  claude: ['claude-fable-5-1', 'opus', 'sonnet'],
   codex: ['gpt-5.4', 'gpt-5.4-mini'],
+}
+
+const efforts: Record<LaunchTool, string[]> = {
+  claude: ['low', 'medium', 'high', 'xhigh', 'max'],
+  codex: ['low', 'medium', 'high', 'xhigh'],
+}
+
+const modelLabels: Record<string, string> = {
+  'claude-fable-5-1': 'Fable 5.1',
+  opus: 'Opus',
+  sonnet: 'Sonnet',
+}
+
+export function launchModelLabel(model: string) {
+  return modelLabels[model] ?? model
 }
 
 export function initialLaunchForm(tool: LaunchTool = 'claude'): LaunchFormState {
@@ -22,6 +39,8 @@ export function initialLaunchForm(tool: LaunchTool = 'claude'): LaunchFormState 
     tool,
     model: tool === 'codex' ? '' : models[tool][0],
     modelOptions: [...models[tool]],
+    effort: '',
+    effortOptions: [...efforts[tool]],
     tag: 'impl',
     repo: '',
     branch: '',
@@ -31,13 +50,15 @@ export function initialLaunchForm(tool: LaunchTool = 'claude'): LaunchFormState 
 
 export function changeLaunchTool(current: LaunchFormState, tool: LaunchTool): LaunchFormState {
   const defaults = initialLaunchForm(tool)
-  return { ...current, tool, model: defaults.model, modelOptions: defaults.modelOptions }
+  return { ...current, tool, model: defaults.model, modelOptions: defaults.modelOptions, effort: defaults.effort, effortOptions: defaults.effortOptions }
 }
 
 export function launchRequest(form: LaunchFormState) {
+  const effort = form.effort.trim()
   return {
     tool: form.tool,
     model: form.model.trim(),
+    ...(effort ? { effort } : {}),
     tag: form.tag.trim(),
     repo: form.repo.trim(),
     branch: form.branch.trim(),

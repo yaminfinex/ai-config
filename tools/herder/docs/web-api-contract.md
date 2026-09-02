@@ -1050,12 +1050,17 @@ POST `/api/agents/{bus-name}/message`
 
 POST `/api/spawn`
   Body: `{"tool": "claude" | "codex", "model": "<optional>",
+  "effort": "<optional>",
   "tag": "<optional, default impl>", "repo": "<optional absolute path>",
   "branch": "<optional>"}`. A blank repo means the ai-config root that
   launched this Herder. A blank branch generates
-  `launch-<tool>-<yyyymmdd-hhmm>`. Every request delegates to
+  `launch-<tool>-<yyyymmdd-hhmmss>`; an existing branch adds `-2`, then `-3`,
+  and so on. Every request delegates to
   `tools/fleet/spawn.sh` with `--worktree-branch` and `--repo`; the web
   server never owns the launched process and never uses `--split-from`.
+  Blank effort uses the selected tool's default. Claude accepts `low`,
+  `medium`, `high`, `xhigh`, or `max`; Codex accepts `low`, `medium`, `high`,
+  or `xhigh`. Any other non-blank effort is refused with HTTP 400.
 
   HTTP 200: `{"names":["<bus-name>"],"output_tail":"<spawn output>"}`.
   Semantic spawn refusals are HTTP 409 with `error: "launch refused"`

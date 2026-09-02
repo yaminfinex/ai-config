@@ -26,18 +26,18 @@ func TestLaunchMapsRepoAndOptionalWorktreeToFleetArgv(t *testing.T) {
 	}{
 		{
 			name: "generated worktree branch",
-			body: `{"tool":"claude","model":"opus","tag":"impl","repo":"/repo/root"}`,
-			want: []string{"claude", "--model", "opus", "--tag", "impl", "--worktree-branch", "launch-claude-20260902-0304", "--repo", "/repo/root"},
+			body: `{"tool":"claude","model":"claude-fable-5-1","effort":"max","tag":"impl","repo":"/repo/root"}`,
+			want: []string{"claude", "--model", "claude-fable-5-1", "--effort", "max", "--tag", "impl", "--worktree-branch", "launch-claude-20260902-030405", "--repo", "/repo/root"},
 		},
 		{
 			name: "new worktree",
-			body: `{"tool":"codex","model":"gpt-5.4-mini","tag":"review","repo":"/repo/root","branch":"feature/web"}`,
-			want: []string{"codex", "--model", "gpt-5.4-mini", "--tag", "review", "--worktree-branch", "feature/web", "--repo", "/repo/root"},
+			body: `{"tool":"codex","model":"gpt-5.4-mini","effort":"xhigh","tag":"review","repo":"/repo/root","branch":"feature/web"}`,
+			want: []string{"codex", "--model", "gpt-5.4-mini", "--effort", "xhigh", "--tag", "review", "--worktree-branch", "feature/web", "--repo", "/repo/root"},
 		},
 		{
 			name: "Codex default model",
-			body: `{"tool":"codex","model":"","tag":"impl","repo":"/repo/root"}`,
-			want: []string{"codex", "--tag", "impl", "--worktree-branch", "launch-codex-20260902-0304", "--repo", "/repo/root"},
+			body: `{"tool":"codex","model":"","effort":" ","tag":"impl","repo":"/repo/root"}`,
+			want: []string{"codex", "--tag", "impl", "--worktree-branch", "launch-codex-20260902-030405", "--repo", "/repo/root"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -72,6 +72,39 @@ func TestLaunchMapsRepoAndOptionalWorktreeToFleetArgv(t *testing.T) {
 	}
 }
 
+func TestLaunchGeneratedBranchesAddCollisionSuffixes(t *testing.T) {
+	deps := fixtureDeps()
+	deps.now = func() time.Time { return time.Date(2026, 9, 2, 3, 4, 5, 0, time.UTC) }
+	branches := make(map[string]bool)
+	deps.branchExists = func(_ context.Context, _, branch string) (bool, error) {
+		return branches[branch], nil
+	}
+	var got []string
+	deps.spawn = func(_ context.Context, args []string) (webaction.Result, error) {
+		for index, arg := range args {
+			if arg == "--worktree-branch" && index+1 < len(args) {
+				got = append(got, args[index+1])
+				branches[args[index+1]] = true
+			}
+		}
+		return webaction.Result{Name: "impl-vava", Pane: "p9"}, nil
+	}
+	handler := newHandler(deps)
+	for range 2 {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(`{"tool":"codex","repo":"/repo/root"}`))
+		request.RemoteAddr = "100.64.0.8:4400"
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("response=%d %s", response.Code, response.Body.String())
+		}
+	}
+	want := []string{"launch-codex-20260902-030405", "launch-codex-20260902-030405-2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("branches=%q want=%q", got, want)
+	}
+}
+
 func TestLaunchReturnsSpawnStderrVerbatim(t *testing.T) {
 	deps := fixtureDeps()
 	want := "fleet spawn: branch already exists\nretry with a different branch"
@@ -101,7 +134,7 @@ func TestLaunchAppendsAttributedEdgeAfterSuccess(t *testing.T) {
 		return webaction.Result{Name: "impl-vava", Pane: "p9", OutputTail: "launch ready"}, nil
 	}
 	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(`{"tool":"claude","model":"opus","tag":"impl","repo":"/repo/root"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(`{"tool":"claude","model":"opus","effort":"high","tag":"impl","repo":"/repo/root"}`))
 	request.RemoteAddr = "100.64.0.8:4400"
 	newHandler(deps).ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -120,6 +153,7 @@ func TestLaunchAppendsAttributedEdgeAfterSuccess(t *testing.T) {
 		"launcher": "web-alice-example-com",
 		"tool":     "claude",
 		"model":    "opus",
+		"effort":   "high",
 		"tag":      "impl",
 		"repo":     "/repo/root",
 		"time":     "2026-09-02T03:04:05.000000006Z",
@@ -155,6 +189,8 @@ func TestLaunchPinsAttributionValidationAndInfrastructureRefusals(t *testing.T) 
 		{name: "relative repo", body: `{"tool":"codex","repo":"relative"}`, status: http.StatusBadRequest, detail: "absolute path"},
 		{name: "invalid branch", body: `{"tool":"codex","repo":"/repo/root","branch":"bad branch"}`, status: http.StatusBadRequest, detail: "branch must start"},
 		{name: "multiline model", body: `{"tool":"codex","repo":"/repo/root","model":"one\ntwo"}`, status: http.StatusBadRequest, detail: "one non-empty line"},
+		{name: "unknown Claude effort", body: `{"tool":"claude","repo":"/repo/root","effort":"bogus"}`, status: http.StatusBadRequest, detail: "effort for claude must be one of: low, medium, high, xhigh, max"},
+		{name: "unsupported Codex max effort", body: `{"tool":"codex","repo":"/repo/root","effort":"max"}`, status: http.StatusBadRequest, detail: "effort for codex must be one of: low, medium, high, xhigh"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			deps := fixtureDeps()

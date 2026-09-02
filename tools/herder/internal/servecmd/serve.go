@@ -83,6 +83,8 @@ type dependencies struct {
 	repoContext          func(context.Context, string) (repoctx.Context, error)
 	repoRoot             string
 	recordLaunch         func(launchEdge) error
+	branchExists         func(context.Context, string, string) (bool, error)
+	branchAllocator      *launchBranchAllocator
 	now                  func() time.Time
 	audit                func(string, ...any)
 	inputSerial          *paneInputSerial
@@ -120,6 +122,7 @@ var liveDependencies = dependencies{
 	transcriptWatcher: fsnotify.NewWatcher,
 	repoContext:       repoctx.Read,
 	recordLaunch:      appendLaunchEdge,
+	branchExists:      localBranchExists,
 	now:               time.Now,
 	audit:             log.Printf,
 	inputSerial:       &paneInputSerial{},
@@ -245,6 +248,7 @@ type paneInputResponse struct {
 type spawnRequest struct {
 	Tool   *string `json:"tool"`
 	Model  *string `json:"model"`
+	Effort *string `json:"effort"`
 	Tag    *string `json:"tag"`
 	Repo   *string `json:"repo"`
 	Branch *string `json:"branch"`
@@ -253,8 +257,21 @@ type spawnRequest struct {
 var (
 	tagPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	branchPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	effortLevelsByTool = map[string][]string{
+		"claude": {"low", "medium", "high", "xhigh", "max"},
+		"codex":  {"low", "medium", "high", "xhigh"},
+	}
 	errSenderCollision = errors.New("derived web sender collides with a bus agent")
 )
+
+func validEffort(tool, effort string) bool {
+	for _, allowed := range effortLevelsByTool[tool] {
+		if effort == allowed {
+			return true
+		}
+	}
+	return false
+}
 
 func webMessage(sender, text string) string {
 	note := fmt.Sprintf("%s\n[This message came from a web operator named %s via the fleet web view. They cannot receive hcom messages; do not reply with `hcom send`. Answer in your normal chat turn; they are watching the session transcript live.]\n%s", webNoteStart, sender, webNoteEnd)
@@ -455,6 +472,9 @@ func newHandler(deps dependencies) http.Handler {
 	}
 	if deps.inputSerial == nil {
 		deps.inputSerial = &paneInputSerial{}
+	}
+	if deps.branchAllocator == nil {
+		deps.branchAllocator = newLaunchBranchAllocator()
 	}
 	if deps.state == nil {
 		deps.state = webstate.Unavailable(errors.New("state store is not configured"))
@@ -1035,6 +1055,14 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		}
 	}
+	effort := ""
+	if request.Effort != nil {
+		effort = strings.TrimSpace(*request.Effort)
+		if effort != "" && !validEffort(*request.Tool, effort) {
+			refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("effort for %s must be one of: %s", *request.Tool, strings.Join(effortLevelsByTool[*request.Tool], ", ")))
+			return
+		}
+	}
 	repo := strings.TrimSpace(deps.repoRoot)
 	if request.Repo != nil && strings.TrimSpace(*request.Repo) != "" {
 		repo = filepath.Clean(strings.TrimSpace(*request.Repo))
@@ -1051,8 +1079,9 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if request.Branch != nil {
 		branch = strings.TrimSpace(*request.Branch)
 	}
-	if branch == "" {
-		branch = fmt.Sprintf("launch-%s-%s", *request.Tool, deps.now().UTC().Format("20060102-1504"))
+	generatedBranch := branch == ""
+	if generatedBranch {
+		branch = fmt.Sprintf("launch-%s-%s", *request.Tool, deps.now().UTC().Format("20060102-150405"))
 	}
 	if !branchPattern.MatchString(branch) {
 		refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: branch must start with a letter or digit and contain only letters, digits, dot, underscore, slash, and hyphen")
@@ -1068,9 +1097,25 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		serveAttributionError(w, err)
 		return
 	}
+	if generatedBranch {
+		if deps.branchExists == nil {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", "cannot inspect existing launch branches")
+			return
+		}
+		var release func()
+		branch, release, err = deps.branchAllocator.reserve(r.Context(), repo, branch, deps.branchExists)
+		if err != nil {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+			return
+		}
+		defer release()
+	}
 	args := []string{*request.Tool}
 	if model != "" {
 		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
 	}
 	args = append(args, "--tag", tag, "--worktree-branch", branch, "--repo", repo)
 	result, err := deps.spawn(r.Context(), args)
@@ -1085,7 +1130,7 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if deps.recordLaunch == nil {
 		deps.recordLaunch = appendLaunchEdge
 	}
-	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Tag: tag, Repo: repo, Time: deps.now().UTC()}
+	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Effort: effort, Tag: tag, Repo: repo, Time: deps.now().UTC()}
 	if err := deps.recordLaunch(edge); err != nil {
 		refuse(w, http.StatusBadGateway, "launch record failed", fmt.Sprintf("%s launched, but its launch edge could not be recorded: %v", result.Name, err))
 		return

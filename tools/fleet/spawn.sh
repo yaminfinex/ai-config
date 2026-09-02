@@ -13,7 +13,7 @@ die() {
 usage() {
   local rc=${1:-2}
   cat >&2 <<'EOF'
-usage: spawn.sh <claude|codex> [--model MODEL] --tag TAG
+usage: spawn.sh <claude|codex> [--model MODEL] [--effort LEVEL] --tag TAG
                 (--workspace ID | --worktree-branch NAME --repo PATH |
                  --pane ID | --split-from PANE_ID|self)
                 [--split-direction right|down] [--prompt TEXT]
@@ -30,6 +30,7 @@ shift
 [[ $tool == claude || $tool == codex ]] || die "tool must be claude or codex"
 
 model=
+effort=
 tag=
 workspace=
 worktree_branch=
@@ -44,6 +45,11 @@ while (($# > 0)); do
     --model)
       [[ $# -ge 2 ]] || usage
       model=$2
+      shift 2
+      ;;
+    --effort)
+      [[ $# -ge 2 ]] || usage
+      effort=$2
       shift 2
       ;;
     --tag)
@@ -97,6 +103,14 @@ done
 
 [[ -n $tag ]] || die "--tag is required"
 [[ $tag =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "--tag must contain only letters, digits, underscore, and hyphen"
+if [[ -n $effort ]]; then
+  case "$tool:$effort" in
+    claude:low | claude:medium | claude:high | claude:xhigh | claude:max | \
+      codex:low | codex:medium | codex:high | codex:xhigh) ;;
+    claude:*) die "--effort for claude must be one of: low, medium, high, xhigh, max" ;;
+    codex:*) die "--effort for codex must be one of: low, medium, high, xhigh" ;;
+  esac
+fi
 
 placements=0
 [[ -n $workspace ]] && ((placements += 1))
@@ -185,6 +199,13 @@ fi
 
 launch=(hcom 1 "$tool" --tag "$tag" --dir "$cwd")
 [[ -z $model ]] || launch+=(--model "$model")
+if [[ -n $effort ]]; then
+  if [[ $tool == claude ]]; then
+    launch+=(--effort "$effort")
+  else
+    launch+=(-c "model_reasoning_effort=\"$effort\"")
+  fi
+fi
 [[ -z $prompt ]] || launch+=(--hcom-prompt "$prompt")
 if [[ $tool == claude ]]; then
   launch+=(--dangerously-skip-permissions)

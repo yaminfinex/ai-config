@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiProblem, spawnAgent } from '../../api/client.ts'
-import { changeLaunchTool, dialogTabTargetIndex, initialLaunchForm, launchConfirmation, launchRefusal, launchRequest, type LaunchTool } from './launchModel.ts'
+import { changeLaunchTool, dialogTabTargetIndex, initialLaunchForm, launchConfirmation, launchModelLabel, launchRefusal, launchRequest, type LaunchTool } from './launchModel.ts'
 
 const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])'
 
@@ -60,7 +60,11 @@ export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => vo
           </select></label>
           <label>Model<input list={`launch-${form.tool}-models`} value={form.model} disabled={pending} maxLength={120} placeholder="default"
             onChange={(event) => setForm((current) => ({ ...current, model: event.target.value }))} /></label>
-          <datalist id={`launch-${form.tool}-models`}>{form.modelOptions.map((model) => <option value={model} key={model} />)}</datalist>
+          <datalist id={`launch-${form.tool}-models`}>{form.modelOptions.map((model) => <option value={model} label={launchModelLabel(model)} key={model} />)}</datalist>
+          <label>Reasoning<select value={form.effort} disabled={pending}
+            onChange={(event) => setForm((current) => ({ ...current, effort: event.target.value }))}>
+            <option value="">default</option>{form.effortOptions.map((effort) => <option value={effort} key={effort}>{effort}</option>)}
+          </select></label>
           <label>Tag<input value={form.tag} disabled={pending} pattern="[A-Za-z0-9][A-Za-z0-9_-]*" required
             onChange={(event) => setForm((current) => ({ ...current, tag: event.target.value }))} /></label>
           <label>Repository<input value={form.repo} disabled={pending} placeholder="This Herder repo"

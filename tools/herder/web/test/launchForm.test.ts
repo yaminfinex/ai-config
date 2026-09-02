@@ -2,13 +2,15 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { dialogTabTargetIndex, initialLaunchForm, launchConfirmation, launchRefusal } from '../src/features/launch/launchModel.ts'
+import { changeLaunchTool, dialogTabTargetIndex, initialLaunchForm, launchConfirmation, launchModelLabel, launchRequest, launchRefusal } from '../src/features/launch/launchModel.ts'
 
 test('launch form starts with plain defaults and curated models', () => {
   assert.deepEqual(initialLaunchForm(), {
     tool: 'claude',
-    model: 'opus',
-    modelOptions: ['opus', 'sonnet', 'haiku'],
+    model: 'claude-fable-5-1',
+    modelOptions: ['claude-fable-5-1', 'opus', 'sonnet'],
+    effort: '',
+    effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'],
     tag: 'impl',
     repo: '',
     branch: '',
@@ -18,11 +20,32 @@ test('launch form starts with plain defaults and curated models', () => {
     tool: 'codex',
     model: '',
     modelOptions: ['gpt-5.4', 'gpt-5.4-mini'],
+    effort: '',
+    effortOptions: ['low', 'medium', 'high', 'xhigh'],
     tag: 'impl',
     repo: '',
     branch: '',
     branchHelp: 'A fresh worktree is created for the agent.',
   })
+})
+
+test('launch request omits blank effort and serializes a selected effort', () => {
+  const defaults = initialLaunchForm()
+  assert.equal('effort' in launchRequest(defaults), false)
+  assert.deepEqual(launchRequest({ ...defaults, effort: ' high ' }), {
+    tool: 'claude',
+    model: 'claude-fable-5-1',
+    effort: 'high',
+    tag: 'impl',
+    repo: '',
+    branch: '',
+  })
+  assert.equal(changeLaunchTool({ ...defaults, effort: 'max' }, 'codex').effort, '')
+})
+
+test('Claude model suggestions present Fable 5.1 before Opus and Sonnet', () => {
+  const form = initialLaunchForm('claude')
+  assert.deepEqual(form.modelOptions.map(launchModelLabel), ['Fable 5.1', 'Opus', 'Sonnet'])
 })
 
 test('blank Codex model uses the hcom default and is presented as default', () => {
@@ -47,11 +70,11 @@ test('launch confirmation offers the launched agent in the current space', () =>
 })
 
 test('launch dialog traps Tab and Shift+Tab at its focus boundaries', () => {
-  assert.equal(dialogTabTargetIndex(3, 4, false), 0)
-  assert.equal(dialogTabTargetIndex(0, 4, true), 3)
-  assert.equal(dialogTabTargetIndex(1, 4, false), null)
-  assert.equal(dialogTabTargetIndex(2, 4, true), null)
-  assert.equal(dialogTabTargetIndex(-1, 4, false), 0)
+  assert.equal(dialogTabTargetIndex(4, 5, false), 0)
+  assert.equal(dialogTabTargetIndex(0, 5, true), 4)
+  assert.equal(dialogTabTargetIndex(2, 5, false), null)
+  assert.equal(dialogTabTargetIndex(3, 5, true), null)
+  assert.equal(dialogTabTargetIndex(-1, 5, false), 0)
   assert.equal(dialogTabTargetIndex(-1, 0, false), null)
 })
 

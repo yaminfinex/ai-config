@@ -1,9 +1,12 @@
 package servecmd
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,12 +23,62 @@ type launchEdge struct {
 	Launcher string    `json:"launcher"`
 	Tool     string    `json:"tool"`
 	Model    string    `json:"model"`
+	Effort   string    `json:"effort"`
 	Tag      string    `json:"tag"`
 	Repo     string    `json:"repo"`
 	Time     time.Time `json:"time"`
 }
 
 var launchEdgeMu sync.Mutex
+
+type launchBranchAllocator struct {
+	mu       sync.Mutex
+	reserved map[string]struct{}
+}
+
+func newLaunchBranchAllocator() *launchBranchAllocator {
+	return &launchBranchAllocator{reserved: make(map[string]struct{})}
+}
+
+func (a *launchBranchAllocator) reserve(ctx context.Context, repo, base string, exists func(context.Context, string, string) (bool, error)) (string, func(), error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for suffix := 1; ; suffix++ {
+		candidate := base
+		if suffix > 1 {
+			candidate = fmt.Sprintf("%s-%d", base, suffix)
+		}
+		key := repo + "\x00" + candidate
+		if _, ok := a.reserved[key]; ok {
+			continue
+		}
+		found, err := exists(ctx, repo, candidate)
+		if err != nil {
+			return "", nil, err
+		}
+		if found {
+			continue
+		}
+		a.reserved[key] = struct{}{}
+		return candidate, func() {
+			a.mu.Lock()
+			delete(a.reserved, key)
+			a.mu.Unlock()
+		}, nil
+	}
+}
+
+func localBranchExists(ctx context.Context, repo, branch string) (bool, error) {
+	err := exec.CommandContext(ctx, "git", "-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/"+branch).Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("inspect local branch %q in %q: %w", branch, repo, err)
+}
 
 func appendLaunchEdge(edge launchEdge) error {
 	state, err := herderStateDir()
