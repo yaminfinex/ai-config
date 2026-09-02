@@ -22,8 +22,9 @@ var commandTimeout = Timeout
 var ErrUnavailable = errors.New("lifecycle substrate unavailable")
 
 type Result struct {
-	Name string `json:"name"`
-	Pane string `json:"pane"`
+	Name       string `json:"name"`
+	Pane       string `json:"pane"`
+	OutputTail string `json:"output_tail,omitempty"`
 }
 
 func Spawn(ctx context.Context, args []string) (Result, error) {
@@ -35,6 +36,7 @@ func Spawn(ctx context.Context, args []string) (Result, error) {
 	commandCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(commandCtx, script, args...)
+	cmd.Dir = root
 	cmd.Env = hcomcli.AnonymousEnv()
 	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
@@ -53,7 +55,19 @@ func Spawn(ctx context.Context, args []string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v; output: %s", ErrUnavailable, err, strings.TrimSpace(string(out)))
 	}
+	result.OutputTail = outputTail(stderr.Bytes(), out)
 	return result, nil
+}
+
+func outputTail(stderr, stdout []byte) string {
+	const limit = 16 << 10
+	combined := make([]byte, 0, len(stderr)+len(stdout))
+	combined = append(combined, stderr...)
+	combined = append(combined, stdout...)
+	if len(combined) > limit {
+		combined = combined[len(combined)-limit:]
+	}
+	return strings.TrimSpace(string(combined))
 }
 
 func parseSpawn(out []byte) (Result, error) {

@@ -19,6 +19,7 @@ import { NotesRail } from './features/notes/NotesRail'
 import { NoteQuickAdd } from './features/notes/NoteQuickAdd'
 import { shortcutLabels } from './features/layout/shellShortcuts'
 import { browserOnlySpacesMessage, defaultMaxSpaces, serverSpaceLookupMessage, SpaceStrip } from './features/spaces/index.ts'
+import { LaunchAgent } from './features/launch/LaunchAgent.tsx'
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
 
 const herderTheme: DockviewTheme = {
@@ -50,7 +51,7 @@ function StreamBanners({ fleetProblem, viewerProblem, spaceProblem, flushLayout 
   </div>
 }
 
-function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, spaceStrip }: {
+function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, onOpenAgent, spaceStrip }: {
   fleetProblem: string
   viewer: string
   viewerPending: boolean
@@ -59,6 +60,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   onToggleFleet: () => void
   onToggleNotes: () => void
   onShortcuts: () => void
+  onOpenAgent: (name: string) => void
   spaceStrip: ReactNode
 }) {
   const stream = useStreamStatus()
@@ -68,7 +70,10 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   const shortcuts = shortcutLabels(navigator.userAgent)
   return <footer className="status-bar">
     <div className="status-primary">
-      <RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} />
+      <div className="fleet-status-group">
+        <RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} />
+        <LaunchAgent onOpenAgent={onOpenAgent} />
+      </div>
       <div className="workspace-switcher-slot">{spaceStrip}</div>
     </div>
     <div className="status-secondary">
@@ -113,6 +118,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
         onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
         onShortcuts={() => workspace.setShortcutReference(true)}
+        onOpenAgent={(name) => openAgent(name, true, undefined, true)}
         spaceStrip={<SpaceStrip {...workspace.spaces} />} />
     </section>
     <UtilityRail side="right" label="Notes" headingAction={<NoteQuickAdd group="general" label="unassigned" />} width={notesRail.width} collapsed={notesRail.collapsed}

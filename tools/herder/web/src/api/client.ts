@@ -166,11 +166,10 @@ export function sendMessage(name: string, text: string, fetcher?: Fetcher) {
 }
 
 export type SpawnRequest = {
-  from_pane: string
-  shape: 'pane' | 'tab' | 'worktree'
   tool: 'claude' | 'codex'
+  model?: string
   tag: string
-  prompt: string
+  repo?: string
   branch?: string
 }
 
