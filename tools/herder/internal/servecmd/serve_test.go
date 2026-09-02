@@ -79,6 +79,7 @@ func fixtureDeps() dependencies {
 		fileResolver:     fileresolver.New(fileindex.New(fileindex.Options{})),
 		repoContext:      repoctx.Read,
 		recordLaunch:     func(launchEdge) error { return nil },
+		branchExists:     func(context.Context, string, string) (bool, error) { return false, nil },
 		now:              time.Now,
 		audit:            func(string, ...any) {},
 		inputSerial:      &paneInputSerial{},

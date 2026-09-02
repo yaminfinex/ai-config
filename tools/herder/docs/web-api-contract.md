@@ -1011,7 +1011,8 @@ POST `/api/spawn`
   "tag": "<optional, default impl>", "repo": "<optional absolute path>",
   "branch": "<optional>"}`. A blank repo means the ai-config root that
   launched this Herder. A blank branch generates
-  `launch-<tool>-<yyyymmdd-hhmm>`. Every request delegates to
+  `launch-<tool>-<yyyymmdd-hhmmss>`; an existing branch adds `-2`, then `-3`,
+  and so on. Every request delegates to
   `tools/fleet/spawn.sh` with `--worktree-branch` and `--repo`; the web
   server never owns the launched process and never uses `--split-from`.
   Blank effort uses the selected tool's default. Claude accepts `low`,

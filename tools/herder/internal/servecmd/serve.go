@@ -83,6 +83,8 @@ type dependencies struct {
 	repoContext          func(context.Context, string) (repoctx.Context, error)
 	repoRoot             string
 	recordLaunch         func(launchEdge) error
+	branchExists         func(context.Context, string, string) (bool, error)
+	branchAllocator      *launchBranchAllocator
 	now                  func() time.Time
 	audit                func(string, ...any)
 	inputSerial          *paneInputSerial
@@ -120,6 +122,7 @@ var liveDependencies = dependencies{
 	transcriptWatcher: fsnotify.NewWatcher,
 	repoContext:       repoctx.Read,
 	recordLaunch:      appendLaunchEdge,
+	branchExists:      localBranchExists,
 	now:               time.Now,
 	audit:             log.Printf,
 	inputSerial:       &paneInputSerial{},
@@ -469,6 +472,9 @@ func newHandler(deps dependencies) http.Handler {
 	}
 	if deps.inputSerial == nil {
 		deps.inputSerial = &paneInputSerial{}
+	}
+	if deps.branchAllocator == nil {
+		deps.branchAllocator = newLaunchBranchAllocator()
 	}
 	if deps.state == nil {
 		deps.state = webstate.Unavailable(errors.New("state store is not configured"))
@@ -1073,8 +1079,9 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if request.Branch != nil {
 		branch = strings.TrimSpace(*request.Branch)
 	}
-	if branch == "" {
-		branch = fmt.Sprintf("launch-%s-%s", *request.Tool, deps.now().UTC().Format("20060102-1504"))
+	generatedBranch := branch == ""
+	if generatedBranch {
+		branch = fmt.Sprintf("launch-%s-%s", *request.Tool, deps.now().UTC().Format("20060102-150405"))
 	}
 	if !branchPattern.MatchString(branch) {
 		refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: branch must start with a letter or digit and contain only letters, digits, dot, underscore, slash, and hyphen")
@@ -1089,6 +1096,19 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if err != nil {
 		serveAttributionError(w, err)
 		return
+	}
+	if generatedBranch {
+		if deps.branchExists == nil {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", "cannot inspect existing launch branches")
+			return
+		}
+		var release func()
+		branch, release, err = deps.branchAllocator.reserve(r.Context(), repo, branch, deps.branchExists)
+		if err != nil {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+			return
+		}
+		defer release()
 	}
 	args := []string{*request.Tool}
 	if model != "" {
@@ -1110,7 +1130,7 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if deps.recordLaunch == nil {
 		deps.recordLaunch = appendLaunchEdge
 	}
-	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Tag: tag, Repo: repo, Time: deps.now().UTC()}
+	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Effort: effort, Tag: tag, Repo: repo, Time: deps.now().UTC()}
 	if err := deps.recordLaunch(edge); err != nil {
 		refuse(w, http.StatusBadGateway, "launch record failed", fmt.Sprintf("%s launched, but its launch edge could not be recorded: %v", result.Name, err))
 		return
