@@ -79,6 +79,8 @@ type dependencies struct {
 	transcriptWatcher    func() (*fsnotify.Watcher, error)
 	fileWatcherDelta     func(int)
 	repoContext          func(context.Context, string) (repoctx.Context, error)
+	repoRoot             string
+	recordLaunch         func(launchEdge) error
 	now                  func() time.Time
 	audit                func(string, ...any)
 	inputSerial          *paneInputSerial
@@ -113,6 +115,7 @@ var liveDependencies = dependencies{
 	fileWatcher:       fsnotify.NewWatcher,
 	transcriptWatcher: fsnotify.NewWatcher,
 	repoContext:       repoctx.Read,
+	recordLaunch:      appendLaunchEdge,
 	now:               time.Now,
 	audit:             log.Printf,
 	inputSerial:       &paneInputSerial{},
@@ -236,12 +239,11 @@ type paneInputResponse struct {
 }
 
 type spawnRequest struct {
-	FromPane *string `json:"from_pane"`
-	Shape    *string `json:"shape"`
-	Tool     *string `json:"tool"`
-	Tag      *string `json:"tag"`
-	Prompt   *string `json:"prompt"`
-	Branch   *string `json:"branch"`
+	Tool   *string `json:"tool"`
+	Model  *string `json:"model"`
+	Tag    *string `json:"tag"`
+	Repo   *string `json:"repo"`
+	Branch *string `json:"branch"`
 }
 
 var (
@@ -311,6 +313,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies := liveDependencies
 	runtimeDependencies.buildIdentity = buildIdentity
 	runtimeDependencies.configuredRoots = configuredRoots
+	runtimeDependencies.repoRoot = strings.TrimSpace(os.Getenv("AI_CONFIG_ROOT"))
 	return serve(listeners, newHandler(runtimeDependencies), stdout, stderr)
 }
 
@@ -978,29 +981,51 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
-	if request.FromPane == nil || strings.TrimSpace(*request.FromPane) == "" || request.Shape == nil || request.Tool == nil || request.Tag == nil || request.Prompt == nil {
-		refuse(w, http.StatusBadRequest, "bad request", "from_pane, shape, tool, tag, and prompt are required")
-		return
-	}
-	if *request.Shape != "pane" && *request.Shape != "tab" && *request.Shape != "worktree" {
-		refuse(w, http.StatusBadRequest, "bad request", `shape must be "pane", "tab", or "worktree"`)
+	if request.Tool == nil {
+		refuse(w, http.StatusBadRequest, "bad request", "tool is required")
 		return
 	}
 	if *request.Tool != "claude" && *request.Tool != "codex" {
 		refuse(w, http.StatusBadRequest, "bad request", "tool must be claude or codex")
 		return
 	}
-	if !tagPattern.MatchString(*request.Tag) {
+	tag := "impl"
+	if request.Tag != nil {
+		tag = strings.TrimSpace(*request.Tag)
+	}
+	if !tagPattern.MatchString(tag) {
 		refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: --tag must contain only letters, digits, underscore, and hyphen")
 		return
 	}
-	if *request.Shape == "worktree" {
-		if request.Branch == nil || !branchPattern.MatchString(*request.Branch) {
-			refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: branch must start with a letter or digit and contain only letters, digits, dot, underscore, slash, and hyphen")
+	model := ""
+	if request.Model != nil {
+		model = strings.TrimSpace(*request.Model)
+		if model != "" && (strings.ContainsAny(model, "\r\n\x00") || len(model) > 120) {
+			refuse(w, http.StatusBadRequest, "bad request", "model must be one non-empty line of at most 120 characters")
 			return
 		}
-	} else if request.Branch != nil {
-		refuse(w, http.StatusBadRequest, "bad request", "branch is allowed only for worktree shape")
+	}
+	repo := strings.TrimSpace(deps.repoRoot)
+	if request.Repo != nil && strings.TrimSpace(*request.Repo) != "" {
+		repo = filepath.Clean(strings.TrimSpace(*request.Repo))
+	}
+	if repo == "" {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", "cannot resolve this Herder repo root")
+		return
+	}
+	if !filepath.IsAbs(repo) {
+		refuse(w, http.StatusBadRequest, "bad request", "repo must be an absolute path")
+		return
+	}
+	branch := ""
+	if request.Branch != nil {
+		branch = strings.TrimSpace(*request.Branch)
+	}
+	if branch == "" {
+		branch = fmt.Sprintf("launch-%s-%s", *request.Tool, deps.now().UTC().Format("20060102-1504"))
+	}
+	if !branchPattern.MatchString(branch) {
+		refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: branch must start with a letter or digit and contain only letters, digits, dot, underscore, slash, and hyphen")
 		return
 	}
 	roster, err := deps.roster()
@@ -1008,60 +1033,34 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	if _, err := attributedSender(r, deps, roster); err != nil {
+	launcher, err := attributedSender(r, deps, roster)
+	if err != nil {
 		serveAttributionError(w, err)
 		return
 	}
-	snapshot, err := deps.snapshot()
-	if err != nil {
-		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-		return
+	args := []string{*request.Tool}
+	if model != "" {
+		args = append(args, "--model", model)
 	}
-	var pane *herdrcli.Pane
-	for i := range snapshot.Panes {
-		if snapshot.Panes[i].PaneID == *request.FromPane {
-			pane = &snapshot.Panes[i]
-			break
-		}
-	}
-	if pane == nil {
-		refuse(w, http.StatusConflict, "refused by substrate", fmt.Sprintf("fleet spawn: pane does not exist: %s", *request.FromPane))
-		return
-	}
-	args := []string{*request.Tool, "--tag", *request.Tag}
-	switch *request.Shape {
-	case "pane":
-		args = append(args, "--split-from", pane.PaneID)
-	case "tab":
-		args = append(args, "--workspace", pane.WorkspaceID)
-	case "worktree":
-		var repo string
-		for _, workspace := range snapshot.Workspaces {
-			if workspace.WorkspaceID == pane.WorkspaceID && workspace.Worktree != nil {
-				repo = workspace.Worktree.CheckoutPath
-				if repo == "" {
-					repo = workspace.Worktree.RepoRoot
-				}
-				break
-			}
-		}
-		if repo == "" {
-			refuse(w, http.StatusConflict, "refused by substrate", fmt.Sprintf("fleet spawn: workspace %s has no repository", pane.WorkspaceID))
-			return
-		}
-		args = append(args, "--worktree-branch", *request.Branch, "--repo", repo)
-	}
-	args = append(args, "--prompt", *request.Prompt)
+	args = append(args, "--tag", tag, "--worktree-branch", branch, "--repo", repo)
 	result, err := deps.spawn(r.Context(), args)
 	if err != nil {
 		if errors.Is(err, webaction.ErrUnavailable) {
 			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		} else {
-			refuse(w, http.StatusConflict, "refused by substrate", err.Error())
+			refuse(w, http.StatusConflict, "launch refused", err.Error())
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	if deps.recordLaunch == nil {
+		deps.recordLaunch = appendLaunchEdge
+	}
+	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Tag: tag, Repo: repo, Time: deps.now().UTC()}
+	if err := deps.recordLaunch(edge); err != nil {
+		refuse(w, http.StatusBadGateway, "launch record failed", fmt.Sprintf("%s launched, but its launch edge could not be recorded: %v", result.Name, err))
+		return
+	}
+	writeJSON(w, http.StatusOK, launchResponse{Names: []string{result.Name}, OutputTail: result.OutputTail})
 }
 
 func attributedSender(r *http.Request, deps dependencies, roster []hcomidentity.Row) (string, error) {

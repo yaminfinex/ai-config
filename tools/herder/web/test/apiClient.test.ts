@@ -77,19 +77,19 @@ test('mutations use pinned JSON request shapes', async () => {
   await sendMessage('vile', 'hello', fetcher)
   await sendPaneInput('w1:p/1', { text: '\x03\x1b[A' }, fetcher)
   await sendPaneInput('w1:p/1', { keys: ['ctrl+c', 'up'] }, fetcher)
-  await spawnAgent({ from_pane: 'w1:p1', shape: 'pane', tool: 'codex', tag: 'new', prompt: 'work' }, fetcher)
+  await spawnAgent({ tool: 'codex', model: 'gpt-5.4-mini', tag: 'impl', repo: '/repo root', branch: 'feature/web' }, fetcher)
   assert.deepEqual(requests.map(({ path, init }) => [path, init?.method, init?.body]), [
     ['/api/agents/vile/message', 'POST', JSON.stringify({ text: 'hello' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ text: '\x03\x1b[A' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ keys: ['ctrl+c', 'up'] })],
-    ['/api/spawn', 'POST', JSON.stringify({ from_pane: 'w1:p1', shape: 'pane', tool: 'codex', tag: 'new', prompt: 'work' })],
+    ['/api/spawn', 'POST', JSON.stringify({ tool: 'codex', model: 'gpt-5.4-mini', tag: 'impl', repo: '/repo root', branch: 'feature/web' })],
   ])
 })
 
 test('refusals preserve semantic status for lifecycle presentation', async () => {
   const fetcher = (async () => jsonResponse({ error: 'attribution required', detail: 'peer unknown' }, { status: 409 })) as typeof fetch
   await assert.rejects(
-    spawnAgent({ from_pane: 'w1:p1', shape: 'pane', tool: 'codex', tag: 'new', prompt: 'work' }, fetcher),
+    spawnAgent({ tool: 'claude', model: 'opus', tag: 'impl', repo: '' }, fetcher),
     (error) => {
       assert.deepEqual(lifecycleProblem(error), { readOnly: 'Connect via Tailscale to continue. peer unknown' })
       return true

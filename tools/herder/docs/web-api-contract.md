@@ -1006,33 +1006,28 @@ POST `/api/agents/{bus-name}/message`
   tailscaled — never conflated with a refusal).
 
 POST `/api/spawn`
-  Contextual only. Body:
-  `{"from_pane": "<pane-id>", "shape": "pane" | "tab" | "worktree",
-    "tool": "claude" | "codex", "tag": "...", "prompt": "...",
-    "branch": "<only for worktree shape>"}`.
-  Placement derives from `from_pane`'s tab/workspace; worktree shape
-  inherits the workspace's repo. Wraps the one spawn path
-  (tools/fleet — which grew a same-tab split placement for the pane
-  shape at implementation, 2026-08-25, keeping terminal and web on
-  one path). Response: the new agent's bus name + pane. Refusals
-  (unknown pane, workspace without a repo for worktree shape) are
-  409s quoting the substrate.
+  Body: `{"tool": "claude" | "codex", "model": "<optional>",
+  "tag": "<optional, default impl>", "repo": "<optional absolute path>",
+  "branch": "<optional>"}`. A blank repo means the ai-config root that
+  launched this Herder. A blank branch generates
+  `launch-<tool>-<yyyymmdd-hhmm>`. Every request delegates to
+  `tools/fleet/spawn.sh` with `--worktree-branch` and `--repo`; the web
+  server never owns the launched process and never uses `--split-from`.
 
-The spawn lifecycle response (pinned at implementation review
-2026-08-25): HTTP 200 `{"name": "<bus-name>", "pane": "<pane-id>"}`.
-Substrate success IS success: when the spawn succeeded but
-placement is not yet visible to the board poll, `pane` is empty and
-the agent appears on `/api/fleet` within a poll tick — never a 5xx
-for a session that exists (a false 502 invites duplicate spawns).
-Attribution, statuses, and infrastructure-vs-refusal classification
-follow the message write's rules exactly.
+  HTTP 200: `{"names":["<bus-name>"],"output_tail":"<spawn output>"}`.
+  Semantic spawn refusals are HTTP 409 with `error: "launch refused"`
+  and spawn.sh's stderr preserved as `detail`; wrapper/infrastructure
+  failures are 502. After success, one attributed launch edge per name is
+  appended to `launch-edges.jsonl` under the Herder state directory. The
+  new agent then appears through the ordinary fleet SSE poll; no endpoint
+  response is used as fleet state.
 
 ### AMENDMENT (owner-ruled, 2026-08-26) — web fork removed
 
 The owner ruled that the web fork control does not work and breaks sessions.
 The client control and `POST /api/agents/{bus-name}/fork` endpoint are removed;
 the path now receives the standard 404 unknown-endpoint refusal. This removes
-only web fork. Contextual spawn remains available, and lifecycle operations
+only web fork. Worktree-only spawn remains available, and lifecycle operations
 outside this web API are unchanged.
 
 ## Web-peer attribution (ruled — tailscale identities, flat authority)

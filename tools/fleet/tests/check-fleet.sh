@@ -226,15 +226,25 @@ grep -Fx 'name=gate-vava' "$TEST_ROOT/delayed-hooks.out" >/dev/null \
   || fail "spawn did not tolerate delayed hook binding after readiness"
 pass "spawn waits briefly for hook binding after readiness"
 
+FLEET_TEST_HOOKS_BOUND=0 PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/codex-unbound.out" 2>"$TEST_ROOT/codex-unbound.err"
+grep -Fx 'name=gate-vava' "$TEST_ROOT/codex-unbound.out" >/dev/null \
+  || fail "spawn did not report the ready Codex launch with pty-only binding"
+grep -F 'fleet spawn: note: ready launch is not hook-bound in hcom roster: gate-vava' "$TEST_ROOT/codex-unbound.err" >/dev/null \
+  || fail "spawn did not note the ready Codex launch's expected unbound hooks"
+grep -Fx 'pane=p-test' "$TEST_ROOT/codex-unbound.out" >/dev/null \
+  || fail "spawn did not report the ready Codex placement"
+pass "spawn accepts ready Codex launch with pty-only binding"
+
 if FLEET_TEST_HOOKS_BOUND=0 PATH="$TEST_ROOT/bin:$PATH" \
-  "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/unbound.out" 2>"$TEST_ROOT/unbound.err"; then
-  fail "spawn accepted a ready launch without bound hooks"
+  "$FLEET/spawn.sh" claude --tag gate --pane p-test >"$TEST_ROOT/claude-unbound.out" 2>"$TEST_ROOT/claude-unbound.err"; then
+  fail "spawn accepted a ready Claude launch without bound hooks"
 fi
-grep -F 'ready launch is not hook-bound in hcom roster: gate-vava' "$TEST_ROOT/unbound.err" >/dev/null \
-  || fail "spawn did not explain the unbound ready launch"
-grep -F 'pane=p-test' "$TEST_ROOT/unbound.err" >/dev/null \
-  || fail "spawn did not name the placement left by an unbound ready launch"
-pass "spawn requires hook binding after launch readiness"
+grep -F 'ready launch is not hook-bound in hcom roster: gate-vava' "$TEST_ROOT/claude-unbound.err" >/dev/null \
+  || fail "spawn did not explain the unbound ready Claude launch"
+grep -F 'pane=p-test' "$TEST_ROOT/claude-unbound.err" >/dev/null \
+  || fail "spawn did not name the placement left by an unbound ready Claude launch"
+pass "spawn still requires hook binding for ready Claude launches"
 
 if FLEET_TEST_PROCESS_SHAPE=no-shell-pid PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/no-shell.out" 2>"$TEST_ROOT/no-shell.err"; then

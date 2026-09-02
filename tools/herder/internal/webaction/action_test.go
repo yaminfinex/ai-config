@@ -26,7 +26,7 @@ func TestSpawnPreservesArgvAndParsesWrapperOutput(t *testing.T) {
 	t.Setenv("ACTION_LOG", log)
 	prompt := "--review 'quoted'\nsecond line"
 	result, err := Spawn(context.Background(), []string{"codex", "--tag", "api", "--split-from", "w1:p1", "--prompt", prompt})
-	if err != nil || result != (Result{Name: "api-vava", Pane: "w1:p9"}) {
+	if err != nil || result.Name != "api-vava" || result.Pane != "w1:p9" || !strings.Contains(result.OutputTail, "Started the launch process") || !strings.Contains(result.OutputTail, "placement=split-pane") {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 	got, _ := os.ReadFile(log)
@@ -91,7 +91,7 @@ func TestParseSpawnRejectsDuplicateRecords(t *testing.T) {
 
 func TestParseSpawnAllowsPlacementPending(t *testing.T) {
 	result, err := parseSpawn([]byte("name=api-vava\n"))
-	if err != nil || result != (Result{Name: "api-vava", Pane: ""}) {
+	if err != nil || result.Name != "api-vava" || result.Pane != "" {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 }

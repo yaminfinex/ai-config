@@ -78,6 +78,7 @@ func fixtureDeps() dependencies {
 		roots:            buildRootSet,
 		fileResolver:     fileresolver.New(fileindex.New(fileindex.Options{})),
 		repoContext:      repoctx.Read,
+		recordLaunch:     func(launchEdge) error { return nil },
 		now:              time.Now,
 		audit:            func(string, ...any) {},
 		inputSerial:      &paneInputSerial{},
@@ -1154,130 +1155,6 @@ func TestMessageWriteMapsSendInfrastructureTo502AndSemanticRefusalTo409(t *testi
 			newHandler(deps).ServeHTTP(response, request)
 			if response.Code != test.status || !strings.Contains(response.Body.String(), `"error":"`+test.errorText+`"`) {
 				t.Fatalf("response = %d %s", response.Code, response.Body.String())
-			}
-		})
-	}
-}
-
-func TestSpawnMapsEveryShapeToThePinnedFleetFlags(t *testing.T) {
-	for name, test := range map[string]struct {
-		body string
-		want []string
-	}{
-		"same tab":       {`{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"hello"}`, []string{"codex", "--tag", "api", "--split-from", "p1", "--prompt", "hello"}},
-		"same workspace": {`{"from_pane":"p1","shape":"tab","tool":"claude","tag":"api","prompt":"hello"}`, []string{"claude", "--tag", "api", "--workspace", "w1", "--prompt", "hello"}},
-		"worktree":       {`{"from_pane":"p1","shape":"worktree","tool":"codex","tag":"api","prompt":"hello","branch":"feature/web"}`, []string{"codex", "--tag", "api", "--worktree-branch", "feature/web", "--repo", "/repo/checkout", "--prompt", "hello"}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			deps := fixtureDeps()
-			baseSnapshot := deps.snapshot
-			deps.snapshot = func() (herdrcli.Snapshot, error) {
-				snapshot, _ := baseSnapshot()
-				snapshot.Workspaces[0].Worktree = &herdrcli.WorkspaceWorktree{RepoRoot: "/repo", CheckoutPath: "/repo/checkout"}
-				return snapshot, nil
-			}
-			var got []string
-			deps.spawn = func(_ context.Context, args []string) (webaction.Result, error) {
-				got = append([]string(nil), args...)
-				return webaction.Result{Name: "api-vava", Pane: "p9"}, nil
-			}
-			response := httptest.NewRecorder()
-			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(test.body)))
-			if response.Code != http.StatusOK || fmt.Sprint(got) != fmt.Sprint(test.want) || !strings.Contains(response.Body.String(), `"name":"api-vava"`) || !strings.Contains(response.Body.String(), `"pane":"p9"`) {
-				t.Fatalf("response=%d %s args=%q want=%q", response.Code, response.Body.String(), got, test.want)
-			}
-		})
-	}
-}
-
-func TestSpawnPreservesPromptAsOneArgumentAndPinsStrictBody(t *testing.T) {
-	deps := fixtureDeps()
-	prompt := "--review 'quotes'\nsecond line"
-	var got []string
-	deps.spawn = func(_ context.Context, args []string) (webaction.Result, error) {
-		got = args
-		return webaction.Result{Name: "api-vava", Pane: "p9"}, nil
-	}
-	body, _ := json.Marshal(map[string]string{"from_pane": "p1", "shape": "pane", "tool": "codex", "tag": "api", "prompt": prompt})
-	response := httptest.NewRecorder()
-	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewReader(body)))
-	if response.Code != http.StatusOK || got[len(got)-1] != prompt {
-		t.Fatalf("response=%d %s args=%q", response.Code, response.Body.String(), got)
-	}
-
-	for name, body := range map[string]string{
-		"unknown field":  `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"x","extra":true}`,
-		"missing prompt": `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api"}`,
-		"branch on pane": `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"x","branch":"no"}`,
-		"bad tag":        `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"bad tag","prompt":"x"}`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			response := httptest.NewRecorder()
-			newHandler(fixtureDeps()).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(body)))
-			if response.Code != http.StatusBadRequest {
-				t.Fatalf("response=%d %s", response.Code, response.Body.String())
-			}
-		})
-	}
-}
-
-func TestSpawnPinsAttributionAndSubstrateRefusals(t *testing.T) {
-	valid := `{"from_pane":"p1","shape":"pane","tool":"codex","tag":"api","prompt":"x"}`
-	for name, test := range map[string]struct {
-		mutate func(*dependencies)
-		status int
-		detail string
-	}{
-		"unattributed": {func(d *dependencies) {
-			d.sender = func(context.Context, string) (string, error) { return "", errors.New("peer not found") }
-		}, 409, "peer not found"},
-		"whois unavailable": {func(d *dependencies) {
-			d.sender = func(context.Context, string) (string, error) {
-				return "", fmt.Errorf("%w: tailscaled down", webidentity.ErrUnavailable)
-			}
-		}, 502, "tailscaled down"},
-		"unknown pane": {func(d *dependencies) {}, 409, "fleet spawn: pane does not exist: missing"},
-		"script refusal": {func(d *dependencies) {
-			d.spawn = func(context.Context, []string) (webaction.Result, error) {
-				return webaction.Result{}, errors.New("fleet spawn: pane is busy")
-			}
-		}, 409, "fleet spawn: pane is busy"},
-		"script unavailable": {func(d *dependencies) {
-			d.spawn = func(context.Context, []string) (webaction.Result, error) {
-				return webaction.Result{}, fmt.Errorf("%w: missing", webaction.ErrUnavailable)
-			}
-		}, 502, "missing"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			deps := fixtureDeps()
-			test.mutate(&deps)
-			body := valid
-			if name == "unknown pane" {
-				body = strings.Replace(valid, `"p1"`, `"missing"`, 1)
-			}
-			response := httptest.NewRecorder()
-			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(body)))
-			if response.Code != test.status || !strings.Contains(response.Body.String(), test.detail) {
-				t.Fatalf("response=%d %s", response.Code, response.Body.String())
-			}
-		})
-	}
-}
-
-func TestSpawnRejectsWorktreeWithoutRepoAndInvalidBranch(t *testing.T) {
-	for name, test := range map[string]struct {
-		body   string
-		status int
-		detail string
-	}{
-		"missing repo":   {`{"from_pane":"p1","shape":"worktree","tool":"codex","tag":"api","prompt":"x","branch":"feature/web"}`, http.StatusConflict, "workspace w1 has no repository"},
-		"invalid branch": {`{"from_pane":"p1","shape":"worktree","tool":"codex","tag":"api","prompt":"x","branch":"bad branch"}`, http.StatusBadRequest, "branch must start"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			response := httptest.NewRecorder()
-			newHandler(fixtureDeps()).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(test.body)))
-			if response.Code != test.status || !strings.Contains(response.Body.String(), test.detail) {
-				t.Fatalf("response=%d %s", response.Code, response.Body.String())
 			}
 		})
 	}

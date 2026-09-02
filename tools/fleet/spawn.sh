@@ -239,7 +239,12 @@ done
 full_name=$(jq -er '.name | select(length > 0)' <<<"$roster_entry") \
   || die "ready launch roster row has no name: $hcom_name (batch=$batch_id, $placement_detail, pane=$pane_id)"
 if ! jq -e '.hooks_bound == true' <<<"$roster_entry" >/dev/null; then
-  die "ready launch is not hook-bound in hcom roster: $full_name (batch=$batch_id, $placement_detail, pane=$pane_id left for explicit cleanup)"
+  if [[ $tool == codex ]]; then
+    printf 'fleet spawn: note: ready launch is not hook-bound in hcom roster: %s\n' \
+      "$full_name (batch=$batch_id, $placement_detail, pane=$pane_id left for explicit cleanup)" >&2
+  else
+    die "ready launch is not hook-bound in hcom roster: $full_name (batch=$batch_id, $placement_detail, pane=$pane_id left for explicit cleanup)"
+  fi
 fi
 
 printf 'name=%s\n' "$full_name"

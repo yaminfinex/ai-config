@@ -252,11 +252,11 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF 'Live stream timed out' "$ROOT/app.js" &&
   ! grep -qF '/transcript/stream' "$ROOT/app.js" &&
   grep -qF '/message' "$ROOT/app.js" &&
-  ! grep -qF '/api/spawn' "$ROOT/app.js" &&
+  grep -qF '/api/spawn' "$ROOT/app.js" &&
   ! grep -qF '/fork' "$ROOT/app.js" &&
   ! grep -qF 'Fork agent' "$ROOT/app.js" &&
   ! grep -qF 'placement pending' "$ROOT/app.js" &&
-  ! grep -qF 'Spawn agent' "$ROOT/app.js" &&
+  grep -qF 'Launch agent' "$ROOT/app.js" &&
   ! grep -qF 'Fleet board' "$ROOT/app.js" &&
   grep -qF '/agents/' "$ROOT/app.js" &&
   grep -qF 'herder.web.layout.v1' "$ROOT/app.js" &&
@@ -472,14 +472,18 @@ else
 fi
 
 if curl -fsS -X POST -H 'Content-Type: application/json' \
-  --data '{"from_pane":"w1:p1","shape":"pane","tool":"codex","tag":"web","prompt":"quote '\'' and\n--dash"}' \
+  --data '{"tool":"codex","model":"","tag":"web","repo":"/repo/root","branch":"feature/web"}' \
   "http://127.0.0.1:$port/api/spawn" >"$ROOT/spawn.json" &&
-  jq -e '. == {name:"spawn-vava",pane:"w1:p9"}' "$ROOT/spawn.json" >/dev/null &&
-  grep -qxF '<--split-from>' "$ROOT/spawn.log" && grep -qxF '<w1:p1>' "$ROOT/spawn.log" &&
+  jq -e '.names == ["spawn-vava"] and (.output_tail | contains("Started the launch process"))' "$ROOT/spawn.json" >/dev/null &&
+  ! grep -qxF '<--model>' "$ROOT/spawn.log" &&
+  grep -qxF '<--worktree-branch>' "$ROOT/spawn.log" && grep -qxF '<feature/web>' "$ROOT/spawn.log" &&
+  grep -qxF '<--repo>' "$ROOT/spawn.log" && grep -qxF '</repo/root>' "$ROOT/spawn.log" &&
+  ! grep -qF '<--split-from>' "$ROOT/spawn.log" &&
+  jq -e '.name == "spawn-vava" and .launcher == "web-alice-example-com" and .tool == "codex" and .model == "" and .tag == "web" and .repo == "/repo/root"' "$ROOT/home/.local/state/herder/launch-edges.jsonl" >/dev/null &&
   curl -fsS "http://127.0.0.1:$port/api/fleet" | jq -e '.workspaces[].tabs[].panes[] | select(.pane_id == "w1:p9" and .agent == "spawn-vava")' >/dev/null; then
-  pass "contextual spawn maps same-tab to split-from, preserves argv, and appears in fleet"
+  pass "launch maps worktree argv, records attribution, returns output, and appears in fleet"
 else
-  bad "contextual spawn" "body=$(cat "$ROOT/spawn.json" 2>/dev/null || true) args=$(cat "$ROOT/spawn.log" 2>/dev/null || true)"
+  bad "launch" "body=$(cat "$ROOT/spawn.json" 2>/dev/null || true) args=$(cat "$ROOT/spawn.log" 2>/dev/null || true) edge=$(cat "$ROOT/home/.local/state/herder/launch-edges.jsonl" 2>/dev/null || true)"
 fi
 
 if [ "$(curl -sS -o "$ROOT/fork-removed.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"prompt":"continue safely"}' \

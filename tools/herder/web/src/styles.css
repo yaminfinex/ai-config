@@ -253,6 +253,9 @@ h2, h3, p { margin-top: 0; }
 .status-primary { flex: 1 1 auto; }
 .status-secondary { flex: 0 0 auto; margin-left: auto; }
 .status-health { display: flex; align-items: center; gap: 9px; }
+.fleet-status-group { display: flex; height: 20px; flex: 0 0 auto; align-items: center; gap: 4px; }
+.launch-agent-button { width: 20px; height: 20px; flex: 0 0 20px; padding: 0; border-color: var(--border2); background: var(--chip); color: var(--status-bar-text); font: 600 13px var(--mono); }
+.launch-agent-button:hover, .launch-agent-button:focus-visible { border-color: var(--accent); background: var(--bg2); color: var(--text); }
 .workspace-switcher-slot { display: flex; height: 20px; min-width: 0; flex: 1 1 auto; }
 .space-strip, .space-chips { display: flex; min-width: 0; align-items: center; gap: 3px; }
 .space-strip { position: relative; width: 100%; max-width: 720px; }
@@ -294,6 +297,31 @@ h2, h3, p { margin-top: 0; }
 .shortcut-reference dd, .shortcut-reference p { color: var(--dim); font-size: 10px; }
 .shortcut-reference p { margin: 9px 0 0; line-height: 1.45; }
 .shortcut-reference p strong { color: var(--text); }
+
+.launch-agent-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 16px; background: var(--overlay-subtle); backdrop-filter: blur(2px); }
+.launch-agent-dialog { width: min(440px, 100%); overflow: hidden; border: 1px solid var(--border2); border-radius: 8px; background: var(--bg2); color: var(--text); box-shadow: 0 12px 36px var(--floating-shadow); white-space: normal; }
+.launch-agent-dialog > header { display: flex; height: 40px; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.launch-agent-dialog > header strong { font: 600 13px var(--mono); }
+.launch-agent-dialog > header button { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--dim); font-size: 16px; }
+.launch-agent-dialog form { display: grid; gap: 8px; padding: 12px; }
+.launch-agent-dialog label { display: grid; grid-template-columns: 128px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--dim); font: 11px var(--mono); }
+.launch-agent-dialog input, .launch-agent-dialog select { width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--border2); border-radius: 4px; outline: none; background: var(--bg); color: var(--text); font: 11px var(--mono); }
+.launch-agent-dialog input:focus, .launch-agent-dialog select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.launch-agent-help { margin: 0 0 0 136px; color: var(--dimmer); font-size: 10px; line-height: 1.4; }
+.launch-agent-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.launch-agent-actions button, .launch-agent-confirmation button { min-height: 28px; padding: 4px 12px; border-color: var(--border2); background: var(--chip); color: var(--text); font: 10px var(--mono); }
+.launch-agent-actions button[type='submit'], .launch-agent-confirmation button { border-color: var(--accent); background: var(--accent-dim); }
+.launch-agent-refusal { max-height: 160px; overflow: auto; margin: 0 12px 12px; padding: 8px; border: 1px solid var(--error-border); border-radius: 4px; background: var(--error-bg); color: var(--error-text); font: 10px/1.5 var(--mono); white-space: pre-wrap; }
+.launch-agent-confirmation { display: grid; gap: 8px; margin: 0 12px 12px; padding: 8px; border: 1px solid var(--info-border); border-radius: 4px; background: var(--info-bg); color: var(--info-text); font: 10px/1.5 var(--mono); }
+.launch-agent-confirmation button { justify-self: start; }
+.launch-agent-confirmation details { min-width: 0; }
+.launch-agent-confirmation summary { cursor: pointer; }
+.launch-agent-confirmation pre { max-height: 160px; overflow: auto; margin: 8px 0 0; padding: 8px; border-radius: 4px; background: var(--bg); color: var(--text); white-space: pre-wrap; }
+
+@media (max-width: 520px) {
+  .launch-agent-dialog label { grid-template-columns: 1fr; gap: 4px; }
+  .launch-agent-help { margin-left: 0; }
+}
 
 .quick-open-backdrop { position: fixed; z-index: 20; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 120px) 16px 16px; background: var(--overlay-subtle); backdrop-filter: blur(2px); }
 .quick-open { display: flex; width: min(680px, 100%); max-height: min(620px, 72vh); flex-direction: column; overflow: hidden; border: 1px solid var(--border2); border-radius: 9px; background: var(--bg2); box-shadow: 0 12px 36px var(--floating-shadow); }

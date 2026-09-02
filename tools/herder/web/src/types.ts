@@ -73,8 +73,8 @@ export interface Refusal {
 }
 
 export interface LifecycleResult {
-  name: string
-  pane: string
+  names: string[]
+  output_tail: string
 }
 
 export interface AgentDetail {
