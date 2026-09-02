@@ -8,6 +8,7 @@ import {
   type ActivityAggregation,
   type ActivityPillTone,
 } from './cleanView.ts'
+import { systemEntryPresentation } from './systemEntries.ts'
 
 export type ObjectValue = Record<string, unknown>
 
@@ -15,7 +16,8 @@ export const objectValue = (value: unknown): ObjectValue => value && typeof valu
 export const valueText = (value: unknown) => typeof value === 'string' ? value : typeof value === 'number' || typeof value === 'boolean' ? String(value) : ''
 
 export function messageText(payload: unknown): string {
-  const content = objectValue(objectValue(payload).message).content
+  const value = objectValue(payload)
+  const content = objectValue(value.message).content ?? value.content
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content.map((block) => {
@@ -110,6 +112,10 @@ export function cleanRows(entries: TranscriptEntry[], relationships: CleanRowRel
     if (disposition === 'activity') {
       const label = activityLabel(entry)
       run.push({ key: `activity:${entry.uuid ?? entry.byteOffset}`, label, tone: activityPillTone(entry.kind), aggregation: entry.kind === 'tool_use' ? { category: 'tool', content: label } : undefined, entry, index })
+      return
+    }
+    if (disposition === 'system') {
+      if (systemEntryPresentation(entry.payload)?.alwaysVisible) addEntry(entry, index)
       return
     }
     if (disposition === 'show') addEntry(entry, index)

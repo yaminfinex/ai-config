@@ -21,8 +21,10 @@ const maxToolOutputBytes = 16 * 1024
 
 var bookkeepingTypes = map[string]struct{}{
 	"agent-name": {}, "ai-title": {}, "bridge-session": {},
+	"atis-latch": {}, "cost-state": {},
 	"file-history-delta": {}, "file-history-snapshot": {},
-	"last-prompt": {}, "mode": {},
+	"isolation-latch": {}, "last-prompt": {}, "mode": {},
+	"observer-ref":    {},
 	"permission-mode": {}, "pr-link": {}, "queue-operation": {},
 	"worktree-state": {},
 }
@@ -35,6 +37,7 @@ var (
 type envelope struct {
 	Type             string `json:"type"`
 	Subtype          string `json:"subtype"`
+	Content          string `json:"content"`
 	UUID             string `json:"uuid"`
 	Timestamp        string `json:"timestamp"`
 	IsSidechain      bool   `json:"isSidechain"`
@@ -421,8 +424,16 @@ func classifyMode(raw []byte, line, offset int64, includeSidechain bool) (Entry,
 		if !render {
 			return Entry{}, false, false
 		}
+	case "relocated":
+		base.Kind = KindSystemChip
 	case "system":
 		switch env.Subtype {
+		case "local_command":
+			if isCommandOutput(env.Content) {
+				base.Kind = KindCommandOutput
+			}
+		case "model_refusal_fallback", "model_consent_fallback":
+			base.Kind = KindSystemChip
 		case "turn_duration":
 			base.Kind = KindTurnDuration
 		case "compact_boundary":
@@ -488,13 +499,17 @@ func classifyUser(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
 	if strings.TrimSpace(text) == "<hcom>" {
 		return KindHcomStub, raw
 	}
-	if strings.Contains(text, "<command-name>") || strings.Contains(text, "<local-command-stdout>") {
+	if isCommandOutput(text) {
 		return KindCommandOutput, raw
 	}
 	if env.Origin.Kind == "human" && (env.PromptSource == "typed" || env.PromptSource == "queued") {
 		return KindHumanPrompt, raw
 	}
 	return KindUnknown, raw
+}
+
+func isCommandOutput(text string) bool {
+	return strings.Contains(text, "<command-name>") || strings.Contains(text, "<local-command-stdout>")
 }
 
 func classifyAttachment(env envelope, raw json.RawMessage) (Kind, json.RawMessage, bool) {

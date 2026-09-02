@@ -200,6 +200,34 @@ test('compact row building joins marker-only entries and fail-open text splits r
   assert.deepEqual(superseded[0].type === 'run' ? superseded[0].activities.map((activity) => activity.entry.byteOffset) : [], [1, 2])
 })
 
+test('compact rows keep always-visible model fallbacks and drop other system chips', () => {
+  const entry = (kind: TranscriptEntry['kind'], payload: unknown, byteOffset: number): TranscriptEntry => ({
+    line: byteOffset,
+    byteOffset,
+    kind,
+    payload,
+  })
+  const assistant = entry('assistant_text', { message: { content: 'visible reply' } }, 1)
+  const refusal = entry('system_chip', {
+    type: 'system',
+    subtype: 'model_refusal_fallback',
+    fallbackModel: 'claude-opus-4-8',
+    content: "Fable 5's safeguards flagged this message. Switched to Opus 4.8.",
+  }, 2)
+  const relocated = entry('system_chip', { type: 'relocated', relocatedCwd: '/invented/violet-worktree' }, 3)
+  const scheduled = entry('system_chip', { type: 'system', subtype: 'scheduled_task_fire' }, 4)
+  const relationships = {
+    pairedToolResults: new Set<number>(),
+    pairedDeliveries: new Set<number>(),
+    pairedCommandOutputs: new Set<number>(),
+    duplicateHcomDeliveries: new Map<number, Set<number>>(),
+  }
+
+  const rows = cleanRows([assistant, refusal, relocated, scheduled], relationships)
+  assert.deepEqual(rows.map((row) => row.type === 'entry' ? row.entry.byteOffset : null), [1, 2])
+  assert.equal(rows[1].type === 'entry' ? rows[1].entry : null, refusal)
+})
+
 test('compact strip wraps accessibly', () => {
   const strip = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function ActivityStrip'), transcriptEntriesSource.indexOf('function ActivityEntry'))
   const summaryRule = stylesSource.match(/\.activity-strip > summary \{([^}]*)\}/)?.[1] ?? ''

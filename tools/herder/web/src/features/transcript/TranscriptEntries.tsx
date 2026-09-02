@@ -6,6 +6,7 @@ import type { TranscriptEntry } from '../../types'
 import { aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun } from './cleanView'
 import { cleanRows, messageText, objectValue, valueText, type CleanActivity, type ObjectValue } from './cleanRows'
 import { parseAssistantFencing } from './fencingModel'
+import { systemEntryPresentation, unknownEntryLabel } from './systemEntries'
 
 type MentionContextValue = {
   matcher: AgentMentionMatcher
@@ -208,6 +209,7 @@ function AssistantText({ content, agentName, timestamp, now, showSystem }: { con
 function EntryView({ entry, index, entries, relationships, agentName, now, showSystem, cleanView }: { entry: TranscriptEntry, index: number, entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number, showSystem: boolean, cleanView: boolean }) {
   const payload = objectValue(entry.payload)
   const content = messageText(entry.payload)
+  const systemEntry = entry.kind === 'system_chip' ? systemEntryPresentation(payload) : null
   if (relationships.pairedToolResults.has(index) || relationships.pairedDeliveries.has(index) || relationships.pairedCommandOutputs.has(index)) return null
   if (cleanView && cleanViewDisposition[entry.kind] === 'hide') return null
   if (entry.kind === 'hcom_delivery_stub') {
@@ -238,9 +240,11 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   }
   if (entry.kind === 'turn_duration') return <div className="turn-footer">turn · {formatDuration(Number(payload.durationMs))}{payload.messageCount != null ? ` · ${Number(payload.messageCount)} messages` : ''} · <Timestamp timestamp={entry.timestamp} now={now} /></div>
   if (entry.kind === 'task_notification' || entry.kind === 'injected_system') return <details className="system-chip"><summary>{entry.kind === 'task_notification' ? 'background task finished' : 'injected system prompt'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><div data-note-capture-content><MentionText>{content || JSON.stringify(payload)}</MentionText></div></details>
+  if (systemEntry?.subtype === 'relocated') return showSystem ? <div className="system-chip">{systemEntry.summary} · <Timestamp timestamp={entry.timestamp} now={now} /></div> : null
+  if (systemEntry?.alwaysVisible) return <details className="system-chip model-switch-entry" role="status"><summary>{systemEntry.summary} · <Timestamp timestamp={entry.timestamp} now={now} /></summary>{systemEntry.detail && <pre data-note-capture-content>{systemEntry.detail}</pre>}</details>
   if (entry.kind === 'system_chip') return !showSystem && payload.subtype !== 'scheduled_task_fire' ? null : <details className="system-chip"><summary>{valueText(payload.subtype) || 'system entry'} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{JSON.stringify(payload, null, 2)}</pre></details>
   if (!showSystem) return null
-  return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : `unknown entry · ${entry.kind}`} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{JSON.stringify(entry.payload, null, 2)}</pre></details>
+  return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : unknownEntryLabel(entry)} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{JSON.stringify(entry.payload, null, 2)}</pre></details>
 }
 
 export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView, mentionMatcher, onOpenAgent, sideHint }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void, sideHint: string }) {
