@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { initialLaunchForm, launchConfirmation, launchRefusal } from '../src/features/launch/launchModel.ts'
+import { dialogTabTargetIndex, initialLaunchForm, launchConfirmation, launchRefusal } from '../src/features/launch/launchModel.ts'
 
 test('launch form starts with plain defaults and curated models', () => {
   assert.deepEqual(initialLaunchForm(), {
@@ -41,8 +41,18 @@ test('launch refusal keeps the server detail visible verbatim', () => {
 test('launch confirmation offers the launched agent in the current space', () => {
   assert.deepEqual(launchConfirmation(['impl-vava']), {
     line: 'Launched impl-vava.',
+    taskLine: 'It has no task yet — send it one from its panel.',
     action: { label: 'Open in this space', agent: 'impl-vava' },
   })
+})
+
+test('launch dialog traps Tab and Shift+Tab at its focus boundaries', () => {
+  assert.equal(dialogTabTargetIndex(3, 4, false), 0)
+  assert.equal(dialogTabTargetIndex(0, 4, true), 3)
+  assert.equal(dialogTabTargetIndex(1, 4, false), null)
+  assert.equal(dialogTabTargetIndex(2, 4, true), null)
+  assert.equal(dialogTabTargetIndex(-1, 4, false), 0)
+  assert.equal(dialogTabTargetIndex(-1, 0, false), null)
 })
 
 test('launch form explains that the default creates an isolated worktree', () => {

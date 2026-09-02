@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { apiProblem, spawnAgent } from '../../api/client.ts'
-import { changeLaunchTool, initialLaunchForm, launchConfirmation, launchRefusal, launchRequest, type LaunchTool } from './launchModel.ts'
+import { changeLaunchTool, dialogTabTargetIndex, initialLaunchForm, launchConfirmation, launchRefusal, launchRequest, type LaunchTool } from './launchModel.ts'
+
+const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])'
 
 export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => void }) {
   const [open, setOpen] = useState(false)
@@ -8,9 +10,15 @@ export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => vo
   const [pending, setPending] = useState(false)
   const [problem, setProblem] = useState('')
   const [result, setResult] = useState<{ names: string[], output_tail: string } | null>(null)
+  const launchButton = useRef<HTMLButtonElement | null>(null)
+  const dialog = useRef<HTMLElement | null>(null)
   const tool = useRef<HTMLSelectElement | null>(null)
 
-  useEffect(() => { if (open) tool.current?.focus() }, [open])
+  useEffect(() => {
+    if (!open) return
+    tool.current?.focus()
+    return () => launchButton.current?.focus()
+  }, [open])
 
   const close = () => {
     setOpen(false)
@@ -33,10 +41,17 @@ export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => vo
   const confirmation = result ? launchConfirmation(result.names) : null
 
   return <>
-    <button type="button" className="launch-agent-button" aria-label="Launch agent" title="Launch agent" onClick={() => setOpen(true)}>+</button>
+    <button ref={launchButton} type="button" className="launch-agent-button" aria-label="Launch agent" title="Launch agent" onClick={() => setOpen(true)}>+</button>
     {open && <div className="launch-agent-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}>
-      <section className="launch-agent-dialog" role="dialog" aria-modal="true" aria-labelledby="launch-agent-title" onKeyDown={(event) => {
-        if (event.key === 'Escape') { event.preventDefault(); close() }
+      <section ref={dialog} className="launch-agent-dialog" role="dialog" aria-modal="true" aria-labelledby="launch-agent-title" onKeyDown={(event) => {
+        if (event.key === 'Escape') { event.preventDefault(); close(); return }
+        if (event.key !== 'Tab') return
+        const items = [...(dialog.current?.querySelectorAll<HTMLElement>(focusableSelector) ?? [])]
+        const next = dialogTabTargetIndex(items.indexOf(document.activeElement as HTMLElement), items.length, event.shiftKey)
+        if (next === null) return
+        event.preventDefault()
+        event.stopPropagation()
+        items[next]?.focus()
       }}>
         <header><strong id="launch-agent-title">Launch agent</strong><button type="button" aria-label="Close launch form" onClick={close}>×</button></header>
         <form onSubmit={submit}>
@@ -58,7 +73,8 @@ export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => vo
         {problem && <pre className="launch-agent-refusal" role="alert">{problem}</pre>}
         {confirmation && <div className="launch-agent-confirmation" role="status" aria-live="polite">
           <span>{confirmation.line}</span>
-          {confirmation.action && <button type="button" onClick={() => onOpenAgent(confirmation.action!.agent)}>{confirmation.action.label}</button>}
+          <span className="launch-agent-task-note">{confirmation.taskLine}</span>
+          {confirmation.action && <button type="button" onClick={() => { onOpenAgent(confirmation.action!.agent); close() }}>{confirmation.action.label}</button>}
           {result?.output_tail && <details><summary>Launch output</summary><pre>{result.output_tail}</pre></details>}
         </div>}
       </section>

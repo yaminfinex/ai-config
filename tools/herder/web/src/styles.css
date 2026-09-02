@@ -313,6 +313,7 @@ h2, h3, p { margin-top: 0; }
 .launch-agent-actions button[type='submit'], .launch-agent-confirmation button { border-color: var(--accent); background: var(--accent-dim); }
 .launch-agent-refusal { max-height: 160px; overflow: auto; margin: 0 12px 12px; padding: 8px; border: 1px solid var(--error-border); border-radius: 4px; background: var(--error-bg); color: var(--error-text); font: 10px/1.5 var(--mono); white-space: pre-wrap; }
 .launch-agent-confirmation { display: grid; gap: 8px; margin: 0 12px 12px; padding: 8px; border: 1px solid var(--info-border); border-radius: 4px; background: var(--info-bg); color: var(--info-text); font: 10px/1.5 var(--mono); }
+.launch-agent-task-note { color: var(--dim); }
 .launch-agent-confirmation button { justify-self: start; }
 .launch-agent-confirmation details { min-width: 0; }
 .launch-agent-confirmation summary { cursor: pointer; }

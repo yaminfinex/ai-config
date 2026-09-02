@@ -52,6 +52,14 @@ export function launchConfirmation(names: string[]) {
   const first = names[0]
   return {
     line: names.length === 1 ? `Launched ${first}.` : `Launched ${names.join(', ')}.`,
+    taskLine: 'It has no task yet — send it one from its panel.',
     action: first ? { label: 'Open in this space', agent: first } : null,
   }
+}
+
+export function dialogTabTargetIndex(activeIndex: number, itemCount: number, reverse: boolean) {
+  if (itemCount < 1) return null
+  if (reverse && activeIndex <= 0) return itemCount - 1
+  if (!reverse && (activeIndex < 0 || activeIndex >= itemCount - 1)) return 0
+  return null
 }
