@@ -184,6 +184,26 @@ test('pulled merges and storage events notify readers without notifying mutation
   assert.equal(mutations, 0)
 })
 
+test('equal-updated merges choose the greater writeID regardless of arrival order', () => {
+  const lower: StoredNoteRecord = {
+    version: 1,
+    writeID: 'a-write',
+    record: { id: 'same-note', group: 'general', text: 'lower writeID', created: 1, updated: 42 },
+  }
+  const greater: StoredNoteRecord = {
+    version: 1,
+    writeID: 'z-write',
+    record: { id: 'same-note', group: 'general', text: 'greater writeID', created: 1, updated: 42 },
+  }
+
+  for (const records of [[lower, greater], [greater, lower]]) {
+    const subject = harness()
+    subject.store.merge(records)
+    assert.equal(subject.store.list()[0]?.text, 'greater writeID')
+    assert.equal(subject.store.records()[0]?.writeID, 'z-write')
+  }
+})
+
 test('each successful local add, edit, and delete call emits one mutation batch', () => {
   const subject = harness()
   const batches: StoredNoteRecord[][] = []
