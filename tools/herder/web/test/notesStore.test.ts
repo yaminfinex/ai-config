@@ -5,6 +5,7 @@ import {
   createNotesStore,
   defaultRandomID,
   notesStoragePrefix,
+  type StoredNoteRecord,
   type NotesStorage,
   type NotesStoreEventTarget,
 } from '../src/features/notes/notesStore.ts'
@@ -156,6 +157,69 @@ test('storage events merge one note by last-write-wins and tombstones prevent re
   const stale = tabB.store.edit(note.id, { text: 'stale resurrection' })
   assert.equal(stale.ok, false)
   assert.deepEqual(tabB.store.list(), [])
+})
+
+test('pulled merges and storage events notify readers without notifying mutation subscribers', () => {
+  const subject = harness()
+  let reads = 0
+  let mutations = 0
+  subject.store.subscribe(() => { reads++ })
+  subject.store.subscribeMutations(() => { mutations++ })
+  const remote: StoredNoteRecord = {
+    version: 1,
+    writeID: 'remote-write',
+    record: { id: 'remote-note', group: 'general', text: 'from server', created: 1, updated: 2 },
+  }
+  subject.store.merge([remote])
+  assert.equal(reads, 1)
+  assert.equal(mutations, 0)
+
+  const storage = subject.storage as FakeStorage
+  subject.flushScheduled()
+  const eventRecord: StoredNoteRecord = { ...remote, writeID: 'tab-write', record: { ...remote.record, text: 'from tab', updated: 3 } }
+  const key = `${notesStoragePrefix}record:${encodeURIComponent(eventRecord.record.id)}`
+  storage.values.set(key, JSON.stringify(eventRecord))
+  ;(subject.events as FakeEvents).dispatch('storage', { key, newValue: JSON.stringify(eventRecord), storageArea: storage as Storage })
+  assert.equal(reads, 2)
+  assert.equal(mutations, 0)
+})
+
+test('equal-updated merges choose the greater writeID regardless of arrival order', () => {
+  const lower: StoredNoteRecord = {
+    version: 1,
+    writeID: 'a-write',
+    record: { id: 'same-note', group: 'general', text: 'lower writeID', created: 1, updated: 42 },
+  }
+  const greater: StoredNoteRecord = {
+    version: 1,
+    writeID: 'z-write',
+    record: { id: 'same-note', group: 'general', text: 'greater writeID', created: 1, updated: 42 },
+  }
+
+  for (const records of [[lower, greater], [greater, lower]]) {
+    const subject = harness()
+    subject.store.merge(records)
+    assert.equal(subject.store.list()[0]?.text, 'greater writeID')
+    assert.equal(subject.store.records()[0]?.writeID, 'z-write')
+  }
+})
+
+test('each successful local add, edit, and delete call emits one mutation batch', () => {
+  const subject = harness()
+  const batches: StoredNoteRecord[][] = []
+  subject.store.subscribeMutations((records) => batches.push(records))
+  const first = subject.store.add({ group: 'general', text: 'first' })
+  const second = subject.store.add({ group: 'general', text: 'second' })
+  assert.equal(first.ok, true)
+  assert.equal(second.ok, true)
+  if (!first.ok || !second.ok) return
+  assert.equal(batches.length, 2)
+  subject.store.edit(first.value.id, { text: 'edited' })
+  assert.equal(batches.length, 3)
+  subject.store.delete([first.value.id, second.value.id])
+  assert.equal(batches.length, 4)
+  assert.equal(batches[3]?.length, 2)
+  assert.ok(batches[3]?.every(({ record }) => 'deleted' in record))
 })
 
 test('pagehide flushes pending writes and backups remain under the one notes namespace', () => {

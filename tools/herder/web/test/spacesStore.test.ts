@@ -8,7 +8,7 @@ import {
   type SpacesStorage,
   type SpacesStoreEventTarget,
 } from '../src/features/spaces/spacesStore.ts'
-import { mainSpaceID, spaceRecordKey } from '../src/features/spaces/spacesModel.ts'
+import { mainSpaceID, spaceRecordKey, type StoredSpaceRecord } from '../src/features/spaces/spacesModel.ts'
 
 class FakeStorage implements SpacesStorage {
   readonly values = new Map<string, string>()
@@ -231,6 +231,26 @@ test('server merges notify readers without re-enqueueing mutation listeners', ()
   assert.equal(mutations, 0)
   assert.equal(reads, 1)
   assert.deepEqual(subject.store.list().map(({ id }) => id), ['main', 'server-only'])
+})
+
+test('equal-updated merges choose the greater writeID regardless of arrival order', () => {
+  const lower: StoredSpaceRecord = {
+    version: 1,
+    writeID: 'a-write',
+    record: { id: 'same-space', name: 'lower writeID', order: 1, created: 1, updated: 42 },
+  }
+  const greater: StoredSpaceRecord = {
+    version: 1,
+    writeID: 'z-write',
+    record: { id: 'same-space', name: 'greater writeID', order: 1, created: 1, updated: 42 },
+  }
+
+  for (const records of [[lower, greater], [greater, lower]]) {
+    const subject = harness()
+    subject.store.merge(records)
+    assert.equal(subject.store.list().find(({ id }) => id === 'same-space')?.name, 'greater writeID')
+    assert.equal(subject.store.records().find(({ record }) => record.id === 'same-space')?.writeID, 'z-write')
+  }
 })
 
 test('event listeners are lazy and detach after the final subscriber leaves', () => {

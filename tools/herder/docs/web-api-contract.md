@@ -13,7 +13,8 @@ owner ruling.
   only; port from a flag (default proposed: 4400). Ships dark —
   nothing starts it until the owner turns it on.
 - The API wraps live substrate (herdr socket, hcom CLI, tools/fleet
-  spawn path). It holds NO state of its own — restart loses nothing.
+  spawn path). Except for the explicitly pinned generic per-user browser-state
+  store below, it holds NO durable state of its own — restart loses nothing.
   The narrow file/folder watch exception below is ephemeral request state:
   each watch set belongs solely to one `/api/events` connection, is derived
   from that request, and is discarded in full when the connection closes or
@@ -285,6 +286,48 @@ that write paths already require. It has no server-side state and grants no new
 authority: attributed and unattributed viewers retain the same v1 privileges.
 The web shell calls it on load and keeps an honest unresolved state after a
 semantic attribution refusal.
+
+## Per-user browser state
+
+GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
+  are the one generic persistence surface for small, attributed browser-state
+  records. State is isolated first by the resolved web user and then by a short
+  lowercase dotted namespace. The two client namespaces currently in use are
+  `spaces` and `notes`; adding a namespace does not add another endpoint or
+  stream.
+
+  A row is
+  `{"key":"<record-id>","value":<json>,"updated":123,"writeID":"<writer-id>","deleted":false}`.
+  `key` and `writeID` are required non-empty strings. `updated` plus `writeID`
+  is the last-write-wins version pair; `deleted:true` is a retained tombstone.
+  The server caps each serialized `value` at 65,536 bytes and each namespace at
+  10,000 rows including tombstones.
+
+  GET defaults `since` to zero and returns
+  `{"rows":[<row>],"rev":<current-namespace-revision>}`. Revision zero returns
+  every current row; a later cursor returns rows changed after that namespace
+  revision. A namespace that has never been written returns 404
+  `state namespace not found`.
+
+  POST accepts `{"rows":[<row>]}` and resolves every key independently by the
+  same `(updated, writeID)` comparator. Success returns
+  `{"accepted":["<winning-key>"],"rev":<current-namespace-revision>}`;
+  idempotent or losing rows are omitted from `accepted`. A successful write
+  with at least one accepted key publishes one `state-changed` event on the
+  existing `/api/events` EventSource with
+  `{"namespace":"<namespace>","rev":<current-namespace-revision>}`. The event
+  is only a pull nudge; GET remains the source of truth.
+
+  Both methods require the normal attributed web identity. Attribution and
+  sender-collision refusals are 409 with the standard refusal body. POST uses
+  413 `state batch too large` when its request body exceeds the write cap and
+  413 `state refused` when a row value or namespace row count exceeds its cap.
+  An unavailable state directory is 503 `state unavailable`. Malformed
+  namespaces, cursors, bodies, or rows use the existing structured 400/404
+  refusals. Clients retain local browser state through all refusals: 409 stops
+  retries until an attributed pull succeeds, 413 holds the rejected queue until
+  the next local mutation, and transient/offline/503 failures use capped
+  backoff.
 
 GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   The classified, immutable Claude session entry stream. The server

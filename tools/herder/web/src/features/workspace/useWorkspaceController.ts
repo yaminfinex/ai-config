@@ -28,6 +28,7 @@ import { usePanelRecords } from './usePanelRecords'
 import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
+import { useNotes } from '../notes/NotesProvider.tsx'
 import {
   createSpacesStore,
   browserSpacesTransport,
@@ -116,6 +117,7 @@ function initializeBrowserSpaces(): SpacesRuntime {
 }
 
 export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'missing' }>) {
+  const { stateChanged: onNotesStateChanged } = useNotes()
   const [quickOpen, setQuickOpen] = useState(false)
   const [shortcutReference, setShortcutReference] = useState(false)
   const [quickOpenGroup, setQuickOpenGroup] = useState<string>()
@@ -357,7 +359,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const focusedPane = focusedScreenPaneID && screenPaneIDs.includes(focusedScreenPaneID) ? focusedScreenPaneID : undefined
   const onStateChanged = useCallback((namespace: string, rev: number) => {
     void spacesSyncRef.current?.stateChanged(namespace, rev)
-  }, [])
+    onNotesStateChanged(namespace, rev)
+  }, [onNotesStateChanged])
   useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane, onStateChanged)
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null

@@ -4,7 +4,9 @@ import test from 'node:test'
 import {
   createServerSpaceLookup,
   createSpacesSync,
+  createSpacesSyncPersistence,
   serverSpaceLookupMessage,
+  spacesSyncMessages,
   type GenericStateRow,
   type SpacesSyncPersistence,
   type SpacesSyncStore,
@@ -314,4 +316,24 @@ test('state-changed only nudges a pull for the spaces namespace and coalesces re
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.deepEqual(pulls, [0, 1])
   release()
+})
+
+test('spaces keeps byte-identical sync keys and owner-facing messages after generalization', () => {
+  const values = new Map<string, string>()
+  const persistence = createSpacesSyncPersistence({
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => { values.set(key, value) },
+  })
+  persistence.writeCursor(7)
+  persistence.writeQueue([])
+  assert.deepEqual([...values.keys()].sort(), [
+    'herder.web.state.v1:spaces:queue',
+    'herder.web.state.v1:spaces:rev',
+  ])
+  assert.equal(spacesSyncMessages.browserOnly, 'Spaces are saved in this browser only.')
+  assert.equal(spacesSyncMessages.pending(1), 'Spaces are saved on this device, but 1 change could not sync. It will retry automatically.')
+  assert.equal(spacesSyncMessages.pending(2), 'Spaces are saved on this device, but 2 changes could not sync. They will retry automatically.')
+  assert.equal(spacesSyncMessages.queuePersistence, 'Spaces are saved on this device, but the pending sync queue could not be saved between browser sessions.')
+  assert.equal(spacesSyncMessages.postRefused([], '10,000 row limit reached'), 'Spaces are saved on this device, but the server refused to sync them: 10,000 row limit reached')
+  assert.equal(spacesSyncMessages.cursorPersistence, 'Spaces are saved on this device, but the sync cursor could not be saved between browser sessions.')
 })

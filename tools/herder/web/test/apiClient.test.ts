@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, getState, lifecycleProblem, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
@@ -99,6 +100,16 @@ test('generic state reads and writes pin the namespace endpoint shape', async ()
     ['/api/state/session.annotations?since=7', undefined, undefined],
     ['/api/state/spaces', 'POST', JSON.stringify({ rows: [row] })],
   ])
+})
+
+test('the web contract pins generic per-user state and both client namespaces', () => {
+  const contract = readFileSync(new URL('../../docs/web-api-contract.md', import.meta.url), 'utf8')
+  const section = contract.slice(contract.indexOf('## Per-user browser state'), contract.indexOf('GET `/api/agents/', contract.indexOf('## Per-user browser state')))
+  assert.match(section, /GET `\/api\/state\/\{namespace\}\?since=\{rev\}` and POST `\/api\/state\/\{namespace\}`/)
+  assert.match(section, /`spaces` and `notes`/)
+  assert.match(section, /65,536 bytes/)
+  assert.match(section, /409[\s\S]*413[\s\S]*503/)
+  assert.match(section, /`state-changed`[\s\S]*`\{"namespace":"<namespace>","rev":<current-namespace-revision>\}`/)
 })
 
 test('refusals preserve semantic status for lifecycle presentation', async () => {
