@@ -78,7 +78,7 @@ function selectedLine(node: Node | null) {
 }
 
 export function useNoteCapture({ active, source, agents }: { active: boolean, source: NoteSource, agents: string[] }) {
-  const { store, notes, announce } = useNotes()
+  const { store, announce } = useNotes()
   const containerRef = useRef<HTMLElement>(null)
   const pointer = useRef(false)
   const keyboardSelecting = useRef(false)
@@ -152,6 +152,6 @@ export function useNoteCapture({ active, source, agents }: { active: boolean, so
     announce(`Saved a note in ${group === 'general' ? 'unassigned' : group}.`)
     close()
   }
-  const element = capture ? <NoteCaptureChip capture={capture} notes={notes} agents={agents} onSave={save} onAbandon={close} /> : null
+  const element = capture ? <NoteCaptureChip capture={capture} agents={agents} onSave={save} onAbandon={close} /> : null
   return { containerRef, onDoubleClick, element, show, close }
 }

@@ -15,7 +15,7 @@ import {
 } from './notesListModel.ts'
 import { noteSourceLabel, noteTransferText } from './notesPresentation.ts'
 import type { Note } from './notesStore.ts'
-import { useNotes } from './NotesProvider.tsx'
+import { useAllNotes, useNotes, useNotesGroups } from './NotesProvider.tsx'
 import { NotesSelector } from './NotesSelector.tsx'
 import { selectorRows } from './notesSelectorModel.ts'
 import { useScheduledFrame } from '../../shared/lifecycle.ts'
@@ -25,11 +25,25 @@ export type NotesHandOff = (target: string, notes: Note[]) => { ok: true } | { o
 
 const emptySelection = (): NoteSelection => ({ selected: new Set(), anchor: undefined, cursor: undefined })
 
+function LiveNotesSelector({ selected, agents, mode, initialValue, initialQuery, onCancel, onChoose }: {
+  selected: Note[]
+  agents: string[]
+  mode: 'assign' | 'destination'
+  initialValue?: string
+  initialQuery?: string
+  onCancel: () => void
+  onChoose: (value: string) => void
+}) {
+  const notes = useAllNotes()
+  return <NotesSelector notes={notes} selected={selected} agents={agents} mode={mode} initialValue={initialValue} initialQuery={initialQuery} onCancel={onCancel} onChoose={onChoose} />
+}
+
 export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGroup[], agents: string[], onHandOff: NotesHandOff }) {
-  const { store, notes: allNotes, announce, handOffGuard } = useNotes()
+  const { store, announce, handOffGuard } = useNotes()
+  const subscribedNotes = useNotesGroups(groups.map(({ group }) => group))
   const listRef = useRef<HTMLDivElement>(null)
   const scheduleFrame = useScheduledFrame()
-  const notesByGroup = useMemo(() => new Map(groups.map(({ group }) => [group, allNotes.filter((note) => note.group === group)])), [allNotes, groups])
+  const notesByGroup = useMemo(() => new Map(groups.map(({ group }) => [group, subscribedNotes.filter((note) => note.group === group)])), [groups, subscribedNotes])
   const notes = useMemo(() => groups.flatMap(({ group }) => notesByGroup.get(group) ?? []), [groups, notesByGroup])
   const ids = useMemo(() => notes.map((note) => note.id), [notes])
   const [selection, setSelection] = useState<NoteSelection>(emptySelection)
@@ -77,7 +91,7 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
     setProblem('')
   }
   const beginHandOff = () => {
-    const destinationOrder = selectorRows(allNotes, agents, 'destination').map((row) => row.value)
+    const destinationOrder = selectorRows(store.list(), agents, 'destination').map((row) => row.value)
     const route = handOffRoute(selectedNotes, destinationOrder)
     if (route.kind === 'direct') handOff(route.target)
     else setSelector({ mode: 'destination', initial: route.initial })
@@ -168,7 +182,7 @@ export function NotesList({ groups, agents, onHandOff }: { groups: NotesListGrou
       <button type="button" onClick={remove}><kbd>⌫</kbd> delete</button>
       <button type="button" aria-label="Clear selection" onClick={clear}><kbd>esc</kbd></button>
     </div>}
-    {selector && <NotesSelector notes={allNotes} selected={selectedNotes} agents={agents} mode={selector.mode} initialValue={selector.initial} initialQuery={selector.query}
+    {selector && <LiveNotesSelector selected={selectedNotes} agents={agents} mode={selector.mode} initialValue={selector.initial} initialQuery={selector.query}
       onCancel={() => setSelector(undefined)} onChoose={(value) => selector.mode === 'assign' ? move(value) : handOff(value)} />}
   </div>
 }

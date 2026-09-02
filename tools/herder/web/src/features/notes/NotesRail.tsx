@@ -2,11 +2,12 @@ import { appendComposerDraft } from '../../composerState'
 import type { Board } from '../../types'
 import type { OpenPlacement } from '../layout/openPlacement'
 import { NotesList } from './NotesList.tsx'
-import { useNotes } from './NotesProvider'
+import { useAllNotes, useNotesStatus } from './NotesProvider'
 import { liveRosterNames, noteGroupRows, noteTransferText } from './notesPresentation'
 
 export function NotesRail({ board, onOpenAgent }: { board: Board | undefined, onOpenAgent: (name: string, placement?: OpenPlacement) => void }) {
-  const { notes, status } = useNotes()
+  const notes = useAllNotes()
+  const status = useNotesStatus()
   const agents = liveRosterNames(board)
   const groups = noteGroupRows(notes, agents)
   const handOff = (target: string, selected: typeof notes) => {

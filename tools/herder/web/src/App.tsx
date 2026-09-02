@@ -14,7 +14,7 @@ import { AppLink, currentRoute, type Route } from './shared/navigation'
 import { Banner } from './shared/presentation'
 import { statusBarHealth, type HealthTick } from './shared/statusBarPresentation'
 import { ThemeToggle } from './shared/ThemeToggle'
-import { NotesProvider, useNotes } from './features/notes/NotesProvider'
+import { NotesProvider, useNotes, useNotesCount } from './features/notes/NotesProvider'
 import { NotesRail } from './features/notes/NotesRail'
 import { NoteQuickAdd } from './features/notes/NoteQuickAdd'
 import { shortcutLabels } from './features/layout/shellShortcuts'
@@ -32,8 +32,9 @@ function StatusTick({ tick }: { tick: HealthTick }) {
 }
 
 function NotesCount() {
-  const { notes } = useNotes()
-  return <span title="Notes saved in this browser">notes: {notes.length}</span>
+  const { store } = useNotes()
+  const count = useNotesCount(store)
+  return <span title="Notes saved in this browser">notes: {count}</span>
 }
 
 function streamProblems(problems: Record<string, string>, fleetProblem: string) {
