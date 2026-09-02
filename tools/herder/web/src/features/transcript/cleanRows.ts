@@ -8,6 +8,7 @@ import {
   type ActivityAggregation,
   type ActivityPillTone,
 } from './cleanView.ts'
+import { systemEntryPresentation } from './systemEntries.ts'
 
 export type ObjectValue = Record<string, unknown>
 
@@ -111,6 +112,10 @@ export function cleanRows(entries: TranscriptEntry[], relationships: CleanRowRel
     if (disposition === 'activity') {
       const label = activityLabel(entry)
       run.push({ key: `activity:${entry.uuid ?? entry.byteOffset}`, label, tone: activityPillTone(entry.kind), aggregation: entry.kind === 'tool_use' ? { category: 'tool', content: label } : undefined, entry, index })
+      return
+    }
+    if (disposition === 'system') {
+      if (systemEntryPresentation(entry.payload)?.alwaysVisible) addEntry(entry, index)
       return
     }
     if (disposition === 'show') addEntry(entry, index)

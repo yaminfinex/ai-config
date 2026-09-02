@@ -6,6 +6,7 @@ import type { TranscriptEntry } from '../src/types.ts'
 import { messageText } from '../src/features/transcript/cleanRows.ts'
 
 const stylesheet = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+const transcriptEntriesSource = readFileSync(new URL('../src/features/transcript/TranscriptEntries.tsx', import.meta.url), 'utf8')
 
 function luminance(hex: string) {
   const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255)
@@ -44,6 +45,22 @@ test('model refusal fallbacks lead with the switch and retain CLI content as det
   })
 })
 
+test('model consent fallbacks lead with the switch and retain CLI content as detail', async () => {
+  const { systemEntryPresentation } = await import('../src/features/transcript/systemEntries.ts')
+  const content = 'Switched to Opus 4.8 (1M context) for this session · Fable 5 requires usage credits · /model to change'
+  assert.deepEqual(systemEntryPresentation({
+    type: 'system',
+    subtype: 'model_consent_fallback',
+    fallbackModel: 'claude-opus-4-8[1m]',
+    content,
+  }), {
+    subtype: 'model_consent_fallback',
+    summary: 'model switched to Opus 4.8 — consent required',
+    detail: content,
+    alwaysVisible: true,
+  })
+})
+
 test('unknown entry labels retain the original type and system subtype', async () => {
   const { unknownEntryLabel } = await import('../src/features/transcript/systemEntries.ts')
   const entry = (payload: unknown): TranscriptEntry => ({ line: 1, byteOffset: 0, kind: 'unknown', payload })
@@ -55,7 +72,15 @@ test('system local command content reaches the existing command renderer unwrap'
   assert.equal(messageText({ type: 'system', subtype: 'local_command', content: '<local-command-stdout>Reloaded fixture skills</local-command-stdout>' }), '<local-command-stdout>Reloaded fixture skills</local-command-stdout>')
 })
 
+test('message content remains authoritative when top-level content is also present', () => {
+  assert.equal(messageText({
+    content: 'top-level system content',
+    message: { content: 'nested message content' },
+  }), 'nested message content')
+})
+
 test('model switch styling is informational and WCAG AA in both themes', () => {
+  assert.match(transcriptEntriesSource, /systemEntry\?\.alwaysVisible[^\n]*role="status"/)
   assert.match(stylesheet, /\.model-switch-entry \{[^}]*border-color: var\(--info-border\);[^}]*background: var\(--info-bg\);[^}]*color: var\(--info-text\)/s)
   assert.doesNotMatch(stylesheet.match(/\.model-switch-entry \{[^}]*\}/s)?.[0] ?? '', /(?:red|error)/)
   for (const block of stylesheet.matchAll(/:root\[data-theme='(?:light|dark)'\] \{([\s\S]*?)\n\}/g)) {

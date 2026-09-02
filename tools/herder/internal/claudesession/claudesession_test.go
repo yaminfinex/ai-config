@@ -252,6 +252,7 @@ func TestInternalEntryDispositions(t *testing.T) {
 		{"relocated", 4, KindSystemChip, true},
 		{"local command", 5, KindCommandOutput, true},
 		{"model refusal fallback", 6, KindSystemChip, true},
+		{"model consent fallback", 7, KindSystemChip, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -296,7 +297,7 @@ func TestBookkeepingAllowlistIsExact(t *testing.T) {
 		"atis-latch": {}, "cost-state": {},
 		"file-history-delta": {}, "file-history-snapshot": {},
 		"isolation-latch": {}, "last-prompt": {}, "mode": {},
-		"observer-ref": {},
+		"observer-ref":    {},
 		"permission-mode": {}, "pr-link": {}, "queue-operation": {},
 		"worktree-state": {},
 	}

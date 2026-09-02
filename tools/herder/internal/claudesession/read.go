@@ -432,7 +432,7 @@ func classifyMode(raw []byte, line, offset int64, includeSidechain bool) (Entry,
 			if isCommandOutput(env.Content) {
 				base.Kind = KindCommandOutput
 			}
-		case "model_refusal_fallback":
+		case "model_refusal_fallback", "model_consent_fallback":
 			base.Kind = KindSystemChip
 		case "turn_duration":
 			base.Kind = KindTurnDuration

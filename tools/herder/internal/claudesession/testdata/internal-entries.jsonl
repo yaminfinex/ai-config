@@ -5,3 +5,4 @@
 {"type":"relocated","sessionId":"fixture-session","relocatedCwd":"/invented/violet-worktree"}
 {"type":"system","subtype":"local_command","content":"<local-command-stdout>Reloaded fixture skills</local-command-stdout>","uuid":"fixture-local-command"}
 {"type":"system","subtype":"model_refusal_fallback","content":"Fable 5's safeguards flagged this message. Switched to Opus 4.8.","originalModel":"claude-fable-5","fallbackModel":"claude-opus-4-8","uuid":"fixture-model-fallback"}
+{"type":"system","subtype":"model_consent_fallback","content":"Switched to Opus 4.8 (1M context) for this session · Fable 5 requires usage credits · /model to change","originalModel":"claude-fable-5","fallbackModel":"claude-opus-4-8[1m]","uuid":"fixture-consent-fallback"}
