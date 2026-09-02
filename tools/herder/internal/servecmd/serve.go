@@ -32,10 +32,12 @@ import (
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
+	"ai-config/tools/herder/internal/herderstate"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/repoctx"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
+	"ai-config/tools/herder/internal/webstate"
 	"ai-config/tools/herder/internal/webui"
 	"github.com/fsnotify/fsnotify"
 )
@@ -82,6 +84,8 @@ type dependencies struct {
 	now                  func() time.Time
 	audit                func(string, ...any)
 	inputSerial          *paneInputSerial
+	state                webstate.Store
+	stateChanges         *stateChangeBroker
 }
 
 var liveDependencies = dependencies{
@@ -311,6 +315,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies := liveDependencies
 	runtimeDependencies.buildIdentity = buildIdentity
 	runtimeDependencies.configuredRoots = configuredRoots
+	runtimeDependencies.stateChanges = newStateChangeBroker()
+	stateDir, stateDirErr := herderstate.Dir()
+	if stateDirErr != nil {
+		runtimeDependencies.state = webstate.Unavailable(stateDirErr)
+	} else {
+		store, storeErr := webstate.NewFileStore(filepath.Join(stateDir, "web-state"), webstate.DefaultLimits())
+		if storeErr != nil {
+			runtimeDependencies.state = webstate.Unavailable(storeErr)
+		} else {
+			runtimeDependencies.state = store
+		}
+	}
 	return serve(listeners, newHandler(runtimeDependencies), stdout, stderr)
 }
 
@@ -437,6 +453,12 @@ func newHandler(deps dependencies) http.Handler {
 	if deps.inputSerial == nil {
 		deps.inputSerial = &paneInputSerial{}
 	}
+	if deps.state == nil {
+		deps.state = webstate.Unavailable(errors.New("state store is not configured"))
+	}
+	if deps.stateChanges == nil {
+		deps.stateChanges = newStateChangeBroker()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/fleet", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -456,6 +478,14 @@ func newHandler(deps dependencies) http.Handler {
 			return
 		}
 		serveEvents(w, r, deps)
+	})
+	mux.HandleFunc("/api/state/", func(w http.ResponseWriter, r *http.Request) {
+		namespace := strings.TrimPrefix(r.URL.Path, "/api/state/")
+		if namespace == "" || strings.Contains(namespace, "/") {
+			refuse(w, http.StatusNotFound, "unknown state namespace", "state namespace is missing or malformed")
+			return
+		}
+		serveState(w, r, deps, namespace)
 	})
 	mux.HandleFunc("/api/viewer", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -1089,6 +1119,8 @@ func serveAttributionError(w http.ResponseWriter, err error) {
 	refuse(w, http.StatusConflict, "attribution required", err.Error())
 }
 
+var errWriteBodyTooLarge = errors.New("write body too large")
+
 func decodeWriteBody(w http.ResponseWriter, r *http.Request, target any, emptyOK bool) error {
 	return decodeWriteBodyLimit(w, r, target, emptyOK, 64<<10)
 }
@@ -1100,6 +1132,10 @@ func decodeWriteBodyLimit(w http.ResponseWriter, r *http.Request, target any, em
 	if err := decoder.Decode(&raw); err != nil {
 		if emptyOK && errors.Is(err, io.EOF) {
 			return nil
+		}
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return fmt.Errorf("%w: body exceeds %d bytes", errWriteBodyTooLarge, limit)
 		}
 		return errors.New("body must be one JSON object with only documented fields")
 	}
@@ -1217,6 +1253,8 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	hcomState := make(chan error, 1)
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	stateChangeCh, unsubscribeStateChanges := deps.stateChanges.subscribe()
+	defer unsubscribeStateChanges()
 	fileWatches := startFileWatches(ctx, deps, watches)
 	if fileWatches != nil {
 		defer fileWatches.Close()
@@ -1640,6 +1678,10 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			}
 		case fact := <-fileChangeCh:
 			if !emit("file-change", fact) {
+				return
+			}
+		case change := <-stateChangeCh:
+			if !emit("state-changed", change) {
 				return
 			}
 		case names := <-transcriptChangeCh:

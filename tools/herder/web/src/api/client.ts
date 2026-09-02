@@ -4,6 +4,10 @@ import type { GitBase } from '../features/git/gitViewModel'
 export type Fetcher = typeof fetch
 export type ResolveContext = string | { root: string, path: string }
 
+export type StateRow = { key: string, value: unknown, updated: number, writeID: string, deleted: boolean }
+export type StateSinceResponse = { rows: StateRow[], rev: number }
+export type StateUpsertResponse = { accepted: string[], rev: number }
+
 export const queryKeys = {
   fleet: ['fleet'] as const,
   viewer: ['viewer'] as const,
@@ -67,6 +71,18 @@ export function getFleet(fetcher?: Fetcher) {
 
 export function getViewer(fetcher?: Fetcher) {
   return requestJSON<{ viewer: string }>('/api/viewer', undefined, fetcher)
+}
+
+export function getState(namespace: string, since: number, fetcher?: Fetcher) {
+  return requestJSON<StateSinceResponse>(`/api/state/${encodeURIComponent(namespace)}?since=${since}`, undefined, fetcher)
+}
+
+export function upsertState(namespace: string, rows: StateRow[], fetcher?: Fetcher) {
+  return requestJSON<StateUpsertResponse>(`/api/state/${encodeURIComponent(namespace)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rows }),
+  }, fetcher)
 }
 
 export function getAgent(name: string, fetcher?: Fetcher) {

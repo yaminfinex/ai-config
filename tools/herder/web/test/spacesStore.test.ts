@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  compareStoredSpaceRecords,
   createSpacesStore,
   type SpacesStorage,
   type SpacesStoreEventTarget,
@@ -63,6 +65,19 @@ function harness(overrides: Partial<Parameters<typeof createSpacesStore>[0]> = {
     flushScheduled() { for (const callback of [...scheduled.values()]) callback(); scheduled.clear() },
   }
 }
+
+test('the client comparator matches the shared client/server corpus', () => {
+  const corpus = JSON.parse(readFileSync(new URL('../../testdata/state-comparator.json', import.meta.url), 'utf8')) as Array<{
+    left: { updated: number, writeID: string }
+    right: { updated: number, writeID: string }
+    winner: 'left' | 'right' | 'equal'
+  }>
+  for (const item of corpus) {
+    const left = { version: 1 as const, writeID: item.left.writeID, record: { id: 'left', name: 'left', order: 0, created: 0, updated: item.left.updated } }
+    const right = { version: 1 as const, writeID: item.right.writeID, record: { id: 'right', name: 'right', order: 0, created: 0, updated: item.right.updated } }
+    assert.equal(Math.sign(compareStoredSpaceRecords(left, right)), { left: 1, equal: 0, right: -1 }[item.winner])
+  }
+})
 
 test('create, rename, close, and reopen preserve identity and ordering', () => {
   const subject = harness()
@@ -160,6 +175,24 @@ test('the active cap refuses create and reopen without evicting spaces', () => {
   assert.equal(subject.store.list().length, 2)
 })
 
+test('a cross-device union above the creation cap stays visible and refuses a new create with the real count', () => {
+  const storage = new FakeStorage()
+  for (let index = 0; index < 17; index++) {
+    const id = `space-${index}`
+    storage.values.set(spaceRecordKey(id), JSON.stringify({
+      version: 1,
+      writeID: `device-${index}`,
+      record: { id, name: id, order: index, created: index, updated: index },
+    }))
+  }
+  const subject = harness({ storage, maxSpaces: 16 })
+  assert.equal(subject.store.list().length, 17)
+  const result = subject.store.create()
+  assert.equal(result.ok, false)
+  if (!result.ok) assert.match(result.reason, /17 spaces/i)
+  assert.equal(subject.store.list().length, 17)
+})
+
 test('storage events merge per-record LWW tombstones without resurrecting a closed space', () => {
   const storage = new FakeStorage()
   seedMain(storage)
@@ -182,6 +215,22 @@ test('storage events merge per-record LWW tombstones without resurrecting a clos
   eventsB.dispatch('storage', { key, newValue: storage.getItem(key), storageArea: storage as Storage })
   assert.deepEqual(tabB.store.list().map((space) => space.name), ['main'])
   assert.equal(tabB.store.rename(created.value.id, 'stale').ok, false)
+})
+
+test('server merges notify readers without re-enqueueing mutation listeners', () => {
+  const subject = harness()
+  let mutations = 0
+  let reads = 0
+  subject.store.subscribeMutations(() => { mutations++ })
+  subject.store.subscribe(() => { reads++ })
+  subject.store.merge([{
+    version: 1,
+    writeID: 'server-device',
+    record: { id: 'server-only', name: 'server only', order: 1, created: 1, updated: 2 },
+  }])
+  assert.equal(mutations, 0)
+  assert.equal(reads, 1)
+  assert.deepEqual(subject.store.list().map(({ id }) => id), ['main', 'server-only'])
 })
 
 test('event listeners are lazy and detach after the final subscriber leaves', () => {

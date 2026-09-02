@@ -1,0 +1,9 @@
+[
+  { "left": { "updated": 0, "writeID": "a" }, "right": { "updated": 1, "writeID": "a" }, "winner": "right" },
+  { "left": { "updated": 2, "writeID": "a" }, "right": { "updated": 1, "writeID": "z" }, "winner": "left" },
+  { "left": { "updated": 7, "writeID": "a" }, "right": { "updated": 7, "writeID": "b" }, "winner": "right" },
+  { "left": { "updated": 7, "writeID": "z" }, "right": { "updated": 7, "writeID": "b" }, "winner": "left" },
+  { "left": { "updated": 7, "writeID": "same" }, "right": { "updated": 7, "writeID": "same" }, "winner": "equal" },
+  { "left": { "updated": 9007199254740990, "writeID": "older-id" }, "right": { "updated": 9007199254740991, "writeID": "newer-id" }, "winner": "right" },
+  { "left": { "updated": 1735689600000, "writeID": "id-9" }, "right": { "updated": 1735689600000, "writeID": "id-10" }, "winner": "left" }
+]

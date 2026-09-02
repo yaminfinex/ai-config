@@ -79,6 +79,7 @@ export function subscribeToFleet(
   focusedScreenPaneID?: string,
   createEventSource: (url: string) => EventSourceLike = (url) => new EventSource(url),
   timers: TimerHost = window,
+  onStateChanged?: (namespace: string, rev: number) => void,
 ) {
   let active = true
   let events: EventSourceLike | null = null
@@ -161,6 +162,11 @@ export function subscribeToFleet(
       update((current) => recordBuildIdentity(current, buildIdentity))
     })
     events.addEventListener('ping', () => touch(false))
+    events.addEventListener('state-changed', (event) => {
+      touch()
+      const change = JSON.parse(event.data) as { namespace: string, rev: number }
+      onStateChanged?.(change.namespace, change.rev)
+    })
     events.addEventListener('fleet', (event) => {
       touch()
       queryClient.setQueryData<Board>(queryKeys.fleet, JSON.parse(event.data) as Board)
@@ -258,7 +264,7 @@ export function deferFleetSubscription(
   }
 }
 
-export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string) {
+export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string, onStateChanged?: (namespace: string, rev: number) => void) {
   const queryClient = useQueryClient()
   const previousScreenSubscription = useRef('')
   const subscription = [...new Set(agentNames)].sort().join(',')
@@ -278,8 +284,8 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
     subscription ? subscription.split(',') : [],
     screenSubscription ? screenSubscription.split(',') : [],
     JSON.parse(fileWatchSubscription) as FileWatchTarget[],
-    focusedScreenPaneID,
-  )), [fileWatchSubscription, focusedScreenPaneID, queryClient, subscription, screenSubscription])
+    focusedScreenPaneID, undefined, window, onStateChanged,
+  )), [fileWatchSubscription, focusedScreenPaneID, onStateChanged, queryClient, subscription, screenSubscription])
 }
 
 export function useStreamStatus() {

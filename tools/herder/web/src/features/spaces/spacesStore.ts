@@ -27,6 +27,9 @@ export type SpacesStore = {
   close: (id: string) => SpaceResult<SpaceDefinition>
   reopen: (id: string) => SpaceResult<SpaceDefinition>
   rollbackCreate: (id: string) => boolean
+  records: () => StoredSpaceRecord[]
+  merge: (records: StoredSpaceRecord[]) => void
+  subscribeMutations: (listener: (records: StoredSpaceRecord[]) => void) => () => void
   subscribe: (listener: () => void) => () => void
   status: () => SpacesStatus
   flush: () => boolean
@@ -70,9 +73,18 @@ function parseStored(raw: string | null): StoredSpaceRecord | null {
   }
 }
 
+export function compareSpaceVersions(leftUpdated: number, leftWriteID: string, rightUpdated: number, rightWriteID: string) {
+  if (leftUpdated !== rightUpdated) return leftUpdated > rightUpdated ? 1 : -1
+  if (leftWriteID === rightWriteID) return 0
+  return leftWriteID > rightWriteID ? 1 : -1
+}
+
+export function compareStoredSpaceRecords(left: StoredSpaceRecord, right: StoredSpaceRecord) {
+  return compareSpaceVersions(left.record.updated, left.writeID, right.record.updated, right.writeID)
+}
+
 function newer(left: StoredSpaceRecord, right: StoredSpaceRecord) {
-  if (left.record.updated !== right.record.updated) return left.record.updated > right.record.updated ? left : right
-  return left.writeID >= right.writeID ? left : right
+  return compareStoredSpaceRecords(left, right) >= 0 ? left : right
 }
 
 function recordID(key: string) {
@@ -95,6 +107,7 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
   const records = new Map<string, StoredSpaceRecord>()
   const dirty = new Set<string>()
   const listeners = new Set<() => void>()
+  const mutationListeners = new Set<(records: StoredSpaceRecord[]) => void>()
   let timer: unknown
   let attached = false
 
@@ -160,6 +173,7 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
     dirty.add(stored.record.id)
     scheduleFlush()
     notify()
+    for (const listener of mutationListeners) listener([stored])
   }
   const putBatch = (values: StoredSpaceRecord[]) => {
     for (const stored of values) {
@@ -168,6 +182,7 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
     }
     scheduleFlush()
     notify()
+    for (const listener of mutationListeners) listener(values)
   }
   const reconcile = (id: string) => {
     if (!storage) return records.get(id)
@@ -245,7 +260,8 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
     list: live,
     recentlyClosed: closed,
     create: () => guarded(() => {
-      if (live().length >= maxSpaces) return { ok: false, reason: `There is no room for another space. The ${maxSpaces}-space limit refuses creation rather than closing an existing space.` }
+      const count = live().length
+      if (count >= maxSpaces) return { ok: false, reason: `There is no room for another space. All ${count} spaces stay visible, but the ${maxSpaces}-space limit refuses new creation until the count is lower.` }
       const usedNames = new Set([...records.values()].map(({ record }) => record.name))
       let number = 2
       while (usedNames.has(`space ${number}`)) number += 1
@@ -317,6 +333,24 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       notify()
       return true
     },
+    records: () => [...records.values()],
+    merge: (values) => {
+      let changed = false
+      for (const incoming of values) {
+        const current = records.get(incoming.record.id)
+        if (current && compareStoredSpaceRecords(incoming, current) <= 0) continue
+        records.set(incoming.record.id, incoming)
+        dirty.add(incoming.record.id)
+        changed = true
+      }
+      if (!changed) return
+      scheduleFlush()
+      notify()
+    },
+    subscribeMutations: (listener) => {
+      mutationListeners.add(listener)
+      return () => mutationListeners.delete(listener)
+    },
     subscribe: (subscriber) => {
       listeners.add(subscriber)
       attach()
@@ -333,6 +367,7 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       timer = undefined
       detach()
       listeners.clear()
+      mutationListeners.clear()
     },
   }
 }
