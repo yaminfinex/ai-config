@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, lifecycleProblem, resolveFiles, sendMessage, sendPaneInput, spawnAgent, viewerReadOnlyMessage } from '../src/api/client.ts'
+import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, getState, lifecycleProblem, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
@@ -83,6 +83,21 @@ test('mutations use pinned JSON request shapes', async () => {
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ text: '\x03\x1b[A' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ keys: ['ctrl+c', 'up'] })],
     ['/api/spawn', 'POST', JSON.stringify({ from_pane: 'w1:p1', shape: 'pane', tool: 'codex', tag: 'new', prompt: 'work' })],
+  ])
+})
+
+test('generic state reads and writes pin the namespace endpoint shape', async () => {
+  const requests: Array<{ path: string, init?: RequestInit }> = []
+  const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requests.push({ path: String(input), init })
+    return jsonResponse(init?.method === 'POST' ? { accepted: ['main'], rev: 8 } : { rows: [], rev: 7 })
+  }) as typeof fetch
+  const row = { key: 'main', value: { id: 'main', name: 'main', order: 0, created: 0 }, updated: 1, writeID: 'device', deleted: false }
+  await getState('session.annotations', 7, fetcher)
+  await upsertState('spaces', [row], fetcher)
+  assert.deepEqual(requests.map(({ path, init }) => [path, init?.method, init?.body]), [
+    ['/api/state/session.annotations?since=7', undefined, undefined],
+    ['/api/state/spaces', 'POST', JSON.stringify({ rows: [row] })],
   ])
 })
 

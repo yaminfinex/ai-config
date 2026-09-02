@@ -206,6 +206,28 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   assert.equal(sources[0].closed, true)
 })
 
+test('state changes dispatch from the existing EventSource without opening another socket', () => {
+  const queryClient = new QueryClient()
+  const sources: FakeEventSource[] = []
+  const changes: Array<[string, number]> = []
+  const timers = {
+    setTimeout: (() => 1) as typeof window.setTimeout,
+    clearTimeout: (() => undefined) as typeof window.clearTimeout,
+    setInterval: (() => 2) as typeof window.setInterval,
+    clearInterval: (() => undefined) as typeof window.clearInterval,
+  }
+  const stop = subscribeToFleet(queryClient, [], [], [], undefined, () => {
+    const source = new FakeEventSource()
+    sources.push(source)
+    return source
+  }, timers, (namespace, rev) => changes.push([namespace, rev]))
+  assert.equal(sources.length, 1)
+  sources[0].emit('state-changed', JSON.stringify({ namespace: 'spaces', rev: 9 }))
+  assert.deepEqual(changes, [['spaces', 9]])
+  assert.equal(sources.length, 1)
+  stop()
+})
+
 test('one multi-entry SSE burst causes one active transcript cursor fetch', async () => {
   const queryClient = new QueryClient()
   const source = new FakeEventSource()

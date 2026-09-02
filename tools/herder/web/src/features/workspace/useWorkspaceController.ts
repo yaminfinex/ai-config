@@ -30,6 +30,10 @@ import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import {
   createSpacesStore,
+  browserSpacesTransport,
+  createServerSpaceLookup,
+  createSpacesSync,
+  createSpacesSyncPersistence,
   createAndSwitchSpace,
   closeSpaceLayout,
   hasRecoverableSpaceLayout,
@@ -43,7 +47,10 @@ import {
   readActiveSpace,
   removeLayoutRecovery,
   reopenSpaceLayout,
+  resetSpacesSyncCursor,
   restoreSpaceDock,
+  serverSpaceLookupMessage,
+  spacesStoreSyncAdapter,
   writeActiveSpace,
   type SpaceDefinition,
   type SpacesStatus,
@@ -66,6 +73,7 @@ type SpacesRuntime = {
   activeSpaceID: string | null
   status: SpacesStatus
   problem: string
+  lookupSpaceID: string | null
 }
 
 function unavailableSpacesRuntime(problem: string, legacy?: LegacyLayoutFamilies): SpacesRuntime {
@@ -76,7 +84,7 @@ function unavailableSpacesRuntime(problem: string, legacy?: LegacyLayoutFamilies
   }
   return {
     initialization, store: null, spaces: [], recent: [], activeSpaceID: null,
-    status: { persistent: false, recovered: false, problem }, problem,
+    status: { persistent: false, recovered: false, problem }, problem, lookupSpaceID: null,
   }
 }
 
@@ -84,18 +92,18 @@ function initializeBrowserSpaces(): SpacesRuntime {
   try {
     const initialization = initializeSpaces(localStorage)
     if (initialization.mode === 'legacy') return unavailableSpacesRuntime(initialization.problem, initialization.legacy)
-    const store = createSpacesStore({ onPurge: (id) => removeLayoutRecovery(localStorage, id) })
+    const store = createSpacesStore({ onPurge: (id) => { removeLayoutRecovery(localStorage, id); resetSpacesSyncCursor(localStorage) } })
   const spaces = store.list()
-    const selection = readActiveSpace(spaces, spaceIDFromSearch(window.location.search), sessionStorage, localStorage)
+    const urlSpaceID = spaceIDFromSearch(window.location.search)
+    const selection = readActiveSpace(spaces, urlSpaceID, sessionStorage, localStorage)
     if (!selection.id) return unavailableSpacesRuntime(
       'Spaces are unavailable because their saved definitions could not be read. Your current layout is still being saved.',
       readLegacyLayoutFamilies(localStorage),
     )
-    const fallback = spaces.find((space) => space.id === selection.id)
     const problem = selection.staleURL
-      ? `The space in this link is closed or unavailable. This tab opened ${fallback?.name ?? 'another space'} instead.`
+      ? serverSpaceLookupMessage
       : store.status().problem
-    return { initialization, store, spaces, recent: store.recentlyClosed().filter((space) => hasRecoverableSpaceLayout(localStorage, space.id)), activeSpaceID: selection.id, status: store.status(), problem }
+    return { initialization, store, spaces, recent: store.recentlyClosed().filter((space) => hasRecoverableSpaceLayout(localStorage, space.id)), activeSpaceID: selection.id, status: store.status(), problem, lookupSpaceID: selection.staleURL ? urlSpaceID : null }
   } catch {
     const initialization = initializeSpaces({
       getItem: () => null,
@@ -126,11 +134,13 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [activeSpaceID, setActiveSpaceID] = useState(spacesRuntime.activeSpaceID)
   const [spaceProblem, setSpaceProblem] = useState(spacesRuntime.problem)
   const [spaceAnnouncement, setSpaceAnnouncement] = useState('')
+  const [pendingLookupSwitchID, setPendingLookupSwitchID] = useState<string>()
   const [historySuppressor] = useState(() => createHistorySuppressor(
     (callback) => window.requestAnimationFrame(callback),
     (handle) => window.cancelAnimationFrame(handle),
   ))
   const apiRef = useRef<DockviewApi | undefined>(undefined)
+  const spacesSyncRef = useRef<ReturnType<typeof createSpacesSync> | null>(null)
   const notesFocusReturn = useRef<HTMLElement | null>(null)
   const disposeDock = useRef<() => void>(() => undefined)
   const queryClient = useQueryClient()
@@ -230,6 +240,48 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   }, [activeSpaceID, historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
 
   useEffect(() => {
+    const store = spacesRuntime.store
+    if (!store) return
+    let lookup: ReturnType<typeof createServerSpaceLookup> | undefined
+    const sync = createSpacesSync({
+      store: spacesStoreSyncAdapter(store),
+      persistence: createSpacesSyncPersistence(localStorage),
+      transport: browserSpacesTransport(),
+      retry: (callback, delay) => window.setTimeout(callback, delay),
+      cancelRetry: (handle) => window.clearTimeout(handle as number),
+      onProblem: (problem) => setSpaceProblem(problem || store.status().problem),
+      onRows: () => lookup?.rowsArrived(store.list().map(({ id }) => id)),
+    })
+    spacesSyncRef.current = sync
+    if (spacesRuntime.lookupSpaceID) {
+      lookup = createServerSpaceLookup(spacesRuntime.lookupSpaceID, {
+        hasLocal: (id) => store.list().some((space) => space.id === id),
+        switchTo: (id) => { setPendingLookupSwitchID(id); setSpaceProblem(store.status().problem) },
+        fallback: () => {
+          const fallback = store.list().find((space) => space.id === spacesRuntime.activeSpaceID)
+          setSpaceProblem(`The space in this link is closed or unavailable. This tab opened ${fallback?.name ?? 'another space'} instead.`)
+        },
+        scheduleTimeout: (callback, delay) => window.setTimeout(callback, delay),
+        cancelTimeout: (handle) => window.clearTimeout(handle as number),
+      })
+    }
+    void sync.start().then(() => lookup?.firstPullCompleted(store.list().map(({ id }) => id)))
+    const online = () => { void sync.retryNow() }
+    window.addEventListener('online', online)
+    return () => {
+      window.removeEventListener('online', online)
+      lookup?.dispose()
+      sync.dispose()
+      if (spacesSyncRef.current === sync) spacesSyncRef.current = null
+    }
+  }, [spacesRuntime.activeSpaceID, spacesRuntime.lookupSpaceID, spacesRuntime.store])
+
+  useEffect(() => {
+    if (!pendingLookupSwitchID || !apiRef.current || !spaces.some((space) => space.id === pendingLookupSwitchID)) return
+    if (activeSpaceID === pendingLookupSwitchID || switchSpace(pendingLookupSwitchID)) setPendingLookupSwitchID(undefined)
+  }, [activeSpaceID, pendingLookupSwitchID, revision, spaces, switchSpace])
+
+  useEffect(() => {
     if (!spacesRuntime.store || !activeSpaceID || spaces.some((space) => space.id === activeSpaceID)) return
     const fallback = spaces[0]
     if (fallback) switchSpace(fallback.id)
@@ -301,7 +353,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const provenScreenPaneIDs = openPanels.flatMap((params) => params.kind === 'screen' && screenIdentityState(params, boardQuery.data) === 'ready' ? [params.identity.paneID] : [])
   const screenPaneIDs = [...new Set([...provenScreenPaneIDs, ...agentNames.flatMap((name) => agentScreenPanes[name] ? [agentScreenPanes[name]] : [])])]
   const focusedPane = focusedScreenPaneID && screenPaneIDs.includes(focusedScreenPaneID) ? focusedScreenPaneID : undefined
-  useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane)
+  const onStateChanged = useCallback((namespace: string, rev: number) => {
+    void spacesSyncRef.current?.stateChanged(namespace, rev)
+  }, [])
+  useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane, onStateChanged)
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
   const viewer = viewerQuery.data?.viewer ?? 'unresolved'
