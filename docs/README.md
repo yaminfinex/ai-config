@@ -12,6 +12,7 @@ When a cited record is consolidated, its old path remains only as a one-line poi
 - `hcom-upgrade.md`: upgrade and verify hcom.
 - `herdr-upgrade.md`: upgrade and verify herdr.
 - `status-lines.md`: Claude and Codex status-line setup and data flow.
+- `fencing-convention.md`: the plain/status/internal chat fencing every agent uses so the owner's transcript view stays readable; parser-derived grammar, examples, and the hcom session snippet.
 - `new-harness-onboarding.md`: reusable harness characterization and integration checklist.
 - `grok-integration-characterization.md`: tested Grok integration and delivery behavior, including the complete delivery-probe evidence.
 - `design/2026-07-10-herder-instruction-injection.md`: launch/resume instruction-delivery characterization and proposed closure.
