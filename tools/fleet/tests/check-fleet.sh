@@ -301,6 +301,21 @@ inject_lines=$(grep 'term inject vava' "$FLEET_TEST_CALLS")
   || fail "selfcompact injected /compact and the steer in one burst"
 pass "selfcompact splits the /compact prefix from the steer (2.1.257 paste parsing)"
 
+# The launch notes are canonical in docs/hcom-launch-notes.txt; the apply script
+# renders the checkout path in and hands the whole text to `hcom config notes`.
+: >"$FLEET_TEST_CALLS"
+PATH="$TEST_ROOT/bin:$PATH" "$FLEET/apply-hcom-notes.sh" >/dev/null \
+  || fail "apply-hcom-notes did not run against the fake hcom"
+notes_call=$(grep -F ' config notes ' "$FLEET_TEST_CALLS" || true)
+[[ -n $notes_call ]] || fail "apply-hcom-notes did not call hcom config notes"
+repo_root=$(cd -- "$FLEET/../.." && pwd)
+printf -v root_q '%q' "$repo_root/docs/fencing-convention.md"
+[[ $notes_call == *"$root_q"* ]] || fail "apply-hcom-notes did not render the checkout path into the notes"
+[[ $notes_call != *__AI_CONFIG_ROOT__* ]] || fail "apply-hcom-notes left the placeholder unrendered"
+[[ $notes_call == *'<status>'* && $notes_call == *'Lifecycle doctrine'* ]] \
+  || fail "apply-hcom-notes did not send both the doctrine and the fencing paragraph"
+pass "apply-hcom-notes renders the canonical launch notes for hcom"
+
 : >"$FLEET_TEST_CALLS"
 if FLEET_TEST_STATUS_MODE=terminal PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/selfcompact.sh" --run vava steer continue >/dev/null 2>&1; then

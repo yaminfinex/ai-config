@@ -99,13 +99,17 @@ the first after moving the checkout (it stores absolute paths).
    tools/fleet/preset-install.sh
    ```
 
-2. **The lifecycle doctrine note** — the one-time bootstrap note every hcom-launched agent
-   reads at boot. Point it at this checkout's drop-in context doc (run from the checkout
-   root):
+2. **The launch notes** — the bootstrap text every hcom-launched agent reads at session
+   start (lifecycle doctrine + the chat fencing convention). The canonical text lives in
+   this repo at `docs/hcom-launch-notes.txt`; the apply script renders this checkout's
+   path into it and writes it to hcom's `[launch] notes`:
 
    ```sh
-   hcom config notes "Lifecycle doctrine: spawn/cull peers via $PWD/tools/fleet (spawn.sh / cull.sh / selfcompact.sh); messaging, compact-inject, resume (hcom r), fork (hcom f) via hcom; placement via herdr. herder is display-cache ONLY (list + observer) — never a lifecycle gateway. Full doctrine: $PWD/docs/session-context-fleet.md"
+   tools/fleet/apply-hcom-notes.sh          # write
+   tools/fleet/apply-hcom-notes.sh --check  # exit 1 if hcom's copy has drifted
    ```
+
+   Edit the repo file, never the hcom config directly, then re-run the script.
 
 3. **herdr's claude session registration** — the SessionStart hook that reports claude
    session ids to herdr, the display cache's session evidence:
