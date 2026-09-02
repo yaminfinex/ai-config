@@ -31,7 +31,9 @@ bad() { printf 'FAIL  %s - %s\n' "$1" "$2"; fail=$((fail + 1)); }
 if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
   # Build outside the worktree: comparing complete directories catches stale
   # source and direct dist tampering without silently repairing either one.
-  if npm --prefix "$WEB_ROOT" ci &&
+  # A symlinked node_modules is a worktree sharing the live checkout's install:
+  # npm ci would empty the shared target through the link, so reuse it as-is.
+  if { [ -L "$WEB_ROOT/node_modules" ] || npm --prefix "$WEB_ROOT" ci; } &&
     npm --prefix "$WEB_ROOT" run lint &&
     npm --prefix "$WEB_ROOT" run test &&
     npm --prefix "$WEB_ROOT" run typecheck &&
