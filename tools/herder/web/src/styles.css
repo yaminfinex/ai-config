@@ -625,6 +625,7 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .system-chip { display: block; width: fit-content; max-width: 900px; margin: 6px 0; padding: 2px 9px; border: 1px solid var(--border); border-radius: 10px; background: var(--chip); color: var(--dimmer); font-size: 10px; }
 .system-chip summary { list-style-position: inside; }
 .system-chip > div { padding: 6px; color: var(--dim); white-space: pre-wrap; }
+.model-switch-entry { border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); }
 .unknown-entry { border-color: var(--warning-border); color: var(--amber); }
 .scroll-jump-buttons { position: absolute; z-index: 2; left: 50%; bottom: 10px; display: flex; max-width: calc(100% - 36px); gap: 6px; transform: translateX(-50%); }
 .scroll-jump-buttons button { border-color: var(--accent); border-radius: 14px; background: var(--accent); color: var(--jump-text); box-shadow: 0 2px 8px var(--floating-shadow); white-space: nowrap; }

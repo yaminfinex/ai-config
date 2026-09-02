@@ -232,6 +232,43 @@ func TestTaxonomyFixture(t *testing.T) {
 	}
 }
 
+func TestInternalEntryDispositions(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("testdata", "internal-entries.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	tests := []struct {
+		name   string
+		line   int
+		kind   Kind
+		render bool
+	}{
+		{"atis latch", 0, "", false},
+		{"isolation latch", 1, "", false},
+		{"cost state", 2, "", false},
+		{"observer ref", 3, "", false},
+		{"relocated", 4, KindSystemChip, true},
+		{"local command", 5, KindCommandOutput, true},
+		{"model refusal fallback", 6, KindSystemChip, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entry, render, _ := classify([]byte(lines[tc.line]), int64(tc.line), 0)
+			if render != tc.render {
+				t.Fatalf("render = %v, want %v", render, tc.render)
+			}
+			if entry.Kind != tc.kind {
+				t.Fatalf("kind = %q, want %q", entry.Kind, tc.kind)
+			}
+			if render && string(entry.Payload) != lines[tc.line] {
+				t.Fatalf("payload did not preserve fixture line: %s", entry.Payload)
+			}
+		})
+	}
+}
+
 func TestReadVitalsUsesLatestClaudeAssistantFacts(t *testing.T) {
 	t.Parallel()
 	vitals, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))
@@ -256,8 +293,10 @@ func TestBookkeepingAllowlistIsExact(t *testing.T) {
 	t.Parallel()
 	want := map[string]struct{}{
 		"agent-name": {}, "ai-title": {}, "bridge-session": {},
+		"atis-latch": {}, "cost-state": {},
 		"file-history-delta": {}, "file-history-snapshot": {},
-		"last-prompt": {}, "mode": {},
+		"isolation-latch": {}, "last-prompt": {}, "mode": {},
+		"observer-ref": {},
 		"permission-mode": {}, "pr-link": {}, "queue-operation": {},
 		"worktree-state": {},
 	}
