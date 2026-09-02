@@ -18,6 +18,7 @@ import {
 } from '../src/features/spaces/spacesModel.ts'
 import { persistLayoutSnapshot } from '../src/features/layout/layoutPersistenceModel.ts'
 import { layoutStorageKey, type StoredLayout } from '../src/features/layout/dockLayout.ts'
+import { createSpacesStore } from '../src/features/spaces/spacesStore.ts'
 
 class FakeStorage implements Storage {
   readonly values = new Map<string, string>()
@@ -104,6 +105,67 @@ test('two first-load migrations converge on one well-known main definition', () 
   storage.values.delete(migrationMarkerKey)
   assert.equal(initializeSpaces(storage).activeSpaceID, 'main')
   assert.equal([...storage.values.keys()].filter((key) => key === spaceRecordKey(mainSpaceID)).length, 1)
+})
+
+test('closing main and reinitializing keeps its tombstone out of the live space list', () => {
+  const storage = new FakeStorage()
+  storage.values.set(layoutStorageKey, JSON.stringify(v3))
+  initializeSpaces(storage)
+  let id = 0
+  const store = createSpacesStore({
+    storage,
+    events: null,
+    now: () => 1_000,
+    randomID: () => `id-${++id}`,
+    schedule: () => 1,
+    cancel: () => undefined,
+  })
+  assert.equal(store.create().ok, true)
+  assert.equal(closeSpaceLayout(storage, mainSpaceID).ok, true)
+  assert.equal(store.close(mainSpaceID).ok, true)
+  assert.equal(store.flush(), true)
+
+  assert.equal(initializeSpaces(storage).mode, 'spaces')
+  const reloaded = createSpacesStore({ storage, events: null, now: () => 1_001 })
+  assert.equal(reloaded.records().find(({ record }) => record.id === mainSpaceID)?.record.deleted, true)
+  assert.equal(reloaded.list().some(({ id: spaceID }) => spaceID === mainSpaceID), false)
+})
+
+test('a valid migration marker is final when the main layout is missing', () => {
+  const storage = new FakeStorage()
+  storage.values.set(layoutStorageKey, JSON.stringify(v3))
+  initializeSpaces(storage)
+  storage.values.delete(spaceLayoutKey(mainSpaceID))
+  const calls = storage.calls.length
+
+  assert.equal(initializeSpaces(storage).mode, 'spaces')
+  assert.equal(storage.calls.slice(calls).some((call) => call.startsWith('set:')), false)
+})
+
+test('a valid migration marker is final when the main record is missing', () => {
+  const storage = new FakeStorage()
+  storage.values.set(layoutStorageKey, JSON.stringify(v3))
+  initializeSpaces(storage)
+  storage.values.delete(spaceRecordKey(mainSpaceID))
+  const calls = storage.calls.length
+
+  assert.equal(initializeSpaces(storage).mode, 'spaces')
+  assert.equal(storage.values.has(spaceRecordKey(mainSpaceID)), false)
+  assert.equal(storage.calls.slice(calls).some((call) => call.startsWith('set:')), false)
+})
+
+test('migration preserves a pre-existing main record', () => {
+  const storage = new FakeStorage()
+  storage.values.set(layoutStorageKey, JSON.stringify(v3))
+  const existing = JSON.stringify({
+    version: 1,
+    writeID: 'existing-tombstone',
+    record: { id: mainSpaceID, name: 'main', order: 0, created: 12, updated: 34, deleted: true },
+  })
+  storage.values.set(spaceRecordKey(mainSpaceID), existing)
+
+  assert.equal(initializeSpaces(storage).mode, 'spaces')
+  assert.equal(storage.values.get(spaceRecordKey(mainSpaceID)), existing)
 })
 
 test('close verifies recovery before removing live layout and reopen restores both copies', () => {
