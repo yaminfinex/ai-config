@@ -1,3 +1,5 @@
+import type { NotesStore } from './notesStore'
+
 export type NotesSelectorSignal<T> = {
   subscribe: (listener: () => void) => () => void
   getSnapshot: () => T
@@ -42,4 +44,25 @@ export function createNotesSelectorSignal<T>(
       }
     },
   }
+}
+
+export function allNotesSignal(store: NotesStore) {
+  return createNotesSelectorSignal(store.subscribe, store.list, shallowEqualSnapshots)
+}
+
+export function groupNotesSignal(store: NotesStore, group: string) {
+  return createNotesSelectorSignal(store.subscribe, () => store.listGroup(group), shallowEqualSnapshots)
+}
+
+export function notesGroupsSignal(store: NotesStore, groups: string[]) {
+  const included = new Set(groups)
+  return createNotesSelectorSignal(store.subscribe, () => store.list().filter((note) => included.has(note.group)), shallowEqualSnapshots)
+}
+
+export function notesStatusSignal(store: NotesStore) {
+  return createNotesSelectorSignal(store.subscribe, store.status)
+}
+
+export function notesCountSignal(store: NotesStore) {
+  return createNotesSelectorSignal(store.subscribe, () => store.list().length)
 }

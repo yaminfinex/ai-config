@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { createNotesStore, type Note, type NotesStatus, type NotesStore } from './notesStore'
 import { createNoteHandOffGuard, type NoteHandOffGuard } from './noteHandOff'
-import { createNotesSelectorSignal, shallowEqualSnapshots } from './notesSubscription'
+import { allNotesSignal, groupNotesSignal, notesCountSignal, notesGroupsSignal, notesStatusSignal } from './notesSubscription'
 
 type NotesContextValue = {
   store: NotesStore
@@ -43,33 +43,30 @@ export function useNotes() {
 
 export function useAllNotes(): Note[] {
   const { store } = useNotes()
-  const signal = useMemo(() => createNotesSelectorSignal(store.subscribe, store.list, shallowEqualSnapshots), [store])
+  const signal = useMemo(() => allNotesSignal(store), [store])
   return useSyncExternalStore(signal.subscribe, signal.getSnapshot, signal.getSnapshot)
 }
 
 export function useGroupNotes(group: string): Note[] {
   const { store } = useNotes()
-  const signal = useMemo(() => createNotesSelectorSignal(store.subscribe, () => store.listGroup(group), shallowEqualSnapshots), [group, store])
+  const signal = useMemo(() => groupNotesSignal(store, group), [group, store])
   return useSyncExternalStore(signal.subscribe, signal.getSnapshot, signal.getSnapshot)
 }
 
 export function useNotesGroups(groups: string[]): Note[] {
   const { store } = useNotes()
   const groupKey = JSON.stringify(groups)
-  const signal = useMemo(() => {
-    const included = new Set<string>(JSON.parse(groupKey) as string[])
-    return createNotesSelectorSignal(store.subscribe, () => store.list().filter((note) => included.has(note.group)), shallowEqualSnapshots)
-  }, [groupKey, store])
+  const signal = useMemo(() => notesGroupsSignal(store, JSON.parse(groupKey) as string[]), [groupKey, store])
   return useSyncExternalStore(signal.subscribe, signal.getSnapshot, signal.getSnapshot)
 }
 
 export function useNotesStatus(): NotesStatus {
   const { store } = useNotes()
-  const signal = useMemo(() => createNotesSelectorSignal(store.subscribe, store.status), [store])
+  const signal = useMemo(() => notesStatusSignal(store), [store])
   return useSyncExternalStore(signal.subscribe, signal.getSnapshot, signal.getSnapshot)
 }
 
 export function useNotesCount(store: NotesStore): number {
-  const signal = useMemo(() => createNotesSelectorSignal(store.subscribe, () => store.list().length), [store])
+  const signal = useMemo(() => notesCountSignal(store), [store])
   return useSyncExternalStore(signal.subscribe, signal.getSnapshot, signal.getSnapshot)
 }
