@@ -125,6 +125,42 @@ func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	}
 }
 
+func TestReadFromSkipsTokenUsageRecord(t *testing.T) {
+	t.Parallel()
+	assertSkippedRolloutFixture(t, "token_usage_record.jsonl")
+}
+
+func TestReadFromSkipsItemCompleted(t *testing.T) {
+	t.Parallel()
+	assertSkippedRolloutFixture(t, "item_completed.jsonl")
+}
+
+func assertSkippedRolloutFixture(t *testing.T, name string) {
+	t.Helper()
+	// Copied verbatim from Codex 0.153.4 rollout
+	// rollout-2026-09-07T07-50-07-01a07ad8-8c41-71a2-890b-b8cabc7f5a84.jsonl:
+	// item_completed is line 10; token_usage_record is line 14.
+	path := filepath.Join("testdata", name)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ReadFrom(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 0 {
+		t.Errorf("ReadFrom() produced %d entries, want none", len(result.Entries))
+	}
+	if result.NextOffset != int64(len(raw)) {
+		t.Errorf("NextOffset = %d, want %d", result.NextOffset, len(raw))
+	}
+	entry, render := classify(raw, 0, 0)
+	if render || entry.Quarantine != nil {
+		t.Errorf("classify() render = %t, quarantine = %+v; want false, nil", render, entry.Quarantine)
+	}
+}
+
 func TestReadVitalsUsesLatestCodexTurnAndTokenFacts(t *testing.T) {
 	t.Parallel()
 	vitals, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))

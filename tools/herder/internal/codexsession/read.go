@@ -29,7 +29,7 @@ var knownEventTypes = map[string]struct{}{
 	"agent_message": {}, "agent_reasoning": {}, "collab_agent_interaction_end": {},
 	"collab_agent_spawn_end": {}, "collab_close_end": {}, "collab_resume_end": {},
 	"collab_waiting_end": {}, "context_compacted": {}, "entered_review_mode": {},
-	"exec_command_end": {}, "exited_review_mode": {}, "mcp_tool_call_end": {},
+	"exec_command_end": {}, "exited_review_mode": {}, "item_completed": {}, "mcp_tool_call_end": {},
 	"patch_apply_end": {}, "sub_agent_activity": {}, "task_started": {},
 	"thread_goal_updated": {}, "thread_rolled_back": {}, "thread_settings_applied": {},
 	"token_count": {}, "turn_aborted": {}, "web_search_end": {},
@@ -272,7 +272,7 @@ func classify(raw []byte, line, offset int64) (Entry, bool) {
 	case "compacted":
 		base.Kind, base.Payload = KindCompactDivider, normalizeCompaction(env.Payload)
 		return base, true
-	case "session_meta", "turn_context", "world_state", "inter_agent_communication_metadata":
+	case "session_meta", "turn_context", "world_state", "inter_agent_communication_metadata", "token_usage_record":
 		return Entry{}, false
 	default:
 		base.Payload = cloneRaw(raw)
