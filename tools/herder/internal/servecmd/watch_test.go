@@ -147,6 +147,65 @@ func TestWatchReloadDrainsSlowRequestBeforeExec(t *testing.T) {
 	}
 }
 
+func TestWatchReloadExecsAfterDrainCapWithStuckRequest(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(entered)
+		<-release
+		_, _ = io.WriteString(w, "too late")
+	})
+	executed := make(chan struct{})
+	reload := make(chan watchConfig, 1)
+	config := watchConfig{execPath: "/new/herder", exec: func(string, []string, []string) error {
+		close(executed)
+		return errors.New("test exec stopped")
+	}}
+	var stderr bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- serve([]net.Listener{listener}, handler, reload, 15*time.Millisecond, io.Discard, &stderr)
+	}()
+	type requestResult struct {
+		gotResponse bool
+		err         error
+	}
+	requestDone := make(chan requestResult, 1)
+	go func() {
+		response, requestErr := http.Get("http://" + listener.Addr().String())
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		requestDone <- requestResult{gotResponse: response != nil, err: requestErr}
+	}()
+	<-entered
+	reload <- config
+	select {
+	case <-executed:
+	case <-time.After(time.Second):
+		t.Fatal("re-exec did not run after the drain cap")
+	}
+	if code := <-done; code != 1 {
+		t.Fatalf("serve=%d want=1", code)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("watch drain reached 15ms cap; re-executing")) {
+		t.Fatalf("cap log missing: %q", stderr.String())
+	}
+	select {
+	case result := <-requestDone:
+		if result.gotResponse || result.err == nil {
+			t.Fatalf("stuck request unexpectedly received a response: %#v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stuck request was not closed at the drain cap")
+	}
+}
+
 func TestExecutableWatchSnapshotFollowsSymlinkReplacement(t *testing.T) {
 	root := t.TempDir()
 	first := filepath.Join(root, "first")
