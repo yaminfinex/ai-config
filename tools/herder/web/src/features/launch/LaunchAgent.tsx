@@ -4,12 +4,12 @@ import { changeLaunchTool, dialogTabTargetIndex, initialLaunchForm, launchConfir
 
 const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])'
 
-export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => void }) {
+export function LaunchAgent({ workspaceID, workspaceName, checkoutPath, onOpenAgent }: { workspaceID: string, workspaceName: string, checkoutPath?: string, onOpenAgent: (name: string) => void }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(initialLaunchForm)
   const [pending, setPending] = useState(false)
   const [problem, setProblem] = useState('')
-  const [result, setResult] = useState<{ names: string[], output_tail: string } | null>(null)
+  const [result, setResult] = useState<{ names: string[], pane: string, output_tail: string } | null>(null)
   const launchButton = useRef<HTMLButtonElement | null>(null)
   const dialog = useRef<HTMLElement | null>(null)
   const tool = useRef<HTMLSelectElement | null>(null)
@@ -31,17 +31,17 @@ export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => vo
     setProblem('')
     setResult(null)
     try {
-      setResult(await spawnAgent(launchRequest(form)))
+      setResult(await spawnAgent(launchRequest(form, workspaceID)))
     } catch (error) {
       setProblem(launchRefusal(apiProblem(error).problem))
     } finally {
       setPending(false)
     }
   }
-  const confirmation = result ? launchConfirmation(result.names) : null
+  const confirmation = result ? launchConfirmation(result.names, workspaceName, result.pane) : null
 
   return <>
-    <button ref={launchButton} type="button" className="launch-agent-button" aria-label="Launch agent" title="Launch agent" onClick={() => setOpen(true)}>+</button>
+    <button ref={launchButton} type="button" className="launch-agent-button" aria-label={`Launch agent in ${workspaceName}`} title={`Launch agent in ${workspaceName}`} onMouseDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpen(true) }}>+</button>
     {open && <div className="launch-agent-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}>
       <section ref={dialog} className="launch-agent-dialog" role="dialog" aria-modal="true" aria-labelledby="launch-agent-title" onKeyDown={(event) => {
         if (event.key === 'Escape') { event.preventDefault(); close(); return }
@@ -53,7 +53,8 @@ export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => vo
         event.stopPropagation()
         items[next]?.focus()
       }}>
-        <header><strong id="launch-agent-title">Launch agent</strong><button type="button" aria-label="Close launch form" onClick={close}>×</button></header>
+        <header><strong id="launch-agent-title">Launch agent in {workspaceName}</strong><button type="button" aria-label="Close launch form" onClick={close}>×</button></header>
+        <p className="launch-agent-workspace-path" title={checkoutPath}>{checkoutPath || 'Checkout path unavailable'}</p>
         <form onSubmit={submit}>
           <label>Tool<select ref={tool} value={form.tool} disabled={pending} onChange={(event) => setForm((current) => changeLaunchTool(current, event.target.value as LaunchTool))}>
             <option value="claude">Claude</option><option value="codex">Codex</option>
@@ -67,11 +68,6 @@ export function LaunchAgent({ onOpenAgent }: { onOpenAgent: (name: string) => vo
           </select></label>
           <label>Tag<input value={form.tag} disabled={pending} pattern="[A-Za-z0-9][A-Za-z0-9_-]*" required
             onChange={(event) => setForm((current) => ({ ...current, tag: event.target.value }))} /></label>
-          <label>Repository<input value={form.repo} disabled={pending} placeholder="This Herder repo"
-            onChange={(event) => setForm((current) => ({ ...current, repo: event.target.value }))} /></label>
-          <label>Worktree branch<input value={form.branch} disabled={pending} placeholder="Generated automatically"
-            onChange={(event) => setForm((current) => ({ ...current, branch: event.target.value }))} /></label>
-          <p className="launch-agent-help">{form.branchHelp}</p>
           <div className="launch-agent-actions"><button type="button" onClick={close}>Cancel</button><button type="submit" disabled={pending}>{pending ? 'Launching…' : 'Launch'}</button></div>
         </form>
         {problem && <pre className="launch-agent-refusal" role="alert">{problem}</pre>}

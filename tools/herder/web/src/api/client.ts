@@ -170,16 +170,25 @@ export type SpawnRequest = {
   model?: string
   effort?: string
   tag: string
-  repo?: string
-  branch?: string
+  workspace: string
 }
 
-export function spawnAgent(body: SpawnRequest, fetcher?: Fetcher) {
-  return requestJSON<LifecycleResult>('/api/spawn', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  }, fetcher)
+export async function spawnAgent(body: SpawnRequest, fetcher?: Fetcher, timeoutMs = 160_000) {
+  const controller = new AbortController()
+  const deadline = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await requestJSON<LifecycleResult>('/api/spawn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    }, fetcher)
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('The launcher did not answer in time; check the fleet list')
+    throw error
+  } finally {
+    clearTimeout(deadline)
+  }
 }
 
 export function lifecycleProblem(error: unknown): LifecycleProblem {

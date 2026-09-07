@@ -254,7 +254,7 @@ h2, h3, p { margin-top: 0; }
 .status-secondary { flex: 0 0 auto; margin-left: auto; }
 .status-health { display: flex; align-items: center; gap: 9px; }
 .fleet-status-group { display: flex; height: 20px; flex: 0 0 auto; align-items: center; gap: 4px; }
-.launch-agent-button { width: 20px; height: 20px; flex: 0 0 20px; padding: 0; border-color: var(--border2); background: var(--chip); color: var(--status-bar-text); font: 600 13px var(--mono); }
+.launch-agent-button { width: 20px; height: 20px; flex: 0 0 20px; margin-left: auto; padding: 0; border-color: var(--border2); background: var(--chip); color: var(--status-bar-text); font: 600 13px var(--mono); }
 .launch-agent-button:hover, .launch-agent-button:focus-visible { border-color: var(--accent); background: var(--bg2); color: var(--text); }
 .workspace-switcher-slot { display: flex; height: 20px; min-width: 0; flex: 1 1 auto; }
 .space-strip, .space-chips { display: flex; min-width: 0; align-items: center; gap: 3px; }
@@ -303,6 +303,7 @@ h2, h3, p { margin-top: 0; }
 .launch-agent-dialog > header { display: flex; height: 40px; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--border); }
 .launch-agent-dialog > header strong { font: 600 13px var(--mono); }
 .launch-agent-dialog > header button { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--dim); font-size: 16px; }
+.launch-agent-workspace-path { overflow: hidden; margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--dimmer); font: 10px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .launch-agent-dialog form { display: grid; gap: 8px; padding: 12px; }
 .launch-agent-dialog label { display: grid; grid-template-columns: 128px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--dim); font: 11px var(--mono); }
 .launch-agent-dialog input, .launch-agent-dialog select { width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--border2); border-radius: 4px; outline: none; background: var(--bg); color: var(--text); font: 11px var(--mono); }

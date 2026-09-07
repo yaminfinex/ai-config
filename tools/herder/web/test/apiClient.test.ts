@@ -78,12 +78,12 @@ test('mutations use pinned JSON request shapes', async () => {
   await sendMessage('vile', 'hello', fetcher)
   await sendPaneInput('w1:p/1', { text: '\x03\x1b[A' }, fetcher)
   await sendPaneInput('w1:p/1', { keys: ['ctrl+c', 'up'] }, fetcher)
-  await spawnAgent({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', repo: '/repo root', branch: 'feature/web' }, fetcher)
+  await spawnAgent({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', workspace: 'w1' }, fetcher)
   assert.deepEqual(requests.map(({ path, init }) => [path, init?.method, init?.body]), [
     ['/api/agents/vile/message', 'POST', JSON.stringify({ text: 'hello' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ text: '\x03\x1b[A' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ keys: ['ctrl+c', 'up'] })],
-    ['/api/spawn', 'POST', JSON.stringify({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', repo: '/repo root', branch: 'feature/web' })],
+    ['/api/spawn', 'POST', JSON.stringify({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', workspace: 'w1' })],
   ])
 })
 
@@ -115,11 +115,21 @@ test('the web contract pins generic per-user state and both client namespaces', 
 test('refusals preserve semantic status for lifecycle presentation', async () => {
   const fetcher = (async () => jsonResponse({ error: 'attribution required', detail: 'peer unknown' }, { status: 409 })) as typeof fetch
   await assert.rejects(
-    spawnAgent({ tool: 'claude', model: 'opus', tag: 'impl', repo: '' }, fetcher),
+    spawnAgent({ tool: 'claude', model: 'opus', tag: 'impl', workspace: 'w1' }, fetcher),
     (error) => {
       assert.deepEqual(lifecycleProblem(error), { readOnly: 'Connect via Tailscale to continue. peer unknown' })
       return true
     },
+  )
+})
+
+test('spawn aborts at its deadline with an actionable fleet-list message', async () => {
+  const fetcher = ((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+  })) as typeof fetch
+  await assert.rejects(
+    spawnAgent({ tool: 'codex', tag: 'impl', workspace: 'w1' }, fetcher, 5),
+    { message: 'The launcher did not answer in time; check the fleet list' },
   )
 })
 

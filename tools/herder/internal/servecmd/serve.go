@@ -47,6 +47,7 @@ const (
 	PollCadence             = 2 * time.Second
 	HeartbeatCadence        = 15 * time.Second
 	TranscriptSafetyCadence = 30 * time.Second
+	ReloadDrainTimeout      = 150 * time.Second
 	webNoteStart            = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
 	webNoteEnd              = "[HERDER_WEB_OPERATOR_NOTE_END]"
 )
@@ -81,10 +82,7 @@ type dependencies struct {
 	transcriptWatcher    func() (*fsnotify.Watcher, error)
 	fileWatcherDelta     func(int)
 	repoContext          func(context.Context, string) (repoctx.Context, error)
-	repoRoot             string
 	recordLaunch         func(launchEdge) error
-	branchExists         func(context.Context, string, string) (bool, error)
-	branchAllocator      *launchBranchAllocator
 	now                  func() time.Time
 	audit                func(string, ...any)
 	inputSerial          *paneInputSerial
@@ -122,7 +120,6 @@ var liveDependencies = dependencies{
 	transcriptWatcher: fsnotify.NewWatcher,
 	repoContext:       repoctx.Read,
 	recordLaunch:      appendLaunchEdge,
-	branchExists:      localBranchExists,
 	now:               time.Now,
 	audit:             log.Printf,
 	inputSerial:       &paneInputSerial{},
@@ -246,17 +243,15 @@ type paneInputResponse struct {
 }
 
 type spawnRequest struct {
-	Tool   *string `json:"tool"`
-	Model  *string `json:"model"`
-	Effort *string `json:"effort"`
-	Tag    *string `json:"tag"`
-	Repo   *string `json:"repo"`
-	Branch *string `json:"branch"`
+	Tool      *string `json:"tool"`
+	Model     *string `json:"model"`
+	Effort    *string `json:"effort"`
+	Tag       *string `json:"tag"`
+	Workspace *string `json:"workspace"`
 }
 
 var (
 	tagPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
-	branchPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
 	effortLevelsByTool = map[string][]string{
 		"claude": {"low", "medium", "high", "xhigh", "max"},
 		"codex":  {"low", "medium", "high", "xhigh"},
@@ -307,13 +302,14 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	ctx, cancelWatch := context.WithCancel(context.Background())
 	defer cancelWatch()
+	var reload <-chan watchConfig
 	if *watch {
 		config, err := newWatchConfig(os.Args)
 		if err != nil {
 			fmt.Fprintf(stderr, "herder serve: watch unavailable: %v\n", err)
 			return 1
 		}
-		startWatch(ctx, config, stderr)
+		reload = startWatch(ctx, config, stderr)
 	}
 	listeners, warnings, err := liveDependencies.listeners(*port)
 	if err != nil {
@@ -346,8 +342,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			runtimeDependencies.state = store
 		}
 	}
-	runtimeDependencies.repoRoot = strings.TrimSpace(os.Getenv("AI_CONFIG_ROOT"))
-	return serve(listeners, newHandler(runtimeDependencies), stdout, stderr)
+	return serve(listeners, newHandler(runtimeDependencies), reload, ReloadDrainTimeout, stdout, stderr)
 }
 
 type rootFlags []string
@@ -381,8 +376,73 @@ func runningBuildIdentity() (string, error) {
 	return "executable:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func serve(listeners []net.Listener, handler http.Handler, stdout, stderr io.Writer) int {
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+type drainingHandler struct {
+	mu       sync.Mutex
+	handler  http.Handler
+	draining bool
+	active   int
+	idle     chan struct{}
+	nextSSE  uint64
+	sse      map[uint64]context.CancelFunc
+}
+
+func newDrainingHandler(handler http.Handler) *drainingHandler {
+	idle := make(chan struct{})
+	close(idle)
+	return &drainingHandler{handler: handler, idle: idle, sse: make(map[uint64]context.CancelFunc)}
+}
+
+func (d *drainingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	if d.draining {
+		d.mu.Unlock()
+		w.Header().Set("Connection", "close")
+		http.Error(w, "server restarting", http.StatusServiceUnavailable)
+		return
+	}
+	if d.active == 0 {
+		d.idle = make(chan struct{})
+	}
+	d.active++
+	var sseID uint64
+	if r.URL.Path == "/api/events" {
+		d.nextSSE++
+		sseID = d.nextSSE
+		ctx, cancel := context.WithCancel(r.Context())
+		d.sse[sseID] = cancel
+		r = r.WithContext(ctx)
+	}
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.sse, sseID)
+		d.active--
+		if d.active == 0 {
+			close(d.idle)
+		}
+		d.mu.Unlock()
+	}()
+	d.handler.ServeHTTP(w, r)
+}
+
+func (d *drainingHandler) beginDrain() <-chan struct{} {
+	d.mu.Lock()
+	d.draining = true
+	idle := d.idle
+	cancels := make([]context.CancelFunc, 0, len(d.sse))
+	for _, cancel := range d.sse {
+		cancels = append(cancels, cancel)
+	}
+	d.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+	return idle
+}
+
+func serve(listeners []net.Listener, handler http.Handler, reload <-chan watchConfig, drainTimeout time.Duration, stdout, stderr io.Writer) int {
+	drainer := newDrainingHandler(handler)
+	server := &http.Server{Handler: drainer, ReadHeaderTimeout: 5 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	errCh := make(chan error, len(listeners))
@@ -396,6 +456,50 @@ func serve(listeners []net.Listener, handler http.Handler, stdout, stderr io.Wri
 		// instead of waiting for graceful drain. Closing cancels their request
 		// contexts and reaps the blocking hcom subscription subprocesses.
 		_ = server.Close()
+		return 0
+	case config := <-reload:
+		idle := drainer.beginDrain()
+		server.SetKeepAlivesEnabled(false)
+		for _, listener := range listeners {
+			_ = listener.Close()
+		}
+		fmt.Fprintf(stderr, "herder serve: watch change settled; draining requests before re-exec via %s\n", config.execPath)
+		deadline := time.Now().Add(drainTimeout)
+		timer := time.NewTimer(drainTimeout)
+		drained := false
+		select {
+		case <-idle:
+			drained = true
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		case <-timer.C:
+			fmt.Fprintf(stderr, "herder serve: watch drain reached %s cap; re-executing\n", drainTimeout)
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			_ = server.Close()
+			return 0
+		}
+		if drained {
+			shutdownCtx, cancel := context.WithDeadline(context.Background(), deadline)
+			_ = server.Shutdown(shutdownCtx)
+			cancel()
+		} else {
+			_ = server.Close()
+		}
+		if execErr := config.exec(config.execPath, config.argv, config.env); execErr != nil {
+			fmt.Fprintf(stderr, "herder serve: watch re-exec failed: %v\n", execErr)
+			_ = server.Close()
+			return 1
+		}
 		return 0
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
@@ -472,9 +576,6 @@ func newHandler(deps dependencies) http.Handler {
 	}
 	if deps.inputSerial == nil {
 		deps.inputSerial = &paneInputSerial{}
-	}
-	if deps.branchAllocator == nil {
-		deps.branchAllocator = newLaunchBranchAllocator()
 	}
 	if deps.state == nil {
 		deps.state = webstate.Unavailable(errors.New("state store is not configured"))
@@ -1063,28 +1164,25 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		}
 	}
-	repo := strings.TrimSpace(deps.repoRoot)
-	if request.Repo != nil && strings.TrimSpace(*request.Repo) != "" {
-		repo = filepath.Clean(strings.TrimSpace(*request.Repo))
-	}
-	if repo == "" {
-		refuse(w, http.StatusBadGateway, "substrate unreachable", "cannot resolve this Herder repo root")
+	if request.Workspace == nil || strings.TrimSpace(*request.Workspace) == "" {
+		refuse(w, http.StatusBadRequest, "bad request", "workspace is required")
 		return
 	}
-	if !filepath.IsAbs(repo) {
-		refuse(w, http.StatusBadRequest, "bad request", "repo must be an absolute path")
+	workspace := strings.TrimSpace(*request.Workspace)
+	snapshot, err := deps.snapshot()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	branch := ""
-	if request.Branch != nil {
-		branch = strings.TrimSpace(*request.Branch)
+	workspaceLive := false
+	for _, candidate := range snapshot.Workspaces {
+		if candidate.WorkspaceID == workspace {
+			workspaceLive = true
+			break
+		}
 	}
-	generatedBranch := branch == ""
-	if generatedBranch {
-		branch = fmt.Sprintf("launch-%s-%s", *request.Tool, deps.now().UTC().Format("20060102-150405"))
-	}
-	if !branchPattern.MatchString(branch) {
-		refuse(w, http.StatusBadRequest, "bad request", "fleet spawn: branch must start with a letter or digit and contain only letters, digits, dot, underscore, slash, and hyphen")
+	if !workspaceLive {
+		refuse(w, http.StatusConflict, "launch refused", "workspace is not live: "+workspace)
 		return
 	}
 	roster, err := deps.roster()
@@ -1097,19 +1195,6 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		serveAttributionError(w, err)
 		return
 	}
-	if generatedBranch {
-		if deps.branchExists == nil {
-			refuse(w, http.StatusBadGateway, "substrate unreachable", "cannot inspect existing launch branches")
-			return
-		}
-		var release func()
-		branch, release, err = deps.branchAllocator.reserve(r.Context(), repo, branch, deps.branchExists)
-		if err != nil {
-			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-			return
-		}
-		defer release()
-	}
 	args := []string{*request.Tool}
 	if model != "" {
 		args = append(args, "--model", model)
@@ -1117,7 +1202,7 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if effort != "" {
 		args = append(args, "--effort", effort)
 	}
-	args = append(args, "--tag", tag, "--worktree-branch", branch, "--repo", repo)
+	args = append(args, "--tag", tag, "--workspace", workspace)
 	result, err := deps.spawn(r.Context(), args)
 	if err != nil {
 		if errors.Is(err, webaction.ErrUnavailable) {
@@ -1130,12 +1215,12 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if deps.recordLaunch == nil {
 		deps.recordLaunch = appendLaunchEdge
 	}
-	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Effort: effort, Tag: tag, Repo: repo, Time: deps.now().UTC()}
+	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Effort: effort, Tag: tag, Workspace: workspace, Pane: result.Pane, Time: deps.now().UTC()}
 	if err := deps.recordLaunch(edge); err != nil {
 		refuse(w, http.StatusBadGateway, "launch record failed", fmt.Sprintf("%s launched, but its launch edge could not be recorded: %v", result.Name, err))
 		return
 	}
-	writeJSON(w, http.StatusOK, launchResponse{Names: []string{result.Name}, OutputTail: result.OutputTail})
+	writeJSON(w, http.StatusOK, launchResponse{Names: []string{result.Name}, Pane: result.Pane, OutputTail: result.OutputTail})
 }
 
 func attributedSender(r *http.Request, deps dependencies, roster []hcomidentity.Row) (string, error) {

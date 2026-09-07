@@ -15,7 +15,9 @@ import (
 	"ai-config/tools/herder/internal/hcomcli"
 )
 
-const Timeout = 150 * time.Second
+// Timeout leaves the wrapper's 150-second hcom deadline enough time to emit
+// its parsed name/batch/pane refusal before the browser's 160-second deadline.
+const Timeout = 155 * time.Second
 
 var commandTimeout = Timeout
 

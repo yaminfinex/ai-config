@@ -15,6 +15,7 @@ cleanup() {
     kill "$server_pid" 2>/dev/null || true
     wait "$server_pid" 2>/dev/null || true
   fi
+  chmod -R u+w "$ROOT" 2>/dev/null || true
   rm -rf "$ROOT"
 }
 trap cleanup EXIT
@@ -41,7 +42,7 @@ api_answers() {
 
 wait_for_api() {
   local port="$1" body="$2"
-  for _ in {1..160}; do
+  for _ in {1..600}; do
     api_answers "$port" "$body" && return 0
     sleep 0.1
   done
@@ -50,8 +51,8 @@ wait_for_api() {
 
 wait_for_reexec() {
   local log="$1" count
-  for _ in {1..160}; do
-    count="$(grep -cF 'herder serve: watch re-exec via ' "$log" 2>/dev/null || true)"
+  for _ in {1..600}; do
+    count="$(grep -cF 'herder serve: watch change settled; draining requests before re-exec via ' "$log" 2>/dev/null || true)"
     [ "$count" -ge 1 ] && return 0
     sleep 0.1
   done
@@ -102,11 +103,11 @@ fi
 
 cp "$SOURCE_ROOT/main.go.good" "$SOURCE_ROOT/tools/herder/cmd/herder/main.go"
 printf '\n// serve-watch fixture change\n' >>"$SOURCE_ROOT/tools/herder/cmd/herder/main.go"
-for _ in {1..160}; do
-	[ "$(grep -cF 'herder serve: watch re-exec via ' "$SOURCE_ROOT/serve.err" 2>/dev/null || true)" -ge 2 ] && break
+for _ in {1..600}; do
+	[ "$(grep -cF 'herder serve: watch change settled; draining requests before re-exec via ' "$SOURCE_ROOT/serve.err" 2>/dev/null || true)" -ge 2 ] && break
 	sleep 0.1
 done
-if [ "$(grep -cF 'herder serve: watch re-exec via ' "$SOURCE_ROOT/serve.err" 2>/dev/null || true)" -ge 2 ] &&
+if [ "$(grep -cF 'herder serve: watch change settled; draining requests before re-exec via ' "$SOURCE_ROOT/serve.err" 2>/dev/null || true)" -ge 2 ] &&
 	wait_for_api "$source_port" "$SOURCE_ROOT/after-valid.json"; then
   pass "wrapper plane: stable source change re-execs and API answers afterward"
 else
@@ -121,7 +122,7 @@ else
 fi
 if grep -qF 'watch started on source tree' "$SOURCE_ROOT/serve.err" &&
   grep -qF 'watch change detected' "$SOURCE_ROOT/serve.err" &&
-  grep -qF 'watch re-exec via' "$SOURCE_ROOT/serve.err"; then
+  grep -qF 'draining requests before re-exec via' "$SOURCE_ROOT/serve.err"; then
   pass "wrapper plane: terminal log tells the watch/reload story"
 else
   bad "wrapper plane logs" "$(cat "$SOURCE_ROOT/serve.err")"

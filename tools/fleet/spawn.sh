@@ -129,6 +129,7 @@ fi
 command -v jq >/dev/null || die "jq is required"
 command -v hcom >/dev/null || die "hcom is required"
 command -v herdr >/dev/null || die "herdr is required"
+command -v timeout >/dev/null || die "timeout is required"
 
 placement_kind=
 placement_detail=
@@ -212,18 +213,26 @@ if [[ $tool == claude ]]; then
 else
   launch+=(--dangerously-bypass-approvals-and-sandbox)
 fi
-launch+=(--go)
+launch+=(--no-run-here --go)
 
+launch_output_file=$(mktemp "${TMPDIR:-/tmp}/fleet-launch.XXXXXX") || die "cannot create launcher output file"
+trap 'rm -f -- "${launch_output_file:-}"' EXIT
+launch_timeout=${FLEET_LAUNCH_TIMEOUT_SECONDS:-150}
+[[ $launch_timeout =~ ^[1-9][0-9]*$ ]] || die "FLEET_LAUNCH_TIMEOUT_SECONDS must be a positive integer"
 set +e
-launch_output=$(FLEET_PANE=$pane_id HCOM_TERMINAL=fleet "${launch[@]}" 2>&1)
+FLEET_PANE=$pane_id HCOM_TERMINAL=fleet timeout --foreground "${launch_timeout}s" "${launch[@]}" >"$launch_output_file" 2>&1
 launch_rc=$?
 set -e
+launch_output=$(<"$launch_output_file")
 printf '%s\n' "$launch_output" >&2
 
 hcom_name=$(sed -n 's/^Names:[[:space:]]*//p' <<<"$launch_output" | head -n 1 | tr -d '[:space:]')
+batch_id=$(sed -n 's/^Batch id:[[:space:]]*//p' <<<"$launch_output" | head -n 1 | tr -d '[:space:]')
+if ((launch_rc == 124)); then
+  die "launcher timed out after ${launch_timeout}s (name=${hcom_name:-unknown}, batch=${batch_id:-unknown}, pane=$pane_id left for explicit cleanup)"
+fi
 [[ -n $hcom_name && $hcom_name != *,* ]] || die "hcom did not report exactly one launched name (placement left at $pane_id)"
 
-batch_id=$(sed -n 's/^Batch id:[[:space:]]*//p' <<<"$launch_output" | head -n 1 | tr -d '[:space:]')
 if [[ -z $batch_id ]]; then
   batch_id=$(hcom events --action batch_launched --last 100 \
     | jq -r --arg name "$hcom_name" 'select((.data.instances // []) | index($name)) | .data.batch_id' \

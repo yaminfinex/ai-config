@@ -27,6 +27,7 @@ export interface Tab {
 
 export interface Workspace {
   workspace_id: string
+  cwd?: string
   worktree_of?: string
   number: number
   label: string
@@ -74,6 +75,7 @@ export interface Refusal {
 
 export interface LifecycleResult {
   names: string[]
+  pane: string
   output_tail: string
 }
 

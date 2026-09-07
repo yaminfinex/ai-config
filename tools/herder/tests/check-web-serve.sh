@@ -278,7 +278,7 @@ if curl -fsS "http://127.0.0.1:$port/" >"$ROOT/index.html" &&
   grep -qF 'aria-expanded' "$ROOT/app.js" &&
   ! grep -qF 'tree-tab-separator' "$ROOT/app.js" &&
   curl -fsS "http://127.0.0.1:$port/agents/mavu" | grep -qF '<title>Herder fleet</title>'; then
-  pass "serve delivers built shell/sidebar with ephemeral preview tabs, pin affordance, shortcut reference, empty-shell watermark, no retired board/spawn UI, pinned layout persistence, valid tree levels, and direct agent SPA navigation"
+  pass "serve delivers built shell/sidebar with workspace launch, ephemeral preview tabs, pin affordance, shortcut reference, empty-shell watermark, no retired board UI, pinned layout persistence, valid tree levels, and direct agent SPA navigation"
 else
   bad "embedded UI" "index=$(cat "$ROOT/index.html" 2>/dev/null || true)"
 fi
@@ -472,16 +472,16 @@ else
 fi
 
 if curl -fsS -X POST -H 'Content-Type: application/json' \
-  --data '{"tool":"codex","model":"","tag":"web","repo":"/repo/root","branch":"feature/web"}' \
+  --data '{"tool":"codex","model":"","tag":"web","workspace":"w1"}' \
   "http://127.0.0.1:$port/api/spawn" >"$ROOT/spawn.json" &&
-  jq -e '.names == ["spawn-vava"] and (.output_tail | contains("Started the launch process"))' "$ROOT/spawn.json" >/dev/null &&
+  jq -e '.names == ["spawn-vava"] and .pane == "w1:p9" and (.output_tail | contains("Started the launch process"))' "$ROOT/spawn.json" >/dev/null &&
   ! grep -qxF '<--model>' "$ROOT/spawn.log" &&
-  grep -qxF '<--worktree-branch>' "$ROOT/spawn.log" && grep -qxF '<feature/web>' "$ROOT/spawn.log" &&
-  grep -qxF '<--repo>' "$ROOT/spawn.log" && grep -qxF '</repo/root>' "$ROOT/spawn.log" &&
+  grep -qxF '<--workspace>' "$ROOT/spawn.log" && grep -qxF '<w1>' "$ROOT/spawn.log" &&
+  ! grep -qxF '<--worktree-branch>' "$ROOT/spawn.log" && ! grep -qxF '<--repo>' "$ROOT/spawn.log" &&
   ! grep -qF '<--split-from>' "$ROOT/spawn.log" &&
-  jq -e '.name == "spawn-vava" and .launcher == "web-alice-example-com" and .tool == "codex" and .model == "" and .tag == "web" and .repo == "/repo/root"' "$ROOT/home/.local/state/herder/launch-edges.jsonl" >/dev/null &&
+  jq -e '.name == "spawn-vava" and .launcher == "web-alice-example-com" and .tool == "codex" and .model == "" and .tag == "web" and .workspace == "w1" and .pane == "w1:p9"' "$ROOT/home/.local/state/herder/launch-edges.jsonl" >/dev/null &&
   curl -fsS "http://127.0.0.1:$port/api/fleet" | jq -e '.workspaces[].tabs[].panes[] | select(.pane_id == "w1:p9" and .agent == "spawn-vava")' >/dev/null; then
-  pass "launch maps worktree argv, records attribution, returns output, and appears in fleet"
+  pass "launch maps workspace argv, records attribution and pane, returns output, and appears in fleet"
 else
   bad "launch" "body=$(cat "$ROOT/spawn.json" 2>/dev/null || true) args=$(cat "$ROOT/spawn.log" 2>/dev/null || true) edge=$(cat "$ROOT/home/.local/state/herder/launch-edges.jsonl" 2>/dev/null || true)"
 fi

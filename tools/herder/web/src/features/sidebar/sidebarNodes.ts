@@ -1,6 +1,6 @@
 import { workspaceName } from '../../shared/workspaceName.ts'
 import { screenPanePresentation } from '../screen/screenPresentation.ts'
-import type { Board, Pane, Row } from '../../types.ts'
+import type { Board, Pane, Row, Workspace } from '../../types.ts'
 
 export type SidebarNode = {
   id: string
@@ -9,6 +9,7 @@ export type SidebarNode = {
   children: string[]
   count?: number
   pane?: Pane | Row
+  workspace?: Workspace
   tabLabel?: string
 }
 
@@ -37,7 +38,7 @@ export function buildSidebarNodes(board: Board | undefined): Map<string, Sidebar
       addAgentNode(result, paneID, pane, `tab ${tab.number}: ${tab.label || tab.tab_id}`)
     })
     children.push(...(workspaceChildren.get(workspace.workspace_id) ?? []))
-    result.set(id, { id, kind: 'workspace', name: workspaceName(workspace.label, workspace.workspace_id), children, count: workspace.pane_count })
+    result.set(id, { id, kind: 'workspace', name: workspaceName(workspace.label, workspace.workspace_id), children, count: workspace.pane_count, workspace })
   })
   const unplaced: SidebarNode = { id: 'unplaced', kind: 'unplaced', name: 'Unplaced', children: [], count: board.unplaced.length }
   board.unplaced.forEach((row) => {
