@@ -8,6 +8,7 @@ import type { Board, Pane } from '../../types'
 import { unattributedTerminalWarning } from '../screen/screenPresentation'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { TreeRow, TreeState } from '../../shared/TreeRow'
+import { LaunchAgent } from '../launch/LaunchAgent'
 
 const emptyExpandedItems: string[] = []
 
@@ -97,7 +98,7 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
             ...item.getProps(),
             onFocus: () => item.setFocused(),
             onClickCapture: (event) => {
-              if (!event.altKey || (event.target as Element).closest('.tree-disclosure')) return
+              if (!event.altKey || (event.target as Element).closest('.tree-disclosure, .launch-agent-button')) return
               event.preventDefault()
               event.stopPropagation()
               const placement = placementFromModifiers(event)
@@ -119,7 +120,8 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
           className={`${node.kind === 'pane' || node.kind === 'subagent' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}`}
           icon={icon}
           label={<span className="tree-label">{node.name}</span>}
-          trailing={<>{folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
+          trailing={<>{node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
+            {folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
           title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''} · ${sideHint}` : node.name}

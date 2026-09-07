@@ -9,4 +9,7 @@ test('launch dialog restores focus to its launch button when it closes', () => {
   assert.match(component, /onOpenAgent\(confirmation\.action!\.agent\); close\(\)/)
   assert.match(component, /<label>Model[\s\S]*<label>Reasoning[\s\S]*<label>Tag/)
   assert.match(component, /<option value="">default<\/option>/)
+  assert.match(component, /Launch agent in \{workspaceName\}/)
+  assert.match(component, /checkoutPath \|\| 'Checkout path unavailable'/)
+  assert.doesNotMatch(component, /Repository<input|Worktree branch<input/)
 })

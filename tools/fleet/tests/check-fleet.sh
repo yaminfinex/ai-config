@@ -130,6 +130,10 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
 fi
 if [[ ${1:-} == 1 ]]; then
   printf '%s\n' 'Started the launch process' 'Names: vava' 'Batch id: batch-test'
+  case ${FLEET_TEST_LAUNCH_MODE:-} in
+    descendant-stdout) /bin/sleep 3 & ;;
+    blocking) /bin/sleep 5 ;;
+  esac
   exit 2
 fi
 if [[ ${1:-} == list && ${3:-} == status ]]; then
@@ -179,12 +183,29 @@ export FLEET_TEST_CALLS=$TEST_ROOT/calls
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --prompt hello >"$TEST_ROOT/spawn.out"
 grep -Fx 'name=gate-vava' "$TEST_ROOT/spawn.out" >/dev/null || fail "spawn did not print full hcom name"
 grep -F 'FLEET_PANE=p-test HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn omitted fleet env contract"
-grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--dangerously-bypass-approvals-and-sandbox.*--go' "$FLEET_TEST_CALLS" >/dev/null \
+grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--dangerously-bypass-approvals-and-sandbox.*--no-run-here.*--go' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "codex launch omitted a required flag"
 if grep -F 'model_reasoning_effort' "$FLEET_TEST_CALLS" >/dev/null || grep -F -- '--effort' "$FLEET_TEST_CALLS" >/dev/null; then
   fail "spawn added reasoning effort when none was requested"
 fi
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
+
+: >"$FLEET_TEST_CALLS"
+if ! timeout 2 env FLEET_TEST_LAUNCH_MODE=descendant-stdout PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/descendant.out" 2>"$TEST_ROOT/descendant.err"; then
+  fail "spawn waited on a descendant that retained launch stdout"
+fi
+grep -Fx 'name=gate-vava' "$TEST_ROOT/descendant.out" >/dev/null \
+  || fail "spawn lost launch output captured outside a pipe"
+pass "spawn capture does not hang on inherited descendant stdout"
+
+if FLEET_TEST_LAUNCH_MODE=blocking FLEET_LAUNCH_TIMEOUT_SECONDS=1 PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/blocking.out" 2>"$TEST_ROOT/blocking.err"; then
+  fail "spawn accepted a launcher that exceeded its deadline"
+fi
+grep -F 'launcher timed out after 1s (name=vava, batch=batch-test, pane=p-test left for explicit cleanup)' "$TEST_ROOT/blocking.err" >/dev/null \
+  || fail "launcher timeout did not preserve parsed name, batch, and placement"
+pass "spawn caps the launcher wait and reports preserved coordinates"
 
 : >"$FLEET_TEST_CALLS"
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --effort high --tag gate --pane p-test >"$TEST_ROOT/codex-effort.out"

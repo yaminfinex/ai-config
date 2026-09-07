@@ -162,6 +162,14 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 			byPane[bus.LaunchContext.PaneID] = append(byPane[bus.LaunchContext.PaneID], i)
 		}
 	}
+	// A fleet launch may have created its requested pane even when Herdr has not
+	// yet bound agent metadata to it. Preserve the exact launch-context claim as
+	// a visible, explicitly degraded placement; never infer one from a name.
+	for paneID := range livePanes {
+		if _, visible := placements[paneID]; !visible && len(byPane[paneID]) == 1 {
+			placements[paneID] = placement{pane: paneID}
+		}
+	}
 	panesBySession := make(map[sessionIdentity][]string)
 	for paneID, place := range placements {
 		if place.tool != "" && place.session != "" {
@@ -206,7 +214,11 @@ func JoinRows(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 		for _, i := range matches {
 			matched[i] = true
 			bus := roster[i]
-			rows = append(rows, Row{Pane: paneID, Agent: display(first(bus.Name, place.name)), Tool: display(first(bus.Tool, place.tool)), HerdrStatus: display(place.status), BusStatus: display(bus.Status), Gap: "-"})
+			gap := "-"
+			if place.name == "" && place.tool == "" && place.session == "" && place.status == "" {
+				gap = "pane not bound"
+			}
+			rows = append(rows, Row{Pane: paneID, Agent: display(first(bus.Name, place.name)), Tool: display(first(bus.Tool, place.tool)), HerdrStatus: display(place.status), BusStatus: display(bus.Status), Gap: gap})
 		}
 	}
 	for i, bus := range roster {

@@ -9,9 +9,6 @@ export type LaunchFormState = {
   effort: string
   effortOptions: string[]
   tag: string
-  repo: string
-  branch: string
-  branchHelp: string
 }
 
 const models: Record<LaunchTool, string[]> = {
@@ -42,9 +39,6 @@ export function initialLaunchForm(tool: LaunchTool = 'claude'): LaunchFormState 
     effort: '',
     effortOptions: [...efforts[tool]],
     tag: 'impl',
-    repo: '',
-    branch: '',
-    branchHelp: 'A fresh worktree is created for the agent.',
   }
 }
 
@@ -53,15 +47,14 @@ export function changeLaunchTool(current: LaunchFormState, tool: LaunchTool): La
   return { ...current, tool, model: defaults.model, modelOptions: defaults.modelOptions, effort: defaults.effort, effortOptions: defaults.effortOptions }
 }
 
-export function launchRequest(form: LaunchFormState) {
+export function launchRequest(form: LaunchFormState, workspace: string) {
   const effort = form.effort.trim()
   return {
     tool: form.tool,
     model: form.model.trim(),
     ...(effort ? { effort } : {}),
     tag: form.tag.trim(),
-    repo: form.repo.trim(),
-    branch: form.branch.trim(),
+    workspace,
   }
 }
 
@@ -69,10 +62,10 @@ export function launchRefusal(problem: Refusal) {
   return problem.detail
 }
 
-export function launchConfirmation(names: string[]) {
+export function launchConfirmation(names: string[], workspace: string, pane: string) {
   const first = names[0]
   return {
-    line: names.length === 1 ? `Launched ${first}.` : `Launched ${names.join(', ')}.`,
+    line: `${names.length === 1 ? `Launched ${first}` : `Launched ${names.join(', ')}`} in ${workspace} · pane ${pane}.`,
     taskLine: 'It has no task yet — send it one from its panel.',
     action: first ? { label: 'Open in this space', agent: first } : null,
   }

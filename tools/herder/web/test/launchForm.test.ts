@@ -12,9 +12,6 @@ test('launch form starts with plain defaults and curated models', () => {
     effort: '',
     effortOptions: ['low', 'medium', 'high', 'xhigh', 'max'],
     tag: 'impl',
-    repo: '',
-    branch: '',
-    branchHelp: 'A fresh worktree is created for the agent.',
   })
   assert.deepEqual(initialLaunchForm('codex'), {
     tool: 'codex',
@@ -23,22 +20,18 @@ test('launch form starts with plain defaults and curated models', () => {
     effort: '',
     effortOptions: ['low', 'medium', 'high', 'xhigh'],
     tag: 'impl',
-    repo: '',
-    branch: '',
-    branchHelp: 'A fresh worktree is created for the agent.',
   })
 })
 
 test('launch request omits blank effort and serializes a selected effort', () => {
   const defaults = initialLaunchForm()
-  assert.equal('effort' in launchRequest(defaults), false)
-  assert.deepEqual(launchRequest({ ...defaults, effort: ' high ' }), {
+  assert.equal('effort' in launchRequest(defaults, 'w1'), false)
+  assert.deepEqual(launchRequest({ ...defaults, effort: ' high ' }, 'w1'), {
     tool: 'claude',
     model: 'claude-fable-5-1',
     effort: 'high',
     tag: 'impl',
-    repo: '',
-    branch: '',
+	workspace: 'w1',
   })
   assert.equal(changeLaunchTool({ ...defaults, effort: 'max' }, 'codex').effort, '')
 })
@@ -62,8 +55,8 @@ test('launch refusal keeps the server detail visible verbatim', () => {
 })
 
 test('launch confirmation offers the launched agent in the current space', () => {
-  assert.deepEqual(launchConfirmation(['impl-vava']), {
-    line: 'Launched impl-vava.',
+  assert.deepEqual(launchConfirmation(['impl-vava'], 'repo', 'w1:p9'), {
+    line: 'Launched impl-vava in repo · pane w1:p9.',
     taskLine: 'It has no task yet — send it one from its panel.',
     action: { label: 'Open in this space', agent: 'impl-vava' },
   })
@@ -76,9 +69,4 @@ test('launch dialog traps Tab and Shift+Tab at its focus boundaries', () => {
   assert.equal(dialogTabTargetIndex(3, 5, true), null)
   assert.equal(dialogTabTargetIndex(-1, 5, false), 0)
   assert.equal(dialogTabTargetIndex(-1, 0, false), null)
-})
-
-test('launch form explains that the default creates an isolated worktree', () => {
-  assert.equal(initialLaunchForm().branch, '')
-  assert.equal(initialLaunchForm().branchHelp, 'A fresh worktree is created for the agent.')
 })

@@ -136,7 +136,8 @@ func newWatchConfig(args []string) (watchConfig, error) {
 	return config, nil
 }
 
-func startWatch(ctx context.Context, config watchConfig, stderr io.Writer) {
+func startWatch(ctx context.Context, config watchConfig, stderr io.Writer) <-chan watchConfig {
+	reload := make(chan watchConfig, 1)
 	fmt.Fprintf(stderr, "herder serve: watch started on %s\n", config.target.Description())
 	go func() {
 		baseline, err := config.target.Snapshot()
@@ -176,12 +177,13 @@ func startWatch(ctx context.Context, config watchConfig, stderr io.Writer) {
 				if stable < watchStablePolls {
 					continue
 				}
-				fmt.Fprintf(stderr, "herder serve: watch re-exec via %s\n", config.execPath)
-				if execErr := config.exec(config.execPath, config.argv, config.env); execErr != nil {
-					fmt.Fprintf(stderr, "herder serve: watch re-exec failed; continuing current server: %v\n", execErr)
-					baseline, pending, stable, detected = current, "", 0, false
+				select {
+				case reload <- config:
+				case <-ctx.Done():
 				}
+				return
 			}
 		}
 	}()
+	return reload
 }

@@ -8,7 +8,7 @@ test('explicit subagents are direct children of their parent agent row', () => {
   const board: Board = {
     workspaces: [{
       workspace_id: 'w1', number: 1, label: 'invented', focused: false, pane_count: 1, tab_count: 1,
-      active_tab_id: 't1', agent_status: 'active',
+      active_tab_id: 't1', agent_status: 'active', cwd: '/checkout/invented',
       tabs: [{ tab_id: 't1', number: 1, label: 'work', focused: false, pane_count: 1, agent_status: 'active', panes: [{
         pane_id: 'w1:p1', agent: 'probe-fame', tool: 'claude', herdr_status: 'active', bus_status: 'active', gap: '-',
         subagents: [{
@@ -20,6 +20,7 @@ test('explicit subagents are direct children of their parent agent row', () => {
   }
 
   const nodes = buildSidebarNodes(board)
+	assert.equal(nodes.get('workspace:w1')?.workspace?.cwd, '/checkout/invented')
   assert.deepEqual(nodes.get('pane:w1:p1')?.children, ['pane:w1:p1:subagent:probe-child'])
   assert.equal(nodes.get('pane:w1:p1:subagent:probe-child')?.kind, 'subagent')
   assert.deepEqual(nodes.get('unplaced')?.children, [])

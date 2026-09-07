@@ -1051,22 +1051,22 @@ POST `/api/agents/{bus-name}/message`
 POST `/api/spawn`
   Body: `{"tool": "claude" | "codex", "model": "<optional>",
   "effort": "<optional>",
-  "tag": "<optional, default impl>", "repo": "<optional absolute path>",
-  "branch": "<optional>"}`. A blank repo means the ai-config root that
-  launched this Herder. A blank branch generates
-  `launch-<tool>-<yyyymmdd-hhmmss>`; an existing branch adds `-2`, then `-3`,
-  and so on. Every request delegates to
-  `tools/fleet/spawn.sh` with `--worktree-branch` and `--repo`; the web
-  server never owns the launched process and never uses `--split-from`.
+  "tag": "<optional, default impl>", "workspace": "<live Herdr workspace ID>"}`.
+  The workspace is required and is validated against the same in-process
+  Herdr snapshot path used by the fleet view. Every request delegates to
+  `tools/fleet/spawn.sh` with `--workspace`; the web server never owns the
+  launched process and never uses `--split-from`, `--repo`, or
+  `--worktree-branch`.
   Blank effort uses the selected tool's default. Claude accepts `low`,
   `medium`, `high`, `xhigh`, or `max`; Codex accepts `low`, `medium`, `high`,
   or `xhigh`. Any other non-blank effort is refused with HTTP 400.
 
-  HTTP 200: `{"names":["<bus-name>"],"output_tail":"<spawn output>"}`.
+  HTTP 200: `{"names":["<bus-name>"],"pane":"<pane-id>","output_tail":"<spawn output>"}`.
   Semantic spawn refusals are HTTP 409 with `error: "launch refused"`
   and spawn.sh's stderr preserved as `detail`; wrapper/infrastructure
   failures are 502. After success, one attributed launch edge per name is
-  appended to `launch-edges.jsonl` under the Herder state directory. The
+  appended to `launch-edges.jsonl` under the Herder state directory, including
+  the requested workspace ID and returned pane ID. The
   new agent then appears through the ordinary fleet SSE poll; no endpoint
   response is used as fleet state.
 
@@ -1075,7 +1075,7 @@ POST `/api/spawn`
 The owner ruled that the web fork control does not work and breaks sessions.
 The client control and `POST /api/agents/{bus-name}/fork` endpoint are removed;
 the path now receives the standard 404 unknown-endpoint refusal. This removes
-only web fork. Worktree-only spawn remains available, and lifecycle operations
+only web fork. Workspace-bound spawn remains available, and lifecycle operations
 outside this web API are unchanged.
 
 ## Web-peer attribution (ruled — tailscale identities, flat authority)

@@ -151,11 +151,12 @@ func TestBuildNeverUsesSessionFallbackForLivePaneClaim(t *testing.T) {
 	)
 	snapshot.Panes[1].AgentStatus = ""
 	roster := []hcomidentity.Row{{
-		Name: "dore", Tool: "codex", SessionID: "session-dore",
+		Name: "dore", Tool: "codex", SessionID: "session-dore", Status: "active",
 		LaunchContext: hcomidentity.LaunchContext{PaneID: "p2"},
 	}}
 	board := Build(snapshot, roster)
-	if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "dore" || board.Workspaces[0].Tabs[0].Panes[0].BusStatus != "-" || board.Workspaces[0].Tabs[0].Panes[1].Agent != "-" {
+	claimed := board.Workspaces[0].Tabs[0].Panes[1]
+	if len(board.Unplaced) != 0 || board.Workspaces[0].Tabs[0].Panes[0].BusStatus != "-" || claimed.Agent != "dore" || claimed.BusStatus != "active" || claimed.Gap != "pane not bound" {
 		t.Fatalf("live pane claim used session fallback: %#v", board)
 	}
 }
