@@ -17,10 +17,9 @@ import (
 
 type dependencies struct {
 	roster func() ([]hcomidentity.Row, error)
-	now    func() time.Time
 }
 
-var liveDependencies = dependencies{roster: hcomidentity.List, now: time.Now}
+var liveDependencies = dependencies{roster: hcomidentity.List}
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	return run(args, stdout, stderr, liveDependencies)
@@ -60,8 +59,8 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stderr, "herder show: agent store unavailable (%v); showing %s as unregistered\n", store.ImportErr, name)
 		proj = agentstore.NewProjection()
 	} else if proj, err = store.Load(); err != nil {
-		fmt.Fprintf(stderr, "herder show: cannot read agent store: %v\n", err)
-		return 1
+		fmt.Fprintf(stderr, "herder show: cannot read agent store (%v); showing %s as unregistered\n", err, name)
+		proj = agentstore.NewProjection()
 	}
 	var rosterRow *hcomidentity.Row
 	if rows, err := deps.roster(); err != nil {
@@ -93,7 +92,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stdout, "%s\n", encoded)
 		return 0
 	}
-	writeText(stdout, view, deps.now())
+	writeText(stdout, view)
 	return 0
 }
 
@@ -108,7 +107,7 @@ store events. Folds the live hcom roster when available (binding: verified,
 pending or conflict); the roster's session is always current.
 `
 
-func writeText(out io.Writer, v *agentstore.AgentView, now time.Time) {
+func writeText(out io.Writer, v *agentstore.AgentView) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	field := func(label, value string) {
 		if value == "" {
@@ -193,7 +192,6 @@ func writeText(out io.Writer, v *agentstore.AgentView, now time.Time) {
 	for _, e := range v.Events {
 		fmt.Fprintf(out, "  %s  %-18s by %s  %s\n", e.At.UTC().Format(time.RFC3339), e.Kind, e.By, summary(e))
 	}
-	_ = now
 }
 
 func launcherLabel(pr agentstore.Provenance) string {

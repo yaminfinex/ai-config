@@ -1,5 +1,6 @@
 // Package registercmd is `herder register <kind> …`: one append to the agent
-// store. It never talks to hcom or herdr and never blocks on anything but the
+// store. The per-kind flag contract is agentstore.SpecFor; this package only
+// parses flags into an Event and lets Append validate. It never talks to hcom or herdr and never blocks on anything but the
 // store's bounded lock. Exit 0 append (or identical replay), 2 usage, 3 store
 // unavailable.
 package registercmd
@@ -20,38 +21,6 @@ import (
 	"ai-config/tools/herder/internal/herderstate"
 )
 
-type spec struct {
-	required []string
-	optional []string
-	oneOf    []string // exactly one required
-}
-
-var common = []string{"name", "by", "by-kind", "at", "id", "json"}
-
-var specs = map[string]spec{
-	agentstore.KindLaunchRequested:  {required: []string{"tool", "tag"}, oneOf: []string{"workspace", "pane", "split-from"}, optional: []string{"model", "effort", "prompt-ref", "batch", "launcher-kind"}},
-	agentstore.KindLaunchReady:      {required: []string{"name"}, optional: []string{"request", "batch", "pane", "cwd", "session", "tool", "model", "effort", "tag", "workspace", "launcher-kind"}},
-	agentstore.KindLaunchFailed:     {required: []string{"reason"}, optional: []string{"request", "batch", "pane"}},
-	agentstore.KindCullRequested:    {required: []string{"name"}, optional: []string{"pane"}},
-	agentstore.KindCulled:           {required: []string{"name", "pane", "close"}},
-	agentstore.KindResume:           {required: []string{"name"}, optional: []string{"pane", "from-session"}},
-	agentstore.KindFork:             {required: []string{"name", "from"}, optional: []string{"pane"}},
-	agentstore.KindCompactRequested: {required: []string{"name"}, optional: []string{"steer-chars"}},
-	agentstore.KindAssign:           {required: []string{"name", "mission"}, optional: []string{"brief", "thread", "task"}},
-	agentstore.KindAnnotate:         {required: []string{"name"}, optional: []string{"title", "note"}},
-	agentstore.KindReparent:         {required: []string{"name", "manager"}},
-	agentstore.KindMirrorCreated:    {required: []string{"name"}, optional: mirrorFlags},
-	agentstore.KindMirrorReady:      {required: []string{"name"}, optional: mirrorFlags},
-	agentstore.KindMirrorStopped:    {required: []string{"name"}, optional: mirrorFlags},
-	agentstore.KindMirrorBatch:      {required: []string{"name"}, optional: mirrorFlags},
-	agentstore.KindSessionObserved:  {required: []string{"name", "session"}, optional: sessionFlags},
-	agentstore.KindSessionEnded:     {required: []string{"name", "session"}, optional: sessionFlags},
-	agentstore.KindSessionSupersede: {required: []string{"name", "session"}, optional: sessionFlags},
-}
-
-var mirrorFlags = []string{"hcom-event", "reason", "batch", "instances", "parent-name", "is-hcom-launched"}
-var sessionFlags = []string{"tool", "path", "reason"}
-
 // ExitUnavailable is the documented exit for "store unavailable".
 const ExitUnavailable = 3
 
@@ -61,7 +30,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return boolToCode(len(args) == 0)
 	}
 	kind := args[0]
-	sp, ok := specs[kind]
+	sp, ok := agentstore.SpecFor(kind)
 	if !ok {
 		fmt.Fprintf(stderr, "herder register: unknown kind %q\n%s", kind, usage())
 		return 2
@@ -73,8 +42,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("herder register "+kind, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	values := map[string]*string{}
-	for _, name := range append(append(append(append([]string(nil), common...), sp.required...), sp.oneOf...), sp.optional...) {
-		if _, dup := values[name]; name == "json" || dup {
+	for _, name := range append(append(append(append([]string(nil), agentstore.CommonFlags...), sp.Required...), sp.OneOf...), sp.Optional...) {
+		if _, dup := values[name]; dup {
 			continue
 		}
 		values[name] = fs.String(name, "", "")
@@ -93,24 +62,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			return strings.TrimSpace(*p)
 		}
 		return ""
-	}
-	for _, name := range sp.required {
-		if get(name) == "" {
-			fmt.Fprintf(stderr, "herder register %s: --%s is required\n", kind, name)
-			return 2
-		}
-	}
-	if len(sp.oneOf) > 0 {
-		set := 0
-		for _, name := range sp.oneOf {
-			if get(name) != "" {
-				set++
-			}
-		}
-		if set != 1 {
-			fmt.Fprintf(stderr, "herder register %s: exactly one of --%s is required\n", kind, strings.Join(sp.oneOf, ", --"))
-			return 2
-		}
 	}
 	now := time.Now().UTC()
 	at := now
@@ -153,11 +104,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if text := get("steer-chars"); text != "" {
 		n, err := strconv.Atoi(text)
-		if err != nil || n < 0 {
-			fmt.Fprintf(stderr, "herder register %s: --steer-chars %q is not a non-negative integer\n", kind, text)
+		if err != nil {
+			fmt.Fprintf(stderr, "herder register %s: --steer-chars %q is not an integer\n", kind, text)
 			return 2
 		}
-		e.SteerChars = n
+		e.SteerChars = &n
 	}
 	if text := get("instances"); text != "" {
 		for _, part := range strings.Split(text, ",") {
@@ -243,24 +194,25 @@ func usage() string {
 	b.WriteString("--by defaults to $HCOM_NAME, else $USER. --id makes a retry idempotent (same receipt,\n")
 	b.WriteString("no second line). Exit 0 appended or replayed, 2 usage, 3 store unavailable.\n\nKinds:\n")
 	for _, kind := range agentstore.Kinds {
-		fmt.Fprintf(&b, "  %s\n", strings.TrimSpace(strings.TrimPrefix(kindUsage(kind, specs[kind]), "herder register ")))
+		sp, _ := agentstore.SpecFor(kind)
+		fmt.Fprintf(&b, "  %s\n", strings.TrimSpace(strings.TrimPrefix(kindUsage(kind, sp), "herder register ")))
 	}
 	return b.String()
 }
 
-func kindUsage(kind string, sp spec) string {
+func kindUsage(kind string, sp agentstore.Spec) string {
 	var parts []string
-	for _, name := range sp.required {
+	for _, name := range sp.Required {
 		parts = append(parts, "--"+name+" V")
 	}
-	if len(sp.oneOf) > 0 {
+	if len(sp.OneOf) > 0 {
 		var alts []string
-		for _, name := range sp.oneOf {
+		for _, name := range sp.OneOf {
 			alts = append(alts, "--"+name+" V")
 		}
 		parts = append(parts, "("+strings.Join(alts, " | ")+")")
 	}
-	opts := append([]string(nil), sp.optional...)
+	opts := append([]string(nil), sp.Optional...)
 	sort.Strings(opts)
 	for _, name := range opts {
 		parts = append(parts, "[--"+name+" V]")

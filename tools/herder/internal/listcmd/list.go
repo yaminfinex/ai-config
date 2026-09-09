@@ -99,9 +99,11 @@ Usage:
 Rows are joined only by an exact pane ID. A bus agent without a visible pane
 and a visible agent pane without a bus row are shown explicitly as gaps.
 
-LAUNCHER, MANAGER and MISSION come from the agent store ($HERDER_STATE_DIR/
-agents), folded by (name, hcom created_at). A bus row with no store record
-prints "unregistered". The store never gates a lifecycle action.
+LAUNCHER, MANAGER, MISSION and BINDING come from the agent store
+($HERDER_STATE_DIR/agents), folded by (name, hcom created_at). A bus row with
+no store record prints "unregistered"; BINDING shows "conflict A≠B" when a
+registered session claim disagrees with the roster (the roster stays
+current). The store never gates a lifecycle action.
 `)
 }
 
@@ -113,12 +115,32 @@ func Join(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 
 func writeTable(out io.Writer, rows []Row) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "PANE\tAGENT\tTOOL\tHERDR\tBUS\tLAUNCHER\tMANAGER\tMISSION\tGAP")
+	fmt.Fprintln(w, "PANE\tAGENT\tTOOL\tHERDR\tBUS\tLAUNCHER\tMANAGER\tMISSION\tBINDING\tGAP")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			row.Pane, row.Agent, row.Tool, row.HerdrStatus, row.BusStatus, orDash(row.Launcher), orDash(row.Manager), orDash(row.Mission), row.Gap)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Pane, row.Agent, row.Tool, row.HerdrStatus, row.BusStatus, orDash(row.Launcher), orDash(row.Manager), orDash(row.Mission), bindingLabel(row.Binding), row.Gap)
 	}
 	_ = w.Flush()
+}
+
+// bindingLabel is "-" when the store made no session claim, "verified" or
+// "pending" when it agrees or waits, and "conflict <claimed>≠<roster>" (first
+// 8 chars of each id) when the roster disagrees. It never changes GAP.
+func bindingLabel(b *agentstore.Binding) string {
+	if b == nil {
+		return "-"
+	}
+	if b.State != "conflict" {
+		return b.State
+	}
+	return fmt.Sprintf("conflict %s≠%s", short(b.Claimed), short(b.Roster))
+}
+
+func short(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }
 
 func orDash(value string) string {

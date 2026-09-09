@@ -81,7 +81,7 @@ type Event struct {
 	Close       string `json:"close,omitempty"`
 	FromSession string `json:"from_session,omitempty"`
 	FromName    string `json:"from_name,omitempty"`
-	SteerChars  int    `json:"steer_chars,omitempty"`
+	SteerChars  *int   `json:"steer_chars,omitempty"`
 
 	// assign / annotate / reparent
 	Mission string `json:"mission,omitempty"`
@@ -102,85 +102,185 @@ type Event struct {
 	Path string `json:"path,omitempty"`
 }
 
-// Validate enforces the per-kind contract before a line is appended.
+// Spec is the per-kind field contract, keyed by CLI flag name (the JSON name
+// with "-" for "_", and --from for from_name). It lives ONCE here: the
+// package's Append and the register CLI both validate through it.
+type Spec struct {
+	Required []string
+	OneOf    []string // exactly one of these
+	Optional []string
+}
+
+// CommonFlags are accepted by every kind.
+var CommonFlags = []string{"name", "by", "by-kind", "at", "id", "request"}
+
+var mirrorFlags = []string{"hcom-event", "reason", "batch", "instances", "parent-name", "is-hcom-launched"}
+var sessionFlags = []string{"tool", "path", "reason"}
+
+var specs = map[string]Spec{
+	KindLaunchRequested:  {Required: []string{"tool", "tag"}, OneOf: []string{"workspace", "pane", "split-from"}, Optional: []string{"model", "effort", "prompt-ref", "batch", "launcher-kind"}},
+	KindLaunchReady:      {Required: []string{"name"}, Optional: []string{"batch", "pane", "cwd", "session", "tool", "model", "effort", "tag", "workspace", "launcher-kind"}},
+	KindLaunchFailed:     {Required: []string{"reason"}, Optional: []string{"batch", "pane"}},
+	KindCullRequested:    {Required: []string{"name"}, Optional: []string{"pane"}},
+	KindCulled:           {Required: []string{"name", "pane", "close"}},
+	KindResume:           {Required: []string{"name"}, Optional: []string{"pane", "from-session"}},
+	KindFork:             {Required: []string{"name", "from"}, Optional: []string{"pane"}},
+	KindCompactRequested: {Required: []string{"name"}, Optional: []string{"steer-chars"}},
+	KindAssign:           {Required: []string{"name", "mission"}, Optional: []string{"brief", "thread", "task"}},
+	KindAnnotate:         {Required: []string{"name"}, Optional: []string{"title", "note"}},
+	KindReparent:         {Required: []string{"name", "manager"}},
+	KindMirrorCreated:    {Required: []string{"name"}, Optional: mirrorFlags},
+	KindMirrorReady:      {Required: []string{"name"}, Optional: mirrorFlags},
+	KindMirrorStopped:    {Required: []string{"name"}, Optional: mirrorFlags},
+	KindMirrorBatch:      {Required: []string{"instances"}, Optional: mirrorFlags}, // name optional: fans out to instances
+	KindSessionObserved:  {Required: []string{"session"}, Optional: sessionFlags},  // name optional: pane-only session
+	KindSessionEnded:     {Required: []string{"session"}, Optional: sessionFlags},
+	KindSessionSupersede: {Required: []string{"session"}, Optional: sessionFlags},
+}
+
+// SpecFor returns the contract for kind.
+func SpecFor(kind string) (Spec, bool) {
+	sp, ok := specs[kind]
+	return sp, ok
+}
+
+// ByKinds and LauncherKinds are the closed attribution vocabularies.
+var ByKinds = []string{"agent", "web", "user", "unknown", "serve", "observer", "mirror"}
+var LauncherKinds = []string{"agent", "web", "user", "unknown", "mirror"}
+var Tools = []string{"claude", "codex"}
+
+// present reports which flag-named fields carry a value.
+func (e Event) present() map[string]bool {
+	m := map[string]bool{}
+	set := func(name string, on bool) {
+		if on {
+			m[name] = true
+		}
+	}
+	set("name", e.Name != "")
+	set("request", e.Request != "")
+	set("tool", e.Tool != "")
+	set("model", e.Model != "")
+	set("effort", e.Effort != "")
+	set("tag", e.Tag != "")
+	set("prompt-ref", e.PromptRef != "")
+	set("launcher-kind", e.LauncherKind != "")
+	set("batch", e.Batch != "")
+	set("cwd", e.Cwd != "")
+	set("session", e.Session != "")
+	set("reason", e.Reason != "")
+	set("close", e.Close != "")
+	set("from-session", e.FromSession != "")
+	set("from", e.FromName != "")
+	set("steer-chars", e.SteerChars != nil)
+	set("mission", e.Mission != "")
+	set("brief", e.Brief != "")
+	set("thread", e.Thread != "")
+	set("task", e.Task != "")
+	set("title", e.Title != "")
+	set("note", e.Note != "")
+	set("manager", e.Manager != "")
+	set("hcom-event", e.HcomEvent != "")
+	set("instances", len(e.Instances) > 0)
+	set("parent-name", e.ParentName != "")
+	set("is-hcom-launched", e.IsHcomLaunched != nil)
+	set("path", e.Path != "")
+	pane := e.Pane != ""
+	if e.Placement != nil {
+		set("workspace", e.Placement.Workspace != "")
+		set("split-from", e.Placement.SplitFrom != "")
+		pane = pane || e.Placement.Pane != ""
+	}
+	set("pane", pane)
+	return m
+}
+
+// Validate enforces the per-kind contract. It is the ONE validator: the CLI
+// and in-process writers (the serve, later) both go through Append.
 func (e Event) Validate() error {
-	if e.ID == "" {
-		return fmt.Errorf("event id is empty")
+	if !ValidID(e.ID) {
+		return fmt.Errorf("event id %q is not UUID-shaped", e.ID)
 	}
 	if e.At.IsZero() {
 		return fmt.Errorf("event at is zero")
 	}
-	if !knownKind(e.Kind) {
+	sp, ok := specs[e.Kind]
+	if !ok {
 		return fmt.Errorf("unknown event kind %q (known: %s)", e.Kind, strings.Join(Kinds, ", "))
 	}
-	need := func(field, value string) error {
-		if value == "" {
-			return fmt.Errorf("%s requires --%s", e.Kind, field)
-		}
-		return nil
+	if e.Request != "" && !ValidID(e.Request) {
+		return fmt.Errorf("request %q is not UUID-shaped", e.Request)
 	}
-	switch e.Kind {
-	case KindLaunchRequested:
-		if err := need("tool", e.Tool); err != nil {
-			return err
+	if e.ByKind != "" && !contains(ByKinds, e.ByKind) {
+		return fmt.Errorf("invalid by_kind %q (one of %s)", e.ByKind, strings.Join(ByKinds, ", "))
+	}
+	allowed := map[string]bool{}
+	for _, list := range [][]string{CommonFlags, sp.Required, sp.OneOf, sp.Optional} {
+		for _, name := range list {
+			allowed[name] = true
 		}
-		if e.Placement == nil || (e.Placement.Workspace == "" && e.Placement.Pane == "" && e.Placement.SplitFrom == "") {
-			return fmt.Errorf("%s requires one of --workspace, --pane, --split-from", e.Kind)
+	}
+	got := e.present()
+	var extra []string
+	for name := range got {
+		if !allowed[name] {
+			extra = append(extra, "--"+name)
 		}
-	case KindLaunchReady:
-		return need("name", e.Name)
-	case KindLaunchFailed:
-		return need("reason", e.Reason)
-	case KindCulled:
-		if err := need("name", e.Name); err != nil {
-			return err
+	}
+	if len(extra) > 0 {
+		sort.Strings(extra)
+		return fmt.Errorf("%s does not accept %s", e.Kind, strings.Join(extra, ", "))
+	}
+	for _, name := range sp.Required {
+		if !got[name] {
+			return fmt.Errorf("%s requires --%s", e.Kind, name)
 		}
-		if e.Close != "managed" && e.Close != "label-fallback" {
-			return fmt.Errorf("%s requires --close managed|label-fallback", e.Kind)
+	}
+	if len(sp.OneOf) > 0 {
+		n := 0
+		for _, name := range sp.OneOf {
+			if got[name] {
+				n++
+			}
 		}
-	case KindFork:
-		if err := need("name", e.Name); err != nil {
-			return err
+		if n != 1 {
+			return fmt.Errorf("%s requires exactly one of --%s", e.Kind, strings.Join(sp.OneOf, ", --"))
 		}
-		return need("from", e.FromName)
-	case KindAssign:
-		if err := need("name", e.Name); err != nil {
-			return err
+	}
+	if e.Kind == KindLaunchRequested && e.Pane != "" {
+		return fmt.Errorf("%s carries its pane in placement, not --pane at top level", e.Kind)
+	}
+	if e.Tool != "" && !contains(Tools, e.Tool) {
+		return fmt.Errorf("unsupported tool %q (one of %s)", e.Tool, strings.Join(Tools, ", "))
+	}
+	if e.LauncherKind != "" && !contains(LauncherKinds, e.LauncherKind) {
+		return fmt.Errorf("invalid launcher_kind %q", e.LauncherKind)
+	}
+	if e.Close != "" && e.Close != "managed" && e.Close != "label-fallback" {
+		return fmt.Errorf("%s requires --close managed|label-fallback", e.Kind)
+	}
+	if e.SteerChars != nil && *e.SteerChars < 0 {
+		return fmt.Errorf("steer_chars must be non-negative")
+	}
+	if e.Kind == KindAnnotate && e.Title == "" && e.Note == "" {
+		return fmt.Errorf("%s requires --title or --note", e.Kind)
+	}
+	for _, text := range []string{e.Name, e.Manager, e.FromName, e.ParentName, e.By} {
+		if strings.ContainsAny(text, "\r\n\t\x00") {
+			return fmt.Errorf("identity fields must not contain control characters")
 		}
-		return need("mission", e.Mission)
-	case KindAnnotate:
-		if err := need("name", e.Name); err != nil {
-			return err
-		}
-		if e.Title == "" && e.Note == "" {
-			return fmt.Errorf("%s requires --title or --note", e.Kind)
-		}
-	case KindReparent:
-		if err := need("name", e.Name); err != nil {
-			return err
-		}
-		return need("manager", e.Manager)
-	case KindSessionObserved, KindSessionEnded, KindSessionSupersede:
-		if err := need("name", e.Name); err != nil {
-			return err
-		}
-		return need("session", e.Session)
-	default:
-		return need("name", e.Name)
 	}
 	return nil
 }
 
-func knownKind(kind string) bool {
-	i := sort.SearchStrings(sortedKinds, kind)
-	return i < len(sortedKinds) && sortedKinds[i] == kind
+func contains(list []string, value string) bool {
+	for _, v := range list {
+		if v == value {
+			return true
+		}
+	}
+	return false
 }
-
-var sortedKinds = func() []string {
-	out := append([]string(nil), Kinds...)
-	sort.Strings(out)
-	return out
-}()
 
 // Encode renders the single line appended to events.jsonl (trailing newline).
 func Encode(e Event) ([]byte, error) {

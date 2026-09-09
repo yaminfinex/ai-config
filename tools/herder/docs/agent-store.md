@@ -25,7 +25,13 @@ degraded columns when the store cannot be written or read.
 is imported once on first open when `events.jsonl` is absent: each edge
 becomes a `launch-ready` with `by=<web identity>`, `launcher_kind: web` and
 an id derived from the edge line (`sha256`, version nibble 8), so a re-import
-yields the same ids and idempotency absorbs it.
+yields the same ids. The import is atomic: under `agents/init.lock` (a
+separate inode from the journal, same 2 s budget) the whole set is built in
+a temp file, fsynced, renamed to `events.jsonl`, and the directory fsynced.
+A crash mid-import leaves no journal, and the next open imports everything.
+Malformed edge lines are skipped with one warning each.
+
+There is no rotation in this unit; the journal grows until unit 2 adds it.
 
 ## Event schema
 
@@ -62,12 +68,26 @@ died mid-write or the disk filled). The next writer, under the lock,
 truncates to the last complete newline, prints one stderr line and proceeds.
 Readers ignore a trailing partial line without repairing it.
 
+Reader tolerance: a malformed *complete* line is skipped with one warning
+and its bytes are left in place; unknown fields on a well-formed line are
+accepted (a newer serve and an older CLI share this journal across a
+`--watch` re-exec). Validation is strict only at the write boundary.
+
 ## Idempotency
 
-`id` is the idempotency key. Replaying an id (a retry with `--id`) returns
-the receipt of the existing line and appends nothing; the CLI prints
-`replayed=true`. The check runs under the lock so a concurrent retry cannot
-double-append.
+`id` is the idempotency key. Replaying an id (a retry with `--id`) with the
+same payload returns the receipt of the existing line, fsyncs it (the first
+writer may have died before its fsync) and appends nothing; the CLI prints
+`replayed=true`. The same id with a *different* payload (after the `by`
+default; `at` is excluded because the id already fixes the time) is an
+error, not a replay: "id X already has a different payload", register exit
+2, no line. A corrected fact needs a new id. The check runs under the lock so
+a concurrent retry cannot double-append.
+
+Cost: the id check scans the journal from byte 0 on every append, O(n) in
+journal length (about 40 ms at 20k lines). Unit 2 note: the serve must keep
+an in-memory id set plus its last offset, refreshed under the lock, rather
+than call this scan per append.
 
 ## Snapshot
 
@@ -84,8 +104,20 @@ hcom reuses names. Each name holds an ordered list of incarnations; `culled`,
 event that is not an end-of-life attachment (`cull-requested`, `session.*`
 end) opens a new one. The fold with the roster picks the first incarnation
 not closed before hcom's `created_at` (decoded in `hcomidentity`; `created`
-accepted as an alias); with no roster time it takes the latest. A new
+accepted as an alias), then rejects it when its first event predates
+`created_at` unless its open session is the roster's session: a raw `hcom
+kill`, a crash or a missed wrapper records no close, and roster creation is
+the newer evidence. With no roster time it takes the latest. A new
 incarnation inherits nothing: no manager, no assignment, no launcher.
+
+`mirror.batch_launched` fans out to its `instances` (name optional).
+`session.observed` without a name is a pane-only session kept under
+`unnamed_sessions` keyed tool/session. `session.ended`/`superseded` close
+the session the event names, never "whichever is current". Reparents are
+ordered by event time, so an older one arriving late never overwrites a
+newer manager. A registered `launch-ready` supersedes weaker `mirror.*`
+attribution for launcher/launcher_kind (and the default manager, unless a
+reparent was explicit).
 
 Binding: when a register event claimed session S and the roster says S′,
 the view records `binding: conflict {claimed: S, roster: S′}` and keeps S′
@@ -100,8 +132,19 @@ changes only through `reparent {name, manager, by}` (`herder register
 reparent --name X --manager Y`). Hierarchy views hang off `manager`;
 `launcher` stays for audit.
 
+## One validator
+
+`agentstore.SpecFor(kind)` is the single per-kind contract (required, one-of,
+optional fields, keyed by CLI flag name). `Store.Append` validates every
+event through it, so an in-process writer (the serve, unit 2) cannot record
+what the CLI would refuse: unsupported tool, missing launch tag, two
+placement targets, `culled` without a pane, `annotate` with a manager,
+invalid `by_kind`, negative `steer_chars`. The register CLI only parses
+flags into an event.
+
 ## Exit codes (`herder register`)
 
-0 appended or identical replay · 2 usage · 3 store unavailable (unwritable
-dir, lock timeout, failed first-open import). `list`/`show` exit 0 with rows
+0 appended or identical replay · 2 usage or invalid event (including a
+replayed id with a different payload) · 3 store unavailable (unwritable dir,
+lock timeout, failed first-open import). `list`/`show` exit 0 with rows
 shown as `unregistered` and one stderr warning when the store is unavailable.

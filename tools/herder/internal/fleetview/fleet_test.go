@@ -293,4 +293,18 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 	if nilProj := FoldStore(rows, roster, nil); nilProj[0].Launcher != "unregistered" {
 		t.Fatalf("nil projection: %+v", nilProj[0])
 	}
+	// No close event recorded (raw hcom kill): a later created_at must not inherit.
+	apply(agentstore.Event{At: at.Add(20 * time.Second), Kind: agentstore.KindAssign, By: "vara", Name: "mavu", Mission: "second-life"})
+	roster[0].CreatedAt = at.Add(time.Minute)
+	roster[0].SessionID = "brand-new"
+	if noClose := FoldStore(rows, roster, proj); noClose[0].Launcher != "unregistered" || noClose[0].Mission != "-" || noClose[0].Manager != "-" {
+		t.Fatalf("reused name without a close event inherited: %+v", noClose[0])
+	}
+	// Binding folds into the row without touching placement/GAP.
+	apply(agentstore.Event{At: at.Add(30 * time.Second), Kind: agentstore.KindLaunchReady, By: "riko", Name: "funa", Session: "claimed"})
+	roster[1].SessionID = "roster-other"
+	folded := FoldStore(rows, roster, proj)
+	if folded[2].Binding == nil || folded[2].Binding.State != "conflict" || folded[2].Binding.Claimed != "claimed" || folded[2].Binding.Roster != "roster-other" || folded[2].Gap != rows[2].Gap || folded[2].Pane != "-" {
+		t.Fatalf("binding fold = %+v", folded[2])
+	}
 }

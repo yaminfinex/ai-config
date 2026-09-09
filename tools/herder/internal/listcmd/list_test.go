@@ -162,6 +162,7 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Mission: "fleet-refit"},
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindReparent, By: "ziru", Name: "mavu", Manager: "vara"},
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindMirrorReady, By: "riko", ByKind: "mirror", Name: "vile"},
+		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", Name: "funa", Session: "claimed-session-1"},
 	} {
 		if _, err := s.Append(e); err != nil {
 			t.Fatal(err)
@@ -175,7 +176,8 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 			return []hcomidentity.Row{
 				{Name: "mavu", Tool: "codex", Status: "listening", CreatedAt: at.Add(-time.Minute), LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}},
 				{Name: "vile", Tool: "claude", Status: "active"},
-				{Name: "funa", Tool: "codex", Status: "listening"},
+				{Name: "funa", Tool: "codex", Status: "listening", SessionID: "roster-session-2"},
+				{Name: "nobody", Tool: "codex", Status: "listening"},
 			}, nil
 		},
 		store: liveDependencies.store,
@@ -185,13 +187,14 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 	text := stdout.String()
-	if !strings.Contains(text, "LAUNCHER") || !strings.Contains(text, "MANAGER") || !strings.Contains(text, "MISSION") {
+	if !strings.Contains(text, "LAUNCHER") || !strings.Contains(text, "MANAGER") || !strings.Contains(text, "MISSION") || !strings.Contains(text, "BINDING") {
 		t.Fatalf("columns missing:\n%s", text)
 	}
 	for _, row := range []struct{ agent, launcher, manager, mission string }{
 		{"mavu", "ziru", "vara", "fleet-refit"},
 		{"vile", "mirrored: riko", "riko", "-"},
-		{"funa", "unregistered", "-", "-"},
+		{"funa", "ziru", "ziru", "-"},
+		{"nobody", "unregistered", "-", "-"},
 	} {
 		line := lineFor(text, row.agent)
 		fields := strings.Fields(line)
@@ -205,6 +208,12 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 	}
 	if line := lineFor(text, "p9"); !strings.Contains(line, "no bus row") || strings.Contains(line, "unregistered") {
 		t.Errorf("pane without a bus row must not print unregistered: %q", line)
+	}
+	if line := lineFor(text, "funa"); !strings.Contains(line, "conflict claimed-≠roster-s") || !strings.Contains(line, "no visible pane") {
+		t.Errorf("binding conflict must show without changing GAP: %q", line)
+	}
+	if line := lineFor(text, "mavu"); !strings.Contains(line, "  -  ") && !strings.Contains(line, "\t-\t") && strings.Contains(line, "conflict") {
+		t.Errorf("mavu has no claim and must not show a binding: %q", line)
 	}
 	if _, err := os.Stat(filepath.Join(state, "agents", "snapshot.json")); err != nil {
 		t.Fatalf("list did not refresh the snapshot: %v", err)

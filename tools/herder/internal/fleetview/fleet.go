@@ -32,6 +32,7 @@ type Row struct {
 	Manager    string                 `json:"manager,omitempty"`
 	Mission    string                 `json:"mission,omitempty"`
 	Provenance *ProvenanceSummary     `json:"provenance,omitempty"`
+	Binding    *agentstore.Binding    `json:"binding,omitempty"` // claimed vs roster session; never touches placement
 	Title      string                 `json:"title,omitempty"`
 	Vitals     *agentstore.VitalsView `json:"vitals,omitempty"`
 }
@@ -79,6 +80,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 			row.Launcher = "unregistered"
 		}
 		row.Manager = display(view.Manager)
+		row.Binding = view.Binding
 		row.Mission = "-"
 		if view.Assignment != nil {
 			row.Mission = display(view.Assignment.Mission)

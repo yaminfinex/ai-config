@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -20,7 +21,8 @@ const MaxLineBytes = 16 * 1024
 const DefaultLockTimeout = 2 * time.Second
 
 // ErrUnavailable wraps every failure that means "the store cannot be written":
-// register maps it to exit 3.
+// register maps it to exit 3. Any other Append error is an invalid event
+// (exit 2), including a replayed id whose payload differs.
 var ErrUnavailable = errors.New("store unavailable")
 
 // Store is one agents/ directory. Zero value is unusable; use Open.
@@ -30,6 +32,8 @@ type Store struct {
 	LockTimeout time.Duration
 	Stderr      io.Writer // one-line diagnostics (torn tail, import); nil = discard
 	ImportErr   error     // set by Open when the first-open import could not create events.jsonl
+
+	importFault func(edges int) error // test hook: fail the import after N edges
 }
 
 // Receipt is what Append returns; a replayed id returns the receipt of the
@@ -71,9 +75,6 @@ func (s *Store) Append(e Event) (Receipt, error) {
 	if err := e.Validate(); err != nil {
 		return Receipt{}, err
 	}
-	if !ValidID(e.ID) {
-		return Receipt{}, fmt.Errorf("event id %q is not UUID-shaped", e.ID)
-	}
 	e.At = e.At.UTC()
 	line, err := Encode(e)
 	if err != nil {
@@ -105,23 +106,49 @@ func (s *Store) Append(e Event) (Receipt, error) {
 	if existing, offset, found, err := s.findID(e.ID); err != nil {
 		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	} else if found {
+		// A retry is the same payload apart from its defaulted `at` (the id
+		// already fixes the time); anything else differing is a new fact that
+		// needs a new id.
+		retry := e
+		retry.At = existing.At
+		retryLine, _ := Encode(retry)
+		stored, _ := Encode(existing)
+		if !bytes.Equal(stored, retryLine) {
+			return Receipt{}, fmt.Errorf("id %s already has a different payload; a corrected event needs a new id", e.ID)
+		}
+		// The earlier writer may have died between write and fsync; make the
+		// receipt this caller is about to trust durable.
+		if err := file.Sync(); err != nil {
+			return Receipt{}, fmt.Errorf("%w: fsync: %v", ErrUnavailable, err)
+		}
 		return Receipt{Event: existing, Offset: offset, Replayed: true}, nil
 	}
 	end, err := file.Seek(0, io.SeekEnd)
 	if err != nil {
 		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	n, err := file.Write(line)
-	if err != nil {
+	if err := writeRecord(int(file.Fd()), line, syscall.Write, file.Sync); err != nil {
 		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	if n != len(line) {
-		return Receipt{}, fmt.Errorf("%w: short write %d of %d bytes", ErrUnavailable, n, len(line))
-	}
-	if err := file.Sync(); err != nil {
-		return Receipt{}, fmt.Errorf("%w: fsync: %v", ErrUnavailable, err)
-	}
 	return Receipt{Event: e, Offset: end}, nil
+}
+
+// writeRecord is one write(2) (syscall.Write, not os.File.Write, which loops
+// after a short write and could leave two fragments) then fsync. A short
+// write is reported; the torn tail it leaves has no receipt and is repaired
+// by the next lock holder.
+func writeRecord(fd int, line []byte, write func(int, []byte) (int, error), sync func() error) error {
+	n, err := write(fd, line)
+	if err != nil {
+		return err
+	}
+	if n != len(line) {
+		return fmt.Errorf("short write %d of %d bytes", n, len(line))
+	}
+	if err := sync(); err != nil {
+		return fmt.Errorf("fsync: %w", err)
+	}
+	return nil
 }
 
 // repairTornTail runs under the lock: a final line without its newline never
@@ -179,9 +206,9 @@ func completeEnd(read io.ReaderAt, size int64) (int64, error) {
 	return 0, nil
 }
 
-// findID scans complete lines for id (replay detection). The file is a few
-// thousand short lines at most before rotation, so a scan is cheaper than an
-// index that could drift.
+// findID scans every complete line for id (replay detection): O(n) per
+// append, no index, no rotation in this unit. Measured ~40 ms at 20k lines;
+// the serve (unit 2) keeps an in-memory id set plus offset instead.
 func (s *Store) findID(id string) (Event, int64, bool, error) {
 	var found Event
 	var at int64
@@ -240,7 +267,11 @@ func (s *Store) scanEnd(from int64, visit func(Event, int64)) (int64, error) {
 	}
 }
 
-// importEdges is the one-time launch-edges.jsonl import (see Open).
+// importEdges is the one-time launch-edges.jsonl import (see Open). The
+// whole import is built in a temp file and renamed into place under a
+// separate init.lock (never the journal's inode), so a crash mid-import
+// leaves no events.jsonl and the next open imports everything again.
+// Malformed edge lines are skipped with one warning each.
 func (s *Store) importEdges() error {
 	if _, err := os.Stat(s.EventsPath()); err == nil {
 		return nil
@@ -254,10 +285,31 @@ func (s *Store) importEdges() error {
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	initLock, err := os.OpenFile(filepath.Join(s.Dir, "init.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer initLock.Close()
+	timeout := s.LockTimeout
+	if timeout <= 0 {
+		timeout = DefaultLockTimeout
+	}
+	if err := lockFile(initLock, timeout); err != nil {
+		return fmt.Errorf("%w: import %v", ErrUnavailable, err)
+	}
+	defer unlockFile(initLock)
+	if _, err := os.Stat(s.EventsPath()); err == nil {
+		return nil // another opener finished the import while we waited
+	}
 	type edge struct {
 		Name, Launcher, Tool, Model, Effort, Tag, Workspace, Pane string
 		Time                                                      time.Time
 	}
+	var content bytes.Buffer
+	seen := map[string]bool{}
 	imported := 0
 	for _, line := range bytes.Split(raw, []byte("\n")) {
 		line = bytes.TrimSpace(line)
@@ -280,13 +332,65 @@ func (s *Store) importEdges() error {
 		if e.At.IsZero() {
 			e.At = time.Unix(0, 0).UTC()
 		}
-		if _, err := s.Append(e); err != nil {
-			return err
+		if seen[e.ID] {
+			continue
 		}
+		if err := e.Validate(); err != nil {
+			s.warn("skipping launch edge that fails the event contract (%v): %.80s", err, line)
+			continue
+		}
+		encoded, err := Encode(e)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+		seen[e.ID] = true
+		content.Write(encoded)
 		imported++
+		if s.importFault != nil {
+			if err := s.importFault(imported); err != nil {
+				return fmt.Errorf("%w: import: %v", ErrUnavailable, err)
+			}
+		}
+	}
+	if err := atomicWrite(s.EventsPath(), content.Bytes()); err != nil {
+		return fmt.Errorf("%w: import: %v", ErrUnavailable, err)
 	}
 	if imported > 0 {
 		s.warn("imported %d launch edge(s) from %s", imported, s.EdgesPath)
 	}
 	return nil
+}
+
+// atomicWrite publishes raw at path: temp file, fsync, rename, fsync dir.
+func atomicWrite(path string, raw []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".import-*")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	cleanup := func() { _ = os.Remove(name) }
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		cleanup()
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }

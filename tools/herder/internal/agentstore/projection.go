@@ -3,6 +3,7 @@ package agentstore
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	"ai-config/tools/herder/internal/hcomidentity"
@@ -23,7 +24,10 @@ type Projection struct {
 	EventsOffset int64                     `json:"events_offset"`
 	Agents       map[string][]*AgentView   `json:"agents"`
 	Requests     map[string]*RequestRecord `json:"requests"`
-	SnapshotErr  error                     `json:"-"`
+	// UnnamedSessions are pane-only observations (no hcom name yet), keyed
+	// tool + "/" + session id. A later bind by name finds them here.
+	UnnamedSessions map[string]*SessionView `json:"unnamed_sessions"`
+	SnapshotErr     error                   `json:"-"`
 }
 
 // RequestRecord ties launch-requested to its ready/failed outcome, including
@@ -139,7 +143,7 @@ type VitalsView struct {
 }
 
 func NewProjection() *Projection {
-	return &Projection{Version: ProjectionVersion, Agents: map[string][]*AgentView{}, Requests: map[string]*RequestRecord{}}
+	return &Projection{Version: ProjectionVersion, Agents: map[string][]*AgentView{}, Requests: map[string]*RequestRecord{}, UnnamedSessions: map[string]*SessionView{}}
 }
 
 // Marshal is the canonical snapshot encoding (sorted map keys, UTC times), so
@@ -187,7 +191,22 @@ func (p *Projection) Apply(e Event, _ int64) {
 		}
 		return
 	}
+	if e.Kind == KindMirrorBatch && len(e.Instances) > 0 {
+		// A batch names its subjects in instances; fan out one apply per name.
+		for _, name := range e.Instances {
+			child := e
+			child.Name, child.Instances = name, nil
+			child.Kind = KindMirrorCreated
+			p.Apply(child, 0)
+		}
+		if e.Name == "" {
+			return
+		}
+	}
 	if e.Name == "" {
+		if e.Session != "" && (e.Kind == KindSessionObserved || e.Kind == KindSessionEnded || e.Kind == KindSessionSupersede) {
+			p.unnamedSession(e)
+		}
 		return
 	}
 	v := p.record(e)
@@ -202,12 +221,21 @@ func (p *Projection) Apply(e Event, _ int64) {
 	if at.Before(v.FirstSeen) {
 		v.FirstSeen, v.Incarnation = at, at
 	}
+	// setLauncher fills an empty launcher; a registered fact (kind != mirror)
+	// also supersedes weaker mirrored attribution, carrying the default
+	// manager along unless someone reparented explicitly.
 	setLauncher := func(by, kind string) {
-		if v.Provenance.Launcher == "" && by != "" {
-			v.Provenance.Launcher, v.Provenance.LauncherKind = by, kind
-			if v.Manager == "" {
-				v.Manager = by
-			}
+		if by == "" {
+			return
+		}
+		pr := &v.Provenance
+		if pr.Launcher != "" && !(pr.LauncherKind == "mirror" && kind != "mirror") {
+			return
+		}
+		managerFollows := v.Manager == "" || (v.ManagerAt == nil && v.Manager == pr.Launcher)
+		pr.Launcher, pr.LauncherKind = by, kind
+		if managerFollows {
+			v.Manager = by
 		}
 	}
 	registered := func() {
@@ -303,6 +331,11 @@ func (p *Projection) Apply(e Event, _ int64) {
 	case KindAnnotate:
 		v.Annotation = &Annotation{Title: e.Title, Note: e.Note, By: e.By, At: at}
 	case KindReparent:
+		// Event time orders reparents, not arrival: an older one landing
+		// late never overwrites a newer manager.
+		if v.ManagerAt != nil && at.Before(*v.ManagerAt) {
+			break
+		}
 		v.Manager, v.ManagerBy = e.Manager, e.By
 		v.ManagerAt = &at
 	case KindMirrorCreated, KindMirrorReady, KindMirrorBatch:
@@ -324,7 +357,37 @@ func (p *Projection) Apply(e Event, _ int64) {
 		v.openSession(e.Session, firstNonEmpty(e.Tool, v.Tool), e.Path, at, "observed")
 	case KindSessionEnded, KindSessionSupersede:
 		reason := firstNonEmpty(e.Reason, map[string]string{KindSessionEnded: "ended", KindSessionSupersede: "superseded"}[e.Kind])
-		v.endSession(at, reason)
+		v.endNamedSession(e.Session, at, reason)
+	}
+}
+
+func (p *Projection) unnamedSession(e Event) {
+	key := e.Tool + "/" + e.Session
+	at := e.At
+	view := p.UnnamedSessions[key]
+	if view == nil {
+		view = &SessionView{SessionID: e.Session, Tool: e.Tool, Started: &at}
+		p.UnnamedSessions[key] = view
+	}
+	if e.Path != "" {
+		view.Path = e.Path
+	}
+	if e.Kind != KindSessionObserved && view.Ended == nil {
+		view.Ended, view.EndReason = &at, firstNonEmpty(e.Reason, strings.TrimPrefix(e.Kind, "session."))
+	}
+}
+
+// endNamedSession closes the session the event names (not whichever is
+// current); an unknown id is recorded in Events only.
+func (v *AgentView) endNamedSession(id string, at time.Time, reason string) {
+	for i := range v.Sessions {
+		if v.Sessions[i].SessionID == id {
+			if v.Sessions[i].Ended == nil {
+				t := at
+				v.Sessions[i].Ended, v.Sessions[i].EndReason = &t, reason
+			}
+			return
+		}
 	}
 }
 
@@ -390,9 +453,12 @@ func (p *Projection) Latest(name string) *AgentView {
 }
 
 // Incarnation picks the record that matches hcom's creation time: the first
-// incarnation not closed before createdAt. With no roster time (zero), the
-// latest incarnation is the honest answer.
-func (p *Projection) Incarnation(name string, createdAt time.Time) *AgentView {
+// incarnation not closed before createdAt. A record whose first event
+// predates createdAt belongs to an EARLIER life of the name unless its open
+// session is the roster's session: a raw `hcom kill`, a crash or a missed
+// wrapper leaves no close event, and roster creation is the newer evidence.
+// With no roster time (zero), the latest incarnation is the only answer.
+func (p *Projection) Incarnation(name string, createdAt time.Time, rosterSession string) *AgentView {
 	list := p.Agents[name]
 	if len(list) == 0 {
 		return nil
@@ -401,9 +467,13 @@ func (p *Projection) Incarnation(name string, createdAt time.Time) *AgentView {
 		return list[len(list)-1]
 	}
 	for _, v := range list {
-		if v.Closed == nil || !v.Closed.Before(createdAt) {
-			return v
+		if v.Closed != nil && v.Closed.Before(createdAt) {
+			continue
 		}
+		if v.FirstSeen.Before(createdAt) && (rosterSession == "" || currentSession(v) != rosterSession) {
+			return nil
+		}
+		return v
 	}
 	return nil
 }
@@ -415,7 +485,7 @@ func (p *Projection) Incarnation(name string, createdAt time.Time) *AgentView {
 func (p *Projection) View(name string, roster *hcomidentity.Row) *AgentView {
 	var stored *AgentView
 	if roster != nil {
-		stored = p.Incarnation(name, roster.CreatedAt)
+		stored = p.Incarnation(name, roster.CreatedAt, roster.SessionID)
 	} else {
 		stored = p.Latest(name)
 	}

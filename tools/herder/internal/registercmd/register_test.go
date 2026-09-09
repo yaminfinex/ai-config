@@ -111,7 +111,7 @@ func TestRegisterHelpCoversEveryKind(t *testing.T) {
 		if !strings.Contains(stdout, "  "+kind+" ") {
 			t.Errorf("help lacks kind %s", kind)
 		}
-		if _, ok := specs[kind]; !ok {
+		if _, ok := agentstore.SpecFor(kind); !ok {
 			t.Errorf("no spec for %s", kind)
 		}
 	}
