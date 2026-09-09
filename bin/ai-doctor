@@ -525,6 +525,16 @@ check_identity_bearing_shell() {
   warn_strict_exempt "current shell carries managed-agent identity (${present[*]}); launch agents from a clean shell through the managed launcher functions, or run probes under env -i with an isolated HOME/state and no HCOM_*/HERDER_*/HERDR_* values"
 }
 
+check_hcom_launch_notes() {
+  local config="${HCOM_DIR:-$HOME/.hcom}/config.toml"
+
+  if ! command -v hcom >/dev/null 2>&1 || [ ! -r "$config" ]; then
+    warn "hcom launch notes not checkable: hcom not installed"
+  elif ! "$AI_CONFIG_ROOT/tools/fleet/apply-hcom-notes.sh" --check >/dev/null 2>&1; then
+    warn "hcom launch notes drifted from docs/hcom-launch-notes.txt: run tools/fleet/apply-hcom-notes.sh"
+  fi
+}
+
 check_git
 check_portable_links
 check_skill_links
@@ -540,6 +550,7 @@ check_grok_family
 check_identity_bearing_shell
 check_secret_scan
 check_portability_scan
+check_hcom_launch_notes
 
 if [ "$errors" -gt 0 ]; then
   log_error "ai-doctor found $errors error(s) and $warnings warning(s)"

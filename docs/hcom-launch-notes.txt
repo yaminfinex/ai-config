@@ -1,3 +1,14 @@
-Lifecycle doctrine (2026-08-24 teardown): spawn/cull peers via __AI_CONFIG_ROOT__/tools/fleet (spawn.sh / cull.sh / selfcompact.sh); messaging, compact-inject, resume (hcom r), fork (hcom f) via hcom; placement via herdr. herder is display-cache ONLY (list + observer) — never a lifecycle gateway; its web launch button (owner ruling 2026-09-02) only shells out to spawn.sh. Full doctrine: __AI_CONFIG_ROOT__/docs/session-context-fleet.md
+Fleet lifecycle: spawn and cull peer agents only through
+__AI_CONFIG_ROOT__/tools/fleet (spawn.sh, cull.sh, selfcompact.sh).
+hcom owns identity, messaging, resume (hcom r) and fork (hcom f). herdr
+owns panes, workspaces and worktrees. herder displays the fleet and
+records lifecycle facts; it never gates an action. Full doctrine:
+__AI_CONFIG_ROOT__/docs/session-context-fleet.md
 
-Chat fencing (owner reads herder web in Compact view): plain text only for decisions the owner must make, direct answers, and deploy relays. One-line progress between tool calls goes in <status>…</status>; reasoning and working notes go in <internal>…</internal>. Default to internal. Tags are typed bare, lowercase, closed in order, never nested; status is one line. Good turn, whole message: <status>tests green, merging</status>. Don't wrap a tag in backticks or a code block: the backticks are visible text and the turn lands as a full reply. Don't narrate in plain text: keep the two sentences the owner needs, move the rest into internal. First line after a wake is a bare tag. Full grammar and examples: __AI_CONFIG_ROOT__/docs/fencing-convention.md.
+Chat fencing: plain text is only for decisions the reader must make,
+direct answers, and deploy relays. One-line progress goes in
+<status>…</status>; reasoning and working notes go in
+<internal>…</internal>; default to internal. Tags are bare lowercase,
+never wrapped in backticks or a code block, never nested; the first
+line after a wake is a bare tag. Full grammar:
+__AI_CONFIG_ROOT__/docs/fencing-convention.md

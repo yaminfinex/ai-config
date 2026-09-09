@@ -110,6 +110,7 @@ the first after moving the checkout (it stores absolute paths).
    ```
 
    Edit the repo file, never the hcom config directly, then re-run the script.
+   `ai-setup` applies the launch notes, and `ai-doctor` checks them for drift.
 
 3. **herdr's claude session registration** — the SessionStart hook that reports claude
    session ids to herdr, the display cache's session evidence:

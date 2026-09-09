@@ -60,20 +60,30 @@ XDG_CACHE="$ROOT/cache"
 VENDORBIN="$ROOT/vendorbin"
 MOCKBIN="$ROOT/mockbin"
 mkdir -p "$FIXTURE/bin" "$FIXTURE/lib" "$FIXTURE/tools/herder/shims" \
+  "$FIXTURE/tools/fleet" "$FIXTURE/docs" "$HOME_DIR/.hcom" \
   "$HOME_DIR/.claude" "$XDG_CONFIG/mise/conf.d" "$XDG_STATE" "$XDG_CACHE" \
   "$VENDORBIN" "$MOCKBIN"
 
 cp "$REPO/lib/common.sh" "$REPO/lib/mise-path.sh" "$REPO/lib/grok-health.sh" \
   "$REPO/lib/launchers.sh" "$FIXTURE/lib/"
+cp "$REPO/tools/fleet/apply-hcom-notes.sh" "$FIXTURE/tools/fleet/"
+cp "$REPO/docs/hcom-launch-notes.txt" "$FIXTURE/docs/"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$FIXTURE/bin/herder"
 for tool in claude codex grok; do
   printf '%s\n' '#!/bin/sh' '# herder-path-shim' 'exit 0' > "$FIXTURE/tools/herder/shims/$tool"
 done
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$VENDORBIN/grok"
 printf '%s\n' '#!/bin/sh' 'exit 0' > "$MOCKBIN/mise"
+printf '%s\n' '#!/bin/sh' 'exit 0' > "$MOCKBIN/hcom"
 chmod +x "$FIXTURE/bin/herder" "$FIXTURE/tools/herder/shims/claude" \
   "$FIXTURE/tools/herder/shims/codex" "$FIXTURE/tools/herder/shims/grok" \
-  "$VENDORBIN/grok" "$MOCKBIN/mise"
+  "$VENDORBIN/grok" "$MOCKBIN/mise" "$MOCKBIN/hcom"
+
+{
+  printf '%s\n' '[launch]' 'notes = """'
+  sed "s|__AI_CONFIG_ROOT__|$FIXTURE|g" "$FIXTURE/docs/hcom-launch-notes.txt"
+  printf '%s\n' '"""'
+} > "$HOME_DIR/.hcom/config.toml"
 
 printf '%s\n' '{"statusLine":{"command":"$HOME/.claude/statusline.sh"}}' > "$HOME_DIR/.claude/settings.json"
 # Healthy machine shape for the launcher generation: conf.d fronts bin/ ONLY
@@ -168,6 +178,24 @@ assert_rc "mixed warnings strict: actionable warning still fails" "$RC" 1
 assert_contains "mixed warnings strict: ordinary warning remains visible" "$OUT" "WARN GROK_HOME is set"
 assert_contains "mixed warnings strict: identity nudge remains visible" "$OUT" "WARN current shell carries managed-agent identity"
 assert_contains "mixed warnings strict: both warnings counted" "$OUT" "WARN ai-doctor found 2 warning(s)"
+
+sed -i 's/Fleet lifecycle:/Drifted lifecycle:/' "$HOME_DIR/.hcom/config.toml"
+OUT="$(doctor)"
+RC=$?
+assert_rc "hcom notes drift: warning tier rc 0" "$RC" 0
+assert_contains "hcom notes drift: remedy" "$OUT" "WARN hcom launch notes drifted from docs/hcom-launch-notes.txt: run tools/fleet/apply-hcom-notes.sh"
+
+rm "$HOME_DIR/.hcom/config.toml"
+OUT="$(doctor)"
+RC=$?
+assert_rc "hcom config absent: warning tier rc 0" "$RC" 0
+assert_contains "hcom config absent: distinct warning" "$OUT" "WARN hcom launch notes not checkable: hcom not installed"
+
+rm "$MOCKBIN/hcom"
+OUT="$(doctor)"
+RC=$?
+assert_rc "hcom unavailable: warning tier rc 0" "$RC" 0
+assert_contains "hcom unavailable: distinct warning" "$OUT" "WARN hcom launch notes not checkable: hcom not installed"
 
 echo
 if [ "$fail" -eq 0 ]; then

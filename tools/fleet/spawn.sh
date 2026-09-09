@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+# A parent seat's snapshot must not override hcom's current configured notes.
+unset HCOM_NOTES
+
 request=
 pane_id=
 batch_id=
