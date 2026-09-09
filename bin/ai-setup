@@ -250,6 +250,11 @@ claude_settings_apply "$dry_run"
 codex_config_apply_default "$dry_run" "$codex_home_existed" "$skip_codex_config"
 mise_path_install
 shell_rc_install
-run mise exec -- "$AI_CONFIG_ROOT/tools/fleet/apply-hcom-notes.sh"
+if command -v hcom >/dev/null 2>&1; then
+  run "$AI_CONFIG_ROOT/tools/fleet/apply-hcom-notes.sh"
+else
+  # Fresh machine: hcom was just installed by mise and is not on PATH yet.
+  run mise exec -- "$AI_CONFIG_ROOT/tools/fleet/apply-hcom-notes.sh"
+fi
 
 log_info "ai-setup complete"

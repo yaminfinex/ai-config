@@ -394,10 +394,11 @@ check_codex_helper_binaries() {
   # real path (first: codex-code-mode-host). A bare-binary drop-in boots and
   # then fails closed on the first feature that needs one. bin/codex-update
   # installs the whole package bundle; this is the no-network tripwire.
+  # Only the codex-update install dir is checked: a PATH lookup would match
+  # launcher shims (and the doctor fixture's fakes), which never carry helpers.
   local codex helper dir missing=""
   codex="${CODEX_BIN_DIR:-$HOME/.local/bin}/codex"
-  [ -x "$codex" ] || codex="$(command -v codex 2>/dev/null || true)"
-  [ -n "$codex" ] && [ -f "$codex" ] || return 0
+  [ -f "$codex" ] || return 0
   dir="$(dirname "$(abs_path "$codex")")"
   for helper in $(codex_helper_binaries); do
     [ -x "$dir/$helper" ] || missing="$missing $helper"
