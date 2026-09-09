@@ -61,6 +61,18 @@ test('prose between quotes stays fenced', () => {
   assert.equal(pathTokenSpanAt(prose, prose.indexOf('against')).text, 'against')
 })
 
+test('contractions never enclose path prose', () => {
+  for (const text of ["I've created the trail (/home/u/x.md) It's done", "The agent's trail (/home/u/x.md) isn't lost"]) {
+    assert.equal(pathTokenSpanAt(text, text.indexOf('/home')).text, '/home/u/x.md')
+  }
+})
+
+test('a quoted path retains spaces even after a contraction', () => {
+  for (const text of ["see '/home/u/x y.md'", "I've created '/home/u/x y.md' today"]) {
+    assert.equal(pathTokenSpanAt(text, text.indexOf('y.md')).text, "'/home/u/x y.md'")
+  }
+})
+
 test('path signal rejects ordinary prose but admits path-shaped and code mentions', () => {
   assert.equal(hasPathSignal('ordinary', false), false)
   assert.equal(hasPathSignal('src/App.tsx', false), true)

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { resolveFiles, type ResolveContext } from '../../api/client'
 import type { FileCandidate, FileTarget, FolderTarget, ResolveResponse } from '../../types'
-import { autoOpenCandidate, hasPathSignal, isConfidentResolution, isRenderedInlineCode, mentionLine, pathTokenSpanAt } from './fileResolution'
+import { autoOpenCandidate, hasPathSignal, isConfidentResolution, isRenderedInlineCode, mentionLine } from './fileResolution'
+import { pathTokenRangeAt } from './pathTokenRange'
+import { pathFromHref } from '../../shared/pathHref'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
@@ -36,6 +38,23 @@ function textPoint(event: React.MouseEvent<HTMLElement>) {
   return selection?.anchorNode?.nodeType === Node.TEXT_NODE ? { node: selection.anchorNode, offset: selection.anchorOffset } : null
 }
 
+function tokenFor(target: Element, event: React.MouseEvent<HTMLElement>): { mention: string, range: Range } | null {
+  const pathLink = target.closest('.path-link')
+  const range = document.createRange()
+  if (pathLink) {
+    const mention = pathFromHref(pathLink.getAttribute('title') ?? '')
+    if (mention === null) return null
+    range.selectNodeContents(pathLink)
+    return { mention, range }
+  }
+  const point = textPoint(event)
+  if (!point) return null
+  const token = pathTokenRangeAt(point, { renderedCode: isRenderedInlineCode(target), softWrap: !target.closest('pre') })
+  range.setStart(token.start.node, token.start.offset)
+  range.setEnd(token.end.node, token.end.offset)
+  return { mention: token.text, range }
+}
+
 export function useTranscriptFileResolver(context: ResolveContext, enabled: boolean, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void) {
   const [popover, setPopover] = useState<PopoverState | null>(null)
   const request = useRef<AbortController | null>(null)
@@ -61,18 +80,12 @@ export function useTranscriptFileResolver(context: ResolveContext, enabled: bool
     cancel()
     const target = event.nativeEvent.composedPath().find((item): item is Element => item instanceof Element) ?? event.target as Element
     if (target.closest('a, button, header, summary, .window-note, .entry-time')) return
-    const point = textPoint(event)
-    if (!point) return
-    const text = point.node.textContent ?? ''
-    const renderedCode = isRenderedInlineCode(target)
-    const token = pathTokenSpanAt(text, point.offset, renderedCode)
-    const mention = token.text
+    const token = tokenFor(target, event)
+    if (!token) return
+    const { mention, range } = token
     const placement = placementFromModifiers(event)
-    const codeOrQuoted = Boolean(target.closest('code, pre')) || /^[`"']/.test(mention)
-    if (!mention || !hasPathSignal(mention, codeOrQuoted)) return
-    const range = document.createRange()
-    range.setStart(point.node, token.start)
-    range.setEnd(point.node, token.end)
+    const explicitPath = Boolean(target.closest('.path-link, code, pre')) || /^[`"']/.test(mention)
+    if (!mention || !hasPathSignal(mention, explicitPath)) return
     const selection = document.getSelection()
     selection?.removeAllRanges()
     selection?.addRange(range)
@@ -80,8 +93,10 @@ export function useTranscriptFileResolver(context: ResolveContext, enabled: bool
     const controller = new AbortController()
     request.current = controller
     try {
-      const resolution = await resolveFiles(mention, context, fetch, controller.signal)
-      if (controller.signal.aborted || !enabled || !isConfidentResolution(resolution, mention)) return
+      const result = await resolveFiles(mention, context, fetch, controller.signal)
+      if (controller.signal.aborted || !enabled) return
+      // Drop weak fuzzy hits so the no-match popover still preserves root outcomes.
+      const resolution = isConfidentResolution(result, mention) ? result : { ...result, candidates: [] }
       const certain = autoOpenCandidate(resolution)
       if (certain) {
         if (candidateDestination(certain) === 'folder') onOpenFolder({ root: certain.root, path: certain.path }, placement)
