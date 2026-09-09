@@ -1,4 +1,4 @@
-Fleet lifecycle: spawn and cull peer agents only through
+Fleet lifecycle: spawn, cull and self-compact agents only through
 __AI_CONFIG_ROOT__/tools/fleet (spawn.sh, cull.sh, selfcompact.sh).
 hcom owns identity, messaging, resume (hcom r) and fork (hcom f). herdr
 owns panes, workspaces and worktrees. herder displays the fleet and

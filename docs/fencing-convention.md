@@ -149,8 +149,4 @@ Good.
 
 ## Session snippet
 
-Single source for the hcom session-context `notes` field. Copy it verbatim.
-
-```
-Chat fencing (owner reads herder web in Compact view): plain text only for decisions the owner must make, direct answers, and deploy relays. One-line progress between tool calls goes in <status>…</status>; reasoning and working notes go in <internal>…</internal>. Default to internal. Tags are typed bare, lowercase, closed in order, never nested; status is one line. Good turn, whole message: <status>tests green, merging</status>. Don't wrap a tag in backticks or a code block: the backticks are visible text and the turn lands as a full reply. Don't narrate in plain text: keep the two sentences the owner needs, move the rest into internal. First line after a wake is a bare tag. Full grammar and examples: docs/fencing-convention.md in ai-config.
-```
+The notes text lives in `docs/hcom-launch-notes.txt`, and `tools/fleet/apply-hcom-notes.sh` writes it.
