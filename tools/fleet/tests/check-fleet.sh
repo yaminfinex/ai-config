@@ -107,8 +107,8 @@ EOF
 cat >"$TEST_ROOT/bin/hcom" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'hcom FLEET_PANE=%q HCOM_TERMINAL=%q HCOM_NOTES_SET=%q' \
-  "${FLEET_PANE:-}" "${HCOM_TERMINAL:-}" "${HCOM_NOTES+x}" >>"$FLEET_TEST_CALLS"
+printf 'hcom FLEET_PANE=%q FLEET_TOOL=%q HCOM_TERMINAL=%q HCOM_NOTES_SET=%q' \
+  "${FLEET_PANE:-}" "${FLEET_TOOL:-}" "${HCOM_TERMINAL:-}" "${HCOM_NOTES+x}" >>"$FLEET_TEST_CALLS"
 printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
 if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
@@ -200,7 +200,7 @@ export FLEET_TEST_CALLS=$TEST_ROOT/calls
 HCOM_NOTES=stale PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test --prompt hello >"$TEST_ROOT/spawn.out"
 grep -Fx 'name=gate-vava' "$TEST_ROOT/spawn.out" >/dev/null || fail "spawn did not print full hcom name"
-grep -F 'FLEET_PANE=p-test HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn omitted fleet env contract"
+grep -F 'FLEET_PANE=p-test FLEET_TOOL=codex HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn omitted fleet tool env contract"
 grep -F "HCOM_NOTES_SET=''" "$FLEET_TEST_CALLS" >/dev/null \
   || fail "spawn passed inherited HCOM_NOTES to hcom"
 grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--dangerously-bypass-approvals-and-sandbox.*--no-run-here.*--go' "$FLEET_TEST_CALLS" >/dev/null \
@@ -331,7 +331,7 @@ pass "spawn refuses unknown effort before placement or launch"
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --split-from p-source --prompt hello >"$TEST_ROOT/split.out"
 grep -F 'herdr pane get p-source' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not validate its source pane"
 grep -F 'herdr pane split --pane p-source --direction right --no-focus' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not split rightward by default (herdr 0.8 requires an explicit direction)"
-grep -F 'FLEET_PANE=p-split HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not launch into the fresh pane"
+grep -F 'FLEET_PANE=p-split FLEET_TOOL=codex HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "split spawn did not launch into the fresh pane"
 grep -Fx 'pane=p-split' "$TEST_ROOT/split.out" >/dev/null || fail "split spawn did not report the fresh pane"
 pass "spawn splits beside a validated source and launches into the fresh pane"
 
@@ -413,12 +413,26 @@ mkdir -p -- "$launch_dir"
 launch_script=$launch_dir/launch.sh
 printf '#!/usr/bin/env bash\n' >"$launch_script"
 : >"$FLEET_TEST_CALLS"
-first_line=$(PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]')
+first_line=$(PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test FLEET_TOOL=codex "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]')
 [[ $first_line == p-test ]] || fail "open helper did not print pane id first"
 printf -v launch_q '%q' "$launch_script"
-printf -v run_q '%q' "bash $launch_q"
+printf -v run_q '%q' "HERDR_AGENT=codex bash $launch_q"
 grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null || fail "open helper lost script-path quoting"
-pass "open helper preserves first-line id and script quoting"
+pass "open helper marks Codex and preserves first-line id and script quoting"
+
+: >"$FLEET_TEST_CALLS"
+PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test FLEET_TOOL=claude \
+  "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [claude]' >/dev/null
+printf -v run_q '%q' "HERDR_AGENT=claude bash $launch_q"
+grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "open helper used the wrong Claude marker"
+pass "open helper marks Claude with the canonical tool"
+
+if PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test \
+  "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]' >/dev/null 2>&1; then
+  fail "open helper accepted a missing FLEET_TOOL"
+fi
+pass "open helper requires the fleet tool marker"
 
 if "$FLEET/selfcompact.sh" '../wrong' steer continue >/dev/null 2>&1; then
   fail "selfcompact accepted an unsafe hcom name"

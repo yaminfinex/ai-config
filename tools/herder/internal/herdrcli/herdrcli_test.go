@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -39,17 +41,20 @@ func TestParseSessionSnapshotResultRejectsEmpty(t *testing.T) {
 	}
 }
 
-func TestParseServerStatusJSONAndText(t *testing.T) {
-	for name, input := range map[string]string{
-		"json": `{"result":{"socket":"/tmp/herdr.sock","protocol":19,"compatible":true}}`,
-		"text": "socket: /tmp/herdr.sock\nprotocol: 19\ncompatible: yes\n",
+func TestParseServerStatusJSONVersions(t *testing.T) {
+	for name, fixture := range map[string]struct {
+		input    string
+		protocol int
+	}{
+		"0.8.2": {input: `{"socket":"/tmp/herdr.sock","protocol":20,"compatible":true,"restart_needed":false}`, protocol: 20},
+		"0.9.0": {input: `{"status":"running","running":true,"version":"0.9.0","protocol":22,"compatible":true,"endpoint_compatible":true,"socket":"/tmp/herdr.sock"}`, protocol: 22},
 	} {
 		t.Run(name, func(t *testing.T) {
-			status, err := parseServerStatus([]byte(input))
+			status, err := parseServerStatus([]byte(fixture.input))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if status.socket != "/tmp/herdr.sock" || status.protocol != 19 || !status.compatible {
+			if status.socket != "/tmp/herdr.sock" || status.protocol != fixture.protocol || !status.compatible {
 				t.Fatalf("status = %#v", status)
 			}
 		})
@@ -64,6 +69,34 @@ func TestParseServerStatusJSONAndText(t *testing.T) {
 			t.Fatalf("status = %#v", status)
 		}
 	})
+}
+
+func TestLiveSocketRequestsJSONStatus(t *testing.T) {
+	t.Setenv("HERDER_HERDR_SOCKET", "")
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	herdr := filepath.Join(dir, "herdr")
+	script := "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >\"$HERDR_ARGS_FILE\"\nprintf '%s\\n' '{\"socket\":\"/tmp/herdr.sock\",\"protocol\":20,\"compatible\":true}'\n"
+	if err := os.WriteFile(herdr, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_ARGS_FILE", argsFile)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	socket, err := liveSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if socket != "/tmp/herdr.sock" {
+		t.Fatalf("socket = %q", socket)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(args)); got != "status\nserver\n--json" {
+		t.Fatalf("herdr args = %q", got)
+	}
 }
 
 func TestSupportsServerProtocol(t *testing.T) {

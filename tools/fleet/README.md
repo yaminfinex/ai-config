@@ -14,8 +14,9 @@ The command changes only `[terminal.presets.fleet]` in
 `${HCOM_DIR:-$HOME/.hcom}/config.toml`. `spawn.sh` selects it for one launch by
 setting both `HCOM_TERMINAL=fleet` and `FLEET_PANE=<pane-id>`. The open helper
 prints that pane id before any other stdout, stamps the label, and runs hcom's
-generated script in the pane; the preset retains the id so `hcom kill` can run
-`herdr pane close {pane_id}`.
+generated script with `HERDR_AGENT=<claude|codex>` so herdr detects the wrapped
+tool; the preset retains the id so `hcom kill` can run `herdr pane close
+{pane_id}`.
 
 ## Lifecycle
 

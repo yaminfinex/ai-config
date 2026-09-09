@@ -14,6 +14,7 @@ die() {
 
 [[ $# -eq 2 ]] || die "usage: spawn-pane.sh <hcom-script> <pane-title>"
 [[ -n ${FLEET_PANE:-} ]] || die "FLEET_PANE is required"
+[[ -n ${FLEET_TOOL:-} ]] || die "FLEET_TOOL is required"
 
 launch_script=$1
 pane_title=$2
@@ -25,4 +26,4 @@ herdr pane get "$FLEET_PANE" >/dev/null || die "pane does not exist: $FLEET_PANE
 printf '%s\n' "$FLEET_PANE"
 herdr pane rename "$FLEET_PANE" "$pane_title" >/dev/null
 printf -v launch_script_q '%q' "$launch_script"
-herdr pane run "$FLEET_PANE" "bash $launch_script_q" >/dev/null
+herdr pane run "$FLEET_PANE" "HERDR_AGENT=$FLEET_TOOL bash $launch_script_q" >/dev/null

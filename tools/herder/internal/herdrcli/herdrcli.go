@@ -9,7 +9,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -189,7 +188,7 @@ func liveSocket() (string, error) {
 	if socket := os.Getenv("HERDER_HERDR_SOCKET"); socket != "" {
 		return socket, nil
 	}
-	out, err := exec.Command("herdr", "status", "server").Output()
+	out, err := exec.Command("herdr", "status", "server", "--json").Output()
 	if err != nil {
 		return "", fmt.Errorf("herdr status server failed: %w", err)
 	}
@@ -224,11 +223,11 @@ func parseServerStatus(out []byte) (serverStatus, error) {
 		Result struct {
 			Socket     string      `json:"socket"`
 			Protocol   json.Number `json:"protocol"`
-			Compatible any         `json:"compatible"`
+			Compatible bool        `json:"compatible"`
 		} `json:"result"`
 		Socket     string      `json:"socket"`
 		Protocol   json.Number `json:"protocol"`
-		Compatible any         `json:"compatible"`
+		Compatible bool        `json:"compatible"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(out))
 	decoder.UseNumber()
@@ -236,7 +235,7 @@ func parseServerStatus(out []byte) (serverStatus, error) {
 		status := serverStatus{
 			socket:     firstNonEmpty(envelope.Result.Socket, envelope.Socket),
 			protocol:   firstNonZero(numberInt(envelope.Result.Protocol), numberInt(envelope.Protocol)),
-			compatible: compatibility(firstNonNil(envelope.Result.Compatible, envelope.Compatible)),
+			compatible: envelope.Result.Compatible || envelope.Compatible,
 		}
 		if status.socket == "" {
 			return serverStatus{}, fmt.Errorf("herdr status server did not report a socket")
@@ -244,25 +243,7 @@ func parseServerStatus(out []byte) (serverStatus, error) {
 		return status, nil
 	}
 
-	var status serverStatus
-	for _, line := range strings.Split(string(out), "\n") {
-		key, value, ok := strings.Cut(line, ":")
-		if !ok {
-			continue
-		}
-		switch strings.TrimSpace(key) {
-		case "socket":
-			status.socket = strings.TrimSpace(value)
-		case "protocol":
-			status.protocol, _ = strconv.Atoi(strings.TrimSpace(value))
-		case "compatible":
-			status.compatible = compatibility(strings.TrimSpace(value))
-		}
-	}
-	if status.socket == "" {
-		return serverStatus{}, fmt.Errorf("could not decode herdr server status")
-	}
-	return status, nil
+	return serverStatus{}, fmt.Errorf("could not decode herdr server status JSON")
 }
 
 func snapshotFromSocket(socket string) (Snapshot, error) {
@@ -389,28 +370,6 @@ func emptySnapshot(snapshot Snapshot) bool {
 func numberInt(value json.Number) int {
 	n, _ := value.Int64()
 	return int(n)
-}
-
-func compatibility(value any) bool {
-	switch typed := value.(type) {
-	case bool:
-		return typed
-	case string:
-		switch strings.ToLower(typed) {
-		case "yes", "true", "1":
-			return true
-		}
-	}
-	return false
-}
-
-func firstNonNil(values ...any) any {
-	for _, value := range values {
-		if value != nil {
-			return value
-		}
-	}
-	return nil
 }
 
 func firstNonEmpty(values ...string) string {

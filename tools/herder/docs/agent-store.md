@@ -6,6 +6,9 @@ history. It masters none of hcom's or herdr's facts. `internal/agentstore` is
 the only reader and writer; the CLI surfaces are `herder register`, `herder
 show` and the LAUNCHER / MANAGER / MISSION columns of `herder list`.
 
+Herder discovers the live herdr socket and protocol through `herdr status
+server --json`; the machine-readable response is the sole status contract.
+
 ## What herder never does with this store
 
 No lifecycle verb consults it before acting. `register` records what a
