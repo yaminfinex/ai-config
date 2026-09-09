@@ -107,7 +107,8 @@ EOF
 cat >"$TEST_ROOT/bin/hcom" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'hcom FLEET_PANE=%q HCOM_TERMINAL=%q' "${FLEET_PANE:-}" "${HCOM_TERMINAL:-}" >>"$FLEET_TEST_CALLS"
+printf 'hcom FLEET_PANE=%q HCOM_TERMINAL=%q HCOM_NOTES_SET=%q' \
+  "${FLEET_PANE:-}" "${HCOM_TERMINAL:-}" "${HCOM_NOTES+x}" >>"$FLEET_TEST_CALLS"
 printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
 if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
@@ -196,9 +197,12 @@ EOF
 chmod +x "$TEST_ROOT/bin/herdr" "$TEST_ROOT/bin/hcom" "$TEST_ROOT/bin/herder" "$TEST_ROOT/bin/sleep"
 
 export FLEET_TEST_CALLS=$TEST_ROOT/calls
-PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --prompt hello >"$TEST_ROOT/spawn.out"
+HCOM_NOTES=stale PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test --prompt hello >"$TEST_ROOT/spawn.out"
 grep -Fx 'name=gate-vava' "$TEST_ROOT/spawn.out" >/dev/null || fail "spawn did not print full hcom name"
 grep -F 'FLEET_PANE=p-test HCOM_TERMINAL=fleet' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn omitted fleet env contract"
+grep -F "HCOM_NOTES_SET=''" "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "spawn passed inherited HCOM_NOTES to hcom"
 grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--dangerously-bypass-approvals-and-sandbox.*--no-run-here.*--go' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "codex launch omitted a required flag"
 if grep -F 'model_reasoning_effort' "$FLEET_TEST_CALLS" >/dev/null || grep -F -- '--effort' "$FLEET_TEST_CALLS" >/dev/null; then
@@ -454,7 +458,7 @@ repo_root=$(cd -- "$FLEET/../.." && pwd)
 printf -v root_q '%q' "$repo_root/docs/fencing-convention.md"
 [[ $notes_call == *"$root_q"* ]] || fail "apply-hcom-notes did not render the checkout path into the notes"
 [[ $notes_call != *__AI_CONFIG_ROOT__* ]] || fail "apply-hcom-notes left the placeholder unrendered"
-[[ $notes_call == *'<status>'* && $notes_call == *'Lifecycle doctrine'* ]] \
+[[ $notes_call == *'Fleet lifecycle:'* && $notes_call == *'Chat fencing:'* ]] \
   || fail "apply-hcom-notes did not send both the doctrine and the fencing paragraph"
 pass "apply-hcom-notes renders the canonical launch notes for hcom"
 
