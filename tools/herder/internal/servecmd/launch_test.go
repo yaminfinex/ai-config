@@ -39,7 +39,7 @@ func TestLaunchMapsWorkspaceToFleetArgv(t *testing.T) {
 			deps := fixtureDeps()
 			deps.now = func() time.Time { return time.Date(2026, 9, 2, 3, 4, 5, 0, time.UTC) }
 			var got []string
-			deps.spawn = func(_ context.Context, args []string) (webaction.Result, error) {
+			deps.spawn = func(_ context.Context, args []string, _ string) (webaction.Result, error) {
 				got = append([]string(nil), args...)
 				return webaction.Result{Name: "impl-vava", Pane: "p9", OutputTail: "launch ready"}, nil
 			}
@@ -71,7 +71,7 @@ func TestLaunchMapsWorkspaceToFleetArgv(t *testing.T) {
 func TestLaunchReturnsSpawnStderrVerbatim(t *testing.T) {
 	deps := fixtureDeps()
 	want := "fleet spawn: branch already exists\nretry with a different branch"
-	deps.spawn = func(context.Context, []string) (webaction.Result, error) {
+	deps.spawn = func(context.Context, []string, string) (webaction.Result, error) {
 		return webaction.Result{}, errors.New(want)
 	}
 	response := httptest.NewRecorder()
@@ -87,13 +87,13 @@ func TestLaunchReturnsSpawnStderrVerbatim(t *testing.T) {
 	}
 }
 
-func TestLaunchAppendsAttributedEdgeAfterSuccess(t *testing.T) {
+func TestLaunchReturnsSameJSONWithoutWritingLaunchEdge(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("HERDER_STATE_DIR", state)
 	deps := fixtureDeps()
-	deps.now = func() time.Time { return time.Date(2026, 9, 2, 3, 4, 5, 6, time.UTC) }
-	deps.recordLaunch = appendLaunchEdge
-	deps.spawn = func(context.Context, []string) (webaction.Result, error) {
+	var launcher string
+	deps.spawn = func(_ context.Context, _ []string, gotLauncher string) (webaction.Result, error) {
+		launcher = gotLauncher
 		return webaction.Result{Name: "impl-vava", Pane: "p9", OutputTail: "launch ready"}, nil
 	}
 	response := httptest.NewRecorder()
@@ -103,27 +103,19 @@ func TestLaunchAppendsAttributedEdgeAfterSuccess(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("response=%d %s", response.Code, response.Body.String())
 	}
-	encoded, err := os.ReadFile(filepath.Join(state, "launch-edges.jsonl"))
-	if err != nil {
+	if launcher != "web-alice-example-com" {
+		t.Fatalf("launcher=%q", launcher)
+	}
+	if _, err := os.Stat(filepath.Join(state, "launch-edges.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("launch edge was written: %v", err)
+	}
+	var got launchResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	var edge map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(encoded), &edge); err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]any{
-		"name":      "impl-vava",
-		"launcher":  "web-alice-example-com",
-		"tool":      "claude",
-		"model":     "opus",
-		"effort":    "high",
-		"tag":       "impl",
-		"workspace": "w1",
-		"pane":      "p9",
-		"time":      "2026-09-02T03:04:05.000000006Z",
-	}
-	if !reflect.DeepEqual(edge, want) {
-		t.Fatalf("edge=%s\nwant=%s", encoded, fmt.Sprint(want))
+	want := launchResponse{Names: []string{"impl-vava"}, Pane: "p9", OutputTail: "launch ready"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("response=%#v want=%#v", got, want)
 	}
 }
 
@@ -145,7 +137,7 @@ func TestLaunchPinsAttributionValidationAndInfrastructureRefusals(t *testing.T) 
 			}
 		}, status: http.StatusBadGateway, detail: "tailscaled down"},
 		{name: "script unavailable", body: valid, mutate: func(deps *dependencies) {
-			deps.spawn = func(context.Context, []string) (webaction.Result, error) {
+			deps.spawn = func(context.Context, []string, string) (webaction.Result, error) {
 				return webaction.Result{}, fmt.Errorf("%w: missing", webaction.ErrUnavailable)
 			}
 		}, status: http.StatusBadGateway, detail: "missing"},

@@ -46,9 +46,11 @@ var Kinds = []string{
 
 // Placement is where a launch was asked to land (launch-requested only).
 type Placement struct {
-	Workspace string `json:"workspace,omitempty"`
-	Pane      string `json:"pane,omitempty"`
-	SplitFrom string `json:"split_from,omitempty"`
+	Workspace      string `json:"workspace,omitempty"`
+	Pane           string `json:"pane,omitempty"`
+	SplitFrom      string `json:"split_from,omitempty"`
+	WorktreeBranch string `json:"worktree_branch,omitempty"`
+	Repo           string `json:"repo,omitempty"`
 }
 
 // Event is one line of events.jsonl. Common fields first, then the per-kind
@@ -118,7 +120,7 @@ var mirrorFlags = []string{"hcom-event", "reason", "batch", "instances", "parent
 var sessionFlags = []string{"tool", "path", "reason"}
 
 var specs = map[string]Spec{
-	KindLaunchRequested:  {Required: []string{"tool", "tag"}, OneOf: []string{"workspace", "pane", "split-from"}, Optional: []string{"model", "effort", "prompt-ref", "batch", "launcher-kind"}},
+	KindLaunchRequested:  {Required: []string{"tool", "tag"}, OneOf: []string{"workspace", "pane", "split-from", "worktree-branch"}, Optional: []string{"repo", "model", "effort", "prompt-ref", "batch", "launcher-kind"}},
 	KindLaunchReady:      {Required: []string{"name"}, Optional: []string{"batch", "pane", "cwd", "session", "tool", "model", "effort", "tag", "workspace", "launcher-kind"}},
 	KindLaunchFailed:     {Required: []string{"reason"}, Optional: []string{"batch", "pane"}},
 	KindCullRequested:    {Required: []string{"name"}, Optional: []string{"pane"}},
@@ -189,6 +191,8 @@ func (e Event) present() map[string]bool {
 	if e.Placement != nil {
 		set("workspace", e.Placement.Workspace != "")
 		set("split-from", e.Placement.SplitFrom != "")
+		set("worktree-branch", e.Placement.WorktreeBranch != "")
+		set("repo", e.Placement.Repo != "")
 		pane = pane || e.Placement.Pane != ""
 	}
 	set("pane", pane)
@@ -249,6 +253,9 @@ func (e Event) Validate() error {
 	}
 	if e.Kind == KindLaunchRequested && e.Pane != "" {
 		return fmt.Errorf("%s carries its pane in placement, not --pane at top level", e.Kind)
+	}
+	if e.Kind == KindLaunchRequested && (got["worktree-branch"] != got["repo"]) {
+		return fmt.Errorf("%s requires --worktree-branch and --repo together", e.Kind)
 	}
 	if e.Tool != "" && !contains(Tools, e.Tool) {
 		return fmt.Errorf("unsupported tool %q (one of %s)", e.Tool, strings.Join(Tools, ", "))

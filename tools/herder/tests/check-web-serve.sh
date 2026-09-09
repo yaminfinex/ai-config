@@ -123,6 +123,7 @@ mkdir -p "$ROOT/action-root/tools/fleet"
 cat >"$ROOT/action-root/tools/fleet/spawn.sh" <<'SPAWN'
 #!/usr/bin/env bash
 for arg in "$@"; do printf '<%s>\n' "$arg"; done >"$WEB_SPAWN_LOG"
+printf 'FLEET_LAUNCHER=%s\nFLEET_LAUNCHER_KIND=%s\nHERDER_STATE_DIR=%s\n' "${FLEET_LAUNCHER:-}" "${FLEET_LAUNCHER_KIND:-}" "${HERDER_STATE_DIR:-}" >"$WEB_SPAWN_ENV_LOG"
 jq '. + [{"name":"spawn-vava","base_name":"spawn-vava","tool":"codex","status":"listening","joined":true,"session_id":"session-spawn","launch_context":{"pane_id":"w1:p9"}}]' "$WEB_SERVE_ROSTER" >"$WEB_SERVE_ROSTER.tmp"
 mv "$WEB_SERVE_ROSTER.tmp" "$WEB_SERVE_ROSTER"
 jq '.panes += [{"pane_id":"w1:p9","workspace_id":"w1","tab_id":"t1","agent":"codex","agent_status":"active","agent_session":"session-spawn"}]' "$WEB_SERVE_SNAPSHOT" >"$WEB_SERVE_SNAPSHOT.tmp"
@@ -208,6 +209,7 @@ WEB_SERVE_ROSTER="$ROOT/roster.json" \
 WEB_SEND_LOG="$ROOT/send.log" \
 WEB_SEND_CALLS="$ROOT/send.calls" \
 WEB_SPAWN_LOG="$ROOT/spawn.log" \
+WEB_SPAWN_ENV_LOG="$ROOT/spawn.env" \
 WEB_SERVE_SNAPSHOT="$ROOT/snapshot.json" \
 WEB_WHOIS_MODE="$ROOT/whois.mode" \
 AI_CONFIG_ROOT="$ROOT/action-root" \
@@ -479,11 +481,13 @@ if curl -fsS -X POST -H 'Content-Type: application/json' \
   grep -qxF '<--workspace>' "$ROOT/spawn.log" && grep -qxF '<w1>' "$ROOT/spawn.log" &&
   ! grep -qxF '<--worktree-branch>' "$ROOT/spawn.log" && ! grep -qxF '<--repo>' "$ROOT/spawn.log" &&
   ! grep -qF '<--split-from>' "$ROOT/spawn.log" &&
-  jq -e '.name == "spawn-vava" and .launcher == "web-alice-example-com" and .tool == "codex" and .model == "" and .tag == "web" and .workspace == "w1" and .pane == "w1:p9"' "$ROOT/home/.local/state/herder/launch-edges.jsonl" >/dev/null &&
+  grep -qxF 'FLEET_LAUNCHER=web-alice-example-com' "$ROOT/spawn.env" &&
+  grep -qxF 'FLEET_LAUNCHER_KIND=web' "$ROOT/spawn.env" &&
+  ! test -e "$ROOT/home/.local/state/herder/launch-edges.jsonl" &&
   curl -fsS "http://127.0.0.1:$port/api/fleet" | jq -e '.workspaces[].tabs[].panes[] | select(.pane_id == "w1:p9" and .agent == "spawn-vava")' >/dev/null; then
-  pass "launch maps workspace argv, records attribution and pane, returns output, and appears in fleet"
+  pass "launch maps workspace argv, passes attribution, writes no edge file, returns output, and appears in fleet"
 else
-  bad "launch" "body=$(cat "$ROOT/spawn.json" 2>/dev/null || true) args=$(cat "$ROOT/spawn.log" 2>/dev/null || true) edge=$(cat "$ROOT/home/.local/state/herder/launch-edges.jsonl" 2>/dev/null || true)"
+  bad "launch" "body=$(cat "$ROOT/spawn.json" 2>/dev/null || true) args=$(cat "$ROOT/spawn.log" 2>/dev/null || true) env=$(cat "$ROOT/spawn.env" 2>/dev/null || true)"
 fi
 
 if [ "$(curl -sS -o "$ROOT/fork-removed.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"prompt":"continue safely"}' \
