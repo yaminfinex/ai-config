@@ -187,24 +187,28 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 	text := stdout.String()
-	if !strings.Contains(text, "LAUNCHER") || !strings.Contains(text, "MANAGER") || !strings.Contains(text, "MISSION") || !strings.Contains(text, "BINDING") {
+	if !strings.Contains(text, "LAUNCHER") || !strings.Contains(text, "MANAGER") || strings.Contains(text, "MISSION") || !strings.Contains(text, "BINDING") {
 		t.Fatalf("columns missing:\n%s", text)
 	}
-	for _, row := range []struct{ agent, launcher, manager, mission string }{
-		{"mavu", "ziru", "vara", "fleet-refit"},
-		{"vile", "mirrored: riko", "riko", "-"},
-		{"funa", "ziru", "ziru", "-"},
-		{"nobody", "unregistered", "-", "-"},
+	for _, row := range []struct{ agent, launcher, manager string }{
+		{"mavu", "ziru", "vara"},
+		{"vile", "mirrored: riko", "riko"},
+		{"funa", "ziru", "ziru"},
+		{"nobody", "unregistered", "-"},
 	} {
 		line := lineFor(text, row.agent)
 		fields := strings.Fields(line)
-		if len(fields) < 8 || fields[5] != row.launcher && fields[5]+" "+fields[6] != row.launcher {
-			t.Errorf("%s row = %q, want launcher %q manager %q mission %q", row.agent, line, row.launcher, row.manager, row.mission)
+		if len(fields) < 7 || fields[5] != row.launcher && fields[5]+" "+fields[6] != row.launcher {
+			t.Errorf("%s row = %q, want launcher %q manager %q", row.agent, line, row.launcher, row.manager)
 			continue
 		}
-		if !strings.Contains(line, row.manager) || !strings.Contains(line, row.mission) {
-			t.Errorf("%s row = %q, want manager %q mission %q", row.agent, line, row.manager, row.mission)
+		if !strings.Contains(line, row.manager) {
+			t.Errorf("%s row = %q, want manager %q", row.agent, line, row.manager)
 		}
+	}
+	// The assign event is folded into Row.Mission but never printed (owner ruling 2026-09-09).
+	if strings.Contains(lineFor(text, "mavu"), "fleet-refit") {
+		t.Errorf("mission printed in list: %q", lineFor(text, "mavu"))
 	}
 	if line := lineFor(text, "p9"); !strings.Contains(line, "no bus row") || strings.Contains(line, "unregistered") {
 		t.Errorf("pane without a bus row must not print unregistered: %q", line)

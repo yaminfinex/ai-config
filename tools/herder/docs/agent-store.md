@@ -54,6 +54,10 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 | `mirror.created/ready/stopped/batch_launched` | hcom_event, reason, batch, instances, parent_name, is_hcom_launched |
 | `session.observed/ended/superseded` | session, tool, path, reason |
 
+Mission assignment (the `assign` kind, `fleetview.Row.Mission`) is recorded
+but not displayed in `herder list` until the mission model is specced
+(owner ruling 2026-09-09); `show` prints it when present.
+
 ## Locking and atomicity
 
 Append: open `O_WRONLY|O_APPEND|O_CREATE`, `flock(LOCK_EX)` on that file
