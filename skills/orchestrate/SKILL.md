@@ -30,8 +30,16 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
   door** — fork, options, chosen and why — and queue provisional decisions for operator
   ratification on return.
 - **Models.** Pin every spawn's model explicitly — the box default is often wrong for the role.
-  Confirm the per-role lineup with the operator and write it into the playbook; it changes run to
-  run and is never baked into this skill.
+  Standing lineup (owner ruling 2026-09-09; a playbook may override for one run, saying why):
+  - Builders, by spec strength: codex `gpt-5.6-sol` effort low when medium complexity but mostly
+    specced; codex `gpt-5.6-luna` effort high when very well specced and mostly mechanical; claude
+    `claude-fable-5-1` effort low when real implementation decisions remain or the spec is lighter.
+  - Reviewers: codex `gpt-6-astra` or claude `claude-fable-5-1` only; both when the unit matters.
+    Prefer cross-family: the reviewer's family differs from the builder's.
+  - Review target is simplicity, not just correctness. New code must be earned; edge cases must
+    cover real edges and be worth the complexity they add; ask whether the requirement can be
+    avoided or deleted, or whether an architecture move removes most of the code. Readability
+    and naming carry the same weight as correctness. Every review brief says so.
 - **Liveness per role.** Cull-on-done (default — `hcom transcript` and `hcom r` make culling
   cheap) vs keep-open for interrogation.
 

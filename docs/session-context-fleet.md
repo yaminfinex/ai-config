@@ -47,16 +47,7 @@ Provision and cull Claude/Codex peer sessions through `$AI_CONFIG_ROOT/tools/fle
 
 Before reporting DONE, release external resources you opened. Never close your own pane or remove a checkout while its seat is live.
 
-## SEAT SELECTION (owner ruling 2026-09-09; supersedes "codex builds, Opus reviews")
-
-Builders, by how well the unit is specified:
-- Codex `gpt-5.6-sol` effort low: medium complexity, mostly specced.
-- Codex `gpt-5.6-luna` effort high: very well specced and mostly mechanical.
-- Claude `claude-fable-5-1` effort low: significant implementation decisions remain or the spec is lighter.
-
-Reviewers: Codex `gpt-6-astra` or Claude `claude-fable-5-1` only; both when the unit matters. Prefer a cross-family review: the reviewer's model family differs from the builder's.
-
-Standing review rule: new code must be earned. Edge cases must cover real edges and be worth the complexity they add. Reviews target simplicity, not just correctness: can it be done simpler or cheaper, can the requirement be avoided or deleted, is there an architecture move that removes most of the code. Readability, naming and simplicity are judged with the same weight as correctness.
+Seat selection (which model builds, which reviews, what a review targets) is orchestrator doctrine and lives in the orchestrate skill (`skills/orchestrate/SKILL.md`, "Models"), not here.
 
 ## RULES
 
