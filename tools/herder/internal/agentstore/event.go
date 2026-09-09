@@ -254,9 +254,6 @@ func (e Event) Validate() error {
 	if e.Kind == KindLaunchRequested && e.Pane != "" {
 		return fmt.Errorf("%s carries its pane in placement, not --pane at top level", e.Kind)
 	}
-	if e.Kind == KindLaunchRequested && (got["worktree-branch"] != got["repo"]) {
-		return fmt.Errorf("%s requires --worktree-branch and --repo together", e.Kind)
-	}
 	if e.Tool != "" && !contains(Tools, e.Tool) {
 		return fmt.Errorf("unsupported tool %q (one of %s)", e.Tool, strings.Join(Tools, ", "))
 	}

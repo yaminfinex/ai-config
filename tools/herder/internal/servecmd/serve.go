@@ -266,6 +266,13 @@ var (
 	errSenderCollision = errors.New("derived web sender collides with a bus agent")
 )
 
+var lifeMirrorKinds = map[string]string{
+	"created":        agentstore.KindMirrorCreated,
+	"ready":          agentstore.KindMirrorReady,
+	"stopped":        agentstore.KindMirrorStopped,
+	"batch_launched": agentstore.KindMirrorBatch,
+}
+
 func validEffort(tool, effort string) bool {
 	for _, allowed := range effortLevelsByTool[tool] {
 		if effort == allowed {
@@ -360,12 +367,10 @@ func startLifeMirror(ctx context.Context, stateDir string, deps dependencies) {
 	store := agentstore.Open(stateDir, nil)
 	go func() {
 		cursor := &hcomevents.Cursor{}
+		lastError := ""
 		for ctx.Err() == nil {
 			err := deps.life(ctx, cursor, func(life hcomevents.Life) error {
-				kind := map[string]string{
-					"created": agentstore.KindMirrorCreated, "ready": agentstore.KindMirrorReady,
-					"stopped": agentstore.KindMirrorStopped, "batch_launched": agentstore.KindMirrorBatch,
-				}[life.Action]
+				kind := lifeMirrorKinds[life.Action]
 				if kind == "" {
 					return nil
 				}
@@ -383,14 +388,20 @@ func startLifeMirror(ctx context.Context, stateDir string, deps dependencies) {
 					Batch: life.Batch, Instances: life.Instances, ParentName: life.ParentName,
 					IsHcomLaunched: life.IsHcomLaunched, HcomEvent: strconv.FormatInt(life.ID, 10),
 				}
-				_, err = store.Append(event)
+				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
+					deps.audit("hcom life mirror: skip %d: %v", life.ID, err)
+					return nil
+				}
 				return err
 			})
 			if ctx.Err() != nil {
 				return
 			}
-			if err != nil {
+			if err == nil {
+				lastError = ""
+			} else if err.Error() != lastError {
 				deps.audit("hcom life mirror: %v", err)
+				lastError = err.Error()
 			}
 			timer := time.NewTimer(deps.poll)
 			select {

@@ -65,6 +65,7 @@ The serve mirrors hcom life events (`created`, `ready`, `stopped`, and
 up the latest 500 life events at startup, then subscribes until the serve
 context ends. `hcom_event` preserves the bus id and the event id is derived from
 `hcom-life:<id>`, so replay appends nothing. Other life actions are ignored.
+Refused life events are audited once and skipped; an unavailable store is retried.
 
 Mission assignment (the `assign` kind, `fleetview.Row.Mission`) is recorded
 but not displayed in `herder list` until the mission model is specced

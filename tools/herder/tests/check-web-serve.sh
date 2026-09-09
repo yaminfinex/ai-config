@@ -85,6 +85,7 @@ if [ "${1:-}" = send ]; then
 fi
 if [ "${1:-}" = events ]; then
   case " $* " in
+    *" --type life "*) exit 0 ;;
     *" events --last 1 --full --type status --agent vile --context deliver:* "*) exit 0 ;;
     *" events --last 500 --full --type message "*)
       printf '%s\n' \

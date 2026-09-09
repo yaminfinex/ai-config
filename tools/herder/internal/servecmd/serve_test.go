@@ -91,18 +91,24 @@ func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
 	defer cancel()
 	done := make(chan struct{})
 	calls := 0
+	audits := 0
 	deps := fixtureDeps()
 	deps.poll = time.Millisecond
+	deps.audit = func(string, ...any) { audits++ }
 	deps.life = func(_ context.Context, _ *hcomevents.Cursor, emit func(hcomevents.Life) error) error {
 		calls++
 		launched := true
-		for _, life := range []hcomevents.Life{
+		events := []hcomevents.Life{
 			{ID: 1, TS: "2026-09-09T05:00:01Z", Instance: "a", Action: "created", By: "ziru", ParentName: "root"},
 			{ID: 2, TS: "2026-09-09T05:00:02Z", Instance: "a", Action: "ready", By: "ziru", IsHcomLaunched: &launched},
 			{ID: 3, TS: "2026-09-09T05:00:03Z", Instance: "a", Action: "stopped", By: "ziru", Reason: "done"},
 			{ID: 4, TS: "2026-09-09T05:00:04Z", Instance: "ziru", Action: "batch_launched", By: "ziru", Batch: "b1", Instances: []string{"b", "c"}},
 			{ID: 5, TS: "2026-09-09T05:00:05Z", Instance: "ignored", Action: "started", By: "ziru"},
-		} {
+		}
+		if calls == 1 {
+			events = append([]hcomevents.Life{{ID: 0, TS: "2026-09-09T05:00:00Z", Instance: "ziru", Action: "batch_launched", By: "ziru"}}, events...)
+		}
+		for _, life := range events {
 			if err := emit(life); err != nil {
 				return err
 			}
@@ -111,7 +117,7 @@ func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
 			close(done)
 			cancel()
 		}
-		return errors.New("fixture restart")
+		return nil
 	}
 	startLifeMirror(ctx, state, deps)
 	select {
@@ -129,6 +135,9 @@ func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
 	}
 	if bytes.Count(raw, []byte("\n")) != 4 || projection.Latest("ignored") != nil || projection.Latest("ziru") != nil {
 		t.Fatalf("journal=%s", raw)
+	}
+	if audits != 1 {
+		t.Fatalf("audits=%d, want one refused-event audit", audits)
 	}
 	if got := projection.Latest("a"); got == nil || got.Events[0].HcomEvent != "1" || got.Parent != "root" {
 		t.Fatalf("a=%+v", got)

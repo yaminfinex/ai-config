@@ -5,20 +5,29 @@
 
 set -euo pipefail
 
+register_disabled=0
+REGISTER_OUTPUT=
+fleet_tool=cull
+
 register_event() {
-  local kind=$1 herder_bin rc output detail
+  local kind=$1 herder_bin rc detail
   shift
+  REGISTER_OUTPUT=
+  ((register_disabled == 0)) || return 0
   if ! herder_bin=$(command -v herder); then
-    printf 'fleet cull: register %s skipped: herder not found\n' "$kind" >&2
+    printf 'fleet %s: register %s skipped: herder not found\n' "$fleet_tool" "$kind" >&2
+    register_disabled=1
     return 0
   fi
   set +e
-  output=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" 2>&1)
+  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" 2>&1)
   rc=$?
   set -e
   if ((rc != 0)); then
-    detail=${output//$'\n'/; }
-    printf 'fleet cull: register %s skipped: %s\n' "$kind" "${detail:-exit $rc}" >&2
+    detail=${REGISTER_OUTPUT//$'\n'/; }
+    printf 'fleet %s: register %s skipped: %s\n' "$fleet_tool" "$kind" "${detail:-exit $rc}" >&2
+    REGISTER_OUTPUT=
+    register_disabled=1
   fi
 }
 

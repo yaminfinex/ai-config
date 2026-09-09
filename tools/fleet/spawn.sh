@@ -8,9 +8,10 @@ set -euo pipefail
 request=
 pane_id=
 batch_id=
-register_failed=0
 register_disabled=0
 REGISTER_OUTPUT=
+attrib=()
+fleet_tool=spawn
 
 register_event() {
   local kind=$1 herder_bin rc detail
@@ -18,7 +19,7 @@ register_event() {
   REGISTER_OUTPUT=
   ((register_disabled == 0)) || return 0
   if ! herder_bin=$(command -v herder); then
-    printf 'fleet spawn: register %s skipped: herder not found\n' "$kind" >&2
+    printf 'fleet %s: register %s skipped: herder not found\n' "$fleet_tool" "$kind" >&2
     register_disabled=1
     return 0
   fi
@@ -28,18 +29,17 @@ register_event() {
   set -e
   if ((rc != 0)); then
     detail=${REGISTER_OUTPUT//$'\n'/; }
-    printf 'fleet spawn: register %s skipped: %s\n' "$kind" "${detail:-exit $rc}" >&2
+    printf 'fleet %s: register %s skipped: %s\n' "$fleet_tool" "$kind" "${detail:-exit $rc}" >&2
     REGISTER_OUTPUT=
     register_disabled=1
   fi
 }
 
 die() {
-  if [[ -n ${request:-} && ${register_failed:-0} -eq 0 ]]; then
-    register_failed=1
+  if [[ -n $request ]]; then
     failed_args=(--request "$request" --reason "$*")
-    [[ -z ${pane_id:-} ]] || failed_args+=(--pane "$pane_id")
-    [[ -z ${batch_id:-} ]] || failed_args+=(--batch "$batch_id")
+    [[ -z $pane_id ]] || failed_args+=(--pane "$pane_id")
+    [[ -z $batch_id ]] || failed_args+=(--batch "$batch_id")
     register_event launch-failed "${failed_args[@]}"
   fi
   printf 'fleet spawn: %s\n' "$*" >&2
@@ -167,6 +167,10 @@ command -v hcom >/dev/null || die "hcom is required"
 command -v herdr >/dev/null || die "herdr is required"
 command -v timeout >/dev/null || die "timeout is required"
 
+if [[ -n ${FLEET_LAUNCHER:-} && -n ${FLEET_LAUNCHER_KIND:-} ]]; then
+  attrib=(--by "$FLEET_LAUNCHER" --by-kind "$FLEET_LAUNCHER_KIND" --launcher-kind "$FLEET_LAUNCHER_KIND")
+fi
+
 requested_args=(--tool "$tool" --tag "$tag")
 [[ -z $model ]] || requested_args+=(--model "$model")
 [[ -z $effort ]] || requested_args+=(--effort "$effort")
@@ -179,9 +183,7 @@ elif [[ -n $pane ]]; then
 else
   requested_args+=(--split-from "$split_from")
 fi
-if [[ -n ${FLEET_LAUNCHER:-} ]]; then
-  requested_args+=(--by "$FLEET_LAUNCHER" --by-kind "${FLEET_LAUNCHER_KIND:-}" --launcher-kind "${FLEET_LAUNCHER_KIND:-}")
-fi
+requested_args+=("${attrib[@]}")
 register_event launch-requested "${requested_args[@]}"
 request=$(sed -n 's/^request=//p' <<<"$REGISTER_OUTPUT" | head -n 1)
 
@@ -333,9 +335,7 @@ fi
 ready_args=(--request "$request" --name "$full_name" --batch "$batch_id" --pane "$pane_id" --cwd "$cwd")
 session_id=$(jq -r '.session_id // empty' <<<"$roster_entry")
 [[ -z $session_id ]] || ready_args+=(--session "$session_id")
-if [[ -n ${FLEET_LAUNCHER:-} ]]; then
-  ready_args+=(--by "$FLEET_LAUNCHER" --by-kind "${FLEET_LAUNCHER_KIND:-}" --launcher-kind "${FLEET_LAUNCHER_KIND:-}")
-fi
+ready_args+=("${attrib[@]}")
 register_event launch-ready "${ready_args[@]}"
 
 printf 'name=%s\n' "$full_name"

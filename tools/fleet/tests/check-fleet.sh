@@ -220,6 +220,18 @@ FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web PATH="$TEST_ROOT/bin:$PATH" \
 : >"$FLEET_TEST_CALLS"
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-direct.out" 2>"$TEST_ROOT/spawn-direct.err"
 ! grep -F -- '--by' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn forced attribution on a direct launch"
+for partial_attrib in launcher kind; do
+  : >"$FLEET_TEST_CALLS"
+  if [[ $partial_attrib == launcher ]]; then
+    FLEET_LAUNCHER=web-x PATH="$TEST_ROOT/bin:$PATH" \
+      "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-$partial_attrib.out" 2>"$TEST_ROOT/spawn-$partial_attrib.err"
+  else
+    FLEET_LAUNCHER_KIND=web PATH="$TEST_ROOT/bin:$PATH" \
+      "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-$partial_attrib.out" 2>"$TEST_ROOT/spawn-$partial_attrib.err"
+  fi
+  ! grep -F -- '--by' "$FLEET_TEST_CALLS" >/dev/null \
+    || fail "spawn used partial $partial_attrib attribution"
+done
 pass "spawn carries optional web attribution only when supplied"
 
 for mode in exit3 absent sleep; do
@@ -483,6 +495,23 @@ if grep -F 'herdr pane close' "$FLEET_TEST_CALLS" >/dev/null; then
   fail "cull closed a pane explicitly after managed close was verified"
 fi
 pass "cull sends courtesy before kill and verifies managed close"
+
+for mode in exit3 sleep; do
+  rm -f "$cull_state/killed" "$cull_state/closed"
+  : >"$FLEET_TEST_CALLS"
+  start=$SECONDS
+  FLEET_TEST_REGISTER_MODE=$mode FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
+    PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-$mode.out" 2>"$TEST_ROOT/cull-$mode.err"
+  cmp -s "$TEST_ROOT/cull-managed.out" "$TEST_ROOT/cull-$mode.out" \
+    || fail "register $mode changed cull stdout"
+  [[ $(grep -c 'fleet cull: register cull-requested skipped:' "$TEST_ROOT/cull-$mode.err") -eq 1 ]] \
+    || fail "register $mode did not emit exactly one cull warning"
+  if [[ $mode == sleep ]]; then
+    elapsed=$((SECONDS - start))
+    ((elapsed >= 9 && elapsed <= 12)) || fail "cull register timeout took ${elapsed}s instead of about 10s"
+  fi
+done
+pass "cull registration failure and timeout are once-only and fail-open"
 
 rm -f "$cull_state/killed" "$cull_state/closed"
 : >"$FLEET_TEST_CALLS"

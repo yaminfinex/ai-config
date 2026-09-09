@@ -290,7 +290,6 @@ func TestPackageAppendEnforcesTheCLIContract(t *testing.T) {
 		"invalid by_kind":           ev(KindAssign, "a", 1, func(e *Event) { e.Mission, e.ByKind = "m", "browser" }),
 		"negative steer_chars":      ev(KindCompactRequested, "a", 1, func(e *Event) { e.SteerChars = &steer }),
 		"top-level pane on request": ev(KindLaunchRequested, "", 1, func(e *Event) { e.Tool, e.Tag, e.Pane = "claude", "t", "p" }),
-		"repo without branch":       ev(KindLaunchRequested, "", 1, func(e *Event) { e.Tool, e.Tag = "claude", "t"; e.Placement = &Placement{Repo: "/repo"} }),
 	} {
 		if _, err := s.Append(bad); err == nil || errors.Is(err, ErrUnavailable) {
 			t.Errorf("%s: accepted (err=%v)", name, err)
