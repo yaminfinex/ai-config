@@ -1,24 +1,26 @@
-import { hasPathSignal, pathTokenSpanAt } from './fileResolution.ts'
+import { hasPathSignal, pathTokenSpanAt, structuralDelimiter } from './fileResolution.ts'
 
 type TextPoint = { node: Node, offset: number }
 type Character = { value: string, point: TextPoint | null }
 
-const structuralDelimiter = /[\s()[\]{}<>]/u
+const filenameOrLineSuffix = /\.[\p{L}\p{N}]+$|:\d+$/u
+// TEXT_NODE's numeric value also works in Node tests without a DOM global.
 const isText = (node: Node) => node.nodeType === 3
 const isBreak = (node: Node) => node.nodeName === 'BR'
 
-// Text siblings and BRs share an offset map, so removing a wrap never changes
-// the DOM coordinates used to select the original, visibly wrapped path.
-export function pathTokenRangeAt(point: TextPoint, renderedCode = false, softWrap = true) {
+// DOM-range twin of pathTokenSpanAt. Join one logical wrap only when the left
+// fragment is already path-like, has no filename/line suffix or trailing period,
+// and neither neighbor is structural. The offset map preserves DOM selection.
+export function pathTokenRangeAt(point: TextPoint, { renderedCode = false, softWrap = true }: { renderedCode?: boolean, softWrap?: boolean } = {}) {
   if (renderedCode || !softWrap) {
     const token = pathTokenSpanAt(point.node.textContent ?? '', point.offset, renderedCode)
     return { text: token.text, start: { node: point.node, offset: token.start }, end: { node: point.node, offset: token.end } }
   }
-  let first = point.node
-  while (first.previousSibling && (isText(first.previousSibling) || isBreak(first.previousSibling))) first = first.previousSibling
+  let firstSibling = point.node
+  while (firstSibling.previousSibling && (isText(firstSibling.previousSibling) || isBreak(firstSibling.previousSibling))) firstSibling = firstSibling.previousSibling
   const characters: Character[] = []
   let caret = 0
-  for (let node: Node | null = first; node && (isText(node) || isBreak(node)); node = node.nextSibling) {
+  for (let node: Node | null = firstSibling; node && (isText(node) || isBreak(node)); node = node.nextSibling) {
     if (isBreak(node)) {
       characters.push({ value: '\n', point: null })
       continue
@@ -29,18 +31,21 @@ export function pathTokenRangeAt(point: TextPoint, renderedCode = false, softWra
     if (node === point.node) caret = characters.length + Math.max(0, point.offset - startOffset)
     for (let offset = startOffset; offset < text.length; offset++) characters.push({ value: text[offset], point: { node, offset } })
   }
-  let text = characters.map((character) => character.value).join('')
-  for (let index = 1; index < characters.length - 1; index++) {
-    if (text[index] !== '\n' || structuralDelimiter.test(text[index - 1]) || structuralDelimiter.test(text[index + 1])) continue
-    const joined = text.slice(0, index) + text.slice(index + 1)
-    if (!hasPathSignal(pathTokenSpanAt(joined, index).text, false)) continue
-    characters.splice(index, 1)
-    if (caret > index) caret--
-    text = joined
-    index--
+  const text = characters.map((character) => character.value).join('')
+  const joins = new Set<number>()
+  let fragmentStart = 0
+  for (let index = 0; index < text.length; index++) {
+    if (!structuralDelimiter.test(text[index])) continue
+    const left = text.slice(fragmentStart, index).replace(/\n/gu, '')
+    const extendsPath = hasPathSignal(left, false) && !filenameOrLineSuffix.test(left) && !left.endsWith('.')
+    if (text[index] === '\n' && index > 0 && index < text.length - 1 &&
+      !structuralDelimiter.test(text[index - 1]) && !structuralDelimiter.test(text[index + 1]) && extendsPath) joins.add(index)
+    else fragmentStart = index + 1
   }
-  const token = pathTokenSpanAt(text, caret)
-  const start = characters[token.start]?.point ?? point
-  const last = characters[token.end - 1]?.point
+  const kept = characters.filter((_, index) => !joins.has(index))
+  const joinedCaret = caret - [...joins].filter((index) => index < caret).length
+  const token = pathTokenSpanAt(kept.map((character) => character.value).join(''), joinedCaret)
+  const start = kept[token.start]?.point ?? point
+  const last = kept[token.end - 1]?.point
   return { text: token.text, start, end: last ? { node: last.node, offset: last.offset + 1 } : point }
 }

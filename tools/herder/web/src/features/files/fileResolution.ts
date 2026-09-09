@@ -3,7 +3,7 @@ import type { FileCandidate, ResolveResponse } from '../../types'
 // Implementation-tunable: fzf contributes 16 points per rune before bonuses.
 export const FUZZY_POPOVER_SCORE_PER_RUNE = 20
 
-const structuralDelimiter = /[\s()[\]{}<>]/u
+export const structuralDelimiter = /[\s()[\]{}<>]/u
 const enclosingDelimiters = ['`', '"', "'"] as const
 const immediatePathSignal = /^(?:\/|~\/|\.\.?\/|[^\s()[\]{}<>`"':/\\]+\/)/u
 

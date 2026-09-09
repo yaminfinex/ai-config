@@ -31,11 +31,9 @@ class FixtureNode {
 class FixtureElement extends FixtureNode {
   nodeType = 1
   href: string | null = null
-  ignored = false
+  matches = new Set<string>()
   closest(selector: string) {
-    if (selector === '.path-link' && this.href !== null) return this
-    if (selector.startsWith('a,') && this.ignored) return this
-    return null
+    return selector.split(',').some((part) => this.matches.has(part.trim()) || (part.trim() === '.path-link' && this.href !== null)) ? this : null
   }
   getAttribute(name: string) { return name === 'title' ? this.href : null }
 }
@@ -124,7 +122,7 @@ test('empty and weak fuzzy matches show the existing popover and preserve root o
 
 test('anchor gestures and ordinary prose do not resolve; disabled results do not open', async () => {
   const anchor = fixture(empty)
-  anchor.target.ignored = true
+  anchor.target.matches.add('a')
   anchor.caret.offsetNode.textContent = '/home/u/x.md'
   await anchor.doubleClick()
   assert.equal(anchor.queries.length, 0)

@@ -16,8 +16,25 @@ test('href decoding keeps local paths and excludes URL schemes', () => {
   assert.equal(pathFromHref('file:///home/u/x%20y.md'), '/home/u/x y.md')
   assert.equal(pathFromHref('docs/x%2520y.md:12'), 'docs/x%20y.md:12')
   assert.equal(pathFromHref('/home/u/%ZZ.md'), '/home/u/%ZZ.md')
+  assert.equal(pathFromHref('//example.com/a'), null)
   for (const href of ['', 'https://a.b/c', 'mailto:u@a.b', 'herder-agent:kila', 'javascript:alert', 'C:/x.md']) assert.equal(pathFromHref(href), null)
 })
+
+for (const [name, left, right, expected] of [
+  ['prose before an absolute path', 'Wrote the notes to', '/home/u/x.md', '/home/u/x.md'],
+  ['a colon label before an absolute path', 'Path:', '/home/u/x.md', '/home/u/x.md'],
+  ['a sentence ending in a period', 'It is ready.', 'Next step', 'ready.'],
+  ['a complete filename before prose', 'Edit src/App.tsx', 'then run', 'src/App.tsx'],
+  ['an abbreviation ending in a period', 'e.g.', 'foo', 'e.g.'],
+]) {
+  test(`soft wraps do not join ${name}`, () => {
+    for (const nodes of [siblings(`${left}\n${right}`), siblings(left, '\n', right), siblings(left, null, '\n', right)]) {
+      const node = nodes.find((node) => node.textContent!.includes(expected))!
+      const token = pathTokenRangeAt({ node, offset: node.textContent!.indexOf(expected) + 1 })
+      assert.equal(token.text, expected)
+    }
+  })
+}
 
 test('soft wraps map selection across text siblings, a newline, or a BR', () => {
   for (const separator of [[], ['\n'], [null], [null, '\n']] as (string | null)[][]) {
@@ -37,6 +54,8 @@ test('same-node newlines map back to original offsets', () => {
   assert.equal(token.text, '/home/u/proj/sub/x.md')
   assert.equal(token.start.offset, 7)
   assert.equal(token.end.offset, node.textContent!.indexOf(')'))
+  const [multiwrap] = siblings('trail (/home/u/proj/\nchain-confirm\nation.md) done')
+  assert.equal(pathTokenRangeAt({ node: multiwrap, offset: 25 }).text, '/home/u/proj/chain-confirmation.md')
 })
 
 test('soft wraps stop at whitespace, blank lines, structural delimiters, and elements', () => {
@@ -55,7 +74,7 @@ test('soft wraps stop at whitespace, blank lines, structural delimiters, and ele
 
 test('fenced code keeps separate lines and inline code keeps its literal spaces', () => {
   const [node] = siblings('/home/u/proj/\nsub/x.md')
-  assert.equal(pathTokenRangeAt({ node, offset: 3 }, false, false).text, '/home/u/proj/')
+  assert.equal(pathTokenRangeAt({ node, offset: 3 }, { softWrap: false }).text, '/home/u/proj/')
   const [inline] = siblings('docs/my file.md')
-  assert.equal(pathTokenRangeAt({ node: inline, offset: 3 }, true).text, 'docs/my file.md')
+  assert.equal(pathTokenRangeAt({ node: inline, offset: 3 }, { renderedCode: true }).text, 'docs/my file.md')
 })
