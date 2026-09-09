@@ -1,4 +1,5 @@
-// Package cli wires herder's single read-only live-list surface.
+// Package cli wires herder's subcommands: the live list, the agent store
+// view and registrar, and the serve.
 package cli
 
 import (
@@ -7,7 +8,9 @@ import (
 	"strings"
 
 	"ai-config/tools/herder/internal/listcmd"
+	"ai-config/tools/herder/internal/registercmd"
 	"ai-config/tools/herder/internal/servecmd"
+	"ai-config/tools/herder/internal/showcmd"
 )
 
 // command is one herder subcommand. summary is the one-line description in
@@ -21,6 +24,8 @@ type command struct {
 // commands is the single registry the root usage table is generated from.
 var commands = []command{
 	{"list", "Join live herdr placement with the hcom roster", listcmd.Run},
+	{"show", "Show the agent store's view of one agent", showcmd.Run},
+	{"register", "Record one lifecycle fact in the agent store", registercmd.Run},
 	{"serve", "Serve the live fleet API on loopback and tailscale", servecmd.Run},
 }
 
@@ -31,7 +36,8 @@ func rootUsage() string {
 	b.WriteString("herder — display and serve the live fleet view.\n")
 	b.WriteString("\n")
 	b.WriteString("Lifecycle actions compose through tools/fleet, hcom, and herdr. Herder is\n")
-	b.WriteString("a read-only live join and is never lifecycle authority.\n")
+	b.WriteString("the fleet's display cache and registrar: it records what lifecycle tools\n")
+	b.WriteString("report and is never lifecycle authority.\n")
 	b.WriteString("\n")
 	b.WriteString("Commands:\n")
 	for _, cmd := range commands {

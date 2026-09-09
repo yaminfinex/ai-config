@@ -3,9 +3,13 @@ package listcmd
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 )
@@ -146,4 +150,123 @@ func TestRunHelpAndUnknownArgument(t *testing.T) {
 	if code := run([]string{"--json"}, &stdout, &stderr, deps); code != 2 || !strings.Contains(stderr.String(), "unknown argument") {
 		t.Fatalf("unknown: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
+}
+
+func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("HERDER_STATE_DIR", state)
+	s := agentstore.Open(state, nil)
+	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
+	for _, e := range []agentstore.Event{
+		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", ByKind: "agent", Name: "mavu", Pane: "p1"},
+		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Mission: "fleet-refit"},
+		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindReparent, By: "ziru", Name: "mavu", Manager: "vara"},
+		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindMirrorReady, By: "riko", ByKind: "mirror", Name: "vile"},
+	} {
+		if _, err := s.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) {
+			return herdrcli.Snapshot{Panes: []herdrcli.Pane{{PaneID: "p1"}, {PaneID: "p9", Agent: "claude", AgentSession: "s9"}}, Agents: []herdrcli.Agent{{PaneID: "p1", Name: "mavu", Agent: "codex", Status: "active"}}}, nil
+		},
+		roster: func() ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{
+				{Name: "mavu", Tool: "codex", Status: "listening", CreatedAt: at.Add(-time.Minute), LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}},
+				{Name: "vile", Tool: "claude", Status: "active"},
+				{Name: "funa", Tool: "codex", Status: "listening"},
+			}, nil
+		},
+		store: liveDependencies.store,
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr, deps); code != 0 || stderr.Len() != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	text := stdout.String()
+	if !strings.Contains(text, "LAUNCHER") || !strings.Contains(text, "MANAGER") || !strings.Contains(text, "MISSION") {
+		t.Fatalf("columns missing:\n%s", text)
+	}
+	for _, row := range []struct{ agent, launcher, manager, mission string }{
+		{"mavu", "ziru", "vara", "fleet-refit"},
+		{"vile", "mirrored: riko", "riko", "-"},
+		{"funa", "unregistered", "-", "-"},
+	} {
+		line := lineFor(text, row.agent)
+		fields := strings.Fields(line)
+		if len(fields) < 8 || fields[5] != row.launcher && fields[5]+" "+fields[6] != row.launcher {
+			t.Errorf("%s row = %q, want launcher %q manager %q mission %q", row.agent, line, row.launcher, row.manager, row.mission)
+			continue
+		}
+		if !strings.Contains(line, row.manager) || !strings.Contains(line, row.mission) {
+			t.Errorf("%s row = %q, want manager %q mission %q", row.agent, line, row.manager, row.mission)
+		}
+	}
+	if line := lineFor(text, "p9"); !strings.Contains(line, "no bus row") || strings.Contains(line, "unregistered") {
+		t.Errorf("pane without a bus row must not print unregistered: %q", line)
+	}
+	if _, err := os.Stat(filepath.Join(state, "agents", "snapshot.json")); err != nil {
+		t.Fatalf("list did not refresh the snapshot: %v", err)
+	}
+}
+
+func TestRunPrintsRowsWhenStoreImportCannotWrite(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	state := t.TempDir()
+	os.WriteFile(filepath.Join(state, "launch-edges.jsonl"), []byte(`{"name":"mavu","launcher":"web","time":"2026-09-08T22:21:01Z"}`+"\n"), 0o600)
+	os.Chmod(state, 0o500)
+	t.Cleanup(func() { os.Chmod(state, 0o700) })
+	t.Setenv("HERDER_STATE_DIR", state)
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) { return herdrcli.Snapshot{}, nil },
+		roster: func() ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{{Name: "mavu", Tool: "codex", Status: "active"}}, nil
+		},
+		store: liveDependencies.store,
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr, deps); code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(lineFor(stdout.String(), "mavu"), "unregistered") || strings.Count(stderr.String(), "\n") != 1 || !strings.Contains(stderr.String(), "unregistered") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestRunPrintsWhenSnapshotCannotBeWritten(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	state := t.TempDir()
+	t.Setenv("HERDER_STATE_DIR", state)
+	s := agentstore.Open(state, nil)
+	at := time.Now().UTC()
+	if _, err := s.Append(agentstore.Event{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", Name: "mavu"}); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(filepath.Join(state, "agents"), 0o500)
+	t.Cleanup(func() { os.Chmod(filepath.Join(state, "agents"), 0o700) })
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) { return herdrcli.Snapshot{}, nil },
+		roster: func() ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{{Name: "mavu", Tool: "codex", Status: "active"}}, nil
+		},
+		store: liveDependencies.store,
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run(nil, &stdout, &stderr, deps); code != 0 || stderr.Len() != 0 || !strings.Contains(lineFor(stdout.String(), "mavu"), "ziru") {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func lineFor(text, needle string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, needle) {
+			return line
+		}
+	}
+	return ""
 }

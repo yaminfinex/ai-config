@@ -1,0 +1,5 @@
+[
+  {"name":"impl-gime","base_name":"gime","tool":"codex","status":"active","created_at":1788930000.0,"session_id":"roster-S-prime","launch_context":{"pane_id":"w80:p1"}},
+  {"name":"impl-vara","base_name":"vara","tool":"claude","status":"active","created_at":1788930000.0,"session_id":"session-vara","launch_context":{"pane_id":"w80:p2"}},
+  {"name":"impl-pend","base_name":"pend","tool":"claude","status":"active","created_at":1788930000.0,"session_id":"","launch_context":{}}
+]

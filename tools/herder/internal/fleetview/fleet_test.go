@@ -2,7 +2,9 @@ package fleetview
 
 import (
 	"testing"
+	"time"
 
+	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 )
@@ -254,5 +256,41 @@ func TestValidateRosterRejectsDuplicatePaneClaims(t *testing.T) {
 	}
 	if err := ValidateRoster(roster); err == nil {
 		t.Fatal("ValidateRoster accepted duplicate pane claim")
+	}
+}
+
+func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
+	proj := agentstore.NewProjection()
+	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
+	apply := func(e agentstore.Event) { e.ID = agentstore.NewID(at); proj.Apply(e, 0) }
+	apply(agentstore.Event{At: at, Kind: agentstore.KindLaunchReady, By: "ziru", Name: "mavu"})
+	apply(agentstore.Event{At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Mission: "old"})
+	apply(agentstore.Event{At: at.Add(2 * time.Second), Kind: agentstore.KindCulled, By: "ziru", Name: "mavu", Pane: "p1", Close: "managed"})
+	apply(agentstore.Event{At: at.Add(10 * time.Second), Kind: agentstore.KindLaunchReady, By: "vara", Name: "mavu"})
+	rows := []Row{
+		{Pane: "p1", Agent: "mavu", BusStatus: "listening"},
+		{Pane: "p2", Agent: "zira", BusStatus: "-", Gap: "no bus row"},
+		{Pane: "-", Agent: "funa", BusStatus: "active"},
+	}
+	roster := []hcomidentity.Row{{Name: "mavu", CreatedAt: at.Add(9 * time.Second)}, {Name: "funa"}}
+	got := FoldStore(rows, roster, proj)
+	if got[0].Launcher != "vara" || got[0].Manager != "vara" || got[0].Mission != "-" || got[0].Provenance == nil || got[0].Provenance.Kind != "registered" {
+		t.Fatalf("reused name folded the old incarnation: %+v", got[0])
+	}
+	if got[1].Launcher != "-" || got[1].Provenance != nil {
+		t.Fatalf("pane without bus row: %+v", got[1])
+	}
+	if got[2].Launcher != "unregistered" || got[2].Manager != "-" || got[2].Provenance.Kind != "unregistered" {
+		t.Fatalf("bus row without events: %+v", got[2])
+	}
+	if rows[0].Launcher != "" {
+		t.Fatal("FoldStore mutated its input")
+	}
+	roster[0].CreatedAt = at.Add(-time.Minute)
+	if old := FoldStore(rows, roster, proj); old[0].Launcher != "ziru" || old[0].Mission != "old" {
+		t.Fatalf("earlier created_at must fold the old incarnation: %+v", old[0])
+	}
+	if nilProj := FoldStore(rows, roster, nil); nilProj[0].Launcher != "unregistered" {
+		t.Fatalf("nil projection: %+v", nilProj[0])
 	}
 }

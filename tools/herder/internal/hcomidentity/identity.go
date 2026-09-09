@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,20 +30,25 @@ type LaunchContext struct {
 }
 
 type Row struct {
-	Name                 string        `json:"name"`
-	BaseName             string        `json:"base_name,omitempty"`
-	Tool                 string        `json:"tool"`
-	Status               string        `json:"status"`
-	Directory            string        `json:"directory,omitempty"`
-	SessionID            string        `json:"session_id,omitempty"`
-	ParentName           string        `json:"parent_name,omitempty"`
-	AgentID              string        `json:"agent_id,omitempty"`
-	TranscriptPath       string        `json:"transcript_path,omitempty"`
-	LaunchContext        LaunchContext `json:"launch_context"`
-	ParentAgent          string        `json:"-"`
-	ParentSessionID      string        `json:"parent_session_id,omitempty"`
-	ParentDirectory      string        `json:"-"`
-	ParentTranscriptPath string        `json:"-"`
+	Name           string        `json:"name"`
+	BaseName       string        `json:"base_name,omitempty"`
+	Tool           string        `json:"tool"`
+	Status         string        `json:"status"`
+	Directory      string        `json:"directory,omitempty"`
+	SessionID      string        `json:"session_id,omitempty"`
+	ParentName     string        `json:"parent_name,omitempty"`
+	AgentID        string        `json:"agent_id,omitempty"`
+	TranscriptPath string        `json:"transcript_path,omitempty"`
+	Tag            string        `json:"tag,omitempty"`
+	LaunchContext  LaunchContext `json:"launch_context"`
+	// CreatedAt is hcom's creation time for this name (roster created_at,
+	// numeric seconds; created accepted as an alias). Zero when the roster
+	// carries neither. It is the identity incarnation of a reused name.
+	CreatedAt            time.Time `json:"-"`
+	ParentAgent          string    `json:"-"`
+	ParentSessionID      string    `json:"parent_session_id,omitempty"`
+	ParentDirectory      string    `json:"-"`
+	ParentTranscriptPath string    `json:"-"`
 }
 
 // Parent returns the one roster row explicitly named by a child row's
@@ -183,6 +189,57 @@ func stoppedSubagentEvidence(tool, transcript string) (string, string) {
 		return "", ""
 	}
 	return agentID, parentSessionID
+}
+
+// UnmarshalJSON decodes the wire row and hcom's creation time. The installed
+// hcom exposes created_at as numeric seconds (e.g. 1788932670.0); created is
+// accepted as an alias (number or RFC3339 string). Neither leaves CreatedAt zero.
+func (r *Row) UnmarshalJSON(raw []byte) error {
+	type plain Row
+	var wire plain
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return err
+	}
+	var created struct {
+		CreatedAt json.RawMessage `json:"created_at"`
+		Created   json.RawMessage `json:"created"`
+	}
+	if err := json.Unmarshal(raw, &created); err != nil {
+		return err
+	}
+	*r = Row(wire)
+	for _, field := range []json.RawMessage{created.CreatedAt, created.Created} {
+		if at, ok := decodeCreated(field); ok {
+			r.CreatedAt = at
+			break
+		}
+	}
+	return nil
+}
+
+func decodeCreated(raw json.RawMessage) (time.Time, bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return time.Time{}, false
+	}
+	var seconds float64
+	if err := json.Unmarshal(raw, &seconds); err == nil {
+		if seconds <= 0 {
+			return time.Time{}, false
+		}
+		whole := int64(seconds)
+		return time.Unix(whole, int64((seconds-float64(whole))*1e9)).UTC(), true
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		if at, err := time.Parse(time.RFC3339Nano, text); err == nil {
+			return at.UTC(), true
+		}
+		if seconds, err := strconv.ParseFloat(text, 64); err == nil && seconds > 0 {
+			whole := int64(seconds)
+			return time.Unix(whole, int64((seconds-float64(whole))*1e9)).UTC(), true
+		}
+	}
+	return time.Time{}, false
 }
 
 // Decode accepts both the array and JSONL roster formats emitted by hcom.

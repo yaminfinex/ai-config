@@ -147,3 +147,31 @@ func TestListContextBoundsHungHcom(t *testing.T) {
 		t.Fatalf("ListContext error = %v", err)
 	}
 }
+
+func TestDecodeCreatedAtNumericCreatedAliasAndNeither(t *testing.T) {
+	cases := map[string]time.Time{
+		"roster-created_at.json": time.Unix(1788933496, 0).UTC(),
+		"roster-created.json":    time.Date(2026, 9, 5, 12, 34, 56, 0, time.UTC),
+		"roster-no-created.json": {},
+	}
+	for fixture, want := range cases {
+		raw, err := os.ReadFile(filepath.Join("testdata", fixture))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, err := Decode(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", fixture, err)
+		}
+		if len(rows) != 1 || !rows[0].CreatedAt.Equal(want) || rows[0].Name != "impl-lima" || rows[0].LaunchContext.PaneID != "w94:p1" {
+			t.Fatalf("%s: rows = %#v, want CreatedAt %v", fixture, rows, want)
+		}
+		if fixture != "roster-no-created.json" && rows[0].Tag != "impl" {
+			t.Fatalf("%s: tag not decoded: %#v", fixture, rows[0])
+		}
+	}
+	rows, err := Decode([]byte(`[{"name":"x","tool":"codex","status":"active","created_at":null}]`))
+	if err != nil || !rows[0].CreatedAt.IsZero() {
+		t.Fatalf("null created_at: rows=%#v err=%v", rows, err)
+	}
+}
