@@ -42,19 +42,20 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
   const [activeIndex, setActiveIndex] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
-  const debounced = useDebounced(query.trim())
+  const debounced = useDebounced(open ? query.trim() : '')
   const resolution = useQuery({
     queryKey: queryKeys.resolve(debounced, agent),
     queryFn: ({ signal }) => resolveFiles(debounced, agent, fetch, signal),
-    enabled: open && Boolean(debounced),
+    enabled: open && Boolean(query.trim()) && query.trim() === debounced,
     retry: false,
     gcTime: 30_000,
   })
 
   useEffect(() => {
+    setQuery('')
+    setActiveIndex(-1)
     if (!open) return
     restoreFocus.current = document.activeElement as HTMLElement | null
-    setActiveIndex(-1)
     const frame = requestAnimationFrame(() => inputRef.current?.focus())
     return () => {
       cancelAnimationFrame(frame)

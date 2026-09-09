@@ -32,12 +32,15 @@ test('Enter prefers an exact live agent over the synthetic create command', () =
   assert.deepEqual(target, { kind: 'action', index: rows.findIndex((row) => row.kind === 'agent') })
 })
 
-test('reflexive Enter falls through substring action matches to the file candidate', () => {
-  const rows = quickOpenActionRows('review', spaces, ['my-review-agent'], false)
-  assert.deepEqual(quickOpenEnterTarget(rows, 'review', -1, true), { kind: 'file' })
+test('Enter opens a partial agent match before matching spaces and files', () => {
+  const query = ' ReViEw '
+  const rows = quickOpenActionRows(query, spaces, ['my-review-agent'], false)
+  assert.deepEqual(quickOpenEnterTarget(rows, query, -1, true), {
+    kind: 'action', index: rows.findIndex((row) => row.kind === 'agent'),
+  })
 })
 
-test('reflexive Enter switches only an exact space or opens only an exact agent', () => {
+test('Enter prefers an exact space label over a partial agent match', () => {
   const spaceRows = quickOpenActionRows('main', spaces, ['main-agent'], false)
   assert.deepEqual(quickOpenEnterTarget(spaceRows, 'main', -1, false), { kind: 'action', index: 0 })
 
@@ -45,6 +48,35 @@ test('reflexive Enter switches only an exact space or opens only an exact agent'
   assert.deepEqual(quickOpenEnterTarget(agentRows, 'podi', -1, false), {
     kind: 'action', index: agentRows.findIndex((row) => row.kind === 'agent'),
   })
+})
+
+test('Enter chooses the first matching agent in rendered order', () => {
+  const rows = quickOpenActionRows('liha', spaces, ['test-liha', 'liha-helper'], false)
+  const firstAgent = rows.findIndex((row) => row.kind === 'agent')
+  assert.deepEqual(rows[firstAgent], { kind: 'agent', name: 'liha-helper', label: 'liha-helper' })
+  assert.deepEqual(quickOpenEnterTarget(rows, 'liha', -1, true), { kind: 'action', index: firstAgent })
+})
+
+test('Enter opens the first matching space when no agent matches', () => {
+  const rows = quickOpenActionRows('review', spaces, [], false)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', -1, true), { kind: 'action', index: 0 })
+})
+
+test('Enter falls through to a file when no action matches', () => {
+  const rows = quickOpenActionRows('missing', spaces, ['test-liha'], false)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'missing', -1, true), { kind: 'file' })
+})
+
+test('Enter returns null when no action or file matches', () => {
+  const rows = quickOpenActionRows('missing', spaces, ['test-liha'], false)
+  assert.equal(quickOpenEnterTarget(rows, 'missing', -1, false), null)
+})
+
+test('Enter preserves the highlighted action and file targets', () => {
+  const rows = quickOpenActionRows('review', spaces, ['my-review-agent'], false)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', 1, true), { kind: 'action', index: 1 })
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', rows.length, true), { kind: 'file' })
+  assert.equal(quickOpenEnterTarget(rows, 'review', rows.length, false), null)
 })
 
 test('create is arrow-select only and an empty reflexive Enter does nothing', () => {

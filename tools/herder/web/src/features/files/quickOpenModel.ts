@@ -56,7 +56,12 @@ export function quickOpenActionRows(
 
 export function quickOpenDefaultActionIndex(rows: QuickOpenActionRow[], rawQuery: string) {
   const query = rawQuery.trim().toLocaleLowerCase()
-  return query ? rows.findIndex((row) => row.kind !== 'create' && row.label.toLocaleLowerCase() === query) : -1
+  if (!query) return -1
+  const exact = rows.findIndex((row) => row.kind !== 'create' && row.label.toLocaleLowerCase() === query)
+  if (exact >= 0) return exact
+  const agent = rows.findIndex((row) => row.kind === 'agent' && row.name.toLocaleLowerCase().includes(query))
+  if (agent >= 0) return agent
+  return rows.findIndex((row) => row.kind === 'space' && row.label.toLocaleLowerCase().includes(query))
 }
 
 export function quickOpenEnterTarget(
