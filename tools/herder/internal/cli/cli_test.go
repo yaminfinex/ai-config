@@ -51,6 +51,24 @@ func TestEverySubcommandHasHandler(t *testing.T) {
 	}
 }
 
+// registrarCommands are deliberately present: register records facts that a
+// lifecycle tool reports (it performs nothing) and show reads the store. They
+// are not lifecycle verbs and this allow-list is extended on purpose.
+var registrarCommands = []string{"register", "show"}
+
+func TestRegistrarCommandsArePresentAndAreNotLifecycleVerbs(t *testing.T) {
+	_, usage, _ := runCLI(t, "--help")
+	for _, name := range registrarCommands {
+		if !strings.Contains(usage, "  "+name+" ") {
+			t.Errorf("root usage does not advertise %q", name)
+		}
+		code, stdout, _ := runCLI(t, name, "--help")
+		if code != 0 || !strings.Contains(stdout, "herder "+name) {
+			t.Errorf("%s --help = code %d stdout %q", name, code, stdout)
+		}
+	}
+}
+
 func TestRetiredLifecycleCommandsAreAbsent(t *testing.T) {
 	retired := []string{
 		"spawn", "send", "raise", "join", "leave", "credential", "wait",

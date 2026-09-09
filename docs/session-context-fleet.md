@@ -33,7 +33,7 @@ Use `hcom <cmd+flags> --name {instance_name}` for every hcom command:
 
 ## AGENTS (fleet lifecycle)
 
-Provision and cull Claude/Codex peer sessions through `$AI_CONFIG_ROOT/tools/fleet`. hcom owns identity and messages; herdr owns pane/worktree placement. `herder list` joins those live views for display only and never authorizes lifecycle action.
+Provision and cull Claude/Codex peer sessions through `$AI_CONFIG_ROOT/tools/fleet`. hcom owns identity and messages; herdr owns pane/worktree placement. herder is the fleet's display cache, registrar and observer; it never masters identity (hcom) or placement (herdr), and no lifecycle verb consults herder's store before acting. `herder list` joins the live views with the store's provenance for display only; `herder register` records lifecycle facts and performs none.
 
 - Spawn: `$AI_CONFIG_ROOT/tools/fleet/spawn.sh <claude|codex> --model M --tag T (--workspace ID | --worktree-branch BRANCH --repo PATH | --pane ID) --prompt 'short task or one-line brief pointer'`
 - Message: `hcom send @name --intent request --thread THREAD --name {instance_name} -- 'message'`

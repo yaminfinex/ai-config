@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/repoctx"
@@ -23,6 +24,76 @@ type Row struct {
 	Gap         string `json:"gap"`
 	ParentAgent string `json:"parent_agent,omitempty"`
 	Subagents   *Rows  `json:"subagents,omitempty"`
+	// Store-folded columns (FoldStore). Launcher is immutable provenance,
+	// Manager the mutable hierarchy pointer, Mission the current assignment.
+	// A bus row with no store record prints "unregistered"; a pane with no
+	// bus row prints "-".
+	Launcher   string                 `json:"launcher,omitempty"`
+	Manager    string                 `json:"manager,omitempty"`
+	Mission    string                 `json:"mission,omitempty"`
+	Provenance *ProvenanceSummary     `json:"provenance,omitempty"`
+	Binding    *agentstore.Binding    `json:"binding,omitempty"` // claimed vs roster session; never touches placement
+	Title      string                 `json:"title,omitempty"`
+	Vitals     *agentstore.VitalsView `json:"vitals,omitempty"`
+}
+
+// ProvenanceSummary is the row-sized slice of an AgentView's provenance.
+type ProvenanceSummary struct {
+	Kind     string `json:"kind"` // registered | mirrored | unregistered
+	Launcher string `json:"launcher,omitempty"`
+}
+
+// FoldStore is the ONE place the agent store joins the fleet rows, used by
+// the terminal list now and by the serve's board later. Rows are matched by
+// (name, incarnation): the roster row's created_at picks the incarnation. The
+// join itself is untouched; a nil projection folds every bus row as
+// unregistered.
+func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projection) []Row {
+	byName := make(map[string]*hcomidentity.Row, len(roster))
+	for i := range roster {
+		byName[roster[i].Name] = &roster[i]
+	}
+	out := append([]Row(nil), rows...)
+	for i := range out {
+		row := &out[i]
+		if row.BusStatus == "-" {
+			row.Launcher, row.Manager, row.Mission = "-", "-", "-"
+			continue
+		}
+		var view *agentstore.AgentView
+		if bus, ok := byName[row.Agent]; ok && proj != nil {
+			view = proj.View(row.Agent, bus)
+		}
+		if view == nil {
+			row.Launcher, row.Manager, row.Mission = "unregistered", "-", "-"
+			row.Provenance = &ProvenanceSummary{Kind: "unregistered"}
+			continue
+		}
+		pr := view.Provenance
+		row.Provenance = &ProvenanceSummary{Kind: pr.Kind, Launcher: pr.Launcher}
+		switch pr.Kind {
+		case "registered":
+			row.Launcher = display(pr.Launcher)
+		case "mirrored":
+			row.Launcher = "mirrored: " + display(pr.Launcher)
+		default:
+			row.Launcher = "unregistered"
+		}
+		row.Manager = display(view.Manager)
+		row.Binding = view.Binding
+		row.Mission = "-"
+		if view.Assignment != nil {
+			row.Mission = display(view.Assignment.Mission)
+		}
+		if view.Annotation != nil {
+			row.Title = view.Annotation.Title
+		}
+		if view.Session != nil {
+			vitals := view.Session.Vitals
+			row.Vitals = &vitals
+		}
+	}
+	return out
 }
 
 type Rows []Row
