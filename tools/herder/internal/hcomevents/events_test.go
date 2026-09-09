@@ -173,6 +173,47 @@ esac
 	}
 }
 
+func TestSubscribeLifeCatchesUpAndUsesLifeFilter(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "hcom")
+	log := filepath.Join(dir, "args")
+	script := `#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$LIFE_ARGS"
+case " $* " in
+  *" events --last 500 --full --type life "*)
+    printf '%s\n' '{"id":41,"ts":"2026-09-09T05:00:01Z","type":"life","instance":"impl-vava","data":{"action":"created","by":"ziru","batch_id":"b1","parent_name":"root","is_hcom_launched":true}}'
+    ;;
+  *" events --wait 30 --full --type life --sql id > 41 "*)
+    printf '%s\n' '{"timed_out":true}'
+    exit 1
+    ;;
+  *) printf 'unexpected args: %s\n' "$*" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("LIFE_ARGS", log)
+	ctx, cancel := context.WithCancel(context.Background())
+	var got Life
+	err := SubscribeLife(ctx, &Cursor{}, func(life Life) error {
+		got = life
+		cancel()
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != 41 || got.Action != "created" || got.Instance != "impl-vava" || got.By != "ziru" || got.Batch != "b1" || got.ParentName != "root" || got.IsHcomLaunched == nil || !*got.IsHcomLaunched {
+		t.Fatalf("life=%#v", got)
+	}
+	args, _ := os.ReadFile(log)
+	if !bytes.Contains(args, []byte("--last 500 --full --type life")) || bytes.Contains(args, []byte("--type message")) {
+		t.Fatalf("args=%s", args)
+	}
+}
+
 func TestDecodeRejectsNonJSON(t *testing.T) {
 	if _, err := decode([]byte("subscription exploded")); err == nil {
 		t.Fatal("decode accepted non-JSON output")
@@ -204,7 +245,7 @@ printf '%s\n' \
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	events, err := query(context.Background(), 10000, 40)
+	events, err := query(context.Background(), 10000, 40, "message")
 	if err != nil {
 		t.Fatal(err)
 	}

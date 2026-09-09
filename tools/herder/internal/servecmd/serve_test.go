@@ -19,6 +19,7 @@ import (
 	"testing/quick"
 	"time"
 
+	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/fileindex"
 	"ai-config/tools/herder/internal/fileresolver"
@@ -68,7 +69,7 @@ func fixtureDeps() dependencies {
 		agentVitals: func(hcomidentity.Row) (claudesession.Vitals, error) { return claudesession.Vitals{}, nil },
 		sender:      func(context.Context, string) (string, error) { return "web-alice-example-com", nil },
 		send:        func(context.Context, string, string, string) error { return nil },
-		spawn: func(context.Context, []string) (webaction.Result, error) {
+		spawn: func(context.Context, []string, string) (webaction.Result, error) {
 			return webaction.Result{Name: "new-vava", Pane: "p-new"}, nil
 		},
 		poll:             10 * time.Millisecond,
@@ -78,10 +79,68 @@ func fixtureDeps() dependencies {
 		roots:            buildRootSet,
 		fileResolver:     fileresolver.New(fileindex.New(fileindex.Options{})),
 		repoContext:      repoctx.Read,
-		recordLaunch:     func(launchEdge) error { return nil },
 		now:              time.Now,
 		audit:            func(string, ...any) {},
 		inputSerial:      &paneInputSerial{},
+	}
+}
+
+func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
+	state := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	calls := 0
+	audits := 0
+	deps := fixtureDeps()
+	deps.poll = time.Millisecond
+	deps.audit = func(string, ...any) { audits++ }
+	deps.life = func(_ context.Context, _ *hcomevents.Cursor, emit func(hcomevents.Life) error) error {
+		calls++
+		launched := true
+		events := []hcomevents.Life{
+			{ID: 1, TS: "2026-09-09T05:00:01Z", Instance: "a", Action: "created", By: "ziru", ParentName: "root"},
+			{ID: 2, TS: "2026-09-09T05:00:02Z", Instance: "a", Action: "ready", By: "ziru", IsHcomLaunched: &launched},
+			{ID: 3, TS: "2026-09-09T05:00:03Z", Instance: "a", Action: "stopped", By: "ziru", Reason: "done"},
+			{ID: 4, TS: "2026-09-09T05:00:04Z", Instance: "ziru", Action: "batch_launched", By: "ziru", Batch: "b1", Instances: []string{"b", "c"}},
+			{ID: 5, TS: "2026-09-09T05:00:05Z", Instance: "ignored", Action: "started", By: "ziru"},
+		}
+		if calls == 1 {
+			events = append([]hcomevents.Life{{ID: 0, TS: "2026-09-09T05:00:00Z", Instance: "ziru", Action: "batch_launched", By: "ziru"}}, events...)
+		}
+		for _, life := range events {
+			if err := emit(life); err != nil {
+				return err
+			}
+		}
+		if calls == 2 {
+			close(done)
+			cancel()
+		}
+		return nil
+	}
+	startLifeMirror(ctx, state, deps)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("life mirror did not replay")
+	}
+	projection, err := agentstore.Open(state, nil).Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(state, "agents", "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(raw, []byte("\n")) != 4 || projection.Latest("ignored") != nil || projection.Latest("ziru") != nil {
+		t.Fatalf("journal=%s", raw)
+	}
+	if audits != 1 {
+		t.Fatalf("audits=%d, want one refused-event audit", audits)
+	}
+	if got := projection.Latest("a"); got == nil || got.Events[0].HcomEvent != "1" || got.Parent != "root" {
+		t.Fatalf("a=%+v", got)
 	}
 }
 

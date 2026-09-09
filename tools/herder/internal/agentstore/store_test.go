@@ -304,6 +304,10 @@ func TestPackageAppendEnforcesTheCLIContract(t *testing.T) {
 		"pane-only session":   ev(KindSessionObserved, "", 1, func(e *Event) { e.Session, e.Tool = "s", "claude" }),
 		"zero steer_chars":    ev(KindCompactRequested, "a", 1, func(e *Event) { e.SteerChars = &zero }),
 		"ready with launcher": ev(KindLaunchReady, "a", 1, func(e *Event) { e.Tool, e.LauncherKind = "codex", "web"; e.Placement = &Placement{Workspace: "w"} }),
+		"worktree placement": ev(KindLaunchRequested, "", 1, func(e *Event) {
+			e.Tool, e.Tag = "codex", "t"
+			e.Placement = &Placement{WorktreeBranch: "topic", Repo: "/repo"}
+		}),
 	} {
 		if _, err := s.Append(good); err != nil {
 			t.Errorf("%s: rejected: %v", name, err)

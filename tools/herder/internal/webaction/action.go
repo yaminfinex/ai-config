@@ -29,7 +29,7 @@ type Result struct {
 	OutputTail string `json:"output_tail,omitempty"`
 }
 
-func Spawn(ctx context.Context, args []string) (Result, error) {
+func Spawn(ctx context.Context, args []string, launcher string) (Result, error) {
 	root := strings.TrimSpace(os.Getenv("AI_CONFIG_ROOT"))
 	if root == "" {
 		return Result{}, fmt.Errorf("%w: AI_CONFIG_ROOT is not set; cannot locate tools/fleet/spawn.sh", ErrUnavailable)
@@ -40,6 +40,10 @@ func Spawn(ctx context.Context, args []string) (Result, error) {
 	cmd := exec.CommandContext(commandCtx, script, args...)
 	cmd.Dir = root
 	cmd.Env = hcomcli.AnonymousEnv()
+	cmd.Env = append(cmd.Env, "FLEET_LAUNCHER="+launcher, "FLEET_LAUNCHER_KIND=web")
+	if stateDir := strings.TrimSpace(os.Getenv("HERDER_STATE_DIR")); stateDir != "" {
+		cmd.Env = append(cmd.Env, "HERDER_STATE_DIR="+stateDir)
+	}
 	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

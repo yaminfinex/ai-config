@@ -166,18 +166,34 @@ case "${1:-} ${2:-}" in
       ((count >= 2)) && hooks_bound=1 || hooks_bound=0
     fi
     if [[ $hooks_bound == 1 ]]; then
-      printf '%s\n' '[{"base_name":"vava","hooks_bound":true,"name":"gate-vava"}]'
+      printf '%s\n' '[{"base_name":"vava","hooks_bound":true,"name":"gate-vava","session_id":"session-test"}]'
     else
-      printf '%s\n' '[{"base_name":"vava","hooks_bound":false,"name":"gate-vava"}]'
+      printf '%s\n' '[{"base_name":"vava","hooks_bound":false,"name":"gate-vava","session_id":"session-test"}]'
     fi
     ;;
 esac
+EOF
+cat >"$TEST_ROOT/bin/herder" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'herder FLEET_LAUNCHER=%q FLEET_LAUNCHER_KIND=%q' "${FLEET_LAUNCHER:-}" "${FLEET_LAUNCHER_KIND:-}" >>"$FLEET_TEST_CALLS"
+printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
+printf '\n' >>"$FLEET_TEST_CALLS"
+case ${FLEET_TEST_REGISTER_MODE:-} in
+  exit3) printf 'store unavailable\n' >&2; exit 3 ;;
+  sleep) exec /bin/sleep 20 ;;
+esac
+if [[ ${1:-} == register && ${2:-} == launch-requested ]]; then
+  printf '%s\n' 'id=018f0000-0000-7000-8000-000000000001' 'request=018f0000-0000-7000-8000-000000000001'
+else
+  printf '%s\n' 'id=018f0000-0000-7000-8000-000000000002'
+fi
 EOF
 cat >"$TEST_ROOT/bin/sleep" <<'EOF'
 #!/usr/bin/env bash
 exit 0
 EOF
-chmod +x "$TEST_ROOT/bin/herdr" "$TEST_ROOT/bin/hcom" "$TEST_ROOT/bin/sleep"
+chmod +x "$TEST_ROOT/bin/herdr" "$TEST_ROOT/bin/hcom" "$TEST_ROOT/bin/herder" "$TEST_ROOT/bin/sleep"
 
 export FLEET_TEST_CALLS=$TEST_ROOT/calls
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --prompt hello >"$TEST_ROOT/spawn.out"
@@ -188,7 +204,78 @@ grep -E 'hcom .* 1 codex .*--dir /tmp.*--hcom-prompt hello.*--dangerously-bypass
 if grep -F 'model_reasoning_effort' "$FLEET_TEST_CALLS" >/dev/null || grep -F -- '--effort' "$FLEET_TEST_CALLS" >/dev/null; then
   fail "spawn added reasoning effort when none was requested"
 fi
+requested_line=$(grep -n 'herder .*register launch-requested' "$FLEET_TEST_CALLS" | head -n1 | cut -d: -f1)
+launch_line=$(grep -n 'hcom .* 1 codex' "$FLEET_TEST_CALLS" | head -n1 | cut -d: -f1)
+ready_line=$(grep -n 'herder .*register launch-ready' "$FLEET_TEST_CALLS" | head -n1 | cut -d: -f1)
+[[ $requested_line -lt $launch_line && $ready_line -gt $launch_line ]] || fail "spawn registration calls are misordered"
+grep -F 'register launch-ready --request 018f0000-0000-7000-8000-000000000001 --name gate-vava --batch batch-test --pane p-test --cwd /tmp --session session-test' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "spawn ready registration lost request or launch facts"
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
+
+: >"$FLEET_TEST_CALLS"
+FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-web.out" 2>"$TEST_ROOT/spawn-web.err"
+[[ $(grep -c 'herder .*register launch-.*--by web-x --by-kind web --launcher-kind web' "$FLEET_TEST_CALLS") -eq 2 ]] \
+  || fail "spawn did not attribute both web registration calls"
+: >"$FLEET_TEST_CALLS"
+PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-direct.out" 2>"$TEST_ROOT/spawn-direct.err"
+! grep -F -- '--by' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn forced attribution on a direct launch"
+for partial_attrib in launcher kind; do
+  : >"$FLEET_TEST_CALLS"
+  if [[ $partial_attrib == launcher ]]; then
+    FLEET_LAUNCHER=web-x PATH="$TEST_ROOT/bin:$PATH" \
+      "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-$partial_attrib.out" 2>"$TEST_ROOT/spawn-$partial_attrib.err"
+  else
+    FLEET_LAUNCHER_KIND=web PATH="$TEST_ROOT/bin:$PATH" \
+      "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-$partial_attrib.out" 2>"$TEST_ROOT/spawn-$partial_attrib.err"
+  fi
+  ! grep -F -- '--by' "$FLEET_TEST_CALLS" >/dev/null \
+    || fail "spawn used partial $partial_attrib attribution"
+done
+pass "spawn carries optional web attribution only when supplied"
+
+for mode in exit3 absent sleep; do
+  : >"$FLEET_TEST_CALLS"
+  start=$SECONDS
+  test_path="$TEST_ROOT/bin:$PATH"
+  if [[ $mode == absent ]]; then
+    mv "$TEST_ROOT/bin/herder" "$TEST_ROOT/bin/herder.off"
+    test_path="$TEST_ROOT/bin:/usr/bin:/bin"
+  fi
+  FLEET_TEST_REGISTER_MODE=$mode PATH="$test_path" \
+    "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-$mode.out" 2>"$TEST_ROOT/spawn-$mode.err"
+  if [[ $mode == absent ]]; then mv "$TEST_ROOT/bin/herder.off" "$TEST_ROOT/bin/herder"; fi
+  cmp -s "$TEST_ROOT/spawn.out" "$TEST_ROOT/spawn-$mode.out" || fail "register $mode changed spawn stdout"
+  [[ $(grep -c 'fleet spawn: register launch-requested skipped:' "$TEST_ROOT/spawn-$mode.err") -eq 1 ]] \
+    || fail "register $mode did not emit exactly one warning"
+  if [[ $mode == sleep ]]; then
+    elapsed=$((SECONDS - start))
+    ((elapsed >= 9 && elapsed <= 12)) || fail "register timeout took ${elapsed}s instead of about 10s"
+  fi
+done
+pass "spawn registration absence, failure, and timeout are fail-open"
+
+mkdir -p "$TEST_ROOT/real-bin"
+(cd "$ROOT/tools/herder" && go build -o "$TEST_ROOT/real-bin/herder" ./cmd/herder)
+real_state=$TEST_ROOT/real-state
+mkdir -p "$real_state"
+: >"$FLEET_TEST_CALLS"
+HERDER_STATE_DIR="$real_state" HCOM_NAME=conductor PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/real-spawn.out" 2>"$TEST_ROOT/real-spawn.err"
+jq -s -e 'length == 2 and .[0].kind == "launch-requested" and .[1].kind == "launch-ready" and .[1].request == .[0].id' \
+  "$real_state/agents/events.jsonl" >/dev/null || fail "real register rejected the wrapper event contract"
+HERDER_STATE_DIR="$real_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$TEST_ROOT/real-bin/herder" show gate-vava --json | jq -e '.provenance.kind == "registered"' >/dev/null \
+  || fail "real show did not project the registered launch"
+web_state=$TEST_ROOT/real-web-state
+mkdir -p "$web_state"
+HERDER_STATE_DIR="$web_state" FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web \
+  PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  >"$TEST_ROOT/real-web-spawn.out" 2>"$TEST_ROOT/real-web-spawn.err"
+HERDER_STATE_DIR="$web_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$TEST_ROOT/real-bin/herder" show gate-vava --json | jq -e '.provenance.launcher == "web-x" and .provenance.launcher_kind == "web"' >/dev/null \
+  || fail "real register lost web launcher attribution"
+pass "real spawn and register validate requested, ready, projection, and web attribution end to end"
 
 : >"$FLEET_TEST_CALLS"
 if ! timeout 2 env FLEET_TEST_LAUNCH_MODE=descendant-stdout PATH="$TEST_ROOT/bin:$PATH" \
@@ -298,6 +385,8 @@ grep -F 'ready launch is not hook-bound in hcom roster: gate-vava' "$TEST_ROOT/c
 grep -F 'pane=p-test' "$TEST_ROOT/claude-unbound.err" >/dev/null \
   || fail "spawn did not name the placement left by an unbound ready Claude launch"
 pass "spawn still requires hook binding for ready Claude launches"
+[[ $(grep -c 'herder .*register launch-failed .*--request 018f0000-0000-7000-8000-000000000001 .*--pane p-test .*--batch batch-test' "$FLEET_TEST_CALLS") -eq 1 ]] \
+  || fail "spawn did not register the post-placement failure exactly once with coordinates"
 
 if FLEET_TEST_PROCESS_SHAPE=no-shell-pid PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/no-shell.out" 2>"$TEST_ROOT/no-shell.err"; then
@@ -398,10 +487,31 @@ send_line=$(grep -n 'hcom .* send @gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 kill_line=$(grep -n 'hcom .* kill gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 [[ -n $send_line && -n $kill_line && $send_line -lt $kill_line ]] \
   || fail "cull did not send its courtesy notice before kill"
+requested_line=$(grep -n 'herder .*register cull-requested --name gate-vava --pane p-managed' "$FLEET_TEST_CALLS" | cut -d: -f1)
+[[ -n $requested_line && $requested_line -lt $send_line ]] || fail "cull request was not registered before courtesy and kill"
+grep -F 'register culled --name gate-vava --pane p-managed --close managed' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "managed cull outcome was not registered"
 if grep -F 'herdr pane close' "$FLEET_TEST_CALLS" >/dev/null; then
   fail "cull closed a pane explicitly after managed close was verified"
 fi
 pass "cull sends courtesy before kill and verifies managed close"
+
+for mode in exit3 sleep; do
+  rm -f "$cull_state/killed" "$cull_state/closed"
+  : >"$FLEET_TEST_CALLS"
+  start=$SECONDS
+  FLEET_TEST_REGISTER_MODE=$mode FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
+    PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-$mode.out" 2>"$TEST_ROOT/cull-$mode.err"
+  cmp -s "$TEST_ROOT/cull-managed.out" "$TEST_ROOT/cull-$mode.out" \
+    || fail "register $mode changed cull stdout"
+  [[ $(grep -c 'fleet cull: register cull-requested skipped:' "$TEST_ROOT/cull-$mode.err") -eq 1 ]] \
+    || fail "register $mode did not emit exactly one cull warning"
+  if [[ $mode == sleep ]]; then
+    elapsed=$((SECONDS - start))
+    ((elapsed >= 9 && elapsed <= 12)) || fail "cull register timeout took ${elapsed}s instead of about 10s"
+  fi
+done
+pass "cull registration failure and timeout are once-only and fail-open"
 
 rm -f "$cull_state/killed" "$cull_state/closed"
 : >"$FLEET_TEST_CALLS"
@@ -411,6 +521,8 @@ grep -Fx 'culled name=gate-vava pane=p-fallback close=label-fallback' "$TEST_ROO
   || fail "cull did not report its unique-label fallback close"
 grep -F 'herdr pane close p-fallback' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "cull did not close the unique exact-label fallback pane"
+grep -F 'register culled --name gate-vava --pane p-fallback --close label-fallback' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "fallback cull outcome was not registered"
 pass "cull closes only the unique exact-label fallback pane"
 
 rm -f "$cull_state/killed" "$cull_state/closed"
@@ -424,6 +536,7 @@ grep -F 'multiple panes match the exact gate-vava [codex] label; refusing to cul
 if grep -E 'hcom .* (send|kill) ' "$FLEET_TEST_CALLS" >/dev/null; then
   fail "cull acted on the seat before refusing ambiguous labels"
 fi
+! grep -F 'herder ' "$FLEET_TEST_CALLS" >/dev/null || fail "ambiguous cull wrote a registration event"
 pass "cull refuses ambiguous exact-label matches before acting"
 
 printf 'ALL GREEN - fleet wrapper contract holds.\n'

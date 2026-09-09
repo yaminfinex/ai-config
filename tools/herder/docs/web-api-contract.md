@@ -1064,9 +1064,9 @@ POST `/api/spawn`
   HTTP 200: `{"names":["<bus-name>"],"pane":"<pane-id>","output_tail":"<spawn output>"}`.
   Semantic spawn refusals are HTTP 409 with `error: "launch refused"`
   and spawn.sh's stderr preserved as `detail`; wrapper/infrastructure
-  failures are 502. After success, one attributed launch edge per name is
-  appended to `launch-edges.jsonl` under the Herder state directory, including
-  the requested workspace ID and returned pane ID. The
+  failures are 502. The wrapper records the launch through `herder register`,
+  attributed with the server-derived web identity; the serve writes no launch
+  edge file. The
   new agent then appears through the ordinary fleet SSE poll; no endpoint
   response is used as fleet state.
 

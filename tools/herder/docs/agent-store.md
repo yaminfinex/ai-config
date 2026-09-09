@@ -31,7 +31,7 @@ a temp file, fsynced, renamed to `events.jsonl`, and the directory fsynced.
 A crash mid-import leaves no journal, and the next open imports everything.
 Malformed edge lines are skipped with one warning each.
 
-There is no rotation in this unit; the journal grows until unit 2 adds it.
+There is no rotation yet; the journal grows until measurement earns a retention policy.
 
 ## Event schema
 
@@ -53,6 +53,19 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 | `reparent` | manager |
 | `mirror.created/ready/stopped/batch_launched` | hcom_event, reason, batch, instances, parent_name, is_hcom_launched |
 | `session.observed/ended/superseded` | session, tool, path, reason |
+
+`spawn.sh` records requested and ready (or failed) around the existing launch.
+When a serve launches it, `FLEET_LAUNCHER` carries the server-derived web
+identity and `FLEET_LAUNCHER_KIND=web`; direct shell launches leave both unset
+and use register's normal attribution default. Requested placement also accepts
+`worktree_branch` with its required `repo`.
+
+The serve mirrors hcom life events (`created`, `ready`, `stopped`, and
+`batch_launched`) through the same append API with `by_kind=mirror`. It catches
+up the latest 500 life events at startup, then subscribes until the serve
+context ends. `hcom_event` preserves the bus id and the event id is derived from
+`hcom-life:<id>`, so replay appends nothing. Other life actions are ignored.
+Refused life events are audited once and skipped; an unavailable store is retried.
 
 Mission assignment (the `assign` kind, `fleetview.Row.Mission`) is recorded
 but not displayed in `herder list` until the mission model is specced
@@ -89,9 +102,8 @@ error, not a replay: "id X already has a different payload", register exit
 a concurrent retry cannot double-append.
 
 Cost: the id check scans the journal from byte 0 on every append, O(n) in
-journal length (about 40 ms at 20k lines). Unit 2 note: the serve must keep
-an in-memory id set plus its last offset, refreshed under the lock, rather
-than call this scan per append.
+journal length (about 40 ms at 20k lines). Rare life events use this same path;
+an id set or offset cache waits for a measurement showing the scan matters.
 
 ## Snapshot
 

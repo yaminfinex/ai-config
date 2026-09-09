@@ -98,7 +98,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if ws, pane, split := get("workspace"), get("pane"), get("split-from"); kind == agentstore.KindLaunchRequested {
 		e.Pane = ""
-		e.Placement = &agentstore.Placement{Workspace: ws, Pane: pane, SplitFrom: split}
+		e.Placement = &agentstore.Placement{Workspace: ws, Pane: pane, SplitFrom: split, WorktreeBranch: get("worktree-branch"), Repo: get("repo")}
 	} else if ws != "" {
 		e.Placement = &agentstore.Placement{Workspace: ws}
 	}

@@ -5,6 +5,32 @@
 
 set -euo pipefail
 
+register_disabled=0
+REGISTER_OUTPUT=
+fleet_tool=cull
+
+register_event() {
+  local kind=$1 herder_bin rc detail
+  shift
+  REGISTER_OUTPUT=
+  ((register_disabled == 0)) || return 0
+  if ! herder_bin=$(command -v herder); then
+    printf 'fleet %s: register %s skipped: herder not found\n' "$fleet_tool" "$kind" >&2
+    register_disabled=1
+    return 0
+  fi
+  set +e
+  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" 2>&1)
+  rc=$?
+  set -e
+  if ((rc != 0)); then
+    detail=${REGISTER_OUTPUT//$'\n'/; }
+    printf 'fleet %s: register %s skipped: %s\n' "$fleet_tool" "$kind" "${detail:-exit $rc}" >&2
+    REGISTER_OUTPUT=
+    register_disabled=1
+  fi
+}
+
 die() {
   printf 'fleet cull: %s\n' "$*" >&2
   exit 1
@@ -46,6 +72,11 @@ elif [[ $label_count -gt 1 ]]; then
   die "multiple panes match the exact $full_name [$tool] label; refusing to cull"
 fi
 
+candidate=${managed_pane:-$label_pane}
+requested_args=(--name "$full_name")
+[[ -z $candidate ]] || requested_args+=(--pane "$candidate")
+register_event cull-requested "${requested_args[@]}"
+
 if ! hcom send "@$full_name" --intent inform -- "your seat is closing"; then
   printf 'fleet cull: courtesy notice failed; continuing with requested cull\n' >&2
 fi
@@ -56,9 +87,9 @@ kill_rc=$?
 set -e
 printf '%s\n' "$kill_output" >&2
 
-candidate=${managed_pane:-$label_pane}
 if [[ -n $candidate ]] && ! herdr pane get "$candidate" >/dev/null 2>&1; then
   ((kill_rc == 0)) || printf 'fleet cull: hcom kill returned %d, but pane closure is verified\n' "$kill_rc" >&2
+  register_event culled --name "$full_name" --pane "$candidate" --close managed
   printf 'culled name=%s pane=%s close=managed\n' "$full_name" "$candidate"
   exit 0
 fi
@@ -73,6 +104,7 @@ if [[ $fallback_count -eq 1 ]]; then
   if herdr pane get "$fallback_pane" >/dev/null 2>&1; then
     die "fallback pane still exists after close: $fallback_pane"
   fi
+  register_event culled --name "$full_name" --pane "$fallback_pane" --close label-fallback
   printf 'culled name=%s pane=%s close=label-fallback\n' "$full_name" "$fallback_pane"
   exit 0
 fi

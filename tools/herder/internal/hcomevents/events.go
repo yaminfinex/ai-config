@@ -27,6 +27,19 @@ type Message struct {
 	SentAt string   `json:"sent_at,omitempty"`
 }
 
+type Life struct {
+	ID             int64
+	TS             string
+	Instance       string
+	Action         string
+	By             string
+	Reason         string
+	Batch          string
+	Instances      []string
+	ParentName     string
+	IsHcomLaunched *bool
+}
+
 // DeliveryWatermark is the recipient cursor recorded by hcom after a delivery
 // batch. Position is the last bus event consumed by that concrete recipient;
 // MessageTimestamp identifies the batch tail and is corroboration only.
@@ -49,15 +62,22 @@ type event struct {
 	Type     string      `json:"type"`
 	Instance string      `json:"instance"`
 	Data     struct {
-		From        string      `json:"from"`
-		DeliveredTo []string    `json:"delivered_to"`
-		Mentions    []string    `json:"mentions"`
-		Intent      string      `json:"intent"`
-		Thread      string      `json:"thread"`
-		Text        string      `json:"text"`
-		Context     string      `json:"context"`
-		Position    json.Number `json:"position"`
-		MsgTS       string      `json:"msg_ts"`
+		From           string      `json:"from"`
+		DeliveredTo    []string    `json:"delivered_to"`
+		Mentions       []string    `json:"mentions"`
+		Intent         string      `json:"intent"`
+		Thread         string      `json:"thread"`
+		Text           string      `json:"text"`
+		Context        string      `json:"context"`
+		Position       json.Number `json:"position"`
+		MsgTS          string      `json:"msg_ts"`
+		Action         string      `json:"action"`
+		By             string      `json:"by"`
+		Reason         string      `json:"reason"`
+		Batch          string      `json:"batch_id"`
+		Instances      []string    `json:"instances"`
+		ParentName     string      `json:"parent_name"`
+		IsHcomLaunched *bool       `json:"is_hcom_launched"`
 	} `json:"data"`
 	TimedOut bool `json:"timed_out"`
 }
@@ -107,7 +127,7 @@ func projectDelivery(parsed event) (DeliveryWatermark, error) {
 // same event decoder and projection as Subscribe so endpoint reads and stream
 // wake frames cannot drift in shape.
 func Recent(ctx context.Context, limit int) ([]Message, error) {
-	events, err := query(ctx, limit, -1)
+	events, err := query(ctx, limit, -1, "message")
 	if err != nil {
 		return nil, err
 	}
@@ -128,19 +148,39 @@ func Recent(ctx context.Context, limit int) ([]Message, error) {
 // Subscribe blocks, forwarding every new bus message until ctx is canceled.
 // The blocking --wait query is hcom's own event subscription/wakeup path.
 func Subscribe(ctx context.Context, cursor *Cursor, emit func(Message) error, healthy func() error) error {
+	return subscribe(ctx, cursor, "message", 1, false, projectMessage, emit, healthy)
+}
+
+// SubscribeLife catches up the bounded recent life history, then forwards
+// new life events until ctx is canceled. Its cursor is process-local.
+func SubscribeLife(ctx context.Context, cursor *Cursor, emit func(Life) error) error {
+	return subscribe(ctx, cursor, "life", 500, true, projectLife, emit, func() error { return nil })
+}
+
+func subscribe[T any](ctx context.Context, cursor *Cursor, eventType string, initialLimit int, emitInitial bool, project func(event) (T, error), emit func(T) error, healthy func() error) error {
 	if !cursor.initialized {
-		events, err := query(ctx, 1, -1)
+		events, err := query(ctx, initialLimit, -1, eventType)
 		if err != nil {
-			return fmt.Errorf("hcom events subscription baseline failed: %w", err)
+			return fmt.Errorf("hcom %s subscription baseline failed: %w", eventType, err)
 		}
-		for _, event := range events {
-			id, err := eventID(event)
+		for _, parsed := range events {
+			id, err := eventID(parsed)
 			if err != nil {
 				return err
 			}
-			if id > cursor.ID {
-				cursor.ID = id
+			if id <= cursor.ID {
+				continue
 			}
+			if emitInitial {
+				value, err := project(parsed)
+				if err != nil {
+					return err
+				}
+				if err := emit(value); err != nil {
+					return err
+				}
+			}
+			cursor.ID = id
 		}
 		cursor.initialized = true
 		if err := healthy(); err != nil {
@@ -149,12 +189,12 @@ func Subscribe(ctx context.Context, cursor *Cursor, emit func(Message) error, he
 	}
 	for {
 		filter := fmt.Sprintf("id > %d", cursor.ID)
-		wake, err := run(ctx, "events", "--wait", "30", "--full", "--type", "message", "--sql", filter)
+		wake, err := run(ctx, "events", "--wait", "30", "--full", "--type", eventType, "--sql", filter)
 		if ctx.Err() != nil {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("hcom events subscription failed: %w", err)
+			return fmt.Errorf("hcom %s subscription failed: %w", eventType, err)
 		}
 		if err := healthy(); err != nil {
 			return err
@@ -162,32 +202,29 @@ func Subscribe(ctx context.Context, cursor *Cursor, emit func(Message) error, he
 		if wake.TimedOut {
 			continue
 		}
-
-		// Wait mode is the subscription/wakeup mechanism, but it returns only
-		// one matching event. Query the full window after the old cursor so a
-		// burst between wakeups is forwarded without dropping earlier messages.
 		queryCtx, cancel := context.WithTimeout(ctx, catchUpTimeout)
-		events, err := query(queryCtx, 10000, cursor.ID)
+		events, err := query(queryCtx, 10000, cursor.ID, eventType)
 		cancel()
 		if err != nil {
-			return fmt.Errorf("hcom events subscription catch-up failed: %w", err)
+			return fmt.Errorf("hcom %s subscription catch-up failed: %w", eventType, err)
 		}
 		progressed := false
 		for _, parsed := range events {
-			if parsed.Type != "message" {
-				continue
-			}
-			message, err := projectMessage(parsed)
+			value, err := project(parsed)
 			if err != nil {
 				return err
 			}
-			if message.ID <= cursor.ID {
-				continue
-			}
-			if err := emit(message); err != nil {
+			id, err := eventID(parsed)
+			if err != nil {
 				return err
 			}
-			cursor.ID = message.ID
+			if id <= cursor.ID {
+				continue
+			}
+			if err := emit(value); err != nil {
+				return err
+			}
+			cursor.ID = id
 			progressed = true
 		}
 		if !progressed {
@@ -200,6 +237,20 @@ func Subscribe(ctx context.Context, cursor *Cursor, emit func(Message) error, he
 			}
 		}
 	}
+}
+
+func projectLife(parsed event) (Life, error) {
+	id, err := eventID(parsed)
+	if err != nil {
+		return Life{}, err
+	}
+	if parsed.Type != "life" {
+		return Life{}, fmt.Errorf("invalid hcom life event type %q", parsed.Type)
+	}
+	return Life{ID: id, TS: parsed.TS, Instance: parsed.Instance, Action: parsed.Data.Action,
+		By: parsed.Data.By, Reason: parsed.Data.Reason, Batch: parsed.Data.Batch,
+		Instances: parsed.Data.Instances, ParentName: parsed.Data.ParentName,
+		IsHcomLaunched: parsed.Data.IsHcomLaunched}, nil
 }
 
 func projectMessage(parsed event) (Message, error) {
@@ -249,8 +300,8 @@ func run(ctx context.Context, args ...string) (event, error) {
 	return parsed, nil
 }
 
-func query(ctx context.Context, limit int, afterID int64) ([]event, error) {
-	args := []string{"events", "--last", strconv.Itoa(limit), "--full", "--type", "message"}
+func query(ctx context.Context, limit int, afterID int64, eventType string) ([]event, error) {
+	args := []string{"events", "--last", strconv.Itoa(limit), "--full", "--type", eventType}
 	if afterID >= 0 {
 		args = append(args, "--sql", fmt.Sprintf("id > %d", afterID))
 	}

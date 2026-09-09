@@ -18,20 +18,27 @@ func TestSpawnPreservesArgvAndParsesWrapperOutput(t *testing.T) {
 	}
 	log := filepath.Join(root, "args")
 	stub := filepath.Join(dir, "spawn.sh")
-	script := "#!/usr/bin/env bash\nfor arg in \"$@\"; do printf '<%s>\\n' \"$arg\"; done >\"$ACTION_LOG\"\nprintf '%s\\n' 'Started the launch process' 'Names: api-vava' 'Batch id: batch-1' 'name=stderr-evil' 'pane=stderr-evil' >&2\nprintf '%s\\n' 'name=api-vava' 'pane=w1:p9' 'cwd=/repo' 'placement=split-pane'\n"
+	script := "#!/usr/bin/env bash\nprintf 'launcher=%s\\nkind=%s\\nstate=%s\\n' \"${FLEET_LAUNCHER:-}\" \"${FLEET_LAUNCHER_KIND:-}\" \"${HERDER_STATE_DIR:-}\" >\"$ACTION_ENV_LOG\"\nfor arg in \"$@\"; do printf '<%s>\\n' \"$arg\"; done >\"$ACTION_LOG\"\nprintf '%s\\n' 'Started the launch process' 'Names: api-vava' 'Batch id: batch-1' 'name=stderr-evil' 'pane=stderr-evil' >&2\nprintf '%s\\n' 'name=api-vava' 'pane=w1:p9' 'cwd=/repo' 'placement=split-pane'\n"
 	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AI_CONFIG_ROOT", root)
 	t.Setenv("ACTION_LOG", log)
+	envLog := filepath.Join(root, "env")
+	t.Setenv("ACTION_ENV_LOG", envLog)
+	t.Setenv("HERDER_STATE_DIR", filepath.Join(root, "state"))
 	prompt := "--review 'quoted'\nsecond line"
-	result, err := Spawn(context.Background(), []string{"codex", "--tag", "api", "--split-from", "w1:p1", "--prompt", prompt})
+	result, err := Spawn(context.Background(), []string{"codex", "--tag", "api", "--split-from", "w1:p1", "--prompt", prompt}, "web-owner")
 	if err != nil || result.Name != "api-vava" || result.Pane != "w1:p9" || !strings.Contains(result.OutputTail, "Started the launch process") || !strings.Contains(result.OutputTail, "placement=split-pane") {
 		t.Fatalf("result=%#v err=%v", result, err)
 	}
 	got, _ := os.ReadFile(log)
 	if !strings.Contains(string(got), "<"+prompt+">\n") {
 		t.Fatalf("argv=%q", got)
+	}
+	envGot, _ := os.ReadFile(envLog)
+	if string(envGot) != "launcher=web-owner\nkind=web\nstate="+filepath.Join(root, "state")+"\n" {
+		t.Fatalf("env=%q", envGot)
 	}
 }
 
@@ -46,13 +53,13 @@ func TestSpawnQuotesRefusalAndMissingScriptIsUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("AI_CONFIG_ROOT", root)
-	if _, err := Spawn(context.Background(), nil); err == nil || errors.Is(err, ErrUnavailable) || err.Error() != "fleet spawn: pane is busy" {
+	if _, err := Spawn(context.Background(), nil, "web-owner"); err == nil || errors.Is(err, ErrUnavailable) || err.Error() != "fleet spawn: pane is busy" {
 		t.Fatalf("refusal=%v", err)
 	}
 	if err := os.Remove(stub); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Spawn(context.Background(), nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := Spawn(context.Background(), nil, "web-owner"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("missing=%v", err)
 	}
 }
@@ -71,7 +78,7 @@ func TestSpawnTimeoutIsUnavailable(t *testing.T) {
 	previous := commandTimeout
 	commandTimeout = 20 * time.Millisecond
 	t.Cleanup(func() { commandTimeout = previous })
-	if _, err := Spawn(context.Background(), nil); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "timed out") {
+	if _, err := Spawn(context.Background(), nil, "web-owner"); !errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("timeout = %v", err)
 	}
 }

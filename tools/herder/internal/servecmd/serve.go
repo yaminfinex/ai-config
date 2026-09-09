@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/fileindex"
 	"ai-config/tools/herder/internal/fileresolver"
@@ -60,6 +61,7 @@ type dependencies struct {
 	roster               func() ([]hcomidentity.Row, error)
 	stopped              func(string) (hcomidentity.Row, error)
 	messages             func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
+	life                 func(context.Context, *hcomevents.Cursor, func(hcomevents.Life) error) error
 	recentMessages       func(context.Context, int) ([]hcomevents.Message, error)
 	latestDelivery       func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error)
 	entryEnd             func(hcomidentity.Row) (int64, error)
@@ -69,7 +71,7 @@ type dependencies struct {
 	agentVitals          func(hcomidentity.Row) (claudesession.Vitals, error)
 	sender               func(context.Context, string) (string, error)
 	send                 func(context.Context, string, string, string) error
-	spawn                func(context.Context, []string) (webaction.Result, error)
+	spawn                func(context.Context, []string, string) (webaction.Result, error)
 	poll                 time.Duration
 	heartbeat            time.Duration
 	transcriptSafety     time.Duration
@@ -82,7 +84,6 @@ type dependencies struct {
 	transcriptWatcher    func() (*fsnotify.Watcher, error)
 	fileWatcherDelta     func(int)
 	repoContext          func(context.Context, string) (repoctx.Context, error)
-	recordLaunch         func(launchEdge) error
 	now                  func() time.Time
 	audit                func(string, ...any)
 	inputSerial          *paneInputSerial
@@ -97,6 +98,7 @@ var liveDependencies = dependencies{
 	roster:               hcomidentity.List,
 	stopped:              hcomidentity.Stopped,
 	messages:             hcomevents.Subscribe,
+	life:                 hcomevents.SubscribeLife,
 	recentMessages:       hcomevents.Recent,
 	latestDelivery:       hcomevents.LatestDelivery,
 	entryEnd:             entryTailEnd,
@@ -119,7 +121,6 @@ var liveDependencies = dependencies{
 	fileWatcher:       fsnotify.NewWatcher,
 	transcriptWatcher: fsnotify.NewWatcher,
 	repoContext:       repoctx.Read,
-	recordLaunch:      appendLaunchEdge,
 	now:               time.Now,
 	audit:             log.Printf,
 	inputSerial:       &paneInputSerial{},
@@ -250,6 +251,12 @@ type spawnRequest struct {
 	Workspace *string `json:"workspace"`
 }
 
+type launchResponse struct {
+	Names      []string `json:"names"`
+	Pane       string   `json:"pane"`
+	OutputTail string   `json:"output_tail"`
+}
+
 var (
 	tagPattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	effortLevelsByTool = map[string][]string{
@@ -258,6 +265,13 @@ var (
 	}
 	errSenderCollision = errors.New("derived web sender collides with a bus agent")
 )
+
+var lifeMirrorKinds = map[string]string{
+	"created":        agentstore.KindMirrorCreated,
+	"ready":          agentstore.KindMirrorReady,
+	"stopped":        agentstore.KindMirrorStopped,
+	"batch_launched": agentstore.KindMirrorBatch,
+}
 
 func validEffort(tool, effort string) bool {
 	for _, allowed := range effortLevelsByTool[tool] {
@@ -341,8 +355,63 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		} else {
 			runtimeDependencies.state = store
 		}
+		startLifeMirror(ctx, stateDir, runtimeDependencies)
 	}
 	return serve(listeners, newHandler(runtimeDependencies), reload, ReloadDrainTimeout, stdout, stderr)
+}
+
+func startLifeMirror(ctx context.Context, stateDir string, deps dependencies) {
+	if deps.life == nil {
+		return
+	}
+	store := agentstore.Open(stateDir, nil)
+	go func() {
+		cursor := &hcomevents.Cursor{}
+		lastError := ""
+		for ctx.Err() == nil {
+			err := deps.life(ctx, cursor, func(life hcomevents.Life) error {
+				kind := lifeMirrorKinds[life.Action]
+				if kind == "" {
+					return nil
+				}
+				at, err := time.Parse(time.RFC3339Nano, life.TS)
+				if err != nil {
+					return fmt.Errorf("hcom life event %d has invalid timestamp: %w", life.ID, err)
+				}
+				name := life.Instance
+				if kind == agentstore.KindMirrorBatch {
+					name = ""
+				}
+				event := agentstore.Event{
+					ID: agentstore.DerivedID([]byte(fmt.Sprintf("hcom-life:%d", life.ID))), At: at.UTC(), Kind: kind,
+					By: life.By, ByKind: "mirror", Name: name, Reason: life.Reason,
+					Batch: life.Batch, Instances: life.Instances, ParentName: life.ParentName,
+					IsHcomLaunched: life.IsHcomLaunched, HcomEvent: strconv.FormatInt(life.ID, 10),
+				}
+				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
+					deps.audit("hcom life mirror: skip %d: %v", life.ID, err)
+					return nil
+				}
+				return err
+			})
+			if ctx.Err() != nil {
+				return
+			}
+			if err == nil {
+				lastError = ""
+			} else if err.Error() != lastError {
+				deps.audit("hcom life mirror: %v", err)
+				lastError = err.Error()
+			}
+			timer := time.NewTimer(deps.poll)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			}
+		}
+	}()
 }
 
 type rootFlags []string
@@ -1203,21 +1272,13 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		args = append(args, "--effort", effort)
 	}
 	args = append(args, "--tag", tag, "--workspace", workspace)
-	result, err := deps.spawn(r.Context(), args)
+	result, err := deps.spawn(r.Context(), args, launcher)
 	if err != nil {
 		if errors.Is(err, webaction.ErrUnavailable) {
 			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		} else {
 			refuse(w, http.StatusConflict, "launch refused", err.Error())
 		}
-		return
-	}
-	if deps.recordLaunch == nil {
-		deps.recordLaunch = appendLaunchEdge
-	}
-	edge := launchEdge{Name: result.Name, Launcher: launcher, Tool: *request.Tool, Model: model, Effort: effort, Tag: tag, Workspace: workspace, Pane: result.Pane, Time: deps.now().UTC()}
-	if err := deps.recordLaunch(edge); err != nil {
-		refuse(w, http.StatusBadGateway, "launch record failed", fmt.Sprintf("%s launched, but its launch edge could not be recorded: %v", result.Name, err))
 		return
 	}
 	writeJSON(w, http.StatusOK, launchResponse{Names: []string{result.Name}, Pane: result.Pane, OutputTail: result.OutputTail})
