@@ -32,7 +32,13 @@ node install shadows the vendor binary and launches raw, off-bus agents; `ai-doc
 such copies):
 
 - `claude` — the vendor installer, landing in `~/.local/bin/claude`
-- `codex` — the vendor binary in `~/.local/bin/codex`
+- `codex` — `bin/codex-update` (installs the release's *package bundle* into
+  `~/.local/bin`: `codex` plus the sibling helpers it spawns from its own directory,
+  e.g. `codex-code-mode-host`). Never drop in a bare `codex` binary: since 0.153 a
+  session boots and then fails closed on code mode when the helper is absent.
+  `bin/codex-update --check` reports version drift and missing helpers; `ai-doctor`
+  carries the same helper tripwire. Updates are atomic renames — running sessions keep
+  their old inode, no compaction or restart needed.
 - `grok` — optional; fleet support is retired, the launcher function is only a direct
   vendor passthrough (the Grok Build installer, `~/.grok/bin`)
 

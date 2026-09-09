@@ -71,6 +71,13 @@ log_error() {
   printf 'ERROR %s\n' "$*" >&2
 }
 
+# Helper executables the vendor Codex CLI spawns from its own directory
+# (resolved via the real executable path, not PATH). One line per helper.
+# Consumed by bin/codex-update (install + --check) and ai-doctor.
+codex_helper_binaries() {
+  printf '%s\n' codex-code-mode-host
+}
+
 abs_path() {
   local path="$1"
   local dir

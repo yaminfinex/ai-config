@@ -6,6 +6,7 @@ This repo is the canonical corpus. Live agent config paths are symlinked into it
 
 ## Commands
 
+- `bin/codex-update`: install/update the vendor Codex CLI from the release package bundle (binary + sibling helpers, atomic swap); `--check` reports drift and missing helpers.
 - `bin/ai-setup`: install or repair live symlinks, meld `claude/settings.shared.json` into `~/.claude/settings.json`, and meld `codex/config.shared.toml` into `~/.codex/config.toml` (additive merge; see [docs/claude-context-trim.md](docs/claude-context-trim.md)).
 - `bin/ai-doctor`: inspect Git state, symlink drift, local-only skills, likely secrets, absolute home paths, pinned-vs-plain Claude config divergence, and Grok credential/home/binary drift (reports only; never repairs live Grok state).
 - `bin/ai-sync`: pull remote changes and heal safe symlink drift.

@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# codex-update - install or check the vendor Codex CLI and its sibling helpers.
+#
+# Why this exists: from 0.153 the `codex` binary spawns helper executables it
+# expects to find NEXT TO ITSELF (first one: codex-code-mode-host). Dropping a
+# bare `codex` binary into ~/.local/bin is no longer a complete install — the
+# session boots, then fails closed on the first feature that needs a helper.
+# The release's `codex-package-<target>.tar.gz` bundle is the unit of install:
+# every file in its bin/ is installed as a sibling, atomically, so a live
+# session never sees a half-updated set and running sessions keep their old
+# inode until they exit.
+#
+# Usage:
+#   codex-update                 install the latest release
+#   codex-update --version V     install release V (e.g. 0.153.4)
+#   codex-update --from-package DIR
+#                                install from an already-extracted package dir
+#                                (offline / air-gapped / tests)
+#   codex-update --check         report installed vs latest and missing helpers;
+#                                rc 1 on drift or a missing helper
+#   codex-update --check --quick same, without the network lookup
+#
+# Env: CODEX_BIN_DIR overrides the install dir (default ~/.local/bin).
+
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/lib/common.sh"
+
+bin_dir="${CODEX_BIN_DIR:-$HOME/.local/bin}"
+mode=install
+want_version=""
+from_package=""
+quick=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --check) mode=check ;;
+    --quick) quick=1 ;;
+    --version) want_version="${2:?--version needs a value}"; shift ;;
+    --from-package) from_package="${2:?--from-package needs a directory}"; shift ;;
+    -h|--help)
+      sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *) log_error "unknown argument: $1"; exit 2 ;;
+  esac
+  shift
+done
+
+target() {
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) echo x86_64-unknown-linux-musl ;;
+    Linux-aarch64|Linux-arm64) echo aarch64-unknown-linux-musl ;;
+    Darwin-x86_64) echo x86_64-apple-darwin ;;
+    Darwin-arm64) echo aarch64-apple-darwin ;;
+    *) log_error "unsupported platform: $(uname -s)-$(uname -m)"; exit 1 ;;
+  esac
+}
+
+installed_version() {
+  [ -x "$bin_dir/codex" ] || { echo none; return; }
+  "$bin_dir/codex" --version 2>/dev/null | awk '{print $2}' || echo unknown
+}
+
+latest_version() {
+  # The GitHub "latest" redirect is the cheapest unauthenticated lookup.
+  local loc
+  loc=$(curl -sI --max-time 10 https://github.com/openai/codex/releases/latest \
+    | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
+  case "$loc" in
+    */rust-v*) echo "${loc##*/rust-v}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Helpers a complete install must carry beside `codex`. The installer copies
+# every bin/ entry of the package regardless; this list is what --check (and
+# ai-doctor) can verify without the network.
+missing_helpers() {
+  local h
+  for h in $(codex_helper_binaries); do
+    [ -x "$bin_dir/$h" ] || echo "$h"
+  done
+}
+
+do_check() {
+  local rc=0 inst latest missing
+  inst=$(installed_version)
+  printf 'codex: %s (%s)\n' "$inst" "$bin_dir/codex"
+  missing=$(missing_helpers)
+  if [ -n "$missing" ]; then
+    printf 'MISSING helper(s) beside codex: %s\n' "$(echo "$missing" | tr '\n' ' ')"
+    rc=1
+  else
+    printf 'helpers present: %s\n' "$(codex_helper_binaries | tr '\n' ' ')"
+  fi
+  if [ "$quick" -eq 0 ]; then
+    if latest=$(latest_version); then
+      printf 'latest: %s\n' "$latest"
+      if [ "$inst" != "$latest" ]; then
+        printf 'UPDATE available: %s -> %s (run: codex-update)\n' "$inst" "$latest"
+        rc=1
+      fi
+    else
+      printf 'latest: lookup failed (offline?)\n'
+    fi
+  fi
+  return $rc
+}
+
+fetch_package() {
+  # Download and extract the package bundle for $1 into $2; prints nothing.
+  local version="$1" dest="$2" tgt url
+  tgt=$(target)
+  url="https://github.com/openai/codex/releases/download/rust-v${version}/codex-package-${tgt}.tar.gz"
+  log_info "fetching $url"
+  curl -fsSL --max-time 600 -o "$dest/pkg.tar.gz" "$url"
+  tar -xzf "$dest/pkg.tar.gz" -C "$dest"
+  rm -f "$dest/pkg.tar.gz"
+}
+
+install_from_dir() {
+  local pkg="$1" f name new_version staged=() before
+  [ -x "$pkg/bin/codex" ] || { log_error "no bin/codex in package dir $pkg"; exit 1; }
+  new_version=$("$pkg/bin/codex" --version 2>/dev/null | awk '{print $2}')
+  [ -n "$new_version" ] || { log_error "package codex does not run on this machine"; exit 1; }
+  for h in $(codex_helper_binaries); do
+    [ -x "$pkg/bin/$h" ] || { log_error "package is missing required helper bin/$h"; exit 1; }
+  done
+  before=$(installed_version)
+  mkdir -p "$bin_dir"
+  # Stage every bin/ entry beside its final name, then rename each into place.
+  # rename(2) is atomic: a running codex keeps its old inode, a new launch sees
+  # the new file, and there is no window where the path is absent.
+  for f in "$pkg"/bin/*; do
+    name=$(basename "$f")
+    cp "$f" "$bin_dir/.$name.codex-update.$$"
+    chmod +x "$bin_dir/.$name.codex-update.$$"
+    staged+=("$name")
+  done
+  for name in "${staged[@]}"; do
+    mv -f "$bin_dir/.$name.codex-update.$$" "$bin_dir/$name"
+  done
+  log_info "codex $before -> $new_version; installed: ${staged[*]} (in $bin_dir)"
+  log_info "running codex sessions keep the previous binary until they exit; new launches get $new_version"
+}
+
+case "$mode" in
+  check) do_check ;;
+  install)
+    if [ -n "$from_package" ]; then
+      install_from_dir "$from_package"
+    else
+      command -v curl >/dev/null || { log_error "curl is required"; exit 1; }
+      if [ -z "$want_version" ]; then
+        want_version=$(latest_version) || { log_error "could not resolve latest release"; exit 1; }
+      fi
+      if [ "$(installed_version)" = "$want_version" ] && [ -z "$(missing_helpers)" ]; then
+        log_info "codex $want_version already installed with all helpers; nothing to do"
+        exit 0
+      fi
+      tmp=$(mktemp -d)
+      trap 'rm -rf "$tmp"' EXIT
+      fetch_package "$want_version" "$tmp"
+      install_from_dir "$tmp"
+    fi
+    ;;
+esac

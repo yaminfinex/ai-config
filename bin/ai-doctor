@@ -389,6 +389,22 @@ check_vendor_agent_duplicates() {
   done
 }
 
+check_codex_helper_binaries() {
+  # Since 0.153 `codex` spawns helper executables it expects beside its own
+  # real path (first: codex-code-mode-host). A bare-binary drop-in boots and
+  # then fails closed on the first feature that needs one. bin/codex-update
+  # installs the whole package bundle; this is the no-network tripwire.
+  local codex helper dir missing=""
+  codex="${CODEX_BIN_DIR:-$HOME/.local/bin}/codex"
+  [ -x "$codex" ] || codex="$(command -v codex 2>/dev/null || true)"
+  [ -n "$codex" ] && [ -f "$codex" ] || return 0
+  dir="$(dirname "$(abs_path "$codex")")"
+  for helper in $(codex_helper_binaries); do
+    [ -x "$dir/$helper" ] || missing="$missing $helper"
+  done
+  [ -z "$missing" ] || warn "codex at $codex is missing sibling helper(s):$missing — sessions fail closed on code mode; run bin/codex-update (installs the full package bundle)"
+}
+
 check_retired_vendor_pin_cache() {
   local cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/herder/vendorbin"
   [ -d "$cache_dir" ] || return 0
@@ -534,6 +550,7 @@ check_claude_shared_settings
 check_claude_config_divergence
 check_mise_path
 check_vendor_agent_duplicates
+check_codex_helper_binaries
 check_retired_vendor_pin_cache
 check_login_shell_resolution
 check_grok_family
