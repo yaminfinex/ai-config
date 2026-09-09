@@ -43,8 +43,8 @@ test('agent mentions, Markdown links, and bare URLs share the inline link idiom'
     'Ask grill-kila, read [the docs](https://docs.example.com), or visit https://example.com.',
   ))
   assert.match(html, /<button[^>]*class="inline-link agent-mention"[^>]*>grill-kila<\/button>/)
-  assert.match(html, /<a class="inline-link" href="https:\/\/docs\.example\.com">the docs<\/a>/)
-  assert.match(html, /<a class="inline-link" href="https:\/\/example\.com">https:\/\/example\.com<\/a>/)
+  assert.match(html, /<a class="inline-link" href="https:\/\/docs\.example\.com" target="_blank" rel="noopener noreferrer">the docs<\/a>/)
+  assert.match(html, /<a class="inline-link" href="https:\/\/example\.com" target="_blank" rel="noopener noreferrer">https:\/\/example\.com<\/a>/)
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.match(css, /\.inline-link \{[^}]*color: var\(--accent-text\);[^}]*text-decoration[^}]*underline/s)
 })
@@ -67,10 +67,30 @@ test('agent markdown transforms parsed text nodes but skips code, existing links
   assert.match(html, /<strong><button[^>]*>grill-kila<\/button><\/strong>/)
   assert.match(html, /<button[^>]*>@kila<\/button>/)
   assert.match(html, /<code>grill-kila<\/code>/)
-  assert.match(html, /<a class="inline-link" href="https:\/\/example.com">grill-kila<\/a>/)
+  assert.match(html, /<a class="inline-link" href="https:\/\/example.com" target="_blank" rel="noopener noreferrer">grill-kila<\/a>/)
   assert.match(html, /&lt;span&gt;grill-kila&lt;\/span&gt;/)
   assert.match(html, /<pre><code class="language-txt">grill-kila\n<\/code><\/pre>/)
   assert.equal(opened.length, 0)
+})
+
+test('transcript local links expose their original href as path spans', () => {
+  const options = agentMarkdownOptions(agentMentionMatcher({ workspaces: [], unplaced: [] }), () => undefined)
+  for (const [markdown, href, label] of [
+    ['[trail](/home/u/x.md)', '/home/u/x.md', 'trail'],
+    ['<file:///home/u/x.md>', 'file:///home/u/x.md', 'file:///home/u/x.md'],
+    ['[relative](docs/x%20y.md)', 'docs/x%20y.md', 'relative'],
+  ]) {
+    const html = renderToStaticMarkup(createElement(Markdown, options, markdown))
+    assert.ok(html.includes(`<span class="path-link" title="${href}">${label}</span>`), html)
+    assert.doesNotMatch(html, /<a\b/)
+  }
+})
+
+test('transcript mail links stay anchors and unsafe schemes stay inert', () => {
+  const options = agentMarkdownOptions(agentMentionMatcher({ workspaces: [], unplaced: [] }), () => undefined)
+  const html = renderToStaticMarkup(createElement(Markdown, options, '[mail](mailto:u@example.com) [bad](javascript:alert)'))
+  assert.match(html, /<a[^>]*href="mailto:u@example.com"[^>]*>mail<\/a>/)
+  assert.doesNotMatch(html, /javascript:|class="path-link"/)
 })
 
 test('agent markdown treats malformed and non-roster internal links as inert text', () => {

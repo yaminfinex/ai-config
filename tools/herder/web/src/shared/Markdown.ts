@@ -2,6 +2,7 @@ import { createElement, memo, useMemo, type ReactNode } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentMentionMatcher, AgentMentionOpen } from './agentMentions.ts'
+import { pathFromHref } from './pathHref.ts'
 
 const externalHTTP = /^https?:\/\//iu
 const inlineLinkClass = (className?: string) => ['inline-link', className].filter(Boolean).join(' ')
@@ -9,7 +10,7 @@ const inlineLinkClass = (className?: string) => ['inline-link', className].filte
 export const fileMarkdownComponents = {
   a: ({ node, href = '', children, className, ...props }) => {
     void node
-    return externalHTTP.test(href)
+    return pathFromHref(href) === null && externalHTTP.test(href)
       ? createElement('a', { ...props, className: inlineLinkClass(className), href, target: '_blank', rel: 'noopener noreferrer' }, children)
       : createElement('span', { className: 'markdown-relative-link', title: `Relative link: ${href}` }, children, ' ', createElement('code', null, href || 'target unavailable'))
   },
@@ -88,7 +89,13 @@ export const Markdown = memo(function Markdown({ children, components, agentMent
       ...components,
       a: ({ node, href = '', children: linkChildren, className, ...props }) => {
         void node
-        if (!href.startsWith(agentScheme)) return createElement('a', { ...props, className: inlineLinkClass(className), href }, linkChildren)
+        if (!href.startsWith(agentScheme)) {
+          if (pathFromHref(href) !== null) return createElement('span', { className: 'path-link', title: href }, linkChildren)
+          return createElement('a', {
+            ...props, className: inlineLinkClass(className), href,
+            ...(externalHTTP.test(href) ? { target: '_blank', rel: 'noopener noreferrer' } : {}),
+          }, linkChildren)
+        }
         let decoded: string
         try {
           decoded = decodeURIComponent(href.slice(agentScheme.length))
@@ -109,7 +116,7 @@ export const Markdown = memo(function Markdown({ children, components, agentMent
     return {
       remarkPlugins: [remarkGfm, mentionPlugin(agentMentions.matcher)],
       components: mentionComponents,
-      urlTransform: (url: string) => url.startsWith(agentScheme) ? url : defaultUrlTransform(url),
+      urlTransform: (url: string) => url.startsWith(agentScheme) || pathFromHref(url) !== null ? url : defaultUrlTransform(url),
     }
   }, [agentMentions, components])
   return createElement(ReactMarkdown, { ...options, children })

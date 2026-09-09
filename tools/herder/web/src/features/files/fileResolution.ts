@@ -5,6 +5,7 @@ export const FUZZY_POPOVER_SCORE_PER_RUNE = 20
 
 const structuralDelimiter = /[\s()[\]{}<>]/u
 const enclosingDelimiters = ['`', '"', "'"] as const
+const immediatePathSignal = /^(?:\/|~\/|\.\.?\/|[^\s()[\]{}<>`"':/\\]+\/)/u
 
 export function isRenderedInlineCode(target: Pick<Element, 'closest'>) {
   return Boolean(target.closest('code')) && !target.closest('pre')
@@ -16,8 +17,7 @@ export function pathTokenSpanAt(text: string, offset: number, renderedCode = fal
   for (const delimiter of enclosingDelimiters) {
     const left = text.lastIndexOf(delimiter, point)
     const right = text.indexOf(delimiter, point)
-    const delimitersBefore = left < 0 ? 0 : text.slice(0, left).split(delimiter).length - 1
-    if (left >= 0 && delimitersBefore % 2 === 0 && right > left && !text.slice(left + 1, right).includes(delimiter)) return { start: left, end: right + 1, text: text.slice(left, right + 1) }
+    if (left >= 0 && right > left && immediatePathSignal.test(text.slice(left + 1, right))) return { start: left, end: right + 1, text: text.slice(left, right + 1) }
   }
   let start = point
   let end = point
