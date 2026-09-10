@@ -9,8 +9,10 @@ import (
 )
 
 // startStoreWatch watches the agent store's journal (events.jsonl) so a store
-// append — a spawn's register, a future reparent — rebuilds the board within
-// the file-watch debounce instead of waiting for the poll. The directory is watched
+// append — a spawn's register, a future reparent — refolds the shared
+// projection within the file-watch debounce instead of waiting for the poll.
+// Started once per process by startStoreProjection (observe.go), never per
+// SSE connection. The directory is watched
 // (the journal is appended in place and may be created after the serve
 // starts); only the journal file is a trigger. Nil when the store or the
 // watcher factory is absent or the directory cannot be watched; the poll

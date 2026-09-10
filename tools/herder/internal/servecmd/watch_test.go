@@ -114,7 +114,9 @@ func TestWatchReloadDrainsSlowRequestBeforeExec(t *testing.T) {
 	}}
 	var stderr bytes.Buffer
 	done := make(chan int, 1)
-	go func() { done <- serve([]net.Listener{listener}, handler, reload, time.Second, io.Discard, &stderr) }()
+	go func() {
+		done <- serve([]net.Listener{listener}, handler, reload, time.Second, nil, io.Discard, &stderr)
+	}()
 	responseDone := make(chan string, 1)
 	go func() {
 		response, requestErr := http.Get("http://" + listener.Addr().String())
@@ -169,7 +171,7 @@ func TestWatchReloadExecsAfterDrainCapWithStuckRequest(t *testing.T) {
 	var stderr bytes.Buffer
 	done := make(chan int, 1)
 	go func() {
-		done <- serve([]net.Listener{listener}, handler, reload, 15*time.Millisecond, io.Discard, &stderr)
+		done <- serve([]net.Listener{listener}, handler, reload, 15*time.Millisecond, nil, io.Discard, &stderr)
 	}()
 	type requestResult struct {
 		gotResponse bool

@@ -33,8 +33,10 @@ import (
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
+	"ai-config/tools/herder/internal/herdersock"
 	"ai-config/tools/herder/internal/herderstate"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/observer"
 	"ai-config/tools/herder/internal/repoctx"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
@@ -95,6 +97,14 @@ type dependencies struct {
 	// store is the agent store the serve opens once at Run: the life mirror
 	// appends to it and the board folds a read-only projection from it.
 	store *agentstore.Store
+	// projection is the one folded store view every board read shares;
+	// storeChanges nudges SSE clients when it was refreshed; storeWriter is
+	// true only for the serve that owns the socket (the one snapshot writer).
+	projection   *projectionCache
+	storeChanges *tickBroker
+	storeWriter  bool
+	// observer is the in-memory session vitals table (see observe.go).
+	observer *observer.Observer
 }
 
 type rosterCache struct {
@@ -170,7 +180,7 @@ var liveDependencies = dependencies{
 	entryTail:            entryTail,
 	entryPath:            entrySessionPath,
 	agentQueueExclusions: readQueueExclusions,
-	agentVitals:          readAgentVitals,
+	agentVitals:          readAgentVitals(nil),
 	sender:               webidentity.Sender,
 	send:                 hcommessage.SendRequest,
 	spawn:                webaction.Spawn,
@@ -411,6 +421,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.configuredRoots = configuredRoots
 	runtimeDependencies.stateChanges = newStateChangeBroker()
 	runtimeDependencies.rosterCache = &rosterCache{}
+	var socket *herdersock.Server
 	stateDir, stateDirErr := herderstate.Dir()
 	if stateDirErr != nil {
 		runtimeDependencies.state = webstate.Unavailable(stateDirErr)
@@ -423,8 +434,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 		runtimeDependencies.store = agentstore.Open(stateDir, nil)
 		startLifeMirror(ctx, runtimeDependencies)
+		// Observer + socket: the serve keeps session vitals warm and answers the
+		// CLI over <stateDir>/herder.sock; the socket owner is also the one
+		// snapshot.json writer. See observe.go and tools/herder/README.md.
+		runtimeDependencies.observer = startObserver(ctx, runtimeDependencies)
+		runtimeDependencies.agentVitals = readAgentVitals(runtimeDependencies.observer.Lookup)
+		socket = startSocket(stateDir, runtimeDependencies.observer, runtimeDependencies)
+		runtimeDependencies.storeWriter = socket != nil
+		runtimeDependencies = startStoreProjection(ctx, runtimeDependencies)
 	}
-	return serve(listeners, newHandler(runtimeDependencies), reload, ReloadDrainTimeout, stdout, stderr)
+	defer socket.Close()
+	return serve(listeners, newHandler(runtimeDependencies), reload, ReloadDrainTimeout, socket.Close, stdout, stderr)
 }
 
 func startLifeMirror(ctx context.Context, deps dependencies) {
@@ -591,7 +611,9 @@ func (d *drainingHandler) beginDrain() <-chan struct{} {
 	return idle
 }
 
-func serve(listeners []net.Listener, handler http.Handler, reload <-chan watchConfig, drainTimeout time.Duration, stdout, stderr io.Writer) int {
+// beforeExec runs right before a --watch re-exec replaces the process (the
+// socket is unlinked there because deferred closes never run after Exec).
+func serve(listeners []net.Listener, handler http.Handler, reload <-chan watchConfig, drainTimeout time.Duration, beforeExec func(), stdout, stderr io.Writer) int {
 	drainer := newDrainingHandler(handler)
 	server := &http.Server{Handler: drainer, ReadHeaderTimeout: 5 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -645,6 +667,9 @@ func serve(listeners []net.Listener, handler http.Handler, reload <-chan watchCo
 			cancel()
 		} else {
 			_ = server.Close()
+		}
+		if beforeExec != nil {
+			beforeExec()
 		}
 		if execErr := config.exec(config.execPath, config.argv, config.env); execErr != nil {
 			fmt.Fprintf(stderr, "herder serve: watch re-exec failed: %v\n", execErr)
@@ -948,13 +973,19 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 	return board, nil
 }
 
-// readProjection is the board's read-only view of the agent store: snapshot
-// plus journal tail, never a snapshot write. A missing or unreadable store
-// folds every row as unregistered (manager_state unknown) rather than
-// failing the board; the store is augmenting data, never lifecycle authority.
+// readProjection is the board's read-only view of the agent store. With a
+// running serve it is the shared projection the process-level store watch
+// refreshed (one fold per change, TASK-125); without one (tests, a serve with
+// no state dir) it folds snapshot plus journal tail here, never writing. A
+// missing or unreadable store folds every row as unregistered (manager_state
+// unknown) rather than failing the board; the store is augmenting data, never
+// lifecycle authority.
 func readProjection(deps dependencies) *agentstore.Projection {
 	if deps.store == nil {
 		return nil
+	}
+	if proj := deps.projection.get(); proj != nil {
+		return proj
 	}
 	proj, err := deps.store.LoadNoSnapshot()
 	if err != nil {
@@ -1555,7 +1586,14 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if fileWatches != nil {
 		fileChangeCh = fileWatches.Facts
 	}
-	storeChangeCh := startStoreWatch(ctx, deps)
+	// Store changes arrive from the process-level watch (observe.go); a
+	// connection never folds the journal itself.
+	var storeChangeCh <-chan struct{}
+	if deps.storeChanges != nil {
+		ch, unsubscribe := deps.storeChanges.subscribe()
+		defer unsubscribe()
+		storeChangeCh = ch
+	}
 	var screenReader screenSource
 	go func() {
 		cursor := &hcomevents.Cursor{}

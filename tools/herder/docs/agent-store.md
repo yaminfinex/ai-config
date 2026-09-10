@@ -127,8 +127,11 @@ an id set or offset cache waits for a measurement showing the scan matters.
 ## Snapshot
 
 `snapshot.json` is the projection at `events_offset`. One-shot `list` and
-`show` never rewrite it, and nothing refreshes it today. Refreshing belongs to
-the long-lived serve (follow-up TASK-125). The snapshot is trusted only when its
+`show` never rewrite it. The long-lived serve refreshes it (TASK-125, closed):
+the serve that owns `herder.sock` calls `Load()` once at start and once per
+journal-change debounce, temp+rename; every SSE client shares that one folded
+projection. A second serve on the same state dir (the socket loser) folds
+without writing, so there is one writer. The snapshot is trusted only when its
 offset lands on a record boundary of the current file; otherwise full replay.
 Replay from a snapshot plus tail equals full replay byte-for-byte (tested).
 

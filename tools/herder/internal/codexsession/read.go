@@ -153,7 +153,7 @@ func ReadVitals(path string) (Vitals, error) {
 	var vitals Vitals
 	err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
 		var facts Vitals
-		observeVitals(raw, &facts)
+		ObserveVitals(raw, &facts)
 		if vitals.Model == "" {
 			vitals.Model = facts.Model
 		}
@@ -165,7 +165,10 @@ func ReadVitals(path string) (Vitals, error) {
 	return vitals, err
 }
 
-func observeVitals(raw []byte, vitals *Vitals) {
+// ObserveVitals folds one complete Codex rollout record into vitals. It is the
+// ONLY envelope parse for Codex vitals; ReadVitals (reverse seed) and
+// sessionvitals.Advance (forward tail) both call it.
+func ObserveVitals(raw []byte, vitals *Vitals) {
 	var env rolloutEnvelope
 	if json.Unmarshal(raw, &env) != nil {
 		return

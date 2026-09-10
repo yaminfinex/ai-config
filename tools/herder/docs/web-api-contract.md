@@ -26,6 +26,21 @@ owner ruling.
   404 unknown agent/pane, 409 refused by substrate).
 - Unversioned paths in v1; this contract file is the version.
 
+### AMENDMENT (owner ruling #236244, 2026-09-10) — in-memory session vitals cache and local socket
+
+The "no durable state" clause is unchanged in substance: the serve now keeps
+an in-memory observer of live session vitals (model, context usage, per
+roster session) that is rebuilt from transcripts on every start and never
+written anywhere. Restart still loses nothing that cannot be re-derived.
+`GET /api/agents/{name}` answers vitals from that cache when the observer
+knows the session and from the transcript otherwise; numbers are identical
+(one reader, `sessionvitals`). The serve also listens on
+`<herder state dir>/herder.sock` (0600, newline-delimited JSON, one request
+per connection, op `vitals`) so `herder show`/`list` read the cache; with no
+serve the CLI reads transcripts directly. The socket is a read path, never
+lifecycle. No board vitals and no additional SSE stream are added by this
+amendment.
+
 ### AMENDMENT (conductor, 2026-08-26) — opt-in serve auto-reload
 
 The owner asked on 2026-08-26 for relief from manually restarting

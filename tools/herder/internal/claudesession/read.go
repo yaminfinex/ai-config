@@ -182,7 +182,7 @@ func readVitals(path string, includeSidechain bool) (Vitals, error) {
 	var vitals Vitals
 	err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
 		var facts Vitals
-		observeVitals(raw, &facts, includeSidechain)
+		ObserveVitals(raw, &facts, includeSidechain)
 		if vitals.Model == "" {
 			vitals.Model = facts.Model
 		}
@@ -194,7 +194,11 @@ func readVitals(path string, includeSidechain bool) (Vitals, error) {
 	return vitals, err
 }
 
-func observeVitals(raw []byte, vitals *Vitals, includeSidechain bool) {
+// ObserveVitals folds one complete Claude record into vitals: the assistant
+// model and the input-side usage. It is the ONLY envelope parse for vitals;
+// ReadVitals (reverse seed) and sessionvitals.Advance (forward tail) both call
+// it, so cache and direct reads can never drift.
+func ObserveVitals(raw []byte, vitals *Vitals, includeSidechain bool) {
 	var env envelope
 	if json.Unmarshal(raw, &env) != nil || env.Type != "assistant" || (env.IsSidechain && !includeSidechain) {
 		return
