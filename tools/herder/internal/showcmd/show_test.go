@@ -33,6 +33,80 @@ func seed(t *testing.T) string {
 	return state
 }
 
+func seedStaleSnapshot(t *testing.T) (string, string, []byte, time.Time) {
+	t.Helper()
+	state := t.TempDir()
+	t.Setenv("HERDER_STATE_DIR", state)
+	s := agentstore.Open(state, nil)
+	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
+	if _, err := s.Append(agentstore.Event{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", Name: "mavu"}); err != nil {
+		t.Fatal(err)
+	}
+	if proj, err := s.Load(); err != nil || proj.SnapshotErr != nil {
+		t.Fatalf("seed snapshot: proj=%+v err=%v", proj, err)
+	}
+	path := s.SnapshotPath()
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Append(agentstore.Event{ID: agentstore.NewID(at.Add(time.Second)), At: at.Add(time.Second), Kind: agentstore.KindReparent, By: "ziru", Name: "mavu", Manager: "vara"}); err != nil {
+		t.Fatal(err)
+	}
+	return state, path, before, info.ModTime()
+}
+
+func TestShowFoldsSnapshotTailWithoutRewritingSnapshot(t *testing.T) {
+	_, snapshotPath, before, beforeModTime := seedStaleSnapshot(t)
+	deps := dependencies{roster: func() ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "mavu", Tool: "claude"}}, nil
+	}}
+	var out, errBuf bytes.Buffer
+	if code := run([]string{"mavu"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 || !strings.Contains(out.String(), "manager          vara") {
+		t.Fatalf("code=%d out=%q err=%q", code, out.String(), errBuf.String())
+	}
+	after, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) || !info.ModTime().Equal(beforeModTime) {
+		t.Fatalf("show rewrote snapshot: content_equal=%t mtime_before=%s mtime_after=%s", bytes.Equal(after, before), beforeModTime, info.ModTime())
+	}
+}
+
+func TestShowReadsCorrectProjectionWhenStateDirectoryIsReadOnly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	state, _, _, _ := seedStaleSnapshot(t)
+	agentsDir := filepath.Join(state, "agents")
+	if err := os.Chmod(state, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(agentsDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(state, 0o700)
+		_ = os.Chmod(agentsDir, 0o700)
+	})
+	deps := dependencies{roster: func() ([]hcomidentity.Row, error) {
+		return []hcomidentity.Row{{Name: "mavu", Tool: "claude"}}, nil
+	}}
+	var out, errBuf bytes.Buffer
+	if code := run([]string{"mavu"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 || !strings.Contains(out.String(), "manager          vara") {
+		t.Fatalf("code=%d out=%q err=%q", code, out.String(), errBuf.String())
+	}
+}
+
 func TestShowTextAndJSONFoldRosterConflict(t *testing.T) {
 	seed(t)
 	deps := dependencies{

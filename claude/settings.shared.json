@@ -11,6 +11,41 @@
       }
     }
   },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.claude/hooks/context-nudge.sh\" ] && exec \"$HOME/.claude/hooks/context-nudge.sh\" || exit 0",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.claude/hooks/context-nudge.sh\" ] && exec \"$HOME/.claude/hooks/context-nudge.sh\" || exit 0",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.claude/hooks/context-nudge.sh\" ] && exec \"$HOME/.claude/hooks/context-nudge.sh\" || exit 0",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "deny": [
       "Artifact"

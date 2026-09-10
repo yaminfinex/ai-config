@@ -12,6 +12,44 @@ The herder segment uses these environment variables when present:
 - `HERDER_LABEL`, `HERDER_ROLE`
 - `HCOM_INSTANCE_NAME` or `HCOM_NAME`
 
+## Context Warning Hook
+
+Claude runs `$HOME/.claude/hooks/context-nudge.sh` after every user prompt and
+successful tool use. The hook asks `herder show --session <id> --json` for the
+current roster row's `vitals.context_usage.used_tokens`, with a hard two-second
+timeout; it never parses a transcript. The default warning bands are the
+ordered, unique, absolute token counts `200000,250000`. A personal setting can
+override them:
+
+```json
+{
+  "env": {
+    "AI_CONTEXT_NUDGE_BANDS": "150000,200000"
+  }
+}
+```
+
+The marker for a Claude session is
+`${XDG_STATE_HOME:-$HOME/.local/state}/ai-config/context-nudge/claude-<session-id>.bands`.
+It contains one warned band per line. A band is warned at most once in a normal
+compaction cycle, even if usage later dips below it. Claude's `SessionStart`
+event with `source: "compact"` removes that session's marker; other starts do
+not. The hook never compacts, blocks, or contacts an orchestrator itself.
+
+The count describes the last completed request known to herder. The current
+prompt or tool result may not be reflected yet because the transcript-backed
+roster observation lags the current turn. Claude transcripts do not carry a
+context-window size, so bands are absolute by design, not percentages. A first
+observation above multiple bands produces one combined reminder.
+
+The hook is fail-open: missing or slow herder data, malformed input or output,
+invalid preferences, and state errors produce no output and never block work.
+Marker persistence and advisory delivery cannot be atomic, so a process failure
+between them can lose a reminder. Concurrent hook processes are not serialized,
+so at-most-once is a normal-operation rather than transactional guarantee.
+Codex context nudges are not managed by ai-config today; this hook is
+Claude-only.
+
 ## Statusline Snapshot Contract
 
 > **Superseded 2026-08-24 for herder production.** The per-seat sidecar was

@@ -1,4 +1,7 @@
 {
+  "env": {
+    "AI_CONTEXT_NUDGE_BANDS": "200000,250000"
+  },
   "statusLine": {
     "command": "$HOME/.claude/statusline.sh",
     "type": "command"

@@ -68,8 +68,11 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 
 ## Context law
 
-- Hard cap **250k tokens** for every seat, yours included. Workers report context % in every
-  DONE; a unit that cannot fit the band is a breakdown failure — split it, do not push through.
+- Context warning bands are a user preference (the owner's defaults are **200k,250k tokens**),
+  and reminders are advisory rather than blocking. At a warning, compact at the next safe
+  boundary or notify your orchestrator with the token count and next safe boundary; if you are
+  orchestrating, rewrite current state before compacting. Continue bounded work rather than
+  stopping for permission or abandoning the task. Workers report context % in every DONE.
 - You compact in place only after the state file is wholesale-rewritten to current truth —
   live state, rerun commands, and next moves; it supersedes anything older by construction.
 - Workers prefer **cull+pickup** — a tracked handoff brief and a fresh seat beat a degraded

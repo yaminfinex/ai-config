@@ -22,7 +22,7 @@ func (s *Store) Load() (*Projection, error) {
 	return proj, nil
 }
 
-// LoadNoSnapshot replays without touching snapshot.json (tests, diffing).
+// LoadNoSnapshot replays without touching snapshot.json (one-shot reads, tests, diffing).
 func (s *Store) LoadNoSnapshot() (*Projection, error) { return s.load() }
 
 // Replay ignores the snapshot and folds every event from byte 0.
