@@ -299,3 +299,56 @@ test('an own-send marker suppresses only the duplicate message invalidation', as
   assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
   stop()
 })
+
+function graceHarness() {
+  // A pane open resubscribes after the first socket already opened, so the stream problem is absent.
+  const queryClient = new QueryClient()
+  queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, substrateProof: { herdr: false, hcom: false }, serverUpdated: false, lastEvent: null, loadedBuild: null })
+  const sources: FakeEventSource[] = []
+  const timeouts = new Map<number, { callback: () => void, delay: number }>()
+  let timerID = 0
+  const timers = {
+    setTimeout: ((callback: () => void, delay: number) => { const id = ++timerID; timeouts.set(id, { callback, delay }); return id }) as typeof window.setTimeout,
+    clearTimeout: ((id: number) => timeouts.delete(id)) as typeof window.clearTimeout,
+    setInterval: (() => 99) as typeof window.setInterval,
+    clearInterval: (() => undefined) as typeof window.clearInterval,
+  }
+  const stop = subscribeToFleet(queryClient, ['vile'], [], [], undefined, () => { const source = new FakeEventSource(); sources.push(source); return source }, timers)
+  const graceTimers = () => [...timeouts.values()].filter((entry) => entry.delay === 150)
+  const streamProblem = () => queryClient.getQueryData<StreamState>(queryKeys.stream)?.problems.stream
+  return { sources, stop, graceTimers, streamProblem }
+}
+
+test('a resubscribe that opens within the grace window never posts the connecting banner', () => {
+  const harness = graceHarness()
+  assert.equal(harness.streamProblem(), undefined, 'connect must not post the banner synchronously')
+  assert.equal(harness.graceTimers().length, 1)
+  harness.sources[0].onopen?.(new Event('open'))
+  assert.equal(harness.graceTimers().length, 0, 'open cancels the grace timer')
+  assert.equal(harness.streamProblem(), undefined)
+  harness.stop()
+})
+
+test('a slow open posts the connecting banner after the grace and clears it on open', () => {
+  const harness = graceHarness()
+  harness.graceTimers()[0].callback()
+  assert.equal(harness.streamProblem(), 'Connecting to live fleet…')
+  harness.sources[0].onopen?.(new Event('open'))
+  assert.equal(harness.streamProblem(), undefined)
+  harness.stop()
+})
+
+test('teardown during the grace cancels the pending banner', () => {
+  const harness = graceHarness()
+  harness.stop()
+  assert.equal(harness.graceTimers().length, 0)
+  assert.equal(harness.streamProblem(), undefined)
+})
+
+test('an error during the grace replaces the pending banner with the reconnect detail', () => {
+  const harness = graceHarness()
+  harness.sources[0].onerror?.(new Event('error'))
+  assert.equal(harness.streamProblem(), 'Live stream disconnected; reconnecting…')
+  assert.equal(harness.graceTimers().length, 0, 'the grace timer must not overwrite the reconnect detail')
+  harness.stop()
+})
