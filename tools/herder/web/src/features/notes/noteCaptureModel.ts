@@ -69,10 +69,7 @@ export function captureSubmitAction(
   return context.readOnly || !context.live ? 'append' : 'send'
 }
 
-// Which target a fresh capture proposes. Transcript captures always propose
-// their own pane's agent; file and diff captures propose the last real agent
-// this viewer assigned a file-pane note to, when that agent is still on the
-// roster, and otherwise fall back to unassigned.
+// Transcript captures propose their own agent; file and diff captures propose the remembered agent while it is on the roster, else unassigned.
 export function proposedCaptureGroup(source: NoteSource, remembered: string | null, agents: string[]) {
   if (source.kind === 'transcript') return source.agent
   return remembered && agents.includes(remembered) ? remembered : 'general'

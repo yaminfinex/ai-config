@@ -154,7 +154,9 @@ export function createNotesStore(options: Options = {}): NotesStore {
   const tombstoneRetentionMs = options.tombstoneRetentionMs ?? defaultTombstoneRetention
   let storage = options.storage === undefined ? browserStorage() : options.storage
   const events = options.events === undefined ? browserEvents() : options.events
-  let rememberedTarget: string | null | undefined
+  // Memory-only fallback for when storage is unavailable or throws; storage is
+  // otherwise read on every call so every tab of the viewer sees the latest choice.
+  let rememberedTarget: string | null = null
   let storeStatus: NotesStatus = storage
     ? { persistent: true, recovered: false, problem: '' }
     : { persistent: false, recovered: false, problem: 'Notes are kept for this session but are not saved between browser sessions.' }
@@ -396,9 +398,8 @@ export function createNotesStore(options: Options = {}): NotesStore {
     },
     status: () => storeStatus,
     lastTarget: () => {
-      if (rememberedTarget !== undefined) return rememberedTarget
-      try { rememberedTarget = storage?.getItem(lastTargetKey) || null } catch { rememberedTarget = null }
-      return rememberedTarget
+      if (!storage) return rememberedTarget
+      try { return storage.getItem(lastTargetKey) || null } catch { return rememberedTarget }
     },
     rememberTarget: (group) => {
       if (group === 'general') return

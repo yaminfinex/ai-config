@@ -395,7 +395,30 @@ test('the last file-pane target survives a fresh store load over the same storag
   const reloaded = harness({ storage })
   assert.equal(reloaded.store.lastTarget(), 'doza')
   assert.equal(lastTargetKey.startsWith(notesStoragePrefix), true)
+  assert.equal(lastTargetKey.startsWith(`${notesStoragePrefix}record:`), false, 'the preference lives outside the record scan')
   assert.equal(reloaded.store.records().length, 0, 'the preference is not a note record and never rides sync')
+  assert.equal(reloaded.store.status().recovered, false, 'loading the preference is not corrupt-record recovery')
+  assert.equal([...storage.values.keys()].some((key) => key.startsWith(`${notesStoragePrefix}recovery:`)), false)
+})
+
+test('every read sees the latest choice written through shared storage by another store (reddens: cache restored)', () => {
+  const storage = new FakeStorage()
+  const tabA = harness({ storage })
+  const tabB = harness({ storage })
+  tabA.store.rememberTarget('design-doza')
+  assert.equal(tabA.store.lastTarget(), 'design-doza')
+  tabB.store.rememberTarget('impl-nite')
+  assert.equal(tabA.store.lastTarget(), 'impl-nite')
+  storage.values.delete(lastTargetKey)
+  assert.equal(tabA.store.lastTarget(), null)
+})
+
+test('a throwing storage read falls back to the in-memory choice (reddens: fallback dropped)', () => {
+  const storage = new FakeStorage()
+  const subject = harness({ storage })
+  subject.store.rememberTarget('design-doza')
+  storage.blocked = true
+  assert.equal(subject.store.lastTarget(), 'design-doza')
 })
 
 test('choosing unassigned leaves the remembered agent unchanged (reddens: unassigned overwrites)', () => {
