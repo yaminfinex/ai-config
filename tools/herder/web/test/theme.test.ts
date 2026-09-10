@@ -213,16 +213,17 @@ test('notes spacing uses the app 4px token grid', () => {
   assert.doesNotMatch(notes, /(?:margin|padding|gap|top|right|bottom|left):[^;]*(?:3|5|6|7|9|10|14)px/)
 })
 
-test('the space history button meets WCAG AA against the status-bar surface in both themes', () => {
+test('the space history button meets WCAG AA against its chip surface in both themes', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   const foregroundName = token(rule(css, '.space-history', true), 'color')
-  const backgroundName = token(rule(css, '.status-bar'), 'background')
+  const backgroundName = token(rule(css, '.space-history', true), 'background')
   assert.equal(foregroundName, 'status-bar-text')
+  assert.equal(backgroundName, 'chip')
   for (const block of themeBlocks(css)) {
     const foreground = block.match(new RegExp(`--${foregroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
     const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
     assert.ok(foreground && background)
     const ratio = contrast(foreground, background)
-    assert.ok(ratio >= 4.5, `reopen chip contrast ${ratio.toFixed(2)} must meet WCAG AA`)
+    assert.ok(ratio >= 4.5, `space history button contrast ${ratio.toFixed(2)} must meet WCAG AA`)
   }
 })

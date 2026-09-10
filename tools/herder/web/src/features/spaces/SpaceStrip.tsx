@@ -86,7 +86,7 @@ export function SpaceStrip(props: Props) {
     const result = props.rename(editing, name)
     if (result.ok) setEditing(null)
   }
-  const overflow = visibleSpaceIDs(props.items.map((space) => space.id), props.activeID, widths, available, 27, 58)
+  const overflow = visibleSpaceIDs(props.items.map((space) => space.id), props.activeID, widths, available, 27 + (props.recent.length > 0 ? 23 : 0), 58)
   const visible = new Set(overflow.visible)
 
   return <div ref={strip} className="space-strip" role="group" aria-label={`${props.items.length} spaces`}>

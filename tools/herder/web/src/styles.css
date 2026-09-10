@@ -261,12 +261,13 @@ h2, h3, p { margin-top: 0; }
 .space-strip { position: relative; width: 100%; max-width: 720px; }
 .space-strip.degraded { color: var(--warning-text); }
 .space-chips { width: 100%; overflow: visible; }
-.space-chip { display: flex; height: 20px; flex: 0 0 auto; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: var(--chip); }
+.space-chip { display: flex; height: 20px; flex: 0 1 auto; min-width: 0; align-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 4px; background: var(--chip); }
 .space-chip.active { border-color: var(--accent); background: var(--bg2); box-shadow: inset 0 2px var(--accent); }
 .space-chip.dragging { opacity: .65; }
 .space-chip.drop-before { box-shadow: -3px 0 var(--accent); }
 .space-chip.drop-after { box-shadow: 3px 0 var(--accent); }
 .space-name, .space-close, .space-create, .space-history, .space-more { height: 18px; flex: 0 0 auto; padding: 0 6px; border: 0; border-radius: 3px; background: transparent; color: var(--status-bar-text); font: 10px var(--mono); }
+.space-name { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .space-name[aria-pressed='true'] { color: var(--text); }
 .space-close { width: 18px; padding: 0 2px 1px; color: var(--dim); font-size: 13px; }
 .space-create { width: 20px; border: 1px solid var(--border2); background: var(--chip); font-size: 13px; }
@@ -275,6 +276,7 @@ h2, h3, p { margin-top: 0; }
 .space-overflow { position: relative; display: flex; flex: 0 0 auto; }
 .space-more { border: 1px solid var(--border2); background: var(--chip); }
 .space-history { border: 1px solid var(--border2); background: var(--chip); color: var(--status-bar-text); }
+.space-history-wrap { margin-left: auto; }
 .space-history-wrap .space-overflow-menu { left: auto; right: 0; }
 .space-overflow-menu { position: absolute; z-index: 70; bottom: 22px; left: 0; display: grid; min-width: 150px; overflow: hidden; padding: 4px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); box-shadow: 0 12px 36px var(--floating-shadow); }
 .space-overflow-menu button { padding: 6px 8px; border: 0; background: transparent; color: var(--text); font: 11px var(--mono); text-align: left; }

@@ -21,3 +21,12 @@ test('the history menu is bounded to the eight most recent entries at the strip 
 test('the inline reopen row is gone', () => {
   assert.doesNotMatch(source, /space-reopen|>reopen \{space\.name\}/)
 })
+
+test('choosing a history item reopens that space and closes the menu (reddens: close dropped)', () => {
+  assert.match(source, /props\.reopen\(space\.id\); setHistoryOpen\(false\)/)
+})
+
+test('the history menu effect registers Escape to close (reddens: Escape listener dropped)', () => {
+  const effect = source.slice(source.indexOf('if (!historyOpen) return'), source.indexOf('}, [historyOpen])'))
+  assert.match(effect, /if \(event\.key === 'Escape'\) setHistoryOpen\(false\)/)
+})
