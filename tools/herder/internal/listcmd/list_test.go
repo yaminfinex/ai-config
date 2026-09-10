@@ -12,7 +12,9 @@ import (
 	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdersock"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/sessionvitals"
 )
 
 func TestJoinShowsExactMatchAndBothGapDirections(t *testing.T) {
@@ -175,8 +177,8 @@ func TestRunReadsSocketSnapshotBeforeRosterAndPrintsTable(t *testing.T) {
 			calls = append(calls, "roster")
 			return []hcomidentity.Row{{Name: "mavu", Tool: "codex", Status: "listening", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
 		},
-		vitals: func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error) {
-			return claudesession.Vitals{Model: "gpt-5.6-sol", ContextUsage: &claudesession.ContextUsage{UsedTokens: 82000, WindowTokens: &window, UsedPercent: &percent}}, "", time.Time{}, nil
+		vitals: func(hcomidentity.Row) (sessionvitals.Result, error) {
+			return sessionvitals.Result{Vitals: claudesession.Vitals{Model: "gpt-5.6-sol", ContextUsage: &claudesession.ContextUsage{UsedTokens: 82000, WindowTokens: &window, UsedPercent: &percent}}}, nil
 		},
 	}
 	var stdout, stderr bytes.Buffer
@@ -199,9 +201,9 @@ func TestRunPrintsDashVitalsForGapRow(t *testing.T) {
 			return herdrcli.Snapshot{Agents: []herdrcli.Agent{{PaneID: "p1", Name: "pane-only", Agent: "claude"}}}, nil
 		},
 		roster: func() ([]hcomidentity.Row, error) { return nil, nil },
-		vitals: func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error) {
+		vitals: func(hcomidentity.Row) (sessionvitals.Result, error) {
 			t.Fatal("vitals called for gap")
-			return claudesession.Vitals{}, "", time.Time{}, nil
+			return sessionvitals.Result{}, nil
 		},
 	}
 	var out, errBuf bytes.Buffer
@@ -410,4 +412,54 @@ func lineFor(text, needle string) string {
 		}
 	}
 	return ""
+}
+
+// Reddens: the list table drifting between a cache hit and a direct read (no
+// source column), or the socket path being skipped for list.
+func TestListTableIdenticalFromSocketAndDirect(t *testing.T) {
+	state, err := os.MkdirTemp("/tmp", "hlist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(state) })
+	t.Setenv("HERDER_STATE_DIR", state)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	claudeID := "73100000-0000-4000-8000-000000000731"
+	path := filepath.Join(home, ".claude", "projects", "-invented-violet", claudeID+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := `{"type":"assistant","isSidechain":false,"message":{"model":"invented-same","usage":{"input_tokens":82000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}` + "\n"
+	if err := os.WriteFile(path, []byte(record), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) {
+			return herdrcli.Snapshot{Panes: []herdrcli.Pane{{PaneID: "p1", Agent: "claude", AgentStatus: "working"}}}, nil
+		},
+		roster: func() ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{{Name: "mavu", Tool: "claude", Status: "listening", Directory: "/invented/violet", SessionID: claudeID, LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
+		},
+		vitals: sessionvitals.Read,
+	}
+	hits := 0
+	server, err := herdersock.Listen(state, func(herdersock.Request) herdersock.Response {
+		hits++
+		return herdersock.Response{Vitals: claudesession.Vitals{Model: "invented-same", ContextUsage: &claudesession.ContextUsage{UsedTokens: 82000, InputTokens: 82000}}, Path: path}
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fromSocket, fromDirect, stderr bytes.Buffer
+	if code := run(nil, &fromSocket, &stderr, deps); code != 0 || hits != 1 {
+		t.Fatalf("socket list code=%d hits=%d stderr=%q", code, hits, stderr.String())
+	}
+	server.Close()
+	if code := run(nil, &fromDirect, &stderr, deps); code != 0 {
+		t.Fatalf("direct list code=%d stderr=%q", code, stderr.String())
+	}
+	if fromSocket.String() != fromDirect.String() || !strings.Contains(fromDirect.String(), "invented-same") {
+		t.Fatalf("socket:\n%s\ndirect:\n%s", fromSocket.String(), fromDirect.String())
+	}
 }

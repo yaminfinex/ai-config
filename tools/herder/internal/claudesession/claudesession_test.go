@@ -272,7 +272,7 @@ func TestInternalEntryDispositions(t *testing.T) {
 
 func TestReadVitalsUsesLatestClaudeAssistantFacts(t *testing.T) {
 	t.Parallel()
-	vitals, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))
+	vitals, _, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}

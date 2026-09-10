@@ -19,15 +19,21 @@ import (
 
 type dependencies struct {
 	roster func() ([]hcomidentity.Row, error)
-	vitals func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error)
+	// vitals is sessionvitals.Read: the serve's socket cache first, then the
+	// direct transcript read. Tests substitute a fake.
+	vitals func(hcomidentity.Row) (sessionvitals.Result, error)
 }
 
 var liveDependencies = dependencies{roster: hcomidentity.List, vitals: sessionvitals.Read}
 
 type showVitals struct {
 	claudesession.Vitals
+	// ObservedAt is the observer's stamp when Source is "cache", else the
+	// transcript's mtime. Source is "cache" (a running serve answered over
+	// its socket) or "direct" (this process read the transcript); JSON only.
 	ObservedAt  *time.Time `json:"observed_at,omitempty"`
 	SessionFile string     `json:"session_file,omitempty"`
+	Source      string     `json:"source,omitempty"`
 }
 
 type showOutput struct {
@@ -135,13 +141,14 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 	var outputVitals showVitals
 	var vitalsErr string
 	if rosterRow != nil && deps.vitals != nil {
-		// This is today's on-demand reverse transcript scan. Once the
-		// observer/daemon exists, it becomes a central context cache read over the
-		// local socket; the transcript remains the authority behind that cache.
-		vitals, path, observedAt, readErr := deps.vitals(*rosterRow)
-		outputVitals.Vitals, outputVitals.SessionFile = vitals, path
-		if !observedAt.IsZero() {
-			observedAt = observedAt.UTC()
+		// sessionvitals.Read: a running serve answers from its in-memory
+		// observer over <state dir>/herder.sock (source "cache"); with no serve,
+		// a stale socket or a miss it reads the transcript here (source
+		// "direct"). One reader either way; see tools/herder/README.md.
+		read, readErr := deps.vitals(*rosterRow)
+		outputVitals.Vitals, outputVitals.SessionFile, outputVitals.Source = read.Vitals, read.Path, read.Source
+		if !read.ObservedAt.IsZero() {
+			observedAt := read.ObservedAt.UTC()
 			outputVitals.ObservedAt = &observedAt
 		}
 		if readErr != nil {

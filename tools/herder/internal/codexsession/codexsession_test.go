@@ -228,7 +228,7 @@ func assertSkippedRolloutFixture(t *testing.T, name string) {
 
 func TestReadVitalsUsesLatestCodexTurnAndTokenFacts(t *testing.T) {
 	t.Parallel()
-	vitals, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))
+	vitals, _, err := ReadVitals(filepath.Join("testdata", "vitals.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}

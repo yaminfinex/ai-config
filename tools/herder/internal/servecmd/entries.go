@@ -217,14 +217,6 @@ func entrySessionPath(row hcomidentity.Row) (string, error) {
 	return sessionvitals.ResolvePath(home, row)
 }
 
-func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
-	// This is today's on-demand reverse transcript scan. Once the
-	// observer/daemon exists, it becomes a central context cache read over the
-	// local socket; the transcript remains the authority behind that cache.
-	vitals, _, _, err := sessionvitals.Read(row)
-	return vitals, err
-}
-
 // readQueueExclusions scans normalized session windows without retaining the
 // full transcript. Delivered IDs are excluded for every supported tool;
 // pre-compaction candidates are also excluded for Claude, whose compaction can

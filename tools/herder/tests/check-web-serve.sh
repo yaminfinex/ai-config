@@ -203,10 +203,13 @@ print(s.getsockname()[1])
 s.close()
 PY
 )"
+# One source of truth for the serve's state dir: the socket case below reads
+# the same variable, so an inherited HERDER_STATE_DIR never points it elsewhere.
+serve_state_dir="$ROOT/home/.local/state/herder"
 PATH="$ROOT/bin:/usr/bin:/bin" \
 HOME="$ROOT/home" \
 XDG_CACHE_HOME="$ROOT/cache" \
-HERDER_STATE_DIR="$ROOT/home/.local/state/herder" \
+HERDER_STATE_DIR="$serve_state_dir" \
 WEB_SERVE_ROSTER="$ROOT/roster.json" \
 WEB_SEND_LOG="$ROOT/send.log" \
 WEB_SEND_CALLS="$ROOT/send.calls" \
@@ -303,6 +306,19 @@ then
   pass "agent detail derives latest Claude model and raw context usage without a guessed window"
 else
   bad "agent vitals detail" "body=$(cat "$ROOT/vitals.json" 2>/dev/null || true)"
+fi
+
+# Observer socket: the serve answers the CLI's vitals over <state dir>/herder.sock.
+# A show against the same state dir the serve was started with says source
+# cache with the same numbers the detail endpoint derived.
+herder_sock="$serve_state_dir/herder.sock"
+if [ -S "$herder_sock" ] &&
+  PATH="$ROOT/bin:/usr/bin:/bin" HOME="$ROOT/home" XDG_CACHE_HOME="$ROOT/cache" HERDER_STATE_DIR="$serve_state_dir" WEB_SERVE_ROSTER="$ROOT/roster.json" \
+    "$ROOT/herder" show vile --json >"$ROOT/show-cache.json" 2>"$ROOT/show-cache.err" &&
+  jq -e '.vitals.source == "cache" and .vitals.model == "invented-claude-model" and .vitals.context_usage.used_tokens == 1121' "$ROOT/show-cache.json" >/dev/null; then
+  pass "serve listens on the scratch state dir socket and herder show reads vitals from it (source cache)"
+else
+  bad "observer socket" "sock=$(ls -l "$herder_sock" 2>&1) show=$(cat "$ROOT/show-cache.json" 2>/dev/null) err=$(cat "$ROOT/show-cache.err" 2>/dev/null)"
 fi
 
 if python3 - "$ROOT/fleet.json" <<'PY'

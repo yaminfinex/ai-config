@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"text/tabwriter"
-	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/claudesession"
@@ -23,7 +22,9 @@ type dependencies struct {
 	snapshot func() (herdrcli.Snapshot, error)
 	roster   func() ([]hcomidentity.Row, error)
 	store    func(stderr io.Writer) *agentstore.Projection
-	vitals   func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error)
+	// vitals is sessionvitals.Read: the serve's socket cache first, then the
+	// direct transcript read. Tests substitute a fake.
+	vitals func(hcomidentity.Row) (sessionvitals.Result, error)
 }
 
 var liveDependencies = dependencies{
@@ -92,11 +93,11 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 	vitals := make(map[string]claudesession.Vitals, len(roster))
 	if deps.vitals != nil {
 		for _, row := range roster {
-			// This is today's per-row on-demand reverse transcript scan. Once the
-			// observer/daemon exists, it becomes a central context cache read over the
-			// local socket; the transcript remains the authority behind that cache.
-			read, _, _, _ := deps.vitals(row)
-			vitals[row.Name] = read
+			// Sequential per row (no goroutine per row). sessionvitals.Read asks a
+			// running serve's socket first and reads the transcript itself when no
+			// serve answers; a failed row prints "-" rather than failing the list.
+			read, _ := deps.vitals(row)
+			vitals[row.Name] = read.Vitals
 		}
 	}
 	writeTable(stdout, rows, vitals)
@@ -112,8 +113,9 @@ Usage:
 Rows are joined only by an exact pane ID. A bus agent without a visible pane
 and a visible agent pane without a bus row are shown explicitly as gaps.
 
-LAUNCHER, MANAGER and BINDING come from the agent store. MODEL and CONTEXT are
-read on demand from each current session transcript; CONTEXT is used/window
+LAUNCHER, MANAGER and BINDING come from the agent store. MODEL and CONTEXT come
+from a running herder serve's cache over its local socket when one answers,
+else from each current session transcript; CONTEXT is used/window
 and percent used. Missing live vitals print "-".
 
 The store lives at ($HERDER_STATE_DIR/agents), folded by (name, hcom

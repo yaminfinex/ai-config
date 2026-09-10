@@ -112,44 +112,48 @@ func inspectComplete(file *os.File, end int64, buffer []byte, inspect func([]byt
 	}
 }
 
-// ScanCompleteReverse visits complete JSONL records newest-first. A trailing
-// partial record is ignored, matching the transcript readers' append contract.
-// Scanning stops when visit returns false.
-func ScanCompleteReverse(path string, visit func([]byte) bool) error {
+// ScanCompleteReverse visits complete JSONL records newest-first and returns
+// the complete-record end it scanned from, captured once before the first
+// visit. A trailing partial record is ignored, matching the transcript
+// readers' append contract. Scanning stops when visit returns false. Callers
+// that seed an incremental tail continue from the returned end so bytes
+// appended during the scan are never inside the offset unfolded.
+func ScanCompleteReverse(path string, visit func([]byte) bool) (int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer file.Close()
 	stat, err := file.Stat()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	buffer := make([]byte, reverseBlockSize)
 	completeEnd, err := completeEnd(file, stat.Size(), buffer)
 	if err != nil || completeEnd == 0 {
-		return err
+		return 0, err
 	}
+	scannedEnd := completeEnd
 	for completeEnd > 0 {
 		lineEnd := completeEnd - 1
 		newline, err := previousNewline(file, lineEnd, buffer)
 		if err != nil {
-			return err
+			return scannedEnd, err
 		}
 		lineStart := newline + 1
 		line := make([]byte, lineEnd-lineStart)
 		if len(line) > 0 {
 			if _, err := file.ReadAt(line, lineStart); err != nil && err != io.EOF {
-				return err
+				return scannedEnd, err
 			}
 		}
 		line = bytes.TrimSuffix(line, []byte{'\r'})
 		if !visit(line) {
-			return nil
+			return scannedEnd, nil
 		}
 		completeEnd = lineStart
 	}
-	return nil
+	return scannedEnd, nil
 }
 
 func completeEnd(file *os.File, size int64, buffer []byte) (int64, error) {

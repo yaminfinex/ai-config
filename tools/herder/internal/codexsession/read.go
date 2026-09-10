@@ -148,12 +148,13 @@ func read(path string, offset int64, limit int, keepTail bool) (ReadResult, erro
 
 // ReadVitals scans complete rollout records and returns the latest entry that
 // carries each fact. Codex supplies its context-window denominator directly in
-// token_count.info.model_context_window.
-func ReadVitals(path string) (Vitals, error) {
+// token_count.info.model_context_window. The int64 is the complete-record
+// end the scan captured (the offset an incremental tail continues from).
+func ReadVitals(path string) (Vitals, int64, error) {
 	var vitals Vitals
-	err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
+	end, err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
 		var facts Vitals
-		observeVitals(raw, &facts)
+		ObserveVitals(raw, &facts)
 		if vitals.Model == "" {
 			vitals.Model = facts.Model
 		}
@@ -162,10 +163,13 @@ func ReadVitals(path string) (Vitals, error) {
 		}
 		return vitals.Model == "" || vitals.ContextUsage == nil
 	})
-	return vitals, err
+	return vitals, end, err
 }
 
-func observeVitals(raw []byte, vitals *Vitals) {
+// ObserveVitals folds one complete Codex rollout record into vitals. It is the
+// ONLY envelope parse for Codex vitals; ReadVitals (reverse seed) and
+// sessionvitals.Advance (forward tail) both call it.
+func ObserveVitals(raw []byte, vitals *Vitals) {
 	var env rolloutEnvelope
 	if json.Unmarshal(raw, &env) != nil {
 		return

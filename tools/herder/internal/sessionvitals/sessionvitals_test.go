@@ -41,9 +41,13 @@ func TestReadSelectsToolReadersAndReportsObservedFile(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			vitals, path, gotObserved, err := Read(tc.row)
+			read, err := Read(tc.row)
 			if err != nil {
 				t.Fatal(err)
+			}
+			vitals, path, gotObserved := read.Vitals, read.Path, read.ObservedAt
+			if read.Source != "direct" {
+				t.Fatalf("source = %q, want direct with no serve", read.Source)
 			}
 			if vitals.Model != tc.model || vitals.ContextUsage == nil || vitals.ContextUsage.UsedTokens != tc.used || path != tc.path || !gotObserved.Equal(observed) {
 				t.Fatalf("Read() = %+v, %q, %s", vitals, path, gotObserved)
@@ -57,7 +61,8 @@ func TestReadSelectsToolReadersAndReportsObservedFile(t *testing.T) {
 
 func TestReadTreatsUnresolvablePathAsMissingVitals(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	vitals, path, observed, err := Read(hcomidentity.Row{Tool: "codex", SessionID: "73400000-0000-4000-8000-000000000734"})
+	read, err := Read(hcomidentity.Row{Tool: "codex", SessionID: "73400000-0000-4000-8000-000000000734"})
+	vitals, path, observed := read.Vitals, read.Path, read.ObservedAt
 	if err != nil || vitals.Model != "" || vitals.ContextUsage != nil || path != "" || !observed.IsZero() {
 		t.Fatalf("Read() = %+v, %q, %s, %v", vitals, path, observed, err)
 	}
