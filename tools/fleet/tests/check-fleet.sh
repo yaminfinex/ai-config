@@ -5,8 +5,8 @@
 
 set -euo pipefail
 
-# The suite opts into hcom-seat behavior only in the cases that exercise it.
-unset HCOM_PROCESS_ID
+# The suite opts into hcom-seat behavior only in fully pinned cases.
+unset HCOM_NAME HCOM_TAG HCOM_INSTANCE_NAME HCOM_PROCESS_ID
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 FLEET=$ROOT/tools/fleet
@@ -229,8 +229,9 @@ grep -F 'register launch-ready --request 018f0000-0000-7000-8000-000000000001 --
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
 
 : >"$FLEET_TEST_CALLS"
-HCOM_PROCESS_ID=seat-test FLEET_TEST_SELF_MODE=forbid \
-  FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web PATH="$TEST_ROOT/bin:$PATH" \
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  FLEET_TEST_SELF_MODE=forbid FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web \
+  PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-web.out" 2>"$TEST_ROOT/spawn-web.err"
 [[ $(grep 'herder .*register launch-' "$FLEET_TEST_CALLS" \
   | grep -c -- '--launcher-kind web .*--by web-x --by-kind web') -eq 2 ]] \
@@ -280,8 +281,9 @@ mkdir -p "$TEST_ROOT/real-bin"
 real_state=$TEST_ROOT/real-state
 mkdir -p "$real_state"
 : >"$FLEET_TEST_CALLS"
-HERDER_STATE_DIR="$real_state" HCOM_PROCESS_ID=seat-test HCOM_INSTANCE_NAME=fimu \
-  FLEET_TEST_SELF_MODE=name PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  HERDER_STATE_DIR="$real_state" FLEET_TEST_SELF_MODE=name \
+  PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/real-spawn.out" 2>"$TEST_ROOT/real-spawn.err"
 jq -s -e 'length == 2 and .[0].kind == "launch-requested" and .[1].kind == "launch-ready"
   and .[1].request == .[0].id and all(.[]; .by == "ziru" and .by_kind == "agent")' \
@@ -295,8 +297,9 @@ pass "spawn prefers hcom self over stale seat environment"
 fallback_state=$TEST_ROOT/real-fallback-state
 mkdir -p "$fallback_state"
 : >"$FLEET_TEST_CALLS"
-HERDER_STATE_DIR="$fallback_state" HCOM_PROCESS_ID=seat-test HCOM_INSTANCE_NAME=fimu \
-  FLEET_TEST_SELF_MODE=fail PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  HERDER_STATE_DIR="$fallback_state" FLEET_TEST_SELF_MODE=fail \
+  PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/real-fallback-spawn.out" \
   2>"$TEST_ROOT/real-fallback-spawn.err"
 cmp -s "$TEST_ROOT/real-spawn.out" "$TEST_ROOT/real-fallback-spawn.out" \
@@ -414,8 +417,8 @@ grep -Fx 'pane=p-test' "$TEST_ROOT/codex-unbound.out" >/dev/null \
   || fail "spawn did not report the ready Codex placement"
 pass "spawn accepts ready Codex launch with pty-only binding"
 
-if HCOM_PROCESS_ID=seat-test HCOM_INSTANCE_NAME=fimu FLEET_TEST_SELF_MODE=name \
-  FLEET_TEST_HOOKS_BOUND=0 PATH="$TEST_ROOT/bin:$PATH" \
+if env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  FLEET_TEST_SELF_MODE=name FLEET_TEST_HOOKS_BOUND=0 PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" claude --tag gate --pane p-test >"$TEST_ROOT/claude-unbound.out" 2>"$TEST_ROOT/claude-unbound.err"; then
   fail "spawn accepted a ready Claude launch without bound hooks"
 fi
@@ -564,8 +567,9 @@ cull_attrib_state=$TEST_ROOT/real-cull-state
 mkdir -p "$cull_attrib_state"
 rm -f "$cull_state/killed" "$cull_state/closed"
 : >"$FLEET_TEST_CALLS"
-HERDER_STATE_DIR="$cull_attrib_state" HCOM_PROCESS_ID=seat-test HCOM_INSTANCE_NAME=fimu \
-  FLEET_TEST_SELF_MODE=name FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  HERDER_STATE_DIR="$cull_attrib_state" FLEET_TEST_SELF_MODE=name \
+  FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
   PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava \
   >"$TEST_ROOT/cull-attrib.out"
 jq -s -e 'length == 2 and .[0].kind == "cull-requested" and .[1].kind == "culled"
