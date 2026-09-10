@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+unset HCOM_PROCESS_ID
+
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 FLEET=$ROOT/tools/fleet
 TEST_ROOT=$(mktemp -d)
