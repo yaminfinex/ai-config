@@ -206,6 +206,7 @@ PY
 PATH="$ROOT/bin:/usr/bin:/bin" \
 HOME="$ROOT/home" \
 XDG_CACHE_HOME="$ROOT/cache" \
+HERDER_STATE_DIR="$ROOT/home/.local/state/herder" \
 WEB_SERVE_ROSTER="$ROOT/roster.json" \
 WEB_SEND_LOG="$ROOT/send.log" \
 WEB_SEND_CALLS="$ROOT/send.calls" \
@@ -442,7 +443,7 @@ if curl -fsS "http://127.0.0.1:$port/api/agents/retired-vava" >"$ROOT/retired-ag
   curl -fsS "http://127.0.0.1:$port/api/agents/retired-vava/entries?limit=10" >"$ROOT/retired-entries.json" &&
   jq -e '.name == "retired-vava" and .bus_status == "retired" and .pane == null and .session_id == "73100000-0000-4000-8000-000000000731" and has("queued") == false' "$ROOT/retired-agent.json" >/dev/null &&
   jq -e '.sessionId == "73100000-0000-4000-8000-000000000731" and (.entries | length) >= 2' "$ROOT/retired-entries.json" >/dev/null &&
-  [ "$(cat "$ROOT/retired-message.status")" = 409 ] && jq -e '.error == "retired agent" and (.detail | contains("read-only"))' "$ROOT/retired-message.json" >/dev/null; then
+  [ "$(cat "$ROOT/retired-message.status")" = 409 ] && jq -e '.error == "retired agent" and (.detail | contains("accepts no writes"))' "$ROOT/retired-message.json" >/dev/null; then
   pass "retained stopped evidence serves a queue-free read-only transcript and refuses sends"
 else
   bad "retired agent contract" "detail=$(cat "$ROOT/retired-agent.json" 2>/dev/null || true) entries=$(cat "$ROOT/retired-entries.json" 2>/dev/null || true) send=$(cat "$ROOT/retired-message.status" 2>/dev/null || true)/$(cat "$ROOT/retired-message.json" 2>/dev/null || true)"
@@ -489,6 +490,22 @@ else
   bad "message write" "body=$(cat "$ROOT/message.json" 2>/dev/null || true) calls=$(cat "$ROOT/send.calls" 2>/dev/null || true) args=$(cat "$ROOT/send.log" 2>/dev/null || true)"
 fi
 
+if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"title":"Payload lead"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/annotation" >"$ROOT/annotation.json" &&
+  jq -e '. == {name:"mavu",title:"Payload lead",by:"web-alice-example-com"}' "$ROOT/annotation.json" >/dev/null &&
+  jq -e 'select(.kind == "annotate" and .name == "mavu" and .title == "Payload lead" and .by == "web-alice-example-com" and .by_kind == "web")' \
+    "$ROOT/home/.local/state/herder/agents/events.jsonl" >/dev/null; then
+  pass "annotation write appends the titled agent event with web attribution"
+else
+  bad "annotation write" "body=$(cat "$ROOT/annotation.json" 2>/dev/null || true) journal=$(cat "$ROOT/home/.local/state/herder/agents/events.jsonl" 2>/dev/null || true)"
+fi
+
+if [ "$(curl -sS -o "$ROOT/annotation-empty.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"title":"  "}' "http://127.0.0.1:$port/api/agents/mavu/annotation")" = 400 ] && jq -e '.detail == "title must not be empty"' "$ROOT/annotation-empty.json" >/dev/null; then
+  pass "annotation write refuses an empty title with the web contract wording"
+else
+  bad "annotation empty title" "body=$(cat "$ROOT/annotation-empty.json" 2>/dev/null || true)"
+fi
+
 if curl -fsS -X POST -H 'Content-Type: application/json' \
   --data '{"tool":"codex","model":"","tag":"web","workspace":"w1"}' \
   "http://127.0.0.1:$port/api/spawn" >"$ROOT/spawn.json" &&
@@ -530,6 +547,16 @@ if [ "$(cat "$ROOT/unresolved.status")" = 409 ] && jq -e '.error == "attribution
 else
   bad "sender refusals" "unresolved=$(cat "$ROOT/unresolved.status")/$(cat "$ROOT/unresolved.json") existing=$(cat "$ROOT/existing.status")/$(cat "$ROOT/existing.json") reserved=$(cat "$ROOT/reserved.status")/$(cat "$ROOT/reserved.json")"
 fi
+
+printf '%s\n' unresolved >"$ROOT/whois.mode"
+if [ "$(curl -sS -o "$ROOT/annotation-unresolved.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"title":"blocked"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/annotation")" = 409 ] &&
+  jq -e '.error == "attribution required"' "$ROOT/annotation-unresolved.json" >/dev/null; then
+  pass "annotation write refuses an unattributed viewer"
+else
+  bad "annotation attribution refusal" "body=$(cat "$ROOT/annotation-unresolved.json" 2>/dev/null || true)"
+fi
+printf '%s\n' ok >"$ROOT/whois.mode"
 
 curl --max-time 6 -Ns "http://127.0.0.1:$port/api/events?agents=vile" >"$ROOT/events.out" 2>"$ROOT/events.err" &
 events_pid=$!
@@ -593,7 +620,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((23 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((26 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

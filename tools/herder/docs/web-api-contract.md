@@ -1094,6 +1094,20 @@ POST `/api/agents/{bus-name}/message`
   unreachable (infrastructure: timeouts, missing/unreachable hcom or
   tailscaled — never conflated with a refusal).
 
+POST `/api/agents/{bus-name}/annotation`
+  Body: `{"title":"<display name>"}` with no other fields. The title is
+  trimmed, must be non-empty, must contain no CR, LF, tab, or NUL, and is
+  limited to 80 Unicode code points. The target must be a live roster agent;
+  unknown targets return 404 and retired targets return 409. Success appends
+  one `annotate` event in `agents/events.jsonl` with `by_kind: web` and the
+  server-derived web sender, then returns
+  `{"name":"<bus-name>","title":"<display name>","by":"<web-sender>"}`.
+  The resulting fleet label arrives through the next ordinary `fleet` SSE
+  frame; the client does not update it optimistically. Invalid bodies or
+  titles return 400. Missing attribution or a sender collision returns 409;
+  unavailable identity or agent-store substrate and every append failure
+  return 502.
+
 POST `/api/spawn`
   Body: `{"tool": "claude" | "codex", "model": "<optional>",
   "effort": "<optional>",
@@ -1159,7 +1173,8 @@ No WebSocket. No pane injection other than the attributed, bounded Herdr
 `pane.send_input` terminal endpoint defined by TASK-73 above. No cull/kill. No resume or fork, no
 retired-session lifecycle controls beyond the retained read-only transcript
 amendment, no sesh. No blank-form/global spawn, no new-workspace
-creation. No auth beyond the tailnet boundary. No server-side state.
+creation. No auth beyond the tailnet boundary. Server-side augmenting state
+exists in `agents/`; it is never lifecycle authority.
 No agent screen is selected by default. The opt-in interactive agent terminal
 viewport and unattributed-terminal surface are only the narrow exceptions
 defined by the 2026-08-28 expansion and TASK-73 amendment above.

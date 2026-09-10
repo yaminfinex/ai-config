@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Event kinds (Fable design §4 plus the owner's reparent amendment).
@@ -268,6 +269,12 @@ func (e Event) Validate() error {
 	}
 	if e.Kind == KindAnnotate && e.Title == "" && e.Note == "" {
 		return fmt.Errorf("%s requires --title or --note", e.Kind)
+	}
+	if strings.ContainsAny(e.Title, "\r\n\t\x00") {
+		return fmt.Errorf("title must not contain control characters")
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(e.Title)) > 80 {
+		return fmt.Errorf("title must not exceed 80 characters")
 	}
 	for _, text := range []string{e.Name, e.Manager, e.FromName, e.ParentName, e.By} {
 		if strings.ContainsAny(text, "\r\n\t\x00") {

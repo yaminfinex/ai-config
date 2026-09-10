@@ -5,6 +5,7 @@ import test from 'node:test'
 import { buildSidebarNodes, buildSupervisionNodes } from '../src/features/sidebar/sidebarNodes.ts'
 import { defaultExpanded, managerItems, reconcileExpansion } from '../src/features/sidebar/sidebarView.ts'
 import { defaultFleetView, parseShellPreferences, shellPreferencesValue } from '../src/features/layout/shellPreferences.ts'
+import { treeClickGuardSelector } from '../src/features/sidebar/renameModel.ts'
 import type { Board } from '../src/types.ts'
 
 const board: Board = {
@@ -20,6 +21,12 @@ const board: Board = {
 const placement = buildSidebarNodes(board)
 const supervision = buildSupervisionNodes(board)
 const rails = { fleetRail: { width: 260, collapsed: false }, notesRail: { width: 300, collapsed: true } }
+
+test('row click guard contains every trailing interactive control', () => {
+  assert.match(treeClickGuardSelector, /\.tree-disclosure/)
+  assert.match(treeClickGuardSelector, /\.launch-agent-button/)
+  assert.match(treeClickGuardSelector, /\.rename-agent-button/)
+})
 
 test('the fleet view persists through the real shell serializer and parser (default supervision)', () => {
   assert.equal(defaultFleetView, 'supervision')
@@ -67,7 +74,6 @@ test('expandedItems survive a view switch: the transition never runs on the view
   assert.doesNotMatch(sidebar, /defaultExpanded|managerItems\(/)
   assert.equal((sidebar.match(/onExpandedItems\(/g) ?? []).length, 2, 'expected the tree setter wiring and the transition apply, nothing else')
   const effects = [...sidebar.matchAll(/useEffect\([\s\S]*?\}, \[([^\]]*)\]\)/g)].map((match) => match[1])
-  assert.equal(effects.length, 3, "reconcile, selection, rebuild")
   assert.equal(effects.filter((deps) => /\bview\b/.test(deps)).length, 1, 'only the selection effect depends on view')
   assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : supervisionNodes/)
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)

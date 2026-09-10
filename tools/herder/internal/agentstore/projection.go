@@ -11,7 +11,7 @@ import (
 
 // ProjectionVersion changes whenever Apply's fold changes, so a stale
 // snapshot is replayed instead of trusted.
-const ProjectionVersion = 2
+const ProjectionVersion = 3
 
 // EventsKept is how many trailing events each agent record retains.
 const EventsKept = 32
@@ -329,7 +329,16 @@ func (p *Projection) Apply(e Event, _ int64) {
 	case KindAssign:
 		v.Assignment = &Assignment{Mission: e.Mission, Brief: e.Brief, Thread: e.Thread, Task: e.Task, By: e.By, At: at}
 	case KindAnnotate:
-		v.Annotation = &Annotation{Title: e.Title, Note: e.Note, By: e.By, At: at}
+		if v.Annotation == nil {
+			v.Annotation = &Annotation{}
+		}
+		if e.Title != "" {
+			v.Annotation.Title = e.Title
+		}
+		if e.Note != "" {
+			v.Annotation.Note = e.Note
+		}
+		v.Annotation.By, v.Annotation.At = e.By, at
 	case KindReparent:
 		// Event time orders reparents, not arrival: an older one landing
 		// late never overwrites a newer manager.

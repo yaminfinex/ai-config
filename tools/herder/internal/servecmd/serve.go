@@ -303,6 +303,16 @@ type messageResponse struct {
 	Intent string `json:"intent"`
 }
 
+type annotationRequest struct {
+	Title string `json:"title"`
+}
+
+type annotationResponse struct {
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	By    string `json:"by"`
+}
+
 type viewerResponse struct {
 	Viewer string `json:"viewer"`
 }
@@ -876,6 +886,13 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveMessage(w, r, deps, r.PathValue("busName"))
 	})
+	mux.HandleFunc("/api/agents/{busName}/annotation", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveAnnotation(w, r, deps, r.PathValue("busName"))
+	})
 	mux.HandleFunc("/api/panes/{paneID}/history", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")
@@ -1153,29 +1170,8 @@ func serveAgentReadError(w http.ResponseWriter, err error) {
 }
 
 func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
-	roster, err := deps.roster()
-	if err != nil {
-		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
-		return
-	}
-	found := false
-	for _, row := range roster {
-		if row.Name == name {
-			found = true
-			break
-		}
-	}
-	if !found {
-		_, stoppedErr := deps.stopped(name)
-		if stoppedErr == nil {
-			refuse(w, http.StatusConflict, "retired agent", fmt.Sprintf("agent %q is retired; its transcript is read-only", name))
-			return
-		}
-		if !errors.Is(stoppedErr, hcomidentity.ErrStoppedNotFound) {
-			refuse(w, http.StatusBadGateway, "substrate unreachable", stoppedErr.Error())
-			return
-		}
-		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("no live or retained session evidence for %q", name))
+	roster, ok := resolveLiveAgent(w, deps, name)
+	if !ok {
 		return
 	}
 	var request messageRequest
@@ -1201,6 +1197,82 @@ func serveMessage(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		return
 	}
 	writeJSON(w, http.StatusOK, messageResponse{Sent: true, To: name, From: sender, Intent: "request"})
+}
+
+func serveAnnotation(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
+	roster, ok := resolveLiveAgent(w, deps, name)
+	if !ok {
+		return
+	}
+	var request annotationRequest
+	if err := decodeWriteBody(w, r, &request, false); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	title := strings.TrimSpace(request.Title)
+	if title == "" {
+		refuse(w, http.StatusBadRequest, "bad request", "title must not be empty")
+		return
+	}
+	sender, ok := webSender(w, r, deps, roster)
+	if !ok {
+		return
+	}
+	now := deps.now().UTC()
+	event := agentstore.Event{Kind: agentstore.KindAnnotate, Name: name, Title: title, By: sender, ByKind: "web", At: now, ID: agentstore.NewID(now)}
+	receipt, ok := appendWebEvent(w, deps, event)
+	if !ok {
+		return
+	}
+	deps.audit("annotate time=%s viewer=%s name=%s title=%q", receipt.Event.At.UTC().Format(time.RFC3339Nano), receipt.Event.By, name, title)
+	writeJSON(w, http.StatusOK, annotationResponse{Name: name, Title: title, By: receipt.Event.By})
+}
+
+func resolveLiveAgent(w http.ResponseWriter, deps dependencies, name string) ([]hcomidentity.Row, bool) {
+	roster, err := deps.roster()
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return nil, false
+	}
+	for _, row := range roster {
+		if row.Name == name {
+			return roster, true
+		}
+	}
+	if _, err := deps.stopped(name); err == nil {
+		refuse(w, http.StatusConflict, "retired agent", fmt.Sprintf("agent %q is retired; it accepts no writes", name))
+	} else if !errors.Is(err, hcomidentity.ErrStoppedNotFound) {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+	} else {
+		refuse(w, http.StatusNotFound, "unknown agent", fmt.Sprintf("no live or retained session evidence for %q", name))
+	}
+	return nil, false
+}
+
+func webSender(w http.ResponseWriter, r *http.Request, deps dependencies, roster []hcomidentity.Row) (string, bool) {
+	sender, err := attributedSender(r, deps, roster)
+	if err != nil {
+		serveAttributionError(w, err)
+		return "", false
+	}
+	return sender, true
+}
+
+func appendWebEvent(w http.ResponseWriter, deps dependencies, event agentstore.Event) (agentstore.Receipt, bool) {
+	if deps.store == nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", "agent store unavailable")
+		return agentstore.Receipt{}, false
+	}
+	if err := event.Validate(); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return agentstore.Receipt{}, false
+	}
+	receipt, err := deps.store.Append(event)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return agentstore.Receipt{}, false
+	}
+	return receipt, true
 }
 
 func serveViewer(w http.ResponseWriter, r *http.Request, deps dependencies) {

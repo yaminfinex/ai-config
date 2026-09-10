@@ -761,7 +761,7 @@ func TestRetiredMessageIsRefusedBeforeAttributionOrSend(t *testing.T) {
 	response := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/agents/dore/message", strings.NewReader(`{"text":"hello"}`))
 	newHandler(deps).ServeHTTP(response, request)
-	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"retired agent"`) || !strings.Contains(response.Body.String(), "read-only") {
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"error":"retired agent"`) || !strings.Contains(response.Body.String(), "accepts no writes") {
 		t.Fatalf("retired send = %d %s", response.Code, response.Body.String())
 	}
 }

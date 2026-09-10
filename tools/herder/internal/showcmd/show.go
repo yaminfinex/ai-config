@@ -236,6 +236,7 @@ func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
 	if v.Annotation != nil {
 		field("title", v.Annotation.Title)
 		field("note", v.Annotation.Note)
+		field("annotated", stamp(&v.Annotation.At)+" by "+v.Annotation.By)
 	}
 	if v.Binding != nil {
 		b := v.Binding

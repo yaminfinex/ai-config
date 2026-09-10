@@ -25,7 +25,7 @@ from current transcripts on demand and are never persisted in the agent store.
 
 | file | writer | contents |
 |---|---|---|
-| `events.jsonl` | `Store.Append` only (CLI now, serve later) | append-only, one JSON object per line |
+| `events.jsonl` | `Store.Append` only (CLI and serve) | append-only, one JSON object per line |
 | `snapshot.json` | nothing today | `{version, events_offset, agents, requests}` — rebuildable, never authoritative |
 
 `launch-edges.jsonl` (the serve's old web-launch record, one directory up)
@@ -177,11 +177,17 @@ changes only through `reparent {name, manager, by}` (`herder register
 reparent --name X --manager Y`). Hierarchy views hang off `manager`;
 `launcher` stays for audit.
 
+The web serve appends `annotate` events for display-name writes with the
+server-derived sender in `by` and `by_kind: web`. Those writes use the same
+store validation and fold as the register CLI. After trimming, an annotation
+title is at most 80 runes and contains no control characters; the CLI exits 2
+when either rule is violated.
+
 ## One validator
 
 `agentstore.SpecFor(kind)` is the single per-kind contract (required, one-of,
 optional fields, keyed by CLI flag name). `Store.Append` validates every
-event through it, so an in-process writer (the serve, unit 2) cannot record
+event through it, so an in-process writer (the serve) cannot record
 what the CLI would refuse: unsupported tool, missing launch tag, two
 placement targets, `culled` without a pane, `annotate` with a manager,
 invalid `by_kind`, negative `steer_chars`. The register CLI only parses
