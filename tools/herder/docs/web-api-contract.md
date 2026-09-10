@@ -125,6 +125,31 @@ GET `/api/fleet`
   the child remains an independently addressable bus agent. No second fleet
   projection or client-side parent inference exists.
 
+  ### AMENDMENT (owner ruling 2026-09-10, conductor-acked) — the supervision edge on fleet rows
+
+  Every agent row (a workspace pane with a bus row, an `unplaced` row, and
+  each nested `subagents` row) additionally carries:
+
+  - `manager` — the full bus name of the agent that manages this row, or the
+    literal `operator` when a human seeded the edge (hcom's `user`, a shell
+    or web launcher). Absent when no manager is known.
+  - `manager_state` — `live` (the manager is a live roster row; a manager
+    string that is a unique roster `base_name` resolves to that full name),
+    `ended` (the store holds a record for the manager that is closed or no
+    longer on the roster), `operator`, or `unknown` (no manager, or a name
+    with neither a live roster row nor a store record).
+  - `title` — the annotation title from the agent store, when one is set.
+  - `created_at` — hcom's roster creation time for the row, RFC3339 UTC.
+
+  These are herder-mastered augmenting data folded from the agent store at
+  board build time; they are never lifecycle authority. The board still never
+  fabricates a row for an agent hcom does not list: an ended manager appears
+  only as a client-side tombstone node built from its live reports' `manager`
+  strings plus `manager_state: "ended"`. An append to the agent store journal
+  (`$HERDER_STATE_DIR/agents/events.jsonl`) rebuilds the board and re-emits
+  `fleet` within the serve's debounce, with no herdr or hcom change required.
+  The terminal `herder list` output is unchanged by this payload.
+
 GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap
   state. 404 for names not on the bus.

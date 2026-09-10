@@ -3,11 +3,20 @@ import { defaultRailPreferences, type RailPreferences } from './utilityRailModel
 export const shellStorageKey = 'herder.web.shell.v1'
 export const shellStorageBackupKey = 'herder.web.shell.v1.last-good'
 
+export type FleetView = 'supervision' | 'placement'
+export const defaultFleetView: FleetView = 'supervision'
+
+export function fleetView(value: unknown): value is FleetView {
+  return value === 'supervision' || value === 'placement'
+}
+
 export type StoredShellPreferences = {
   version: 1
   rails: RailPreferences
   expandedItems?: string[]
   knownWorkspaceItems?: string[]
+  knownManagerItems?: string[]
+  fleetView?: FleetView
 }
 
 type UnknownRecord = Record<string, unknown>
@@ -30,7 +39,9 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
     const value: unknown = JSON.parse(raw ?? '')
     if (!record(value) || value.version !== 1 || !record(value.rails) ||
       (value.expandedItems !== undefined && !strings(value.expandedItems)) ||
-      (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems))) return null
+      (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems)) ||
+      (value.knownManagerItems !== undefined && !strings(value.knownManagerItems)) ||
+      (value.fleetView !== undefined && !fleetView(value.fleetView))) return null
     const fleet = rail(value.rails.fleet)
     const notes = rail(value.rails.notes)
     if (!fleet || !notes) return null
@@ -39,6 +50,8 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
       rails: { fleet, notes },
       ...(value.expandedItems === undefined ? {} : { expandedItems: value.expandedItems }),
       ...(value.knownWorkspaceItems === undefined ? {} : { knownWorkspaceItems: value.knownWorkspaceItems }),
+      ...(value.knownManagerItems === undefined ? {} : { knownManagerItems: value.knownManagerItems }),
+      ...(value.fleetView === undefined ? {} : { fleetView: value.fleetView }),
     }
   } catch {
     return null

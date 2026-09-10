@@ -550,6 +550,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     notesRail: layout.notesRail, setNotesRail: layout.setNotesRail, toggleNotesRail,
     expandedItems: layout.expandedItems, setExpandedItems: layout.setExpandedItems,
     knownWorkspaceItems: layout.knownWorkspaceItems, setKnownWorkspaceItems: layout.setKnownWorkspaceItems,
+    knownManagerItems: layout.knownManagerItems, setKnownManagerItems: layout.setKnownManagerItems,
+    fleetView: layout.fleetView, setFleetView: layout.setFleetView,
     board: boardQuery.data,
     activeAgent: activeParams?.kind === 'agent' ? activeParams.name : undefined,
     activePane: activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined,

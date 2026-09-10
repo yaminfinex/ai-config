@@ -7,7 +7,17 @@ export interface Row {
   gap: string
   parent_agent?: string
   subagents?: Row[]
+  // Supervision edge (herder-mastered augmenting data, never lifecycle
+  // authority): manager is a full bus name or "operator"; manager_state is
+  // live | ended | operator | unknown; title is the annotation title;
+  // created_at is hcom's roster creation time (RFC3339 UTC).
+  manager?: string
+  manager_state?: ManagerState
+  title?: string
+  created_at?: string
 }
+
+export type ManagerState = 'live' | 'ended' | 'operator' | 'unknown'
 
 export interface Pane extends Row {
   label?: string

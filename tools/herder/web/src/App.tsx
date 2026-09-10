@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from 'react'
 import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
+import { FleetViewToggle } from './features/sidebar/FleetViewToggle'
 import { QuickOpen } from './features/files/QuickOpen'
 import { ShortcutReference } from './features/layout/ShortcutReference'
 import { RailStatusToggle, UtilityRail } from './features/layout/UtilityRail'
@@ -89,6 +90,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const {
     openAgent, openScreen, openFile, openFolder,
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
+    knownManagerItems, setKnownManagerItems, fleetView, setFleetView,
   } = workspace
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell">
     <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup}
@@ -97,11 +99,13 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
     <UtilityRail side="left" label="Fleet" detail="herdr truth" headingStart={<span className="status-dot listening" />}
+      headingAction={<FleetViewToggle view={fleetView} onView={setFleetView} />}
       width={fleetRail.width} collapsed={fleetRail.collapsed}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
-      <FleetSidebar board={workspace.board} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
+      <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
         onPreviewAgent={(name, placement) => openAgent(name, true, placement, true)} onPinAgent={(name, placement) => openAgent(name, false, placement, true)} onPreviewPane={(pane, placement) => openScreen(pane, true, placement)} onPinPane={(pane, placement) => openScreen(pane, false, placement)}
-        expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems} />
+        expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems}
+        knownManagerItems={knownManagerItems} onKnownManagerItems={setKnownManagerItems} />
     </UtilityRail>
     <section className="shell-main">
       <StreamBanners fleetProblem={workspace.fleetProblem} viewerProblem={workspace.viewerProblem} spaceProblem={workspace.spaces.enabled ? workspace.spaceProblem : ''} flushLayout={workspace.flushLayout} />

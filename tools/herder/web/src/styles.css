@@ -184,6 +184,19 @@ h2, h3, p { margin-top: 0; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
 .unplaced-row { color: var(--dim); }
 .subagent-row .tree-label::before { content: 'task '; color: var(--dimmer); font: 9px var(--mono); }
+.tree-secondary { margin-left: 6px; color: var(--dimmer); font: 10px var(--mono); }
+.tombstone-row { color: var(--dimmer); }
+.tombstone-row .tree-label { text-decoration: line-through; text-decoration-color: var(--border2); }
+.tombstone-row .tree-secondary, .unknown-manager-row .tree-secondary { text-decoration: none; }
+.unknown-manager-row { color: var(--dim); }
+.operator-row .tree-label { color: var(--text); }
+.fleet-tree-supervision .pane-chip { margin-left: 4px; }
+.rail-heading > .fleet-view-toggle { display: inline-flex; margin-left: auto; gap: 1px; letter-spacing: 0; text-transform: none; }
+.rail-heading > .fleet-view-toggle + .rail-toggle { margin-left: 0; }
+.fleet-view-option { padding: 1px 6px; border: 1px solid var(--border2); background: transparent; color: var(--dimmer); font: 10px var(--mono); cursor: pointer; }
+.fleet-view-option:first-child { border-radius: 4px 0 0 4px; }
+.fleet-view-option:last-child { border-radius: 0 4px 4px 0; }
+.fleet-view-option.active { background: var(--chip); color: var(--text); }
 .tree-state-shell { min-width: 0; padding-top: 3px; padding-right: 5px; }
 .tree-state { min-height: 22px; padding: 4px 6px; color: var(--dimmer); font: 9px var(--mono); overflow-wrap: anywhere; }
 .tree-state strong { color: inherit; font: inherit; font-weight: 500; }

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { AgentStatusDot, gapLabel } from '../../shared/presentation'
-import { buildSidebarNodes } from './sidebarNodes'
+import { agentNodeID, buildSidebarNodes, buildSupervisionNodes, collapsedLabel } from './sidebarNodes'
 import type { SidebarNode } from './sidebarNodes'
+import { agentKinds, defaultExpanded, managerItems } from './sidebarView'
+import type { FleetView } from '../layout/shellPreferences'
 import type { Board, Pane } from '../../types'
 import { unattributedTerminalWarning } from '../screen/screenPresentation'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
@@ -12,8 +14,9 @@ import { LaunchAgent } from '../launch/LaunchAgent'
 
 const emptyExpandedItems: string[] = []
 
-export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems }: {
+export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
   board: Board | undefined
+  view: FleetView
   activeAgent?: string
   activePane?: string
   onPreviewAgent: (name: string, placement?: OpenPlacement) => void
@@ -24,38 +27,53 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
   onExpandedItems: (items: string[]) => void
   knownWorkspaceItems: string[] | null
   onKnownWorkspaceItems: (items: string[]) => void
+  knownManagerItems: string[] | null
+  onKnownManagerItems: (items: string[]) => void
 }) {
   const [selectedItems, setSelectedItems] = useState<string[]>([])
-  const nodes = useMemo(() => buildSidebarNodes(board), [board])
+  const placementNodes = useMemo(() => buildSidebarNodes(board), [board])
+  const supervisionNodes = useMemo(() => buildSupervisionNodes(board), [board])
+  const nodes = view === 'placement' ? placementNodes : supervisionNodes
   const sideHint = openInSideLabel(navigator.userAgent)
 
   useEffect(() => {
     if (!board) return
-    const workspaceItems = [...nodes.values()].filter((node) => node.kind === 'workspace').map((node) => node.id)
+    const workspaceItems = [...placementNodes.values()].filter((node) => node.kind === 'workspace').map((node) => node.id)
+    const managers = managerItems(supervisionNodes)
     if (expandedItems === null) {
-      onExpandedItems([...nodes.values()].filter((node) => node.kind === 'workspace' || node.kind === 'unplaced' || ((node.kind === 'pane' || node.kind === 'subagent') && node.children.length > 0)).map((node) => node.id))
+      onExpandedItems([...new Set([...defaultExpanded(placementNodes), ...defaultExpanded(supervisionNodes)])])
       onKnownWorkspaceItems(workspaceItems)
+      onKnownManagerItems(managers)
       return
     }
     if (knownWorkspaceItems === null) {
       onKnownWorkspaceItems(workspaceItems)
       return
     }
-    const known = new Set(knownWorkspaceItems)
-    const unseen = workspaceItems.filter((id) => !known.has(id))
+    if (knownManagerItems === null) {
+      // First visit of the supervision view on a browser that already had
+      // placement state: open every manager subtree once.
+      onExpandedItems([...new Set([...expandedItems, ...defaultExpanded(supervisionNodes)])])
+      onKnownManagerItems(managers)
+      return
+    }
+    const known = new Set([...knownWorkspaceItems, ...knownManagerItems])
+    const unseen = [...workspaceItems, ...managers].filter((id) => !known.has(id))
     if (unseen.length === 0) return
     onExpandedItems([...new Set([...expandedItems, ...unseen])])
     onKnownWorkspaceItems([...new Set([...knownWorkspaceItems, ...workspaceItems])])
-  }, [board, expandedItems, knownWorkspaceItems, nodes, onExpandedItems, onKnownWorkspaceItems])
+    onKnownManagerItems([...new Set([...knownManagerItems, ...managers])])
+  }, [board, expandedItems, knownManagerItems, knownWorkspaceItems, onExpandedItems, onKnownManagerItems, onKnownWorkspaceItems, placementNodes, supervisionNodes])
 
   useEffect(() => {
     if (!activeAgent && !activePane) {
       setSelectedItems([])
       return
     }
-    const match = [...nodes.values()].find((node) => (node.kind === 'pane' || node.kind === 'subagent') && (activeAgent ? node.pane?.agent === activeAgent : node.pane?.pane_id === activePane))
+    const match = activeAgent && view === 'supervision' ? nodes.get(agentNodeID(activeAgent))
+      : [...nodes.values()].find((node) => agentKinds.has(node.kind) && (activeAgent ? node.pane?.agent === activeAgent : node.pane?.pane_id === activePane))
     setSelectedItems(match ? [match.id] : [])
-  }, [activeAgent, activePane, nodes])
+  }, [activeAgent, activePane, nodes, view])
 
   const tree = useTree<SidebarNode>({
     rootItemId: 'tree-root',
@@ -83,15 +101,19 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
   useEffect(() => { tree.rebuildTree() }, [nodes, tree])
 
   return <div className="fleet-sidebar-view">
-    {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps('Workspaces and agents')} className="fleet-tree panel-tree">
+    {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps(view === 'placement' ? 'Workspaces and agents' : 'Supervision tree')} className={`fleet-tree panel-tree fleet-tree-${view}`}>
       {tree.getItems().map((item) => {
         const node = item.getItemData()
         const pane = node.pane
         const signal = pane && pane.agent !== '-' && pane.bus_status !== '-' ? pane.bus_status : ''
         const folder = item.isFolder()
+        const agentRow = agentKinds.has(node.kind)
+        const folded = folder && !item.isExpanded() && node.summary !== undefined
         const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
           : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
-            : <span>▰</span>
+            : node.kind === 'operator' ? <span>◉</span>
+              : node.kind === 'tombstone' ? <span className="tombstone-glyph">⊘</span>
+                : <span>▰</span>
         return <TreeRow
           key={item.getId()}
           itemProps={{
@@ -117,14 +139,15 @@ export function FleetSidebar({ board, activeAgent, activePane, onPreviewAgent, o
           expanded={item.isExpanded()}
           selected={item.isSelected()}
           focused={item.isFocused()}
-          className={`${node.kind === 'pane' || node.kind === 'subagent' ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}`}
+          className={`${agentRow ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' || node.kind === 'unadopted' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${node.kind === 'tombstone' ? ' tombstone-row' : ''}${node.kind === 'unknown-manager' ? ' unknown-manager-row' : ''}${node.kind === 'operator' ? ' operator-row' : ''}`}
           icon={icon}
-          label={<span className="tree-label">{node.name}</span>}
+          label={<span className="tree-label">{folded ? collapsedLabel(node) : node.name}{node.secondary && !folded && <span className="tree-secondary">{node.secondary}</span>}</span>}
           trailing={<>{node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
-            {folder && <span className="count-badge">{node.count ?? node.children.length}</span>}
+            {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
-            {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
-          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''} · ${sideHint}` : node.name}
+            {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}
+            {node.paneChip && <span className="pane-chip" title={node.workspaceLabel}>{node.paneChip}</span>}</>}
+          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''} · ${sideHint}` : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.kind === 'unknown-manager' ? `${node.name} · no live seat or record by this name` : node.name}
           onToggle={() => { if (item.isExpanded()) item.collapse(); else item.expand() }}
         />
       })}

@@ -5,6 +5,8 @@ package fleetview
 import (
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/hcomidentity"
@@ -28,13 +30,19 @@ type Row struct {
 	// Manager the mutable hierarchy pointer, Mission the current assignment.
 	// A bus row with no store record prints "unregistered"; a pane with no
 	// bus row prints "-".
-	Launcher   string                 `json:"launcher,omitempty"`
-	Manager    string                 `json:"manager,omitempty"`
-	Mission    string                 `json:"mission,omitempty"`
-	Provenance *ProvenanceSummary     `json:"provenance,omitempty"`
-	Binding    *agentstore.Binding    `json:"binding,omitempty"` // claimed vs roster session; never touches placement
-	Title      string                 `json:"title,omitempty"`
-	Vitals     *agentstore.VitalsView `json:"vitals,omitempty"`
+	Launcher string `json:"launcher,omitempty"`
+	Manager  string `json:"manager,omitempty"`
+	// ManagerState is derived at fold time from the manager's own standing:
+	// operator (a human seeded the edge), live (a live roster row), ended
+	// (a store record that is closed or no longer on the roster), unknown
+	// (no manager, or a name with no record and no roster row).
+	ManagerState string                 `json:"manager_state,omitempty"`
+	CreatedAt    string                 `json:"created_at,omitempty"` // roster created_at, RFC3339 UTC
+	Mission      string                 `json:"mission,omitempty"`
+	Provenance   *ProvenanceSummary     `json:"provenance,omitempty"`
+	Binding      *agentstore.Binding    `json:"binding,omitempty"` // claimed vs roster session; never touches placement
+	Title        string                 `json:"title,omitempty"`
+	Vitals       *agentstore.VitalsView `json:"vitals,omitempty"`
 }
 
 // ProvenanceSummary is the row-sized slice of an AgentView's provenance.
@@ -61,10 +69,16 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 			continue
 		}
 		var view *agentstore.AgentView
-		if bus, ok := byName[row.Agent]; ok && proj != nil {
-			view = proj.ViewForRoster(bus, roster)
+		if bus, ok := byName[row.Agent]; ok {
+			if !bus.CreatedAt.IsZero() {
+				row.CreatedAt = bus.CreatedAt.UTC().Format(time.RFC3339)
+			}
+			if proj != nil {
+				view = proj.ViewForRoster(bus, roster)
+			}
 		}
 		if view == nil {
+			row.ManagerState = ManagerUnknown
 			row.Launcher, row.Manager, row.Mission = "unregistered", "-", "-"
 			row.Provenance = &ProvenanceSummary{Kind: "unregistered"}
 			continue
@@ -79,7 +93,8 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		default:
 			row.Launcher = "unregistered"
 		}
-		row.Manager = display(view.Manager)
+		manager, state := ManagerEdge(view, roster, proj)
+		row.Manager, row.ManagerState = display(manager), state
 		row.Binding = view.Binding
 		row.Mission = "-"
 		if view.Assignment != nil {
@@ -94,6 +109,100 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		}
 	}
 	return out
+}
+
+// Manager states carried on Row.ManagerState.
+const (
+	ManagerOperator = "operator"
+	ManagerLive     = "live"
+	ManagerEnded    = "ended"
+	ManagerUnknown  = "unknown"
+)
+
+// ManagerEdge resolves a folded record's manager pointer to the name the tree
+// hangs the row under and the standing of that manager. A human seed (hcom's
+// literal "user", a registered user/web launcher that still seeds the edge,
+// or a web identity with no record) is the operator. A manager string that is
+// a unique roster base_name resolves to the full roster name (the same rule
+// the life mirror applies). A live roster row is live whether or not it has a
+// record; a record that is closed or whose name is off the roster is ended;
+// anything else is unknown. Nothing here writes an edge.
+func ManagerEdge(view *agentstore.AgentView, roster []hcomidentity.Row, proj *agentstore.Projection) (string, string) {
+	manager := view.Manager
+	if manager == "" || manager == "unknown" {
+		return manager, ManagerUnknown
+	}
+	seededByHuman := view.ManagerAt == nil && (view.Provenance.LauncherKind == "user" || view.Provenance.LauncherKind == "web")
+	if manager == "user" || seededByHuman {
+		return manager, ManagerOperator
+	}
+	var bus *hcomidentity.Row
+	for i := range roster {
+		if roster[i].Name == manager {
+			bus = &roster[i]
+			break
+		}
+	}
+	if bus == nil {
+		if owner, unique := hcomidentity.ByUniqueBaseName(roster, manager); unique {
+			manager, bus = owner.Name, &owner
+		}
+	}
+	if bus != nil {
+		return manager, ManagerLive
+	}
+	if proj != nil && proj.Latest(manager) != nil {
+		return manager, ManagerEnded
+	}
+	if strings.HasPrefix(manager, "web-") {
+		return manager, ManagerOperator
+	}
+	return manager, ManagerUnknown
+}
+
+// FoldBoard folds every row of a built board (workspace panes, unplaced rows
+// and nested subagents) through FoldStore and copies the supervision fields
+// onto them. The board's placement rows are untouched otherwise: the payload
+// gains manager, manager_state, title and created_at and nothing else. A
+// manager the operator seeded reads "operator"; an empty manager is omitted.
+func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Projection) {
+	fold := func(agent, busStatus string) Row {
+		folded := FoldStore([]Row{{Agent: agent, BusStatus: busStatus}}, roster, proj)[0]
+		if folded.ManagerState == ManagerOperator {
+			folded.Manager = ManagerOperator
+		}
+		if folded.Manager == "-" || folded.Manager == "unknown" {
+			folded.Manager = ""
+		}
+		return folded
+	}
+	var foldRows func(rows []Row)
+	foldRows = func(rows []Row) {
+		for i := range rows {
+			if rows[i].BusStatus == "-" {
+				continue
+			}
+			folded := fold(rows[i].Agent, rows[i].BusStatus)
+			rows[i].Manager, rows[i].ManagerState, rows[i].Title, rows[i].CreatedAt = folded.Manager, folded.ManagerState, folded.Title, folded.CreatedAt
+			if rows[i].Subagents != nil {
+				foldRows(*rows[i].Subagents)
+			}
+		}
+	}
+	for w := range board.Workspaces {
+		for t := range board.Workspaces[w].Tabs {
+			panes := board.Workspaces[w].Tabs[t].Panes
+			for p := range panes {
+				if panes[p].BusStatus == "-" {
+					continue
+				}
+				folded := fold(panes[p].Agent, panes[p].BusStatus)
+				panes[p].Manager, panes[p].ManagerState, panes[p].Title, panes[p].CreatedAt = folded.Manager, folded.ManagerState, folded.Title, folded.CreatedAt
+				foldRows(panes[p].Subagents)
+			}
+		}
+	}
+	foldRows(board.Unplaced)
 }
 
 type Rows []Row
@@ -138,6 +247,10 @@ type Pane struct {
 	HerdrStatus    string `json:"herdr_status"`
 	BusStatus      string `json:"bus_status"`
 	Gap            string `json:"gap"`
+	Manager        string `json:"manager,omitempty"`
+	ManagerState   string `json:"manager_state,omitempty"`
+	Title          string `json:"title,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
 	Subagents      []Row  `json:"subagents,omitempty"`
 }
 
