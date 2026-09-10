@@ -1,3 +1,6 @@
+// session.go owns one session's record: the Key, the phase words, and the
+// per-session transitions (resolve, seed, advance, refresh). It does not own
+// discovery (discover.go) or watching (watch.go), and it never persists.
 package observer
 
 import (
@@ -40,27 +43,26 @@ const (
 	PhaseEnded        Phase = "ended"         // superseded or gone from the roster; kept for TTL
 )
 
-// Snapshot is the read-only copy Lookup and tests see.
-type Snapshot struct {
-	Key        Key
-	Agent      string
-	Path       string
-	Phase      Phase
-	Offset     int64
-	Size       int64
-	Vitals     claudesession.Vitals
-	ObservedAt time.Time
-	EndedAt    time.Time
-	Watched    bool
-	Err        string
+// state is one session's record; only this package (and its tests) sees it.
+// Lookup copies out the three facts a caller may have.
+type state struct {
+	key        Key
+	agent      string
+	path       string
+	phase      Phase
+	offset     int64
+	size       int64
+	vitals     claudesession.Vitals
+	observedAt time.Time
+	endedAt    time.Time
+	watched    bool
+	err        string
 }
 
 type session struct {
-	Snapshot
+	state
 	row hcomidentity.Row
 }
-
-func (s *session) snapshot() Snapshot { return s.Snapshot }
 
 func (s *session) subagent() bool { return sessionvitals.IsSubagent(s.row) }
 
@@ -70,65 +72,65 @@ func (s *session) subagent() bool { return sessionvitals.IsSubagent(s.row) }
 func (o *Observer) resolve(s *session) bool {
 	path, err := sessionvitals.ResolvePath(o.opts.Home, s.row)
 	if err != nil {
-		s.Path = ""
-		s.Phase = PhaseAwaitingFile
+		s.path = ""
+		s.phase = PhaseAwaitingFile
 		if sessionvitals.IsResolveRefusal(err) {
-			s.Err = ""
+			s.err = ""
 		} else {
-			s.Err = err.Error()
+			s.err = err.Error()
 		}
 		return false
 	}
-	s.Path = path
-	s.Err = ""
+	s.path = path
+	s.err = ""
 	return true
 }
 
 // seed is the direct read plus the tail offset; the session becomes tailing.
 func (o *Observer) seed(s *session) {
-	s.Phase = PhaseSeeding
-	vitals, end, err := sessionvitals.Seed(s.Key.Tool, s.subagent(), s.Path)
+	s.phase = PhaseSeeding
+	vitals, end, err := sessionvitals.Seed(s.key.Tool, s.subagent(), s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			s.Phase = PhaseAwaitingFile
-			s.Err = ""
+			s.phase = PhaseAwaitingFile
+			s.err = ""
 			return
 		}
-		s.Err = err.Error()
-		s.Phase = PhaseAwaitingFile
+		s.err = err.Error()
+		s.phase = PhaseAwaitingFile
 		return
 	}
-	s.Vitals, s.Offset, s.Size = vitals, end, end
-	s.Err = ""
-	s.Phase = PhaseTailing
-	s.ObservedAt = o.opts.Now()
+	s.vitals, s.offset, s.size = vitals, end, end
+	s.err = ""
+	s.phase = PhaseTailing
+	s.observedAt = o.opts.Now()
 	o.watchSession(s)
 }
 
 // advance folds appended bytes; a shorter file re-seeds through truncated.
 // Returns the bytes read (tests assert it equals the append).
 func (o *Observer) advance(s *session) int64 {
-	if s.Phase != PhaseTailing {
+	if s.phase != PhaseTailing {
 		return 0
 	}
-	vitals, end, read, err := sessionvitals.Advance(s.Key.Tool, s.subagent(), s.Path, s.Offset, s.Vitals)
+	vitals, end, read, err := sessionvitals.Advance(s.key.Tool, s.subagent(), s.path, s.offset, s.vitals)
 	switch {
 	case errors.Is(err, sessionvitals.ErrTruncated):
-		s.Phase = PhaseTruncated
-		s.Err = claudesession.Reset{Reason: claudesession.ResetTruncated, SessionID: s.Key.SessionID, PreviousOffset: s.Offset}.Error()
+		s.phase = PhaseTruncated
+		s.err = claudesession.Reset{Reason: claudesession.ResetTruncated, SessionID: s.key.SessionID, PreviousOffset: s.offset}.Error()
 		o.seed(s)
 		return 0
 	case errors.Is(err, os.ErrNotExist):
-		s.Phase = PhaseAwaitingFile
+		s.phase = PhaseAwaitingFile
 		return 0
 	case err != nil:
-		s.Err = err.Error()
+		s.err = err.Error()
 		return 0
 	}
-	s.Vitals, s.Offset, s.Size = vitals, end, end
-	s.Err = ""
+	s.vitals, s.offset, s.size = vitals, end, end
+	s.err = ""
 	if read > 0 {
-		s.ObservedAt = o.opts.Now()
+		s.observedAt = o.opts.Now()
 	}
 	return read
 }
@@ -136,11 +138,11 @@ func (o *Observer) advance(s *session) int64 {
 // refresh is what a change notification or a sweep does for one session:
 // resolve if needed, seed if not yet tailing, else advance.
 func (o *Observer) refresh(s *session) int64 {
-	switch s.Phase {
+	switch s.phase {
 	case PhaseEnded:
 		return 0
 	case PhaseAwaitingFile:
-		if s.Path == "" && !o.resolve(s) {
+		if s.path == "" && !o.resolve(s) {
 			return 0
 		}
 		o.seed(s)
@@ -153,9 +155,9 @@ func (o *Observer) refresh(s *session) int64 {
 // watchSession asks the directory watcher for the transcript's directory;
 // Watched=false means this session lives on the sweep.
 func (o *Observer) watchSession(s *session) {
-	if o.watch == nil || s.Path == "" {
-		s.Watched = false
+	if o.watch == nil || s.path == "" {
+		s.watched = false
 		return
 	}
-	s.Watched = o.watch.add(filepath.Dir(s.Path))
+	s.watched = o.watch.add(filepath.Dir(s.path))
 }

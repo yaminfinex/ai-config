@@ -113,8 +113,9 @@ Usage:
 Rows are joined only by an exact pane ID. A bus agent without a visible pane
 and a visible agent pane without a bus row are shown explicitly as gaps.
 
-LAUNCHER, MANAGER and BINDING come from the agent store. MODEL and CONTEXT are
-read on demand from each current session transcript; CONTEXT is used/window
+LAUNCHER, MANAGER and BINDING come from the agent store. MODEL and CONTEXT come
+from a running herder serve's cache over its local socket when one answers,
+else from each current session transcript; CONTEXT is used/window
 and percent used. Missing live vitals print "-".
 
 The store lives at ($HERDER_STATE_DIR/agents), folded by (name, hcom

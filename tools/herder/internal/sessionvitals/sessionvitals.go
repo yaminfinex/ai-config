@@ -79,7 +79,7 @@ func SocketLookup(row hcomidentity.Row) (Result, bool) {
 	if !ok {
 		return Result{}, false
 	}
-	return Result{Vitals: response.Vitals, Path: response.Path, ObservedAt: response.ObservedAt, Source: herdersock.SourceCache}, true
+	return Result{Vitals: response.Vitals, Path: response.Path, ObservedAt: response.ObservedAt}, true
 }
 
 // ReadDirect is the on-demand reverse transcript scan: resolve the path, then
@@ -106,7 +106,7 @@ func ReadDirect(row hcomidentity.Row) (Result, error) {
 		return result, err
 	}
 	result.ObservedAt = info.ModTime()
-	result.Vitals, err = readVitals(row.Tool, isSubagent(row), path)
+	result.Vitals, _, err = readVitals(row.Tool, IsSubagent(row), path)
 	return result, err
 }
 
@@ -122,7 +122,7 @@ func IsResolveRefusal(err error) bool {
 func ResolvePath(home string, row hcomidentity.Row) (string, error) {
 	switch row.Tool {
 	case "claude":
-		if isSubagent(row) {
+		if IsSubagent(row) {
 			return claudesession.ResolveSubagent(home, row)
 		}
 		return claudesession.Resolve(home, row)
@@ -143,13 +143,13 @@ func Kilo(value int64) string {
 }
 
 // IsSubagent reports a Claude Task transcript row (agent_id set).
-func IsSubagent(row hcomidentity.Row) bool { return isSubagent(row) }
-
-func isSubagent(row hcomidentity.Row) bool {
+func IsSubagent(row hcomidentity.Row) bool {
 	return row.Tool == "claude" && row.AgentID != ""
 }
 
-func readVitals(tool string, subagent bool, path string) (claudesession.Vitals, error) {
+// readVitals is the tool dispatch for the reverse scan; the int64 is the
+// complete-record end that scan captured.
+func readVitals(tool string, subagent bool, path string) (claudesession.Vitals, int64, error) {
 	switch {
 	case tool == "codex":
 		return codexsession.ReadVitals(path)

@@ -1,3 +1,7 @@
+// client.go owns the asking end: the instant no-listener rules, the one
+// bounded wait, and what counts as a hit. It does not resolve the state dir
+// (sessionvitals does) and never returns an error — a miss is the only
+// failure, and the caller reads directly.
 package herdersock
 
 import (
@@ -43,7 +47,7 @@ func Ask(stateDir string, request Request) (Response, bool) {
 		return Response{Miss: true}, false
 	}
 	var response Response
-	if json.Unmarshal(line, &response) != nil || response.Miss || response.Error != "" {
+	if json.Unmarshal(line, &response) != nil || !response.IsHit() {
 		return Response{Miss: true}, false
 	}
 	return response, true

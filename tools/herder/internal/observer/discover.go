@@ -1,3 +1,7 @@
+// discover.go owns the roster reconciliation: which sessions exist, which
+// were superseded or left, and when ended ones are forgotten; plus the two
+// process-wide passes (debounced change batch, safety sweep). It does not own
+// per-session transitions (session.go) or the watcher (watch.go).
 package observer
 
 import (
@@ -30,15 +34,15 @@ func (o *Observer) sync(rows []hcomidentity.Row) {
 		o.byName[row.Name] = key
 		if s, ok := o.sessions[key]; ok {
 			s.row = row
-			if s.Phase == PhaseEnded {
+			if s.phase == PhaseEnded {
 				// A session that came back (roster blip) resumes tailing.
-				s.Phase = PhaseTailing
-				s.EndedAt = time.Time{}
+				s.phase = PhaseTailing
+				s.endedAt = time.Time{}
 				o.refresh(s)
 			}
 			continue
 		}
-		s := &session{Snapshot: Snapshot{Key: key, Agent: row.Name, Phase: PhaseAwaitingFile}, row: row}
+		s := &session{state: state{key: key, agent: row.Name, phase: PhaseAwaitingFile}, row: row}
 		o.sessions[key] = s
 		if o.resolve(s) {
 			o.seed(s)
@@ -53,7 +57,7 @@ func (o *Observer) sync(rows []hcomidentity.Row) {
 		}
 	}
 	for key, s := range o.sessions {
-		if s.Phase == PhaseEnded && !s.EndedAt.IsZero() && now.Sub(s.EndedAt) >= o.opts.TTL {
+		if s.phase == PhaseEnded && !s.endedAt.IsZero() && now.Sub(s.endedAt) >= o.opts.TTL {
 			delete(o.sessions, key)
 		}
 	}
@@ -61,11 +65,11 @@ func (o *Observer) sync(rows []hcomidentity.Row) {
 
 func (o *Observer) end(key Key, now time.Time) {
 	s, ok := o.sessions[key]
-	if !ok || s.Phase == PhaseEnded {
+	if !ok || s.phase == PhaseEnded {
 		return
 	}
-	s.Phase = PhaseEnded
-	s.EndedAt = now
+	s.phase = PhaseEnded
+	s.endedAt = now
 }
 
 // watchExpectedDirectory lets a fresh launch (awaiting_file) turn into
@@ -76,7 +80,7 @@ func (o *Observer) watchExpectedDirectory(s *session) {
 		return
 	}
 	var dir string
-	switch s.Key.Tool {
+	switch s.key.Tool {
 	case "codex":
 		if s.row.TranscriptPath != "" {
 			dir = filepath.Dir(s.row.TranscriptPath)
@@ -92,7 +96,7 @@ func (o *Observer) watchExpectedDirectory(s *session) {
 	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 		return
 	}
-	s.Watched = o.watch.add(dir)
+	s.watched = o.watch.add(dir)
 }
 
 // onPaths handles one debounced batch of changed transcript paths.
@@ -104,14 +108,14 @@ func (o *Observer) onPaths(paths []string) {
 		changed[path] = true
 	}
 	for _, s := range o.sessions {
-		if s.Phase == PhaseEnded {
+		if s.phase == PhaseEnded {
 			continue
 		}
-		if s.Path != "" && changed[s.Path] {
+		if s.path != "" && changed[s.path] {
 			o.refresh(s)
 			continue
 		}
-		if s.Phase == PhaseAwaitingFile {
+		if s.phase == PhaseAwaitingFile {
 			// A create in a watched directory may be this session's file.
 			o.refresh(s)
 		}
@@ -124,19 +128,19 @@ func (o *Observer) sweep() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, s := range o.sessions {
-		if s.Phase == PhaseEnded {
+		if s.phase == PhaseEnded {
 			continue
 		}
-		if s.Phase == PhaseAwaitingFile {
+		if s.phase == PhaseAwaitingFile {
 			o.refresh(s)
 			continue
 		}
-		info, err := os.Stat(s.Path)
+		info, err := os.Stat(s.path)
 		if err != nil {
-			s.Phase = PhaseAwaitingFile
+			s.phase = PhaseAwaitingFile
 			continue
 		}
-		if info.Size() != s.Size {
+		if info.Size() != s.size {
 			o.refresh(s)
 		}
 	}

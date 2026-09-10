@@ -3,7 +3,9 @@
 `herder list` reads a `session.snapshot` directly from the herdr Unix socket,
 reads the live hcom roster, and joins rows only by an exact pane ID. A visible
 agent pane without a bus row and a bus agent without a visible pane remain
-explicit gaps. It also reverse-scans current transcripts for MODEL and CONTEXT.
+explicit gaps. MODEL and CONTEXT come from a running serve's in-memory cache
+over its local socket when one answers, else from a direct reverse scan of the
+current transcript (cache-then-direct, one reader).
 `herder show <name>` and `herder show --session <id>` print the corresponding
 live vitals alongside the agent-store view.
 
@@ -48,15 +50,17 @@ observer's entries were seeded by the same `sessionvitals` reader the direct
 path uses and are kept current by tailing the transcript directory with
 fsnotify. So there is one reader with two transports: the socket is a cache in
 front of the direct read, never a second calculation. `herder list` does the
-same per row. `GET /api/agents/{name}` inside the serve skips the socket and
+same per row, sequentially: with no serve each eligible row costs one failed
+stat; with a hung serve each row can wait up to 150 ms before its direct
+read, so N eligible rows can cost N × 150 ms. `GET /api/agents/{name}` inside the serve skips the socket and
 calls `observer.Lookup` directly through the same `sessionvitals.ReadWith`
 body, falling back to the direct read for a session the observer does not
 know.
 
-Signposted, not built: more socket ops (board, list), a `vitals` SSE event,
-the CLI as a pure client, the observer as a separate daemon process. The
-per-connection transcript push (`servecmd/transcriptwatch.go`) still has its
-own watcher; `observer/watch.go` says why.
+Future directions for the socket and the observer are listed once, in
+`internal/herdersock/protocol.go`; the observer's own two signposts sit at
+`servecmd/observe.go` (`startObserver`: one roster poll for the whole serve)
+and `observer/watch.go` (why two watchers exist).
 
 ## Gates
 

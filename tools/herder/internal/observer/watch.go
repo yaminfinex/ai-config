@@ -1,3 +1,7 @@
+// watch.go owns the process-scoped directory watcher: fsnotify over
+// transcript directories, the debounce, the ceiling, and the "dead → sweep"
+// degrade. It does not know sessions; it emits changed paths and discover.go
+// maps them back.
 package observer
 
 import (

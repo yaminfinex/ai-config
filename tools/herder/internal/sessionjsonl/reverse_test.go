@@ -17,7 +17,7 @@ func TestScanCompleteReverseIgnoresPartialTailAndStops(t *testing.T) {
 		t.Fatal(err)
 	}
 	var lines []string
-	err := ScanCompleteReverse(path, func(line []byte) bool {
+	_, err := ScanCompleteReverse(path, func(line []byte) bool {
 		lines = append(lines, string(line))
 		return len(lines) < 2
 	})

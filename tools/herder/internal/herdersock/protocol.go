@@ -54,12 +54,18 @@ type Request struct {
 // Response is one newline-terminated JSON object. Miss means the serve does
 // not know the session (the caller reads the transcript directly). Vitals is
 // claudesession.Vitals' own encoding so numbers are byte-identical with a
-// direct read. Phase is the observer's phase word for the session.
+// direct read.
 type Response struct {
 	Miss       bool                 `json:"miss,omitempty"`
 	Error      string               `json:"error,omitempty"`
 	Vitals     claudesession.Vitals `json:"vitals"`
 	Path       string               `json:"path,omitempty"`
-	Phase      string               `json:"phase,omitempty"`
 	ObservedAt time.Time            `json:"observed_at"`
+}
+
+// IsHit is the ONE definition of a usable answer: not a miss, not an error,
+// and carrying at least a model or a context usage. `{}` and `null` decode
+// without error and are misses, so the caller falls back to the direct read.
+func (r Response) IsHit() bool {
+	return !r.Miss && r.Error == "" && (r.Vitals.Model != "" || r.Vitals.ContextUsage != nil)
 }

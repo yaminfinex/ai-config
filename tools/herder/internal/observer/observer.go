@@ -40,8 +40,12 @@ const (
 	// WatchDebounce coalesces a burst of writes into one Advance, the same
 	// window the per-connection transcript push uses.
 	WatchDebounce = 120 * time.Millisecond
-	// MaxWatchDirectories caps inotify use; sessions beyond it are not an
-	// error, they live on the sweep. Same ceiling as servecmd's file watches.
+	// MaxWatchDirectories caps inotify use. It counts transcript DIRECTORIES,
+	// not sessions: every Claude session of one repo shares its project
+	// directory (subagent files sit in their own), so 64 covers many seats.
+	// Slots are never reclaimed until restart; a session whose directory does
+	// not fit is not an error, it lives on the sweep. Same ceiling as
+	// servecmd's file watches.
 	MaxWatchDirectories = 64
 )
 
@@ -124,34 +128,27 @@ func (o *Observer) loop(ctx context.Context) {
 	}
 }
 
-// Lookup is the cache seam sessionvitals.ReadWith takes. The miss rule lives
-// here and nowhere else: unknown session, or a known one that has no vitals
-// yet (awaiting_file, a seed that failed) is a miss; an ended session within
-// the TTL is still a hit with its last vitals.
+// Lookup is the only read API and the cache seam sessionvitals.ReadWith
+// takes. The miss rule lives here and nowhere else: unknown session, or a
+// known one that has no vitals yet (awaiting_file, a seed that failed) is a
+// miss; an ended session within the TTL is still a hit with its last vitals.
 func (o *Observer) Lookup(row hcomidentity.Row) (sessionvitals.Result, bool) {
-	snapshot, ok := o.Snapshot(KeyFor(row))
-	if !ok || snapshot.Vitals.Model == "" && snapshot.Vitals.ContextUsage == nil {
+	s, ok := o.lookupState(KeyFor(row))
+	if !ok || s.vitals.Model == "" && s.vitals.ContextUsage == nil {
 		return sessionvitals.Result{}, false
 	}
-	return sessionvitals.Result{Vitals: snapshot.Vitals, Path: snapshot.Path, ObservedAt: snapshot.ObservedAt}, true
+	return sessionvitals.Result{Vitals: s.vitals, Path: s.path, ObservedAt: s.observedAt}, true
 }
 
-// Snapshot returns a copy of one session's state (tests, diagnostics).
-func (o *Observer) Snapshot(key Key) (Snapshot, bool) {
+// lookupState copies one session's record under the read lock (Lookup, tests).
+func (o *Observer) lookupState(key Key) (state, bool) {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
 	s, ok := o.sessions[key]
 	if !ok {
-		return Snapshot{}, false
+		return state{}, false
 	}
-	return s.snapshot(), true
-}
-
-// Len is the number of tracked sessions, ended ones included (tests).
-func (o *Observer) Len() int {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return len(o.sessions)
+	return s.state, true
 }
 
 func (o *Observer) pollRoster() {

@@ -1,19 +1,23 @@
 package servecmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/hcomidentity"
+	"ai-config/tools/herder/internal/herdersock"
 	"ai-config/tools/herder/internal/observer"
 	"github.com/fsnotify/fsnotify"
 )
@@ -140,8 +144,159 @@ func TestReloadRunsBeforeExecHook(t *testing.T) {
 		done <- serve([]net.Listener{listener}, http.NotFoundHandler(), reload, time.Second, func() { order <- "socket closed" }, io.Discard, &stderr)
 	}()
 	reload <- config
-	<-done
-	if first, second := <-order, <-order; first != "socket closed" || second != "exec" {
+	// Every read is bounded so the mutation (hook removed) FAILS instead of
+	// hanging the package.
+	wait := func(label string) string {
+		select {
+		case v := <-order:
+			return v
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: no event within 5 s", label)
+			return ""
+		}
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not return within 5 s")
+	}
+	if first, second := wait("first"), wait("second"); first != "socket closed" || second != "exec" {
 		t.Fatalf("order = %s, %s", first, second)
+	}
+}
+
+// D2. Reddens: a nil/failed store watcher leaving the projection cache frozen
+// after the first fold (no poll recovery exists; the safety refold must).
+func TestStoreWatcherFailureHasSafetyRefresh(t *testing.T) {
+	deps := supervisionDeps(t)
+	deps.fileWatcher = nil
+	deps.transcriptSafety = 20 * time.Millisecond
+	deps.storeWriter = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	deps = startStoreProjection(ctx, deps)
+	before := readProjection(deps)
+	if before == nil {
+		t.Fatal("no initial projection")
+	}
+	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("d2-e1")), At: time.Now().UTC(), Kind: agentstore.KindReparent, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if after := readProjection(deps); after != before && after.EventsOffset > before.EventsOffset {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("projection frozen at offset %d after the append with no watcher", before.EventsOffset)
+}
+
+// D2 (quiet store). Reddens: the safety pass refolding, and rewriting
+// snapshot.json, when nothing changed.
+func TestSafetyRefreshSkipsQuietStore(t *testing.T) {
+	deps := supervisionDeps(t)
+	deps.fileWatcher = nil
+	deps.transcriptSafety = 10 * time.Millisecond
+	deps.storeWriter = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	deps = startStoreProjection(ctx, deps)
+	info, err := os.Stat(deps.store.SnapshotPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foldsBefore := folds.Load()
+	time.Sleep(120 * time.Millisecond)
+	after, err := os.Stat(deps.store.SnapshotPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folds.Load() != foldsBefore || !after.ModTime().Equal(info.ModTime()) {
+		t.Fatalf("quiet store refolded: folds %d→%d, snapshot mtime %s→%s", foldsBefore, folds.Load(), info.ModTime(), after.ModTime())
+	}
+}
+
+// M7. Reddens: answerVitals answering from anything but observer.Lookup — a
+// known awaiting_file session must be a socket miss exactly as it is a
+// Lookup miss, and a hit must carry Lookup's fields.
+func TestAnswerVitalsMatchesLookupMiss(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	missing := hcomidentity.Row{Name: "fresh", Tool: "claude", Directory: "/invented/none", SessionID: "73100000-0000-4000-8000-000000000001"}
+	obs := observer.New(observer.Options{Roster: func() ([]hcomidentity.Row, error) { return []hcomidentity.Row{missing}, nil }, Home: home, Poll: time.Hour, Sweep: time.Hour})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	obs.Run(ctx)
+	if _, ok := obs.Lookup(missing); ok {
+		t.Fatal("awaiting_file must be a Lookup miss")
+	}
+	answer := answerVitals(obs)
+	if got := answer(herdersock.Request{Op: herdersock.OpVitals, Tool: missing.Tool, Session: missing.SessionID}); !got.Miss || got.IsHit() {
+		t.Fatalf("socket answer for awaiting_file = %+v; want miss", got)
+	}
+	seeded, row, _ := seededObserver(t)
+	want, _ := seeded.Lookup(row)
+	got := answerVitals(seeded)(herdersock.Request{Op: herdersock.OpVitals, Tool: row.Tool, Session: row.SessionID})
+	if !got.IsHit() || got.Vitals.Model != want.Vitals.Model || got.Path != want.Path || !got.ObservedAt.Equal(want.ObservedAt) {
+		t.Fatalf("socket answer %+v != Lookup %+v", got, want)
+	}
+}
+
+// M11. Reddens: a fold per SSE connection — two connections and one append
+// must cost exactly one fold and hand both the same projection pointer.
+func TestTwoConnectionsOneFold(t *testing.T) {
+	deps := supervisionDeps(t)
+	deps.poll = time.Hour
+	deps.fileWatcher = fsnotify.NewWatcher
+	deps.storeWriter = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	deps = startStoreProjection(ctx, deps)
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	readers := make([]*bufio.Reader, 0, 2)
+	for i := 0; i < 2; i++ {
+		response, err := http.Get(server.URL + "/api/events")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		reader := bufio.NewReader(response.Body)
+		for {
+			if event, _ := readEvent(t, reader); event == "fleet" {
+				break
+			}
+		}
+		readers = append(readers, reader)
+	}
+	foldsBefore := folds.Load()
+	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("m11-e1")), At: time.Now().UTC(), Kind: agentstore.KindReparent, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
+		t.Fatal(err)
+	}
+	for i, reader := range readers {
+		got := make(chan string, 1)
+		go func() {
+			for {
+				if event, data := readEvent(t, reader); event == "fleet" {
+					got <- data
+					return
+				}
+			}
+		}()
+		select {
+		case data := <-got:
+			if !strings.Contains(data, `"manager":"sesh-nabi"`) {
+				t.Fatalf("client %d fleet after append = %s", i, data)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("client %d did not receive fleet after the append", i)
+		}
+	}
+	if delta := folds.Load() - foldsBefore; delta != 1 {
+		t.Fatalf("two clients, one append: %d folds, want 1", delta)
+	}
+	if readProjection(deps) != readProjection(deps) {
+		t.Fatal("projection pointer differs between reads")
 	}
 }

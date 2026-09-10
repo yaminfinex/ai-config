@@ -1,3 +1,6 @@
+// server.go owns the listening end: stale-socket probe, bind with mode 0600,
+// one goroutine per accepted connection, Close. It does not decide answers
+// (the caller's answer func does) and does not know the client's budget.
 package herdersock
 
 import (
@@ -105,8 +108,10 @@ func (s *Server) serveOne(conn net.Conn) {
 	_ = json.NewEncoder(conn).Encode(response)
 }
 
-// Close stops accepting, waits for in-flight replies and unlinks the socket
-// so a CLI sees "absent" (no serve) rather than "stale" afterwards.
+// Close stops accepting and waits for in-flight replies. listener.Close
+// unlinks the path itself, before the wait, so a CLI sees "absent" (no serve)
+// rather than "stale" and a successor serve may bind the same path while the
+// last replies drain — nothing here removes the path afterwards.
 func (s *Server) Close() {
 	if s == nil {
 		return
@@ -115,6 +120,5 @@ func (s *Server) Close() {
 		close(s.closed)
 		_ = s.listener.Close()
 		s.wg.Wait()
-		_ = os.Remove(s.path)
 	})
 }

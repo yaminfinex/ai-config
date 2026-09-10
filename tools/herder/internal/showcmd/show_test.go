@@ -295,7 +295,7 @@ func TestShowReportsCacheSourceFromSocketAndDirectWithout(t *testing.T) {
 	}
 	stamp := time.Date(2026, 9, 10, 13, 0, 0, 0, time.UTC)
 	server, err := herdersock.Listen(state, func(r herdersock.Request) herdersock.Response {
-		return herdersock.Response{Vitals: claudesession.Vitals{Model: "invented-cached", ContextUsage: &claudesession.ContextUsage{UsedTokens: 4242, InputTokens: 4242}}, Path: path, Phase: "tailing", ObservedAt: stamp}
+		return herdersock.Response{Vitals: claudesession.Vitals{Model: "invented-cached", ContextUsage: &claudesession.ContextUsage{UsedTokens: 4242, InputTokens: 4242}}, Path: path, ObservedAt: stamp}
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

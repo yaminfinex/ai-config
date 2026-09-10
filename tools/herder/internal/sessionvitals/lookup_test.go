@@ -1,10 +1,12 @@
 package sessionvitals
 
 import (
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,7 +74,9 @@ func TestReadPrefersCacheThenDirect(t *testing.T) {
 				}
 			}()
 			return func() { _ = l.Close() }
-		}, "direct", direct.Vitals.Model, direct.ObservedAt, herdersock.ClientBudget * 3},
+		}, "direct", direct.Vitals.Model, direct.ObservedAt, 400 * time.Millisecond}, // literal: a 5 s budget must redden
+		{"empty", rawReplyListener("{}\n"), "direct", direct.Vitals.Model, direct.ObservedAt, 50 * time.Millisecond},
+		{"null", rawReplyListener("null\n"), "direct", direct.Vitals.Model, direct.ObservedAt, 50 * time.Millisecond},
 		{"miss", func(t *testing.T, dir string) func() {
 			s, err := herdersock.Listen(dir, func(herdersock.Request) herdersock.Response { return herdersock.Response{Miss: true} }, nil)
 			if err != nil {
@@ -85,7 +89,7 @@ func TestReadPrefersCacheThenDirect(t *testing.T) {
 				if r.Op != herdersock.OpVitals || r.Tool != "claude" || r.Session != claudeID {
 					t.Errorf("request = %+v", r)
 				}
-				return herdersock.Response{Vitals: cached, Path: path, Phase: "tailing", ObservedAt: stamp}
+				return herdersock.Response{Vitals: cached, Path: path, ObservedAt: stamp}
 			}, nil)
 			if err != nil {
 				t.Fatal(err)
@@ -159,5 +163,88 @@ func TestSeedAdvanceMatchReadDirect(t *testing.T) {
 	}
 	if _, _, _, err := Advance("codex", false, path, next, advanced); err != ErrTruncated {
 		t.Fatalf("truncation err = %v", err)
+	}
+}
+
+// rawReplyListener answers every connection with one fixed line (D4 rows).
+func rawReplyListener(reply string) func(t *testing.T, dir string) func() {
+	return func(t *testing.T, dir string) func() {
+		l, err := net.Listen("unix", herdersock.Path(dir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					return
+				}
+				_, _ = c.Write([]byte(reply))
+				_ = c.Close()
+			}
+		}()
+		return func() { _ = l.Close() }
+	}
+}
+
+// D1. Reddens: vitals and offset taken from two scans, so a record appended
+// during the seed lands inside Offset unfolded and is never seen. The old
+// record is large so the reverse scan has a real window; the append races it.
+func TestSeedAppendDoesNotSkip(t *testing.T) {
+	dir := t.TempDir()
+	for round := 0; round < 6; round++ {
+		path := filepath.Join(dir, fmt.Sprintf("s%d.jsonl", round))
+		old := `{"type":"assistant","isSidechain":false,"message":{"model":"old-model","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1},"content":[{"type":"text","text":"` + strings.Repeat("x", 16<<20) + `"}]}}` + "\n"
+		if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fresh := `{"type":"assistant","isSidechain":false,"message":{"model":"new-model","usage":{"input_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}` + "\n"
+		type seeded struct {
+			vitals claudesession.Vitals
+			end    int64
+			err    error
+		}
+		done := make(chan seeded, 1)
+		go func() {
+			v, e, err := Seed("claude", false, path)
+			done <- seeded{v, e, err}
+		}()
+		time.Sleep(time.Duration(round) * time.Millisecond)
+		f, _ := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+		_, _ = f.WriteString(fresh)
+		_ = f.Close()
+		got := <-done
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.vitals.Model == "new-model" {
+			continue // append landed before the capture; nothing to skip
+		}
+		if got.end > int64(len(old)) {
+			t.Fatalf("round %d: seed saw old-model but offset %d is past the old record (%d): appended bytes inside the offset", round, got.end, len(old))
+		}
+		advanced, _, read, err := Advance("claude", false, path, got.end, got.vitals)
+		if err != nil || advanced.Model != "new-model" || read != int64(len(fresh)) {
+			t.Fatalf("round %d: advance after seed = %+v read %d err %v; want new-model, %d bytes", round, advanced, read, err, len(fresh))
+		}
+	}
+}
+
+// M8. Reddens: Advance reading from zero instead of from offset — the record
+// before the offset says "old-model" and would overwrite the seeded model.
+func TestAdvanceFoldsOnlyAppendedRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	old := `{"type":"assistant","isSidechain":false,"message":{"model":"old-model","usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}` + "\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prior := claudesession.Vitals{Model: "seeded-model", ContextUsage: &claudesession.ContextUsage{UsedTokens: 1, InputTokens: 1}}
+	usageOnly := `{"type":"assistant","isSidechain":false,"message":{"usage":{"input_tokens":77,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}` + "\n"
+	f, _ := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	_, _ = f.WriteString(usageOnly)
+	_ = f.Close()
+	got, end, read, err := Advance("claude", false, path, int64(len(old)), prior)
+	if err != nil || got.Model != "seeded-model" || got.ContextUsage.UsedTokens != 77 || read != int64(len(usageOnly)) || end != int64(len(old)+len(usageOnly)) {
+		t.Fatalf("Advance = %+v/%+v end %d read %d err %v", got.Model, got.ContextUsage, end, read, err)
 	}
 }

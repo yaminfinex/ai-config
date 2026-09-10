@@ -120,9 +120,9 @@ func TestAdvanceReadsOnlyAppendedBytesAndMatchesDirect(t *testing.T) {
 	for step := 1; step <= 4; step++ {
 		for _, row := range f.rows {
 			key := KeyFor(row)
-			before, _ := o.Snapshot(key)
-			if before.Phase != PhaseTailing {
-				t.Fatalf("%s phase = %s", row.Name, before.Phase)
+			before, _ := o.lookupState(key)
+			if before.phase != PhaseTailing {
+				t.Fatalf("%s phase = %s", row.Name, before.phase)
 			}
 			var chunk string
 			path := f.claude
@@ -139,9 +139,9 @@ func TestAdvanceReadsOnlyAppendedBytesAndMatchesDirect(t *testing.T) {
 			if read != int64(len(chunk)) {
 				t.Fatalf("step %d %s: read %d bytes, appended %d", step, row.Name, read, len(chunk))
 			}
-			after, _ := o.Snapshot(key)
-			if after.Offset != before.Offset+int64(len(chunk)) || after.Vitals.ContextUsage.UsedTokens != int64(1000*step) {
-				t.Fatalf("step %d %s: offset %d→%d, vitals %+v", step, row.Name, before.Offset, after.Offset, after.Vitals.ContextUsage)
+			after, _ := o.lookupState(key)
+			if after.offset != before.offset+int64(len(chunk)) || after.vitals.ContextUsage.UsedTokens != int64(1000*step) {
+				t.Fatalf("step %d %s: offset %d→%d, vitals %+v", step, row.Name, before.offset, after.offset, after.vitals.ContextUsage)
 			}
 			assertParity(t, o, row)
 		}
@@ -159,12 +159,12 @@ func TestTruncationReseeds(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.sweep()
-	got, _ := o.Snapshot(KeyFor(f.rows[0]))
-	if got.Phase != PhaseTailing || got.Vitals.Model != "invented-claude-c" || got.Offset != 1024 {
+	got, _ := o.lookupState(KeyFor(f.rows[0]))
+	if got.phase != PhaseTailing || got.vitals.Model != "invented-claude-c" || got.offset != 1024 {
 		t.Fatalf("after truncation: %+v", got)
 	}
-	if !strings.Contains(got.Err, "truncated") && got.Err != "" {
-		t.Fatalf("err = %q", got.Err)
+	if !strings.Contains(got.err, "truncated") && got.err != "" {
+		t.Fatalf("err = %q", got.err)
 	}
 	assertParity(t, o, f.rows[0])
 }
@@ -177,18 +177,18 @@ func TestAwaitingFileBecomesTailingOnCreate(t *testing.T) {
 	defer cancel()
 	o.Run(ctx)
 	key := KeyFor(f.rows[0])
-	if got, _ := o.Snapshot(key); got.Phase != PhaseAwaitingFile || !got.Watched {
+	if got, _ := o.lookupState(key); got.phase != PhaseAwaitingFile || !got.watched {
 		t.Fatalf("before create: %+v", got)
 	}
 	appendFile(t, f.claude, claudeRecord("invented-claude-new", 4200, 2048))
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if got, _ := o.Snapshot(key); got.Phase == PhaseTailing && got.Vitals.Model == "invented-claude-new" {
+		if got, _ := o.lookupState(key); got.phase == PhaseTailing && got.vitals.Model == "invented-claude-new" {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	got, _ := o.Snapshot(key)
+	got, _ := o.lookupState(key)
 	t.Fatalf("still %+v after create", got)
 }
 
@@ -202,10 +202,10 @@ func TestRosterSessionChangeSupersedes(t *testing.T) {
 	resumed := "73100000-0000-4000-8000-000000000999"
 	rows := []hcomidentity.Row{{Name: "impl-vamo", Tool: "claude", Directory: "/invented/violet", SessionID: resumed}, f.rows[1]}
 	o.sync(rows)
-	old, _ := o.Snapshot(KeyFor(f.rows[0]))
-	fresh, _ := o.Snapshot(KeyFor(rows[0]))
-	if old.Phase != PhaseEnded || fresh.Phase != PhaseAwaitingFile {
-		t.Fatalf("old %s fresh %s", old.Phase, fresh.Phase)
+	old, _ := o.lookupState(KeyFor(f.rows[0]))
+	fresh, _ := o.lookupState(KeyFor(rows[0]))
+	if old.phase != PhaseEnded || fresh.phase != PhaseAwaitingFile {
+		t.Fatalf("old %s fresh %s", old.phase, fresh.phase)
 	}
 	if _, ok := o.Lookup(f.rows[0]); !ok {
 		t.Fatal("ended session within TTL must still answer its last vitals")
@@ -220,7 +220,7 @@ func TestGoneNameEndedRetainedThenDropped(t *testing.T) {
 	o := newObserver(f, clock, nil)
 	o.sync(f.rows)
 	o.sync(f.rows[:1])
-	if got, ok := o.Snapshot(KeyFor(f.rows[1])); !ok || got.Phase != PhaseEnded {
+	if got, ok := o.lookupState(KeyFor(f.rows[1])); !ok || got.phase != PhaseEnded {
 		t.Fatalf("after leaving roster: %+v %v", got, ok)
 	}
 	if _, ok := o.Lookup(f.rows[1]); !ok {
@@ -228,12 +228,12 @@ func TestGoneNameEndedRetainedThenDropped(t *testing.T) {
 	}
 	clock.now = clock.now.Add(DefaultTTL - time.Second)
 	o.sync(f.rows[:1])
-	if _, ok := o.Snapshot(KeyFor(f.rows[1])); !ok {
+	if _, ok := o.lookupState(KeyFor(f.rows[1])); !ok {
 		t.Fatal("dropped before TTL")
 	}
 	clock.now = clock.now.Add(2 * time.Second)
 	o.sync(f.rows[:1])
-	if _, ok := o.Snapshot(KeyFor(f.rows[1])); ok {
+	if _, ok := o.lookupState(KeyFor(f.rows[1])); ok {
 		t.Fatal("not dropped after TTL")
 	}
 }
@@ -261,11 +261,11 @@ func TestWatchCeilingDegradesToSweep(t *testing.T) {
 	o.Run(ctx)
 	watched := 0
 	for _, row := range rows {
-		got, _ := o.Snapshot(KeyFor(row))
-		if got.Phase != PhaseTailing {
-			t.Fatalf("%s phase %s err %q", row.Name, got.Phase, got.Err)
+		got, _ := o.lookupState(KeyFor(row))
+		if got.phase != PhaseTailing {
+			t.Fatalf("%s phase %s err %q", row.Name, got.phase, got.err)
 		}
-		if got.Watched {
+		if got.watched {
 			watched++
 		}
 	}
@@ -273,12 +273,12 @@ func TestWatchCeilingDegradesToSweep(t *testing.T) {
 		t.Fatalf("watched %d directories, ceiling %d", watched, MaxWatchDirectories)
 	}
 	last := rows[len(rows)-1]
-	if got, _ := o.Snapshot(KeyFor(last)); got.Watched {
+	if got, _ := o.lookupState(KeyFor(last)); got.watched {
 		t.Fatal("session above the ceiling reported as watched")
 	}
 	appendFile(t, paths[len(paths)-1], claudeRecord("invented-claude-swept", 99, 512))
 	o.sweep()
-	if got, _ := o.Snapshot(KeyFor(last)); got.Vitals.Model != "invented-claude-swept" {
+	if got, _ := o.lookupState(KeyFor(last)); got.vitals.Model != "invented-claude-swept" {
 		t.Fatalf("sweep did not advance the unwatched session: %+v", got)
 	}
 }
@@ -360,9 +360,9 @@ func TestRosterBlipRestoresPhaseFromPath(t *testing.T) {
 	o.sync(f.rows) // claude: awaiting_file (no file); codex: tailing
 	o.sync(nil)    // both ended
 	o.sync(f.rows) // both back
-	claude, _ := o.Snapshot(KeyFor(f.rows[0]))
-	codex, _ := o.Snapshot(KeyFor(f.rows[1]))
-	if claude.Phase != PhaseAwaitingFile || claude.Err != "" || codex.Phase != PhaseTailing {
-		t.Fatalf("claude %s err %q, codex %s", claude.Phase, claude.Err, codex.Phase)
+	claude, _ := o.lookupState(KeyFor(f.rows[0]))
+	codex, _ := o.lookupState(KeyFor(f.rows[1]))
+	if claude.phase != PhaseAwaitingFile || claude.err != "" || codex.phase != PhaseTailing {
+		t.Fatalf("claude %s err %q, codex %s", claude.phase, claude.err, codex.phase)
 	}
 }

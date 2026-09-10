@@ -217,9 +217,6 @@ func entrySessionPath(row hcomidentity.Row) (string, error) {
 	return sessionvitals.ResolvePath(home, row)
 }
 
-// Vitals for the detail endpoint come from readAgentVitals (observe.go): the
-// in-process observer first, the direct transcript read behind it.
-
 // readQueueExclusions scans normalized session windows without retaining the
 // full transcript. Delivered IDs are excluded for every supported tool;
 // pre-compaction candidates are also excluded for Claude, whose compaction can

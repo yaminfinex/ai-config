@@ -11,12 +11,14 @@ import (
 // startStoreWatch watches the agent store's journal (events.jsonl) so a store
 // append — a spawn's register, a future reparent — refolds the shared
 // projection within the file-watch debounce instead of waiting for the poll.
-// Started once per process by startStoreProjection (observe.go), never per
-// SSE connection. The directory is watched
-// (the journal is appended in place and may be created after the serve
-// starts); only the journal file is a trigger. Nil when the store or the
-// watcher factory is absent or the directory cannot be watched; the poll
-// still catches the change then.
+// Started once per process by startStoreProjection (projection.go), never
+// per SSE connection. The directory is watched (the journal is appended in
+// place and may be created after the serve starts); only the journal file is
+// a trigger. Nil when the store or the watcher factory is absent or the
+// directory cannot be watched; then the process-level safety refold in
+// projection.go (every TranscriptSafetyCadence, only when events.jsonl
+// changed size) catches the change — the SSE poll does not, it reads the
+// shared projection.
 func startStoreWatch(ctx context.Context, deps dependencies) <-chan struct{} {
 	if deps.store == nil || deps.fileWatcher == nil {
 		return nil

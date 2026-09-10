@@ -18,13 +18,12 @@ import (
 // by the CLI.
 
 // Seed reads the vitals the direct path would return and the offset the tail
-// continues from (the end of the last complete record).
+// continues from. Both come from ONE reverse scan: the end is the
+// complete-record end that scan captured before visiting, so a record
+// appended while the scan runs lies at or after the offset and is folded by
+// the next Advance, never skipped.
 func Seed(tool string, subagent bool, path string) (claudesession.Vitals, int64, error) {
-	vitals, err := readVitals(tool, subagent, path)
-	if err != nil {
-		return claudesession.Vitals{}, 0, err
-	}
-	end, err := sessionjsonl.CompleteEnd(path)
+	vitals, end, err := readVitals(tool, subagent, path)
 	if err != nil {
 		return claudesession.Vitals{}, 0, err
 	}

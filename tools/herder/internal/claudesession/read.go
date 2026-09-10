@@ -169,18 +169,20 @@ func read(path string, offset int64, limit int, keepTail, includeSidechain bool)
 }
 
 // ReadVitals scans complete session records and returns the latest entry that
-// carries each fact. It uses the same complete-line rule as transcript reads.
-func ReadVitals(path string) (Vitals, error) {
+// carries each fact, plus the complete-record end the scan captured (the
+// offset an incremental tail continues from). It uses the same complete-line
+// rule as transcript reads.
+func ReadVitals(path string) (Vitals, int64, error) {
 	return readVitals(path, false)
 }
 
-func ReadSubagentVitals(path string) (Vitals, error) {
+func ReadSubagentVitals(path string) (Vitals, int64, error) {
 	return readVitals(path, true)
 }
 
-func readVitals(path string, includeSidechain bool) (Vitals, error) {
+func readVitals(path string, includeSidechain bool) (Vitals, int64, error) {
 	var vitals Vitals
-	err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
+	end, err := sessionjsonl.ScanCompleteReverse(path, func(raw []byte) bool {
 		var facts Vitals
 		ObserveVitals(raw, &facts, includeSidechain)
 		if vitals.Model == "" {
@@ -191,7 +193,7 @@ func readVitals(path string, includeSidechain bool) (Vitals, error) {
 		}
 		return vitals.Model == "" || vitals.ContextUsage == nil
 	})
-	return vitals, err
+	return vitals, end, err
 }
 
 // ObserveVitals folds one complete Claude record into vitals: the assistant
