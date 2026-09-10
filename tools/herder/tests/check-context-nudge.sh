@@ -46,7 +46,7 @@ token_file="$FAKE_TOKEN_DIR/$3"
 token="$(cat "$token_file")" || exit 1
 jq -cn --argjson used "$token" '{vitals:{context_usage:{used_tokens:$used}}}'
 STUB
-chmod +x "$BIN_DIR/herder" "$HOOK"
+chmod +x "$BIN_DIR/herder"
 
 SID_A=11111111-1111-1111-1111-111111111111
 SID_B=22222222-2222-2222-2222-222222222222
@@ -195,7 +195,7 @@ settings="$MERGE_HOME/.claude/settings.json"
 for event in UserPromptSubmit PostToolUse SessionStart; do
   hcom_command="hcom $(case "$event" in UserPromptSubmit) printf user ;; PostToolUse) printf post ;; *) printf start ;; esac)"
   assert_eq "merge: $event preserves hcom" "$(jq --arg e "$event" --arg c "$hcom_command" '[.hooks[$e][] | select(any(.hooks[]; .command == $c))] | length' "$settings")" 1
-  assert_eq "merge: $event has one nudge after two runs" "$(jq --arg e "$event" '[.hooks[$e][] | select(any(.hooks[]; .command == "$HOME/.claude/hooks/context-nudge.sh"))] | length' "$settings")" 1
+  assert_eq "merge: $event has one guarded nudge after two runs" "$(jq --arg e "$event" '[.hooks[$e][] | select(any(.hooks[]; .command == "[ -x \"$HOME/.claude/hooks/context-nudge.sh\" ] && exec \"$HOME/.claude/hooks/context-nudge.sh\" || exit 0"))] | length' "$settings")" 1
 done
 
 printf '\n'

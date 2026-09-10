@@ -1,7 +1,7 @@
 // Package listcmd renders a live, read-only join of herdr placement and the
 // hcom roster, folded with the agent store's provenance columns. The join
-// owns no persisted state; a store failure only degrades the columns, never
-// the list.
+// owns no persisted state and never maintains the store snapshot; a store
+// failure only degrades the columns, never the list.
 package listcmd
 
 import (

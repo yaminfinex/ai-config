@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/context-nudge.sh",
+            "command": "[ -x \"$HOME/.claude/hooks/context-nudge.sh\" ] && exec \"$HOME/.claude/hooks/context-nudge.sh\" || exit 0",
             "timeout": 3
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/context-nudge.sh",
+            "command": "[ -x \"$HOME/.claude/hooks/context-nudge.sh\" ] && exec \"$HOME/.claude/hooks/context-nudge.sh\" || exit 0",
             "timeout": 3
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "$HOME/.claude/hooks/context-nudge.sh",
+            "command": "[ -x \"$HOME/.claude/hooks/context-nudge.sh\" ] && exec \"$HOME/.claude/hooks/context-nudge.sh\" || exit 0",
             "timeout": 3
           }
         ]
