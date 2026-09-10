@@ -7,25 +7,31 @@ package listcmd
 import (
 	"fmt"
 	"io"
+	"sync"
 	"text/tabwriter"
+	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
+	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/fleetview"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herderstate"
 	"ai-config/tools/herder/internal/herdrcli"
+	"ai-config/tools/herder/internal/sessionvitals"
 )
 
 type dependencies struct {
 	snapshot func() (herdrcli.Snapshot, error)
 	roster   func() ([]hcomidentity.Row, error)
 	store    func(stderr io.Writer) *agentstore.Projection
+	vitals   func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error)
 }
 
 var liveDependencies = dependencies{
 	snapshot: herdrcli.LiveSnapshot,
 	roster:   hcomidentity.List,
 	store:    loadStore,
+	vitals:   sessionvitals.Read,
 }
 
 // loadStore never fails a list: an unwritable first-open import or an
@@ -80,13 +86,39 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stderr, "herder list: cannot read live hcom roster: %v\n", err)
 		return 1
 	}
+	roster = hcomidentity.WithParents(roster)
 
 	var proj *agentstore.Projection
 	if deps.store != nil {
 		proj = deps.store(stderr)
 	}
 	rows := fleetview.FoldStore(Join(snapshot, roster), roster, proj)
-	writeTable(stdout, rows)
+	vitals := make(map[string]claudesession.Vitals, len(roster))
+	observed := make([]claudesession.Vitals, len(roster))
+	var reads sync.WaitGroup
+	if deps.vitals != nil {
+		reads.Add(len(roster))
+	}
+	for i, row := range roster {
+		if deps.vitals == nil {
+			break
+		}
+		// This is today's per-row on-demand reverse transcript scan. Once the
+		// observer/daemon exists, it becomes a central context cache read over the
+		// local socket; the transcript remains the authority behind that cache.
+		go func() {
+			defer reads.Done()
+			read, _, _, readErr := deps.vitals(row)
+			if readErr == nil {
+				observed[i] = read
+			}
+		}()
+	}
+	reads.Wait()
+	for i, row := range roster {
+		vitals[row.Name] = observed[i]
+	}
+	writeTable(stdout, rows, vitals)
 	return 0
 }
 
@@ -99,11 +131,14 @@ Usage:
 Rows are joined only by an exact pane ID. A bus agent without a visible pane
 and a visible agent pane without a bus row are shown explicitly as gaps.
 
-LAUNCHER, MANAGER and BINDING come from the agent store
-($HERDER_STATE_DIR/agents), folded by (name, hcom created_at). A bus row with
-no store record prints "unregistered"; BINDING shows "conflict A≠B" when a
-registered session claim disagrees with the roster (the roster stays
-current). The store never gates a lifecycle action.
+LAUNCHER, MANAGER and BINDING come from the agent store. MODEL and CONTEXT are
+read on demand from each current session transcript; CONTEXT is used/window
+and percent used. Missing live vitals print "-".
+
+The store lives at ($HERDER_STATE_DIR/agents), folded by (name, hcom
+created_at). A bus row with no store record prints "unregistered"; BINDING
+shows "conflict A≠B" when a registered session claim disagrees with the roster
+(the roster stays current). The store never gates a lifecycle action.
 `)
 }
 
@@ -113,16 +148,38 @@ func Join(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 	return fleetview.JoinRows(snapshot, roster)
 }
 
-func writeTable(out io.Writer, rows []Row) {
+func writeTable(out io.Writer, rows []Row, vitals map[string]claudesession.Vitals) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "PANE\tAGENT\tTOOL\tHERDR\tBUS\tLAUNCHER\tMANAGER\tBINDING\tGAP")
+	fmt.Fprintln(w, "PANE\tAGENT\tTOOL\tHERDR\tBUS\tLAUNCHER\tMANAGER\tBINDING\tMODEL\tCONTEXT\tGAP")
 	for _, row := range rows {
 		// Row.Mission is folded but not printed: the mission model is not specced
 		// yet (owner ruling 2026-09-09); unit 6 switches the column on.
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			row.Pane, row.Agent, row.Tool, row.HerdrStatus, row.BusStatus, orDash(row.Launcher), orDash(row.Manager), bindingLabel(row.Binding), row.Gap)
+		rowVitals := vitals[row.Agent]
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Pane, row.Agent, row.Tool, row.HerdrStatus, row.BusStatus, orDash(row.Launcher), orDash(row.Manager), bindingLabel(row.Binding), orDash(rowVitals.Model), contextLabel(rowVitals.ContextUsage), row.Gap)
 	}
 	_ = w.Flush()
+}
+
+func contextLabel(usage *claudesession.ContextUsage) string {
+	if usage == nil || usage.UsedTokens <= 0 {
+		return "-"
+	}
+	window, percent := "-", "-"
+	if usage.WindowTokens != nil && *usage.WindowTokens > 0 {
+		window = compactTokens(*usage.WindowTokens)
+	}
+	if usage.UsedPercent != nil {
+		percent = fmt.Sprintf("%.0f%%", *usage.UsedPercent)
+	}
+	return fmt.Sprintf("%s/%s %s", compactTokens(usage.UsedTokens), window, percent)
+}
+
+func compactTokens(value int64) string {
+	if value < 1000 {
+		return fmt.Sprintf("%d", value)
+	}
+	return fmt.Sprintf("%dk", (value+500)/1000)
 }
 
 // bindingLabel is "-" when the store made no session claim, "verified" or

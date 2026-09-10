@@ -23,8 +23,8 @@ type command struct {
 
 // commands is the single registry the root usage table is generated from.
 var commands = []command{
-	{"list", "Join live herdr placement with the hcom roster", listcmd.Run},
-	{"show", "Show the agent store's view of one agent", showcmd.Run},
+	{"list", "Join live placement, roster, provenance, model and context", listcmd.Run},
+	{"show", "Show one agent by name or current session, with live vitals", showcmd.Run},
 	{"register", "Record one lifecycle fact in the agent store", registercmd.Run},
 	{"serve", "Serve the live fleet API on loopback and tailscale", servecmd.Run},
 }

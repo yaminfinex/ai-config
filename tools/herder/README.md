@@ -1,9 +1,11 @@
 # Herder live fleet view
 
-Herder has one command: `herder list`. It reads a `session.snapshot` directly
-from the herdr Unix socket, reads the live hcom roster, and joins rows only by
-an exact pane ID. A visible agent pane without a bus row and a bus agent without
-a visible pane remain explicit gaps.
+`herder list` reads a `session.snapshot` directly from the herdr Unix socket,
+reads the live hcom roster, and joins rows only by an exact pane ID. A visible
+agent pane without a bus row and a bus agent without a visible pane remain
+explicit gaps. It also reverse-scans current transcripts for MODEL and CONTEXT.
+`herder show <name>` and `herder show --session <id>` print the corresponding
+live vitals alongside the agent-store view.
 
 Herder owns no ledger, cache, daemon, or lifecycle authority. Spawn, message,
 compact, cull, resume, and fork compose through `tools/fleet`, hcom, and herdr.
@@ -18,6 +20,8 @@ When running Go directly from this module, use `env -u GOROOT go ...`.
 - `internal/herdrcli/` — herdr socket snapshots and the `herdr status server --json` discovery contract.
 - `internal/hcomidentity/` — hcom roster decoding and identity helpers.
 - `internal/listcmd/` — exact-coordinate live join and table rendering.
+- `internal/sessionvitals/` — on-demand model/context transcript reads.
+- `internal/showcmd/` — one-agent store and live-vitals rendering.
 - `tests/` — hermetic contracts for the surviving surface.
 
 ## Gates

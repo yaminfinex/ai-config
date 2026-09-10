@@ -12,6 +12,7 @@ import (
 	"ai-config/tools/herder/internal/codexsession"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/sessionjsonl"
+	"ai-config/tools/herder/internal/sessionvitals"
 )
 
 const maxEntryWindow = 500
@@ -72,7 +73,7 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	path, err := resolveEntryPath(home, row)
+	path, err := sessionvitals.ResolvePath(home, row)
 	if err != nil {
 		var resolveErr *claudesession.ResolveError
 		var codexResolveErr *codexsession.ResolveError
@@ -183,7 +184,7 @@ func entryTailEnd(row hcomidentity.Row) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	path, err := resolveEntryPath(home, row)
+	path, err := sessionvitals.ResolvePath(home, row)
 	if err != nil {
 		return 0, err
 	}
@@ -195,7 +196,7 @@ func entryTail(row hcomidentity.Row, cursor claudesession.Cursor, limit int) (cl
 	if err != nil {
 		return claudesession.TailResult{}, err
 	}
-	path, err := resolveEntryPath(home, row)
+	path, err := sessionvitals.ResolvePath(home, row)
 	if err != nil {
 		return claudesession.TailResult{}, err
 	}
@@ -213,33 +214,15 @@ func entrySessionPath(row hcomidentity.Row) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return resolveEntryPath(home, row)
+	return sessionvitals.ResolvePath(home, row)
 }
 
 func readAgentVitals(row hcomidentity.Row) (claudesession.Vitals, error) {
-	if row.Tool != "claude" && row.Tool != "codex" {
-		return claudesession.Vitals{}, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return claudesession.Vitals{}, err
-	}
-	path, err := resolveEntryPath(home, row)
-	if err != nil {
-		var claudeResolve *claudesession.ResolveError
-		var codexResolve *codexsession.ResolveError
-		if errors.As(err, &claudeResolve) || errors.As(err, &codexResolve) {
-			return claudesession.Vitals{}, nil
-		}
-		return claudesession.Vitals{}, err
-	}
-	if row.Tool == "codex" {
-		return codexsession.ReadVitals(path)
-	}
-	if isSubagent(row) {
-		return claudesession.ReadSubagentVitals(path)
-	}
-	return claudesession.ReadVitals(path)
+	// This is today's on-demand reverse transcript scan. Once the
+	// observer/daemon exists, it becomes a central context cache read over the
+	// local socket; the transcript remains the authority behind that cache.
+	vitals, _, _, err := sessionvitals.Read(row)
+	return vitals, err
 }
 
 // readQueueExclusions scans normalized session windows without retaining the
@@ -258,7 +241,7 @@ func readQueueExclusions(row hcomidentity.Row, candidates map[string]queueCandid
 	if err != nil {
 		return nil, err
 	}
-	path, err := resolveEntryPath(home, row)
+	path, err := sessionvitals.ResolvePath(home, row)
 	if err != nil {
 		return nil, err
 	}
@@ -285,21 +268,6 @@ func readQueueExclusions(row hcomidentity.Row, candidates map[string]queueCandid
 			return proof.exclusions(candidates)
 		}
 		offset = read.NextOffset
-	}
-}
-
-func resolveEntryPath(home string, row hcomidentity.Row) (string, error) {
-	switch row.Tool {
-	case "claude":
-		if isSubagent(row) {
-			return claudesession.ResolveSubagent(home, row)
-		}
-		return claudesession.Resolve(home, row)
-	case "codex":
-		return codexsession.Resolve(home, row)
-	default:
-		// Preserve the existing non-file-tool refusal category.
-		return claudesession.Resolve(home, row)
 	}
 }
 

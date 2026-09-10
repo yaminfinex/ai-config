@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
+	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 )
@@ -76,6 +77,8 @@ func TestJoinDoesNotClaimPaneVisibilityFromAgentRow(t *testing.T) {
 }
 
 func TestRunReadsSocketSnapshotBeforeRosterAndPrintsTable(t *testing.T) {
+	window := int64(258400)
+	percent := 31.733746
 	var calls []string
 	deps := dependencies{
 		snapshot: func() (herdrcli.Snapshot, error) {
@@ -86,6 +89,9 @@ func TestRunReadsSocketSnapshotBeforeRosterAndPrintsTable(t *testing.T) {
 			calls = append(calls, "roster")
 			return []hcomidentity.Row{{Name: "mavu", Tool: "codex", Status: "listening", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}}}, nil
 		},
+		vitals: func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error) {
+			return claudesession.Vitals{Model: "gpt-5.6-sol", ContextUsage: &claudesession.ContextUsage{UsedTokens: 82000, WindowTokens: &window, UsedPercent: &percent}}, "", time.Time{}, nil
+		},
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run(nil, &stdout, &stderr, deps); code != 0 {
@@ -94,10 +100,31 @@ func TestRunReadsSocketSnapshotBeforeRosterAndPrintsTable(t *testing.T) {
 	if strings.Join(calls, ",") != "snapshot,roster" {
 		t.Fatalf("calls = %v", calls)
 	}
-	for _, text := range []string{"PANE", "AGENT", "HERDR", "BUS", "p1", "mavu", "listening"} {
+	for _, text := range []string{"PANE", "AGENT", "HERDR", "BUS", "MODEL", "CONTEXT", "p1", "mavu", "listening", "gpt-5.6-sol", "82k/258k 32%"} {
 		if !strings.Contains(stdout.String(), text) {
 			t.Errorf("output missing %q:\n%s", text, stdout.String())
 		}
+	}
+}
+
+func TestRunPrintsDashVitalsForGapRow(t *testing.T) {
+	deps := dependencies{
+		snapshot: func() (herdrcli.Snapshot, error) {
+			return herdrcli.Snapshot{Agents: []herdrcli.Agent{{PaneID: "p1", Name: "pane-only", Agent: "claude"}}}, nil
+		},
+		roster: func() ([]hcomidentity.Row, error) { return nil, nil },
+		vitals: func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error) {
+			t.Fatal("vitals called for gap")
+			return claudesession.Vitals{}, "", time.Time{}, nil
+		},
+	}
+	var out, errBuf bytes.Buffer
+	if code := run(nil, &out, &errBuf, deps); code != 0 {
+		t.Fatalf("code=%d err=%q", code, errBuf.String())
+	}
+	fields := strings.Fields(out.String())
+	if !strings.Contains(out.String(), "MODEL") || !strings.Contains(out.String(), "CONTEXT") || len(fields) < 2 || strings.Count(out.String(), "-") < 4 {
+		t.Fatalf("gap output = %q", out.String())
 	}
 }
 
