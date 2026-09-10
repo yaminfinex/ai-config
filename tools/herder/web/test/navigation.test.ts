@@ -11,6 +11,7 @@ import {
   routeFromLocation,
   shouldReplayInitialRoute,
   pathWithSpace,
+  replayHistoryRoute,
 } from '../src/features/layout/historyModel.ts'
 
 const agent = (name = 'mavu'): DockPanelParams => ({ kind: 'agent', name, preview: true })
@@ -113,20 +114,46 @@ test('known paths with malformed params and unknown paths are honest missing rou
 })
 
 test('history replay rejects unknown or malformed state instead of resurrecting it', () => {
-  assert.deepEqual(routeFromHistory('/', '', { ...layoutRouteState, subject: { kind: 'notes', id: 'ghost' } }), { page: 'shell' })
-  assert.deepEqual(routeFromHistory('/', '', { ...layoutRouteState, subject: { kind: 'screen', pane: {}, identity: {} } }), { page: 'shell' })
+  assert.deepEqual(routeFromHistory('/', '', { ...layoutRouteState, subject: { kind: 'notes', id: 'ghost' } }), { page: 'shell', spaceID: null })
+  assert.deepEqual(routeFromHistory('/', '', { ...layoutRouteState, subject: { kind: 'screen', pane: {}, identity: {} } }), { page: 'shell', spaceID: null })
   assert.equal(routeFromHistory('/agents/mavu', '', { ...layoutRouteState, subject: { kind: 'agent', name: '' } }).page, 'panel')
 })
 
-test('popstate parsing treats stale space ids as inert panel metadata', () => {
-  const route = routeFromHistory('/agents/mavu', '?space=closed', historyEntryForPanel(agent('mavu'), 'closed').state)
-  assert.equal(route.page, 'panel')
-  if (route.page === 'panel') assert.equal(route.params.kind, 'agent')
-  assert.equal('spaceID' in route, false)
+test('popstate restores the recorded space before its panel without growing history', () => {
+  let currentSpaceID = 'B'
+  const calls: string[] = []
+  const replay = (spaceID: string, panel: string) => replayHistoryRoute(
+    routeFromHistory(`/agents/${panel}`, `?space=${spaceID}`, historyEntryForPanel(agent(panel), spaceID).state),
+    currentSpaceID,
+    () => true,
+    () => true,
+    {
+      switchSpace: (id) => { calls.push(`space:${id}`); currentSpaceID = id; return true },
+      applyRoute: (route) => { if (route.page === 'panel' && route.params.kind === 'agent') calls.push(`panel:${route.params.name}`) },
+    },
+  )
+
+  replay('A', 'pane-1')
+  replay('B', 'pane-2')
+  assert.deepEqual(calls, ['space:A', 'panel:pane-1', 'space:B', 'panel:pane-2'])
+
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   const popstate = controller.match(/useDOMEvent\(window, 'popstate',[\s\S]*?\n {2}\}\)/)?.[0] ?? ''
-  assert.match(popstate, /routeFromHistory/)
-  assert.doesNotMatch(popstate, /readActiveSpace|switchSpace/)
+  assert.match(popstate, /replayHistoryRoute/)
+  assert.doesNotMatch(popstate, /pushState/)
+})
+
+test('a history entry for a deleted space stays put and restores only an existing panel', () => {
+  const calls: string[] = []
+  const actions = {
+    switchSpace: (id: string) => { calls.push(`space:${id}`); return true },
+    applyRoute: () => { calls.push('panel') },
+  }
+  const route = routeFromHistory('/agents/mavu', '?space=deleted', historyEntryForPanel(agent('mavu'), 'deleted').state)
+  replayHistoryRoute(route, 'current', () => false, () => false, actions)
+  assert.deepEqual(calls, [])
+  replayHistoryRoute(route, 'current', () => false, () => true, actions)
+  assert.deepEqual(calls, ['panel'])
 })
 
 test('a restored layout wins over an app-created route while deliberate deep links replay', () => {

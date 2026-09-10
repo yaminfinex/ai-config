@@ -20,6 +20,7 @@ import { NoteQuickAdd } from './features/notes/NoteQuickAdd'
 import { shortcutLabels } from './features/layout/shellShortcuts'
 import { browserOnlySpacesMessage, defaultMaxSpaces, serverSpaceLookupMessage, SpaceStrip } from './features/spaces/index.ts'
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
+import { preserveDockTabBrowserHistory } from './features/workspace/dockTabHistoryModel.ts'
 
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
@@ -104,7 +105,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     </UtilityRail>
     <section className="shell-main">
       <StreamBanners fleetProblem={workspace.fleetProblem} viewerProblem={workspace.viewerProblem} spaceProblem={workspace.spaces.enabled ? workspace.spaceProblem : ''} flushLayout={workspace.flushLayout} />
-      <div className="dock-host">
+      <div className="dock-host" onKeyDownCapture={preserveDockTabBrowserHistory}>
         <DockviewReact components={dockComponents} tabComponents={{ 'herder-tab': DockTab }} rightHeaderActionsComponent={DockHeaderActions} watermarkComponent={DockWatermark}
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
           pinnedTabs={{ enabled: false }} layoutHistory={{ enabled: false }} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />

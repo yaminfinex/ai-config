@@ -133,7 +133,6 @@ export function SpaceStrip(props: Props) {
               }
             }} />
           : <button type="button" className="space-name" aria-pressed={space.id === props.activeID}
-            aria-keyshortcuts="Meta+ArrowLeft Meta+ArrowRight Control+ArrowLeft Control+ArrowRight"
             onClick={() => props.switch(space.id)} onDoubleClick={() => beginRename(space)} onKeyDown={(event) => {
               if (event.key === 'Enter' || event.key === 'F2') {
                 if (space.id === props.activeID) beginRename(space)

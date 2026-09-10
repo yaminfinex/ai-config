@@ -16,6 +16,7 @@ import { useLayoutPersistence } from '../layout/useLayoutPersistence'
 import {
   createHistorySuppressor,
   decideHistoryUpdate,
+  replayHistoryRoute,
   routeFromHistory,
   spaceIDFromSearch,
   shouldReplayInitialRoute,
@@ -213,7 +214,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   const switchSpace = useCallback((spaceID: string) => {
     const store = spacesRuntime.store
-    if (!store || !store.list().some((space) => space.id === spaceID) || activeSpaceID === spaceID) return false
+    if (!store || !store.list().some((space) => space.id === spaceID) || activeSpaceIDRef.current === spaceID) return false
     const api = apiRef.current
     if (!api) return false
     return performSpaceSwitch(spaceID, {
@@ -241,7 +242,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         setRevision((value) => value + 1)
       },
     })
-  }, [activeSpaceID, historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
+  }, [historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
 
   useEffect(() => {
     const store = spacesRuntime.store
@@ -342,7 +343,13 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
     const route = routeFromHistory(window.location.pathname, window.location.search, window.history.state)
-    if (route.page !== 'missing') applyRoute(route)
+    replayHistoryRoute(
+      route,
+      activeSpaceIDRef.current,
+      (spaceID) => Boolean(spacesRuntime.store?.list().some((space) => space.id === spaceID)),
+      (params) => Boolean(apiRef.current?.getPanel(panelID(params))),
+      { switchSpace, applyRoute },
+    )
   })
 
   const restoredPanels = layout.initial.stored?.dock ? Object.values(layout.initial.stored.dock.panels).flatMap((panel) => {
@@ -514,7 +521,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       window.requestAnimationFrame(() => target?.isConnected && target.focus())
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace, reorderSpace })
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined

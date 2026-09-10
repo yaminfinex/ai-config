@@ -8,6 +8,7 @@ import {
 } from '../workspace/panelRegistryModel.ts'
 
 export type Route = { page: 'shell' } | { page: 'panel', params: DockPanelParams } | { page: 'missing' }
+export type HistoryRoute = Route & { spaceID: string | null }
 export type HistoryCause = 'activation' | 'merge' | 'stamp' | 'replay'
 export const layoutRouteState = { herderLayoutRoute: true } as const
 export const spaceQueryParam = 'space'
@@ -48,12 +49,31 @@ export function routeFromLocation(pathname: string, search: string): Route {
   return { page: 'shell' }
 }
 
-export function routeFromHistory(pathname: string, search: string, state: unknown): Route {
+export function routeFromHistory(pathname: string, search: string, state: unknown): HistoryRoute {
+  const spaceID = spaceIDFromSearch(search)
   if (isLayoutRouteState(state) && 'subject' in state) {
     const params = panelParamsFromHistorySubject(state.subject)
-    if (params && panelRoutePath(params) === pathWithoutSpace(pathname, search)) return { page: 'panel', params }
+    if (params && panelRoutePath(params) === pathWithoutSpace(pathname, search)) return { page: 'panel', params, spaceID }
   }
-  return routeFromLocation(pathname, search)
+  return { ...routeFromLocation(pathname, search), spaceID }
+}
+
+export function replayHistoryRoute(
+  route: HistoryRoute,
+  currentSpaceID: string | null,
+  spaceExists: (spaceID: string) => boolean,
+  panelExists: (params: DockPanelParams) => boolean,
+  actions: {
+    switchSpace: (spaceID: string) => boolean
+    applyRoute: (route: Exclude<Route, { page: 'missing' }>) => void
+  },
+) {
+  if (route.page === 'missing') return
+  if (route.spaceID && route.spaceID !== currentSpaceID) {
+    if (spaceExists(route.spaceID)) { if (!actions.switchSpace(route.spaceID)) return }
+    else if (route.page === 'panel' && !panelExists(route.params)) return
+  }
+  actions.applyRoute(route)
 }
 
 export function shouldReplayInitialRoute(route: Exclude<Route, { page: 'missing' }>, historyState: unknown, restored: boolean) {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { bindShellShortcuts, isEditableShortcutTarget, shortcutLabels, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
 
@@ -52,7 +53,6 @@ function actions(calls: string[]): ShellShortcutActions {
     closeShortcutReference: () => { calls.push('escape'); return true },
     switchTab: (direction) => { calls.push(`tab:${direction}`); return true },
     switchSpace: (direction) => { calls.push(`space:${direction}`); return true },
-    reorderSpace: (direction) => { calls.push(`reorder:${direction}`); return true },
     focusFleet: () => { calls.push('fleet'); return true },
     toggleNotesRail: () => { calls.push('notes'); return true },
     focusComposer: () => { calls.push('composer'); return true },
@@ -139,16 +139,22 @@ test('Shift-Option arrows switch spaces without replacing tab shortcuts', () => 
   } finally { unsubscribe() }
 })
 
-test('Cmd and Ctrl arrows are claimable focused-chip reorder commands including boundaries', () => {
+test('Cmd and Ctrl arrows remain unclaimed for browser back and forward', () => {
   const target = new EventTarget()
   const calls: string[] = []
   const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
   try {
-    assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', ctrlKey: true }).defaultPrevented, true)
-    assert.equal(dispatch(target, { key: 'ArrowRight', code: 'ArrowRight', ctrlKey: true }).defaultPrevented, true)
-    assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', metaKey: true }).defaultPrevented, true)
-    assert.deepEqual(calls, ['reorder:previous', 'reorder:next', 'reorder:previous'])
+    assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', ctrlKey: true }).defaultPrevented, false)
+    assert.equal(dispatch(target, { key: 'ArrowRight', code: 'ArrowRight', ctrlKey: true }).defaultPrevented, false)
+    assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', metaKey: true }).defaultPrevented, false)
+    assert.equal(dispatch(target, { key: 'ArrowRight', code: 'ArrowRight', metaKey: true }).defaultPrevented, false)
+    assert.deepEqual(calls, [])
   } finally { unsubscribe() }
+})
+
+test('shell shortcut source cannot reintroduce Meta or Control arrow bindings', () => {
+  const source = readFileSync(new URL('../src/features/layout/shellShortcuts.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /['"](?:Meta|Control)\+Arrow(?:Left|Right)['"]\s*:/)
 })
 
 test('Option up and down use physical arrow codes for transcript jumps', () => {
