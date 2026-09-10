@@ -5,6 +5,9 @@ export const notesStoragePrefix = 'herder.web.notes.v1:'
 const recordPrefix = `${notesStoragePrefix}record:`
 const backupPrefix = `${notesStoragePrefix}last-good:`
 const recoveryPrefix = `${notesStoragePrefix}recovery:`
+// The last real agent a file-pane note was assigned to, for this viewer only:
+// a plain string outside the record scan, so it never rides notes sync.
+export const lastTargetKey = `${notesStoragePrefix}last-target`
 const defaultTombstoneRetention = 30 * 24 * 60 * 60 * 1_000
 
 export type NoteSource =
@@ -49,6 +52,8 @@ export type NotesStore = {
   subscribeMutations: (listener: (records: StoredNoteRecord[]) => void) => () => void
   subscribe: (listener: () => void) => () => void
   status: () => NotesStatus
+  lastTarget: () => string | null
+  rememberTarget: (group: string) => void
   flush: () => boolean
   dispose: () => void
 }
@@ -149,6 +154,9 @@ export function createNotesStore(options: Options = {}): NotesStore {
   const tombstoneRetentionMs = options.tombstoneRetentionMs ?? defaultTombstoneRetention
   let storage = options.storage === undefined ? browserStorage() : options.storage
   const events = options.events === undefined ? browserEvents() : options.events
+  // Memory-only fallback for when storage is unavailable or throws; storage is
+  // otherwise read on every call so every tab of the viewer sees the latest choice.
+  let rememberedTarget: string | null = null
   let storeStatus: NotesStatus = storage
     ? { persistent: true, recovered: false, problem: '' }
     : { persistent: false, recovered: false, problem: 'Notes are kept for this session but are not saved between browser sessions.' }
@@ -389,6 +397,15 @@ export function createNotesStore(options: Options = {}): NotesStore {
       return () => listeners.delete(listener)
     },
     status: () => storeStatus,
+    lastTarget: () => {
+      if (!storage) return rememberedTarget
+      try { return storage.getItem(lastTargetKey) || null } catch { return rememberedTarget }
+    },
+    rememberTarget: (group) => {
+      if (group === 'general') return
+      rememberedTarget = group
+      try { storage?.setItem(lastTargetKey, group) } catch { /* memory-only, like the rest of the store */ }
+    },
     flush,
     dispose: () => {
       flush()

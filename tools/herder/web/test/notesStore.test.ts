@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   createNotesStore,
   defaultRandomID,
+  lastTargetKey,
   notesStoragePrefix,
   type StoredNoteRecord,
   type NotesStorage,
@@ -382,4 +383,56 @@ test('an unexpected exception during a mutation becomes a visible refusal, never
   assert.equal(added.ok, false)
   if (!added.ok) assert.match(added.reason, /was not saved|left untouched/i)
   assert.deepEqual(subject.store.list(), kept)
+})
+
+test('the last file-pane target survives a fresh store load over the same storage (reddens: written to memory only)', () => {
+  const storage = new FakeStorage()
+  const first = harness({ storage })
+  assert.equal(first.store.lastTarget(), null)
+  first.store.rememberTarget('doza')
+  assert.equal(first.store.lastTarget(), 'doza')
+  assert.equal(storage.values.get(lastTargetKey), 'doza')
+  const reloaded = harness({ storage })
+  assert.equal(reloaded.store.lastTarget(), 'doza')
+  assert.equal(lastTargetKey.startsWith(notesStoragePrefix), true)
+  assert.equal(lastTargetKey.startsWith(`${notesStoragePrefix}record:`), false, 'the preference lives outside the record scan')
+  assert.equal(reloaded.store.records().length, 0, 'the preference is not a note record and never rides sync')
+  assert.equal(reloaded.store.status().recovered, false, 'loading the preference is not corrupt-record recovery')
+  assert.equal([...storage.values.keys()].some((key) => key.startsWith(`${notesStoragePrefix}recovery:`)), false)
+})
+
+test('every read sees the latest choice written through shared storage by another store (reddens: cache restored)', () => {
+  const storage = new FakeStorage()
+  const tabA = harness({ storage })
+  const tabB = harness({ storage })
+  tabA.store.rememberTarget('design-doza')
+  assert.equal(tabA.store.lastTarget(), 'design-doza')
+  tabB.store.rememberTarget('impl-nite')
+  assert.equal(tabA.store.lastTarget(), 'impl-nite')
+  storage.values.delete(lastTargetKey)
+  assert.equal(tabA.store.lastTarget(), null)
+})
+
+test('a throwing storage read falls back to the in-memory choice (reddens: fallback dropped)', () => {
+  const storage = new FakeStorage()
+  const subject = harness({ storage })
+  subject.store.rememberTarget('design-doza')
+  storage.blocked = true
+  assert.equal(subject.store.lastTarget(), 'design-doza')
+})
+
+test('choosing unassigned leaves the remembered agent unchanged (reddens: unassigned overwrites)', () => {
+  const subject = harness()
+  subject.store.rememberTarget('doza')
+  subject.store.rememberTarget('general')
+  assert.equal(subject.store.lastTarget(), 'doza')
+})
+
+test('the target memory is kept for the session when storage is blocked', () => {
+  const storage = new FakeStorage()
+  storage.blocked = true
+  const subject = harness({ storage })
+  assert.equal(subject.store.lastTarget(), null)
+  subject.store.rememberTarget('doza')
+  assert.equal(subject.store.lastTarget(), 'doza')
 })

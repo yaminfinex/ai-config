@@ -68,3 +68,9 @@ export function captureSubmitAction(
   if (!(event.metaKey || event.ctrlKey) || context.group === 'general') return 'queue'
   return context.readOnly || !context.live ? 'append' : 'send'
 }
+
+// Transcript captures propose their own agent; file and diff captures propose the remembered agent while it is on the roster, else unassigned.
+export function proposedCaptureGroup(source: NoteSource, remembered: string | null, agents: string[]) {
+  if (source.kind === 'transcript') return source.agent
+  return remembered && agents.includes(remembered) ? remembered : 'general'
+}
