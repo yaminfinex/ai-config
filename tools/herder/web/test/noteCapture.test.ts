@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   capturePosition,
+  captureSubmitAction,
   captureSourceWithRange,
   isRangeSelection,
   isReservedFileResolutionSelection,
@@ -11,6 +12,7 @@ import {
   sharedCaptureSurface,
 } from '../src/features/notes/noteCaptureModel.ts'
 import { fileResolveGestureEvent } from '../src/shared/selectionPopoverEvents.ts'
+import { noteTransferText } from '../src/features/notes/notesPresentation.ts'
 
 test('capture membership requires the same nearest allowlisted content surface', () => {
   const transcriptOne = {}
@@ -102,4 +104,50 @@ test('capture resolves composed range endpoints against explicit content markers
   assert.match(hook, /data-note-capture-content/)
   assert.match(hook, /sharedCaptureSurface/)
   assert.doesNotMatch(hook, /anchorNode\).*focusNode/)
+})
+
+test('capture submit: plain Enter queues, cmd/ctrl+Enter sends to a live agent', () => {
+  const live = { group: 'lida', readOnly: '', live: true }
+  const key = (over: Partial<Parameters<typeof captureSubmitAction>[0]>) => ({ key: 'Enter', metaKey: false, ctrlKey: false, shiftKey: false, ...over })
+  assert.equal(captureSubmitAction(key({}), live), 'queue')
+  assert.equal(captureSubmitAction(key({ metaKey: true }), live), 'send')
+  assert.equal(captureSubmitAction(key({ ctrlKey: true }), live), 'send')
+  assert.equal(captureSubmitAction(key({ shiftKey: true, metaKey: true }), live), null)
+  assert.equal(captureSubmitAction(key({ key: 'a', metaKey: true }), live), null)
+})
+
+test('capture submit falls back to append when read-only or not live, and queues for unassigned', () => {
+  const cmd = { key: 'Enter', metaKey: true, ctrlKey: false, shiftKey: false }
+  assert.equal(captureSubmitAction(cmd, { group: 'lida', readOnly: 'Read-only', live: true }), 'append')
+  assert.equal(captureSubmitAction(cmd, { group: 'lida', readOnly: '', live: false }), 'append')
+  assert.equal(captureSubmitAction(cmd, { group: 'general', readOnly: '', live: false }), 'queue')
+  assert.equal(captureSubmitAction({ ...cmd, isComposing: true }, { group: 'lida', readOnly: '', live: true }), null)
+})
+
+test('quick send text is the hand-off serializer of the same note, with no second serializer', () => {
+  const note = { quote: 'first line\nsecond', text: 'do this', source: { kind: 'transcript', agent: 'lida' } as const }
+  assert.equal(noteTransferText(note), "from lida's transcript:\n> first line\n> second\n\ndo this")
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  assert.match(hook, /noteTransferText\(note\)/)
+  assert.doesNotMatch(hook, /`> \$\{|transcript:/)
+})
+
+test('the chip wires the submit model to the textarea and the minimal button; the panel wires the composer send path', () => {
+  const chip = readFileSync(new URL('../src/features/notes/NoteCaptureChip.tsx', import.meta.url), 'utf8')
+  assert.equal(chip.match(/submitAction\(event\)/g)?.length, 2)
+  const minimal = chip.slice(chip.indexOf('if (!expanded)'), chip.indexOf('return <aside className="note-capture-popover expanded"'))
+  assert.ok(minimal.length > 100)
+  assert.match(minimal, /event\.metaKey \|\| event\.ctrlKey[\s\S]*submitAction\(event\)[\s\S]*onSave\(group, '', action\)/)
+  assert.match(chip, /⌘↵ send · ↵ queue/)
+  const panel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /readOnly: identityReadOnly,[\s\S]*await sendWithRefresh\(queryClient, agent, text\)\n\s*onSend\(\)/)
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  assert.match(composer, /mutationFn: \(text: string\) => sendWithRefresh\(queryClient, name, text\)/)
+  assert.doesNotMatch(composer + panel, /beginSendRefresh|settleSendRefresh/)
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  assert.match(hook, /\n\s*close\(\)\n\s*void quickSend\.send\(group, text\)\.then\(/)
+  assert.match(panel, /appendComposerDraft\(agent, \[text\]\)[\s\S]*onOpenAgent\(agent\)/)
+  assert.match(panel, /useNoteCapture\(\{.*agents, quickSend \}\)/)
+  const file = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(file, /quickSend/)
 })

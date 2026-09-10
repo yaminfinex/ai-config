@@ -37,7 +37,7 @@ function fencedQuote(quote: string) {
   return `${fence}\n${quote}\n${fence}`
 }
 
-export function noteTransferText(note: Note) {
+export function noteTransferText(note: Pick<Note, 'quote' | 'text' | 'source'>) {
   if (!note.source) return note.text
   const source = note.source.kind === 'transcript' ? `from ${note.source.agent}'s transcript:` : noteSourceLabel(note.source)
   if (!note.quote) return note.text ? `${source}\n${note.text}` : source

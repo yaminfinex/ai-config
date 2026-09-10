@@ -6,6 +6,7 @@ import {
   dragNoteIDs,
   handOffRoute,
   noteListAction,
+  notesFocusLanding,
   pruneNoteSelection,
   selectionAfterArrow,
   selectionAfterClick,
@@ -18,7 +19,9 @@ import type { Note } from './notesStore.ts'
 import { useAllNotes, useNotes, useNotesGroups } from './NotesProvider.tsx'
 import { NotesSelector } from './NotesSelector.tsx'
 import { selectorRows } from './notesSelectorModel.ts'
-import { useScheduledFrame } from '../../shared/lifecycle.ts'
+import { useDOMEvent, useScheduledFrame } from '../../shared/lifecycle.ts'
+import { notesFocusEvent, type NotesFocusDetail } from '../../shared/selectionPopoverEvents.ts'
+import { composerFieldId } from '../../composerState.ts'
 import { beginNoteEdit, noteEditDisplay, updateNoteEdit, type NoteEditDraft } from './noteEditModel.ts'
 
 export type NotesListGroup = { group: string, label: string, orphaned?: boolean }
@@ -61,6 +64,15 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange }: { grou
   const notesByGroup = useMemo(() => new Map(displayGroups.map(({ group }) => [group, displayNotes.filter((note) => note.group === group)])), [displayGroups, displayNotes])
 
   useEffect(() => { setSelection((current) => pruneNoteSelection(current, ids)) }, [ids])
+  // ArrowUp from a composer lands on the last-focused card, else that agent's first note, else the first card.
+  const returnTo = useRef<string | undefined>(undefined)
+  useDOMEvent<CustomEvent<NotesFocusDetail>>(window, notesFocusEvent, (event) => {
+    returnTo.current = event.detail.agent
+    const landing = notesFocusLanding(selection, notes, event.detail.agent)
+    if (!landing) return
+    setSelection(selectionAfterClick(selection, ids, landing, { shift: false, command: false }))
+    focus(landing)
+  })
   useEffect(() => {
     onEditingChange?.(editingActive)
     return () => onEditingChange?.(false)
@@ -141,6 +153,11 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange }: { grou
       setSelection(next); focus(next.cursor); event.preventDefault(); return
     }
     const action = noteListAction(event, editable)
+    if (action === 'clear' && selection.selected.size === 0 && returnTo.current) {
+      document.getElementById(composerFieldId(returnTo.current))?.focus()
+      event.preventDefault()
+      return
+    }
     if (action) { runAction(action); event.preventDefault() }
   }}>
     {displayGroups.map(({ group, label, orphaned }) => {

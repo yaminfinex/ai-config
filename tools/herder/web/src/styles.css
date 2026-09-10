@@ -134,6 +134,8 @@ h2, h3, p { margin-top: 0; }
 .rail-heading > .note-quick-add { margin-left: auto; }
 .rail-heading > .note-quick-add + .rail-toggle { margin-left: 0; }
 .note-add-button { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border-color: var(--border); background: transparent; color: var(--dim); line-height: 1; }
+.notes-send-all { display: flex; justify-content: flex-end; padding: var(--space-1) var(--space-2) 0; }
+.notes-send-all-button { width: auto; padding: 0 var(--space-2); font-size: 10px; }
 .note-quick-add-popover { position: absolute; z-index: 32; top: calc(100% + var(--space-1)); right: 0; width: 232px; padding: var(--space-1); border: 1px solid var(--border2); border-radius: var(--space-1); background: var(--note-selector-bg); box-shadow: 0 8px 24px var(--floating-shadow); }
 .note-quick-add-popover input { width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; background: var(--bg); color: var(--text); }
 .note-quick-add-popover .notes-problem { display: block; }

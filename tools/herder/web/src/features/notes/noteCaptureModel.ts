@@ -54,3 +54,17 @@ export function placeCaretAtEnd(field: Pick<HTMLTextAreaElement, 'value' | 'focu
   field.focus()
   field.setSelectionRange(field.value.length, field.value.length)
 }
+
+export type CaptureSubmitAction = 'queue' | 'send' | 'append'
+
+// Decides what Enter does in the capture chip. Plain Enter queues; cmd/ctrl+Enter
+// sends to a live agent, falls back to appending to its prompt, and still queues
+// when there is no agent to send to. Shift+Enter and IME composition are left alone.
+export function captureSubmitAction(
+  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'shiftKey'> & { isComposing?: boolean },
+  context: { group: string, readOnly: string, live: boolean },
+): CaptureSubmitAction | null {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return null
+  if (!(event.metaKey || event.ctrlKey) || context.group === 'general') return 'queue'
+  return context.readOnly || !context.live ? 'append' : 'send'
+}

@@ -73,7 +73,12 @@ export function useWorkspaceActions({
   const focusComposer = useCallback(() => {
     composerFocusCancel.current()
     composerFocusCancel.current = focusComposerWhenReady(
-      () => document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]'),
+      () => {
+        // A disabled composer (read-only viewer, retired agent) cannot take focus; the pane itself does.
+        const field = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
+        if (!field) return null
+        return field.disabled ? field.closest<HTMLElement>('.agent-page') ?? field : field
+      },
       requestAnimationFrame,
       20,
       cancelAnimationFrame,

@@ -7,6 +7,7 @@ import {
   composerFieldId,
   composerDraftKey,
   blurComposerOnEscape,
+  composerArrowUpAction,
   isComposerQueueShortcut,
   isComposerSendShortcut,
   persistComposerDraft,
@@ -107,9 +108,12 @@ test('Escape blurs the composer without claiming the event', () => {
 
 test('send success refetches the transcript immediately, not just agent status', () => {
   const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
-  const success = composer.slice(composer.indexOf('const sendRefresh'), composer.indexOf('} catch'))
-  assert.match(success, /queryKeys\.agent\(name\)/)
-  assert.match(success, /queryKeys\.entries\(name\)/)
+  assert.match(composer, /mutationFn: \(text: string\) => sendWithRefresh\(queryClient, name, text\)/)
+  const shared = readFileSync(new URL('../src/sendRefresh.ts', import.meta.url), 'utf8')
+  const success = shared.slice(shared.indexOf('export async function sendWithRefresh'), shared.indexOf('} catch', shared.indexOf('export async function sendWithRefresh')))
+  assert.match(success, /queryKeys\.agent\(agent\)/)
+  assert.match(success, /queryKeys\.entries\(agent\)/)
+  assert.match(success, /settleSendRefresh\(token, true, refresh\)/)
 })
 
 test('composer queue clears only after the notes persistence path proves success', () => {
@@ -231,4 +235,31 @@ test('mirror measurement preserves every TASK-82 composer scenario', () => {
   const mirrorRule = css.match(/\.send-box textarea\.composer-measure \{([^}]*)\}/)?.[1] ?? ''
   assert.match(mirrorRule, /position: absolute/)
   assert.doesNotMatch(mirrorRule, /min-height: 0/)
+})
+
+test('ArrowUp moves into the notes list only from the start of the prompt with notes present and no modifiers', () => {
+  const base = { key: 'ArrowUp', altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, value: '', selectionStart: 0, selectionEnd: 0, hasNotes: true }
+  assert.equal(composerArrowUpAction(base), 'notes')
+  assert.equal(composerArrowUpAction({ ...base, value: 'draft' }), 'notes')
+  assert.equal(composerArrowUpAction({ ...base, value: 'draft', selectionStart: 2, selectionEnd: 2 }), null)
+  assert.equal(composerArrowUpAction({ ...base, value: 'draft', selectionStart: 0, selectionEnd: 3 }), null)
+  assert.equal(composerArrowUpAction({ ...base, value: 'draft', selectionStart: 3, selectionEnd: 0 }), 'notes')
+  assert.equal(composerArrowUpAction({ ...base, hasNotes: false }), null)
+  assert.equal(composerArrowUpAction({ ...base, shiftKey: true }), null)
+  assert.equal(composerArrowUpAction({ ...base, metaKey: true }), null)
+  assert.equal(composerArrowUpAction({ ...base, isComposing: true }), null)
+  assert.equal(composerArrowUpAction({ ...base, key: 'ArrowDown' }), null)
+})
+
+test('the composer dispatches the notes focus event, the list answers it, and Escape with nothing selected returns to that composer', () => {
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  assert.match(composer, /composerArrowUpAction\(\{[^}]*hasNotes \}\) === 'notes'[\s\S]*new CustomEvent<NotesFocusDetail>\(notesFocusEvent, \{ detail: \{ agent: name \} \}\)/)
+  const list = readFileSync(new URL('../src/features/notes/NotesList.tsx', import.meta.url), 'utf8')
+  assert.match(list, /useDOMEvent<CustomEvent<NotesFocusDetail>>\(window, notesFocusEvent/)
+  assert.match(list, /action === 'clear' && selection\.selected\.size === 0 && returnTo\.current[\s\S]*getElementById\(composerFieldId\(returnTo\.current\)\)\?\.focus\(\)/)
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  assert.match(controller, /useDOMEvent\(window, notesFocusEvent/)
+  assert.match(list, /const landing = notesFocusLanding\(selection, notes, event\.detail\.agent\)[\s\S]*setSelection\(selectionAfterClick\(selection, ids, landing, \{ shift: false, command: false \}\)\)\n\s*focus\(landing\)/)
+  const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
+  assert.match(actions, /field\.disabled \? field\.closest<HTMLElement>\('\.agent-page'\)/)
 })

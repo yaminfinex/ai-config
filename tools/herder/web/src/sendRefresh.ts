@@ -1,3 +1,6 @@
+import type { QueryClient } from '@tanstack/react-query'
+import { queryKeys, sendMessage } from './api/client.ts'
+
 type RefreshOwner = object
 
 type SendRefreshToken = {
@@ -61,4 +64,22 @@ function removeToken(token: SendRefreshToken) {
   sends?.delete(token)
   if (sends?.size === 0) byAgent?.delete(token.agent)
   if (byAgent?.size === 0) activeSends.delete(token.owner)
+}
+
+// The one send sequence: mark the send, post it, then settle the agent/entries refresh.
+// Composer and the note quick send both go through here; UI state stays with the caller.
+export async function sendWithRefresh(queryClient: QueryClient, agent: string, text: string) {
+  const token = beginSendRefresh(queryClient, agent)
+  const refresh = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.agent(agent), exact: true }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.entries(agent), exact: true }),
+  ])
+  try {
+    const result = await sendMessage(agent, text)
+    await settleSendRefresh(token, true, refresh)
+    return result
+  } catch (error: unknown) {
+    await settleSendRefresh(token, false, refresh)
+    throw error
+  }
 }

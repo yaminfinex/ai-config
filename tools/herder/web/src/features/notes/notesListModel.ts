@@ -95,3 +95,23 @@ export function handOffRoute(notes: Note[], liveOrder: string[]): { kind: 'direc
   const initial = selectorInitialValue(notes, rows, 'destination')
   return { kind: 'selector', initial }
 }
+
+// Send all: every group with a live agent hands its notes off in list order;
+// unassigned, orphaned, and empty groups are skipped and their notes counted.
+export function sendAllPlan(groups: Array<{ group: string, orphaned?: boolean }>, notesByGroup: Map<string, Note[]>, live: string[]) {
+  const handOffs: Array<{ group: string, notes: Note[] }> = []
+  let skipped = 0
+  for (const { group, orphaned } of groups) {
+    const notes = notesByGroup.get(group) ?? []
+    if (notes.length === 0) continue
+    if (group === 'general' || orphaned || !live.includes(group)) skipped += notes.length
+    else handOffs.push({ group, notes })
+  }
+  return { handOffs, skipped }
+}
+
+// Where ArrowUp from a composer lands: the last cursor, else that agent's first note, else the first card.
+export function notesFocusLanding(state: NoteSelection, notes: Array<Pick<Note, 'id' | 'group'>>, agent: string) {
+  if (state.cursor && notes.some((note) => note.id === state.cursor)) return state.cursor
+  return notes.find((note) => note.group === agent)?.id ?? notes[0]?.id
+}
