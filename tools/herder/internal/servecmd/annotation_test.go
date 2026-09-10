@@ -81,6 +81,7 @@ func TestAnnotationEndpointRefusals(t *testing.T) {
 	tests := map[string]struct {
 		mutate     func(*dependencies)
 		name, body string
+		detail     string
 		status     int
 	}{
 		"unknown": {name: "missing", body: `{"title":"x"}`, status: 404},
@@ -101,7 +102,7 @@ func TestAnnotationEndpointRefusals(t *testing.T) {
 		}, name: "impl-kolo", body: `{"title":"x"}`, status: 502},
 		"storeless":     {mutate: func(d *dependencies) { d.store = nil }, name: "impl-kolo", body: `{"title":"x"}`, status: 502},
 		"unknown field": {name: "impl-kolo", body: `{"title":"x","note":"no"}`, status: 400},
-		"empty":         {name: "impl-kolo", body: `{"title":"  "}`, status: 400},
+		"empty":         {name: "impl-kolo", body: `{"title":"  "}`, status: 400, detail: "title must not be empty"},
 		"81 runes":      {name: "impl-kolo", body: `{"title":"` + strings.Repeat("界", 81) + `"}`, status: 400},
 		"control":       {name: "impl-kolo", body: `{"title":"bad\tname"}`, status: 400},
 	}
@@ -117,6 +118,9 @@ func TestAnnotationEndpointRefusals(t *testing.T) {
 			newHandler(deps).ServeHTTP(response, request)
 			if response.Code != test.status {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+			if test.detail != "" && !strings.Contains(response.Body.String(), test.detail) {
+				t.Fatalf("body=%s, want detail %q", response.Body.String(), test.detail)
 			}
 		})
 	}

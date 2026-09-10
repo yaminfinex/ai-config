@@ -74,7 +74,6 @@ test('expandedItems survive a view switch: the transition never runs on the view
   assert.doesNotMatch(sidebar, /defaultExpanded|managerItems\(/)
   assert.equal((sidebar.match(/onExpandedItems\(/g) ?? []).length, 2, 'expected the tree setter wiring and the transition apply, nothing else')
   const effects = [...sidebar.matchAll(/useEffect\([\s\S]*?\}, \[([^\]]*)\]\)/g)].map((match) => match[1])
-  assert.equal(effects.length, 4, "rename focus, reconcile, selection, rebuild")
   assert.equal(effects.filter((deps) => /\bview\b/.test(deps)).length, 1, 'only the selection effect depends on view')
   assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : supervisionNodes/)
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)

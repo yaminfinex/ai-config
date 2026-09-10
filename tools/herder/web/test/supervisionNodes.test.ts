@@ -71,14 +71,12 @@ test('supervision rows carry only title over bus name while placement retains st
   const tume = nodes.get('agent:grill-confirm-tume')
   assert.equal(tume?.name, 'grill confirm')
   assert.equal(tume?.secondary, 'grill-confirm-tume')
-  assert.equal(tume?.paneChip, undefined)
   assert.equal(tume?.statusText, undefined)
-  assert.equal(tume?.summary, undefined)
+  assert.deepEqual(tume?.summary, { total: 1, active: 1 })
   assert.equal(tume?.workspaceLabel, 'fleet')
   const nego = nodes.get('agent:durlog-grill-nego')
   assert.equal(nego?.name, 'durlog-grill-nego')
   assert.equal(nego?.secondary, undefined)
-  assert.equal(nego?.paneChip, undefined)
   assert.equal(nego?.statusText, undefined)
   const placement = buildSidebarNodes(liveShapedBoard())
   const placedTume = [...placement.values()].find((node) => node.pane?.agent === 'grill-confirm-tume')
@@ -87,9 +85,9 @@ test('supervision rows carry only title over bus name while placement retains st
   assert.equal(placedTume?.statusText, 'listening')
 })
 
-test('supervision agent rows never add descendant status summaries to their labels', () => {
+test('a collapsed manager subtree reads as its recursive report total', () => {
   const nodes = buildSupervisionNodes(liveShapedBoard())
-  assert.equal(collapsedLabel(nodes.get('agent:riko')!), 'riko')
+  assert.equal(collapsedLabel(nodes.get('agent:riko')!), 'riko (4)')
   assert.equal(collapsedLabel(nodes.get('agent:vara')!), 'vara')
   assert.equal(collapsedLabel(nodes.get('operator')!), 'you (9 · 2 active)')
 })
@@ -101,7 +99,7 @@ test('collapsing keeps identity and state text: tombstone "name · ended", title
   assert.equal(collapsedLabel(tombstone), 'orch-hamo · ended (2 · 0 active)')
   const tume = nodes.get('agent:grill-confirm-tume')!
   assert.equal(expandedLabel(tume), 'grill confirm · grill-confirm-tume')
-  assert.equal(collapsedLabel(tume), 'grill confirm · grill-confirm-tume')
+  assert.equal(collapsedLabel(tume), 'grill confirm · grill-confirm-tume (1)')
   const fimu = nodes.get('unknown:fimu')!
   assert.equal(expandedLabel(fimu), 'fimu · unknown')
   assert.equal(collapsedLabel(fimu), 'fimu · unknown (1 · 1 active)')

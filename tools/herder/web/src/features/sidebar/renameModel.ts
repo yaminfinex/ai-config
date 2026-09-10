@@ -17,15 +17,7 @@ export function renameValue(state: RenameState, value: string): RenameState {
   return { ...state, value, problem: undefined }
 }
 
-export function prepareRename(state: RenameState): { title?: string } {
+export function prepareRename(state: RenameState): string | null {
   const title = state.value.trim()
-  return title && title !== state.currentTitle ? { title } : {}
-}
-
-export function renameRefused(state: RenameState, problem: LifecycleProblem): RenameState {
-  return { ...state, problem }
-}
-
-export function cancelRename(): null {
-  return null
+  return title && title !== state.currentTitle ? title : null
 }

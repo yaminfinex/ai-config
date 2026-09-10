@@ -428,7 +428,7 @@ if curl -fsS "http://127.0.0.1:$port/api/agents/retired-vava" >"$ROOT/retired-ag
   curl -fsS "http://127.0.0.1:$port/api/agents/retired-vava/entries?limit=10" >"$ROOT/retired-entries.json" &&
   jq -e '.name == "retired-vava" and .bus_status == "retired" and .pane == null and .session_id == "73100000-0000-4000-8000-000000000731" and has("queued") == false' "$ROOT/retired-agent.json" >/dev/null &&
   jq -e '.sessionId == "73100000-0000-4000-8000-000000000731" and (.entries | length) >= 2' "$ROOT/retired-entries.json" >/dev/null &&
-  [ "$(cat "$ROOT/retired-message.status")" = 409 ] && jq -e '.error == "retired agent" and (.detail | contains("read-only"))' "$ROOT/retired-message.json" >/dev/null; then
+  [ "$(cat "$ROOT/retired-message.status")" = 409 ] && jq -e '.error == "retired agent" and (.detail | contains("accepts no writes"))' "$ROOT/retired-message.json" >/dev/null; then
   pass "retained stopped evidence serves a queue-free read-only transcript and refuses sends"
 else
   bad "retired agent contract" "detail=$(cat "$ROOT/retired-agent.json" 2>/dev/null || true) entries=$(cat "$ROOT/retired-entries.json" 2>/dev/null || true) send=$(cat "$ROOT/retired-message.status" 2>/dev/null || true)/$(cat "$ROOT/retired-message.json" 2>/dev/null || true)"
@@ -483,6 +483,12 @@ if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"title":"Paylo
   pass "annotation write appends the titled agent event with web attribution"
 else
   bad "annotation write" "body=$(cat "$ROOT/annotation.json" 2>/dev/null || true) journal=$(cat "$ROOT/home/.local/state/herder/agents/events.jsonl" 2>/dev/null || true)"
+fi
+
+if [ "$(curl -sS -o "$ROOT/annotation-empty.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"title":"  "}' "http://127.0.0.1:$port/api/agents/mavu/annotation")" = 400 ] && jq -e '.detail == "title must not be empty"' "$ROOT/annotation-empty.json" >/dev/null; then
+  pass "annotation write refuses an empty title with the web contract wording"
+else
+  bad "annotation empty title" "body=$(cat "$ROOT/annotation-empty.json" 2>/dev/null || true)"
 fi
 
 if curl -fsS -X POST -H 'Content-Type: application/json' \
@@ -599,7 +605,7 @@ else
   bad "server shutdown" "rc=$serve_rc"
 fi
 
-printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((25 - fail))" "$fail"
+printf '\nSUMMARY web-serve: PASS=%d FAIL=%d\n' "$((26 - fail))" "$fail"
 if [ "$fail" -ne 0 ]; then
   exit 1
 fi

@@ -15,10 +15,9 @@ export type SidebarNode = {
   pane?: Pane | Row
   workspace?: Workspace
   tabLabel?: string
-  // Supervision view only: bus name under a title (or "ended"/"unknown" on
-  // group nodes), placement as a trailing chip, and the folded summary.
+  // Secondary is shared identity/state; statusText is placement-only, while
+  // summary is the folded supervision total.
   secondary?: string
-  paneChip?: string
   statusText?: string
   workspaceLabel?: string
   summary?: SupervisionSummary
@@ -96,7 +95,7 @@ const operatorID = 'operator'
 const unadoptedID = 'unadopted'
 const terminalsID = 'terminals'
 
-type FlatRow = { row: Row, paneChip?: string, workspaceLabel?: string, tabLabel?: string }
+type FlatRow = { row: Row, workspaceLabel?: string, tabLabel?: string }
 
 export function agentNodeID(name: string) {
   return `agent:${name}`
@@ -125,7 +124,7 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
         terminals.set(workspace.workspace_id, entry)
         return
       }
-      collect(pane, { paneChip: pane.pane_id, workspaceLabel: label, tabLabel })
+      collect(pane, { workspaceLabel: label, tabLabel })
     }))
   })
   board.unplaced.forEach((row) => collect(row, {}))
@@ -176,7 +175,7 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
     }
     result.set(id, {
       id, kind: row.parent_agent ? 'subagent' : 'agent', ...agentLabel(row), children, pane: row,
-      workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel,
+      workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel, summary: summarise(result, children),
     })
     return id
   }
@@ -242,11 +241,12 @@ export function expandedLabel(node: SidebarNode) {
 }
 
 // collapsedLabel is what a folded subtree reads: the same identity and state
-// text plus the descendant summary, `ziru (4 · 1 active)` or
+// text plus the descendant summary, `ziru (4)` or
 // `fimu · ended (3 · 1 active)`. Nothing is dropped when folding.
 export function collapsedLabel(node: SidebarNode) {
   const label = expandedLabel(node)
   if (!node.summary || node.summary.total === 0) return label
+  if (node.kind === 'agent' || node.kind === 'subagent') return `${label} (${node.summary.total})`
   return `${label} (${node.summary.total} · ${node.summary.active} active)`
 }
 

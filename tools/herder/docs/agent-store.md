@@ -176,7 +176,9 @@ reparent --name X --manager Y`). Hierarchy views hang off `manager`;
 
 The web serve appends `annotate` events for display-name writes with the
 server-derived sender in `by` and `by_kind: web`. Those writes use the same
-store validation and fold as the register CLI.
+store validation and fold as the register CLI. After trimming, an annotation
+title is at most 80 runes and contains no control characters; the CLI exits 2
+when either rule is violated.
 
 ## One validator
 

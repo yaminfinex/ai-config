@@ -190,7 +190,6 @@ h2, h3, p { margin-top: 0; }
 .tombstone-row .tree-secondary, .unknown-manager-row .tree-secondary { text-decoration: none; }
 .unknown-manager-row { color: var(--dim); }
 .operator-row .tree-label { color: var(--text); }
-.fleet-tree-supervision .pane-chip { margin-left: 4px; }
 .rename-agent-button { visibility: hidden; width: 20px; height: 20px; flex: 0 0 20px; padding: 0; border-color: var(--border2); background: var(--chip); color: var(--dim); font: 12px var(--mono); }
 .panel-tree-row:hover .rename-agent-button, .panel-tree-row:focus-within .rename-agent-button, .rename-agent-button:focus-visible { visibility: visible; }
 .rename-agent-input { width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--accent); }
