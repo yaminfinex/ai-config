@@ -71,6 +71,8 @@ export function unsubscribedScreenPaneIDs(previous: string[], current: string[])
   return [...new Set(previous)].filter((paneID) => !subscribed.has(paneID))
 }
 
+export const connectingBannerGrace = 150
+
 export function subscribeToFleet(
   queryClient: QueryClient,
   agentNames: string[],
@@ -85,6 +87,7 @@ export function subscribeToFleet(
   let events: EventSourceLike | null = null
   let reconnectTimer: number | null = null
   let watchdog: number | null = null
+  let connectingTimer: number | null = null
   const transcriptRefreshTimers = new Map<string, number>()
   let backoff = 500
   let hasOpened = false
@@ -116,8 +119,13 @@ export function subscribeToFleet(
     lastActivity = Date.now()
     if (visible) update((current) => ({ ...current, lastEvent: lastActivity }))
   }
+  const cancelConnecting = () => {
+    if (connectingTimer !== null) timers.clearTimeout(connectingTimer)
+    connectingTimer = null
+  }
   const scheduleReconnect = (detail: string) => {
     if (!active || reconnectTimer !== null) return
+    cancelConnecting()
     events?.close()
     events = null
     update((current) => ({ ...current, problems: { ...current.problems, stream: detail } }))
@@ -130,11 +138,13 @@ export function subscribeToFleet(
   const connect = () => {
     if (!active) return
     lastActivity = Date.now()
-    update((current) => ({
-      ...current,
-      substrateProof: { herdr: false, hcom: false },
-      problems: { ...current.problems, stream: 'Connecting to live fleet…' },
-    }))
+    update((current) => ({ ...current, substrateProof: { herdr: false, hcom: false } }))
+    // A pane open resubscribes the stream; a healthy socket opens well inside the grace,
+    // so the banner (which sits above the pane grid) never enters the flow and never shifts it.
+    connectingTimer = timers.setTimeout(() => {
+      connectingTimer = null
+      update((current) => ({ ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } }))
+    }, connectingBannerGrace)
     try {
       events = createEventSource(eventStreamURL(names, panes, fileWatches, focusedScreenPaneID))
     } catch {
@@ -143,6 +153,7 @@ export function subscribeToFleet(
     }
     events.onopen = () => {
       touch()
+      cancelConnecting()
       backoff = 500
       update((current) => ({ ...current, problems: without(current.problems, 'stream') }))
       const catchUp = hasOpened
@@ -232,6 +243,7 @@ export function subscribeToFleet(
   return () => {
     active = false
     events?.close()
+    cancelConnecting()
     if (reconnectTimer !== null) timers.clearTimeout(reconnectTimer)
     if (watchdog !== null) timers.clearInterval(watchdog)
     transcriptRefreshTimers.forEach((timer) => timers.clearTimeout(timer))
