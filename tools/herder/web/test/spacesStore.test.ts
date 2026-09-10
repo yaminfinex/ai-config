@@ -286,3 +286,10 @@ test('old tombstones purge their paired layout recovery', () => {
   assert.deepEqual(purged, [created.value.id])
   assert.equal(storage.getItem(spaceRecordKey(created.value.id)), null)
 })
+
+test('recentlyClosed lists closed spaces newest first', () => {
+  const subject = harness()
+  const ids = [1, 2, 3].map(() => { const created = subject.store.create(); return created.ok ? created.value.id : '' })
+  ids.forEach((id, index) => { subject.setNow(10_000 + index * 1_000); subject.store.close(id) })
+  assert.deepEqual(subject.store.recentlyClosed().map((space) => space.id), [ids[2], ids[1], ids[0]])
+})

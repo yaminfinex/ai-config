@@ -213,9 +213,9 @@ test('notes spacing uses the app 4px token grid', () => {
   assert.doesNotMatch(notes, /(?:margin|padding|gap|top|right|bottom|left):[^;]*(?:3|5|6|7|9|10|14)px/)
 })
 
-test('space reopen chips meet WCAG AA against the status-bar surface in both themes', () => {
+test('the space history button meets WCAG AA against the status-bar surface in both themes', () => {
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
-  const foregroundName = token(rule(css, '.space-reopen', true), 'color')
+  const foregroundName = token(rule(css, '.space-history', true), 'color')
   const backgroundName = token(rule(css, '.status-bar'), 'background')
   assert.equal(foregroundName, 'status-bar-text')
   for (const block of themeBlocks(css)) {
