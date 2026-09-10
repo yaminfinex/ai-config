@@ -48,9 +48,7 @@ export function statusBarHealth({ problems, substrateProof, lastEventLabel }: He
           label: 'SSE',
           healthy: false,
           title: problems.stream,
-          note: problems.stream === 'Connecting to live fleet…'
-            ? 'connecting…'
-            : problems.stream === 'Live stream disconnected; reconnecting…' ? 'reconnecting…' : undefined,
+          note: problems.stream === 'Connecting to live fleet…' ? 'connecting…' : 'reconnecting…',
         }
       : { label: 'SSE', healthy: true, title: `SSE connected — last activity ${lastEventLabel}.` },
   ]

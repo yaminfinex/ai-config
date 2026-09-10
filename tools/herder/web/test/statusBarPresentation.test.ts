@@ -48,6 +48,13 @@ test('the SSE tick notes that a disconnected live stream is reconnecting', () =>
   assert.equal(sse?.note, 'reconnecting…')
 })
 
+test('the SSE tick notes that a timed-out live stream is reconnecting', () => {
+  const sse = statusBarHealth({
+    problems: { stream: 'Live stream timed out; reconnecting…' }, substrateProof: { herdr: true, hcom: true }, lastEventLabel: '12:34:56 PM',
+  }).find((tick) => tick.label === 'SSE')
+  assert.equal(sse?.note, 'reconnecting…')
+})
+
 test('the healthy SSE tick has no stream note', () => {
   const sse = statusBarHealth({
     problems: {}, substrateProof: { herdr: true, hcom: true }, lastEventLabel: '12:34:56 PM',

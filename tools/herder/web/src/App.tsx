@@ -28,7 +28,7 @@ const herderTheme: DockviewTheme = {
 }
 
 function StatusTick({ tick }: { tick: HealthTick }) {
-  return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}{tick.note && <span className="health-note" role="status">{tick.note}</span>}</span>
+  return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}{tick.note && <span className="health-note">{tick.note}</span>}</span>
 }
 
 function NotesCount() {
