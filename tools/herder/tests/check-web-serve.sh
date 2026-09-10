@@ -333,12 +333,14 @@ assert "worktree_of" not in board["workspaces"][0]
 assert board["workspaces"][1]["worktree_of"] == "w1"
 assert board["workspaces"][1]["tabs"][0]["panes"][0]["agent"] == "zira"
 assert board["unplaced"][0]["agent"] == "vile"
+assert board["unplaced"][0]["context_used"] == 1121
 assert [child["agent"] for child in board["unplaced"][0]["subagents"]] == ["vile_general_purpose_1"]
 assert board["unplaced"][0]["subagents"][0]["parent_agent"] == "vile"
 assert all(row["agent"] != "vile_general_purpose_1" for row in board["unplaced"])
+assert "context_used" not in next(row for row in board["unplaced"] if row["agent"] == "web-vile")
 PY
 then
-  pass "fleet JSON preserves hierarchy, exact placement, and explicit subagent families"
+  pass "fleet JSON preserves hierarchy, exact placement, explicit subagent families, and observer-only context used"
 else
   bad "fleet JSON contract" "body=$(cat "$ROOT/fleet.json")"
 fi

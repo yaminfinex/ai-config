@@ -25,6 +25,7 @@ type Row struct {
 	BusStatus   string `json:"bus_status"`
 	Gap         string `json:"gap"`
 	ParentAgent string `json:"parent_agent,omitempty"`
+	ContextUsed int64  `json:"context_used,omitempty"`
 	Subagents   *Rows  `json:"subagents,omitempty"`
 	// Store-folded columns (FoldStore). Launcher is immutable provenance,
 	// Manager the mutable hierarchy pointer, Mission the current assignment.
@@ -264,6 +265,7 @@ type Pane struct {
 	ManagerState   string `json:"manager_state,omitempty"`
 	Title          string `json:"title,omitempty"`
 	CreatedAt      string `json:"created_at,omitempty"`
+	ContextUsed    int64  `json:"context_used,omitempty"`
 	Subagents      []Row  `json:"subagents,omitempty"`
 }
 

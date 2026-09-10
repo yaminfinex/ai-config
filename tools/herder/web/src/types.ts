@@ -5,6 +5,7 @@ export interface Row {
   herdr_status: string
   bus_status: string
   gap: string
+  context_used?: number
   parent_agent?: string
   subagents?: Row[]
   // Supervision edge (herder-mastered augmenting data, never lifecycle

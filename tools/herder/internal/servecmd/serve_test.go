@@ -29,6 +29,7 @@ import (
 	"ai-config/tools/herder/internal/hcommessage"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/repoctx"
+	"ai-config/tools/herder/internal/sessionvitals"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 	"github.com/fsnotify/fsnotify"
@@ -627,6 +628,59 @@ func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
 	}
 	if unplaced, ok := body["unplaced"].([]any); !ok || len(unplaced) != 0 {
 		t.Fatalf("unplaced = %#v", body["unplaced"])
+	}
+}
+
+func TestBuildBoardAddsOnlyObserverContextUsedToEveryAgentRow(t *testing.T) {
+	deps := fixtureDeps()
+	directCalls := 0
+	deps.agentVitals = func(hcomidentity.Row) (claudesession.Vitals, error) {
+		directCalls++
+		return claudesession.Vitals{}, errors.New("board must not read transcripts directly")
+	}
+	roster := []hcomidentity.Row{
+		{Name: "dore", BaseName: "dore-base", Tool: "codex", Status: "active", SessionID: "session-dore", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}},
+		{Name: "dore-task", BaseName: "dore-task-base", ParentName: "dore-base", AgentID: "task-1", Tool: "codex", Status: "active", SessionID: "session-task"},
+		{Name: "vile", BaseName: "vile-base", Tool: "claude", Status: "listening", SessionID: "session-vile"},
+	}
+	deps.boardVitals = func(row hcomidentity.Row) (sessionvitals.Result, bool) {
+		used := map[string]int64{"dore": 243787, "dore-task": 1121}
+		value, ok := used[row.Name]
+		if !ok {
+			return sessionvitals.Result{}, false
+		}
+		return sessionvitals.Result{Vitals: claudesession.Vitals{ContextUsage: &claudesession.ContextUsage{UsedTokens: value}}}, true
+	}
+
+	snapshot, err := deps.snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	board, err := buildBoard(context.Background(), deps, snapshot, roster)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane := board.Workspaces[0].Tabs[0].Panes[0]
+	if pane.ContextUsed != 243787 || len(pane.Subagents) != 1 || pane.Subagents[0].ContextUsed != 1121 {
+		t.Fatalf("context-used board = %#v", board)
+	}
+	if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "vile" || board.Unplaced[0].ContextUsed != 0 {
+		t.Fatalf("miss row = %#v", board.Unplaced)
+	}
+	payload, err := json.Marshal(board)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded map[string]any
+	if err := json.Unmarshal(payload, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	miss := encoded["unplaced"].([]any)[0].(map[string]any)
+	if _, present := miss["context_used"]; present {
+		t.Fatalf("observer miss was serialized: %s", payload)
+	}
+	if directCalls != 0 {
+		t.Fatalf("direct transcript reader called %d time(s)", directCalls)
 	}
 }
 

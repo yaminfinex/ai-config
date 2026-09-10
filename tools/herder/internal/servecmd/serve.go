@@ -38,6 +38,7 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/observer"
 	"ai-config/tools/herder/internal/repoctx"
+	"ai-config/tools/herder/internal/sessionvitals"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 	"ai-config/tools/herder/internal/webstate"
@@ -73,6 +74,7 @@ type dependencies struct {
 	entryPath            func(hcomidentity.Row) (string, error)
 	agentQueueExclusions func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error)
 	agentVitals          func(hcomidentity.Row) (claudesession.Vitals, error)
+	boardVitals          sessionvitals.Lookup
 	sender               func(context.Context, string) (string, error)
 	send                 func(context.Context, string, string, string) error
 	spawn                func(context.Context, []string, string) (webaction.Result, error)
@@ -449,6 +451,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		// snapshot.json writer. See observe.go and tools/herder/README.md.
 		runtimeDependencies.observer = startObserver(ctx, runtimeDependencies)
 		runtimeDependencies.agentVitals = readAgentVitals(runtimeDependencies.observer.Lookup)
+		runtimeDependencies.boardVitals = runtimeDependencies.observer.Lookup
 		socket = startSocket(stateDir, runtimeDependencies.observer, runtimeDependencies)
 		runtimeDependencies.storeWriter = socket != nil
 		runtimeDependencies = startStoreProjection(ctx, runtimeDependencies)
@@ -971,6 +974,7 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 	}
 	board := fleetview.Build(snapshot, roster, parents)
 	fleetview.FoldBoard(&board, roster, readProjection(deps))
+	foldBoardVitals(&board, roster, deps.boardVitals)
 	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace
@@ -988,6 +992,42 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 		board.Workspaces[index].Git = repository.Git
 	}
 	return board, nil
+}
+
+func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup sessionvitals.Lookup) {
+	if lookup == nil {
+		return
+	}
+	byName := make(map[string]hcomidentity.Row, len(roster))
+	for _, row := range roster {
+		byName[row.Name] = row
+	}
+	var foldRows func([]fleetview.Row)
+	foldRows = func(rows []fleetview.Row) {
+		for i := range rows {
+			if result, ok := lookup(byName[rows[i].Agent]); ok && result.Vitals.ContextUsage != nil {
+				rows[i].ContextUsed = result.Vitals.ContextUsage.UsedTokens
+			}
+			if rows[i].Subagents != nil {
+				foldRows(*rows[i].Subagents)
+			}
+		}
+	}
+	for workspaceIndex := range board.Workspaces {
+		for tabIndex := range board.Workspaces[workspaceIndex].Tabs {
+			panes := board.Workspaces[workspaceIndex].Tabs[tabIndex].Panes
+			for paneIndex := range panes {
+				pane := &panes[paneIndex]
+				if pane.Agent != "-" {
+					if result, ok := lookup(byName[pane.Agent]); ok && result.Vitals.ContextUsage != nil {
+						pane.ContextUsed = result.Vitals.ContextUsage.UsedTokens
+					}
+				}
+				foldRows(pane.Subagents)
+			}
+		}
+	}
+	foldRows(board.Unplaced)
 }
 
 // readProjection is the board's read-only view of the agent store. With a

@@ -155,6 +155,9 @@ GET `/api/fleet`
     neither a live roster row nor a store record, or an ambiguous base name).
   - `title` — the annotation title from the agent store, when one is set.
   - `created_at` — hcom's roster creation time for the row, RFC3339 UTC.
+  - `context_used` — used tokens from the serve's in-process observer. It is
+    absent when the observer does not know the session and is never persisted;
+    the board does not fall back to reading transcripts directly.
 
   `created_at` is hcom-mastered: it is the roster's own creation time,
   passed through unchanged. `manager`, `manager_state` and `title` are
