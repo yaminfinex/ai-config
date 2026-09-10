@@ -93,7 +93,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		default:
 			row.Launcher = "unregistered"
 		}
-		manager, state := ManagerEdge(view, roster, proj)
+		manager, state := managerEdge(view, roster, proj)
 		row.Manager, row.ManagerState = display(manager), state
 		row.Binding = view.Binding
 		row.Mission = "-"
@@ -119,7 +119,7 @@ const (
 	ManagerUnknown  = "unknown"
 )
 
-// ManagerEdge resolves a folded record's manager pointer to the name the tree
+// managerEdge resolves a folded record's manager pointer to the name the tree
 // hangs the row under and the standing of that manager. A human seed (hcom's
 // literal "user", a registered user/web launcher that still seeds the edge,
 // or a web identity with no record) is the operator. A manager string that is
@@ -127,7 +127,7 @@ const (
 // the life mirror applies). A live roster row is live whether or not it has a
 // record; a record that is closed or whose name is off the roster is ended;
 // anything else is unknown. Nothing here writes an edge.
-func ManagerEdge(view *agentstore.AgentView, roster []hcomidentity.Row, proj *agentstore.Projection) (string, string) {
+func managerEdge(view *agentstore.AgentView, roster []hcomidentity.Row, proj *agentstore.Projection) (string, string) {
 	manager := view.Manager
 	if manager == "" || manager == "unknown" {
 		return manager, ManagerUnknown
@@ -144,8 +144,21 @@ func ManagerEdge(view *agentstore.AgentView, roster []hcomidentity.Row, proj *ag
 		}
 	}
 	if bus == nil {
-		if owner, unique := hcomidentity.ByUniqueBaseName(roster, manager); unique {
-			manager, bus = owner.Name, &owner
+		// A base name is only an identity when exactly one live row carries
+		// it. Several matches mean the string cannot be resolved: unknown,
+		// never a tombstone built from a historical base-name record.
+		var matches []*hcomidentity.Row
+		for i := range roster {
+			if roster[i].BaseName == manager {
+				matches = append(matches, &roster[i])
+			}
+		}
+		switch len(matches) {
+		case 1:
+			manager, bus = matches[0].Name, matches[0]
+		case 0:
+		default:
+			return manager, ManagerUnknown
 		}
 	}
 	if bus != nil {

@@ -151,21 +151,22 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
     }
   }
 
+  // placed guards recursion: a row is added once, so a reparent cycle can
+  // never loop; the final unreached-row pass below homes anything a cycle hid.
   const placed = new Set<string>()
-  const addAgent = (flat: FlatRow, ancestors: Set<string>): string => {
+  const addAgent = (flat: FlatRow): string => {
     const { row } = flat
     const id = agentNodeID(row.agent)
     placed.add(row.agent)
-    const next = new Set(ancestors).add(row.agent)
     const children: string[] = []
     for (const report of byCreation(reportsOf.get(row.agent) ?? [])) {
-      if (next.has(report.row.agent) || placed.has(report.row.agent)) continue
-      children.push(addAgent(report, next))
+      if (placed.has(report.row.agent)) continue
+      children.push(addAgent(report))
     }
     for (const child of row.subagents ?? []) {
       const flatChild = rows.get(child.agent)
-      if (!flatChild || next.has(child.agent) || placed.has(child.agent)) continue
-      children.push(addAgent(flatChild, next))
+      if (!flatChild || placed.has(child.agent)) continue
+      children.push(addAgent(flatChild))
     }
     result.set(id, {
       id, kind: row.parent_agent ? 'subagent' : 'agent', name: row.title || row.agent, children, pane: row,
@@ -178,10 +179,10 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
   const operator: SidebarNode = { id: operatorID, kind: 'operator', name: 'you', children: [] }
   result.set(operator.id, operator)
   root.children.push(operator.id)
-  for (const flat of byCreation(operatorReports)) operator.children.push(addAgent(flat, new Set()))
+  for (const flat of byCreation(operatorReports)) operator.children.push(addAgent(flat))
   for (const [manager, reports] of [...tombstones.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     const id = `tombstone:${manager}`
-    const children = byCreation(reports).filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat, new Set([manager])))
+    const children = byCreation(reports).filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat))
     result.set(id, { id, kind: 'tombstone', name: manager, children, secondary: 'ended', summary: summarise(result, children) })
     operator.children.push(id)
   }
@@ -190,11 +191,11 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
   const unadoptedNode: SidebarNode = { id: unadoptedID, kind: 'unadopted', name: 'Unadopted', children: [] }
   for (const flat of byCreation(unadopted)) {
     if (placed.has(flat.row.agent)) continue
-    unadoptedNode.children.push(addAgent(flat, new Set()))
+    unadoptedNode.children.push(addAgent(flat))
   }
   for (const [manager, reports] of [...unknownGroups.entries()].sort(([left], [right]) => left.localeCompare(right))) {
     const id = `unknown:${manager}`
-    const children = byCreation(reports).filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat, new Set([manager])))
+    const children = byCreation(reports).filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat))
     if (children.length === 0) continue
     result.set(id, { id, kind: 'unknown-manager', name: manager, children, secondary: 'unknown', summary: summarise(result, children) })
     unadoptedNode.children.push(id)
@@ -203,7 +204,7 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
   // under a cycle or was itself skipped) still needs a home.
   for (const flat of byCreation([...rows.values()])) {
     if (placed.has(flat.row.agent) || (flat.row.parent_agent && rows.has(flat.row.parent_agent) && placed.has(flat.row.parent_agent))) continue
-    unadoptedNode.children.push(addAgent(flat, new Set()))
+    unadoptedNode.children.push(addAgent(flat))
   }
   unadoptedNode.summary = summarise(result, unadoptedNode.children)
   unadoptedNode.count = unadoptedNode.summary.total
@@ -228,14 +229,26 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
   return result
 }
 
-// collapsedLabel is what a manager subtree reads when folded: `ziru (4 · 1 active)`.
+// expandedLabel is the row text in either state: identity plus its
+// secondary (bus name under a title, "ended" on a tombstone, "unknown" on an
+// unresolved manager group), joined by the ruled separator.
+export function expandedLabel(node: SidebarNode) {
+  return node.secondary ? `${node.name} · ${node.secondary}` : node.name
+}
+
+// collapsedLabel is what a folded subtree reads: the same identity and state
+// text plus the descendant summary, `ziru (4 · 1 active)` or
+// `fimu · ended (3 · 1 active)`. Nothing is dropped when folding.
 export function collapsedLabel(node: SidebarNode) {
-  if (!node.summary || node.summary.total === 0) return node.name
-  return `${node.name} (${node.summary.total} · ${node.summary.active} active)`
+  const label = expandedLabel(node)
+  if (!node.summary || node.summary.total === 0) return label
+  return `${label} (${node.summary.total} · ${node.summary.active} active)`
 }
 
 function push<T>(map: Map<string, T[]>, key: string, value: T) {
-  map.set(key, [...(map.get(key) ?? []), value])
+  const list = map.get(key)
+  if (list) list.push(value)
+  else map.set(key, [value])
 }
 
 function byCreation(flats: FlatRow[]) {

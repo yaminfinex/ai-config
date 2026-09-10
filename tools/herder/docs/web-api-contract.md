@@ -136,13 +136,19 @@ GET `/api/fleet`
   - `manager_state` — `live` (the manager is a live roster row; a manager
     string that is a unique roster `base_name` resolves to that full name),
     `ended` (the store holds a record for the manager that is closed or no
-    longer on the roster), `operator`, or `unknown` (no manager, or a name
-    with neither a live roster row nor a store record).
+    longer on the roster), `operator`, or `unknown` (no manager, a name with
+    neither a live roster row nor a store record, or an ambiguous base name).
   - `title` — the annotation title from the agent store, when one is set.
   - `created_at` — hcom's roster creation time for the row, RFC3339 UTC.
 
-  These are herder-mastered augmenting data folded from the agent store at
-  board build time; they are never lifecycle authority. The board still never
+  `created_at` is hcom-mastered: it is the roster's own creation time,
+  passed through unchanged. `manager`, `manager_state` and `title` are
+  herder-mastered augmenting data folded from the agent store at board build
+  time; they are never lifecycle authority. Resolving a manager string by
+  roster `base_name` has one exception: when several live rows share that
+  base the string cannot name an identity, so `manager_state` is `unknown`
+  (never `ended`, whatever historical base-name records the store holds) and
+  `manager` carries the raw string. The board still never
   fabricates a row for an agent hcom does not list: an ended manager appears
   only as a client-side tombstone node built from its live reports' `manager`
   strings plus `manager_state: "ended"`. An append to the agent store journal

@@ -16,9 +16,9 @@ import { defaultRailPreferences, type RailPreference } from './utilityRailModel'
 import {
   defaultFleetView,
   readShellPreferences,
+  shellPreferencesValue,
   writeShellPreferences,
   type FleetView,
-  type StoredShellPreferences,
 } from './shellPreferences.ts'
 import {
   activeSpaceSessionKey,
@@ -152,11 +152,7 @@ export function useLayoutPersistence(
 
   const flushShell = useCallback(() => {
     if (initialization.mode !== 'spaces' || !shellDirty.current) return false
-    const value: StoredShellPreferences = { version: 1, rails: { fleet: fleetRail, notes: notesRail } }
-    if (expandedItems !== null) value.expandedItems = expandedItems
-    if (knownWorkspaceItems !== null) value.knownWorkspaceItems = knownWorkspaceItems
-    if (knownManagerItems !== null) value.knownManagerItems = knownManagerItems
-    value.fleetView = fleetView
+    const value = shellPreferencesValue({ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView })
     const previous = shellState.current
     const next = writeShellPreferences(localStorage, JSON.stringify(value), previous)
     if (next === previous) return false

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildSupervisionNodes, collapsedLabel } from '../src/features/sidebar/sidebarNodes.ts'
+import { buildSupervisionNodes, collapsedLabel, expandedLabel } from '../src/features/sidebar/sidebarNodes.ts'
 import type { Board, Pane, Row } from '../src/types.ts'
 
 function agent(name: string, extra: Partial<Row> & { pane_id?: string }): Row {
@@ -84,6 +84,19 @@ test('a collapsed manager subtree reads name (descendants · active)', () => {
   assert.equal(collapsedLabel(nodes.get('agent:riko')!), 'riko (4 · 2 active)')
   assert.equal(collapsedLabel(nodes.get('agent:vara')!), 'vara')
   assert.equal(collapsedLabel(nodes.get('operator')!), 'you (9 · 2 active)')
+})
+
+test('collapsing keeps identity and state text: tombstone "name · ended", titled bus name, unknown group', () => {
+  const nodes = buildSupervisionNodes(liveShapedBoard())
+  const tombstone = nodes.get('tombstone:orch-hamo')!
+  assert.equal(expandedLabel(tombstone), 'orch-hamo · ended')
+  assert.equal(collapsedLabel(tombstone), 'orch-hamo · ended (2 · 0 active)')
+  const tume = nodes.get('agent:grill-confirm-tume')!
+  assert.equal(expandedLabel(tume), 'grill confirm · grill-confirm-tume')
+  assert.equal(collapsedLabel(tume), 'grill confirm · grill-confirm-tume (1 · 1 active)')
+  const fimu = nodes.get('unknown:fimu')!
+  assert.equal(expandedLabel(fimu), 'fimu · unknown')
+  assert.equal(collapsedLabel(fimu), 'fimu · unknown (1 · 1 active)')
 })
 
 test('a live manager never becomes a tombstone and an unknown manager never joins the operator', () => {

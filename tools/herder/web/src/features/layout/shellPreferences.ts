@@ -6,7 +6,7 @@ export const shellStorageBackupKey = 'herder.web.shell.v1.last-good'
 export type FleetView = 'supervision' | 'placement'
 export const defaultFleetView: FleetView = 'supervision'
 
-export function fleetView(value: unknown): value is FleetView {
+export function isFleetView(value: unknown): value is FleetView {
   return value === 'supervision' || value === 'placement'
 }
 
@@ -41,7 +41,7 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
       (value.expandedItems !== undefined && !strings(value.expandedItems)) ||
       (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems)) ||
       (value.knownManagerItems !== undefined && !strings(value.knownManagerItems)) ||
-      (value.fleetView !== undefined && !fleetView(value.fleetView))) return null
+      (value.fleetView !== undefined && !isFleetView(value.fleetView))) return null
     const fleet = rail(value.rails.fleet)
     const notes = rail(value.rails.notes)
     if (!fleet || !notes) return null
@@ -56,6 +56,24 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
   } catch {
     return null
   }
+}
+
+// shellPreferencesValue is the one shape the shell writes: rails always,
+// the tree state lists when known, and the fleet view always (so a reload
+// lands on the view the operator last chose).
+export function shellPreferencesValue(state: {
+  fleetRail: RailPreferences['fleet']
+  notesRail: RailPreferences['notes']
+  expandedItems: string[] | null
+  knownWorkspaceItems: string[] | null
+  knownManagerItems: string[] | null
+  fleetView: FleetView
+}): StoredShellPreferences {
+  const value: StoredShellPreferences = { version: 1, rails: { fleet: state.fleetRail, notes: state.notesRail }, fleetView: state.fleetView }
+  if (state.expandedItems !== null) value.expandedItems = state.expandedItems
+  if (state.knownWorkspaceItems !== null) value.knownWorkspaceItems = state.knownWorkspaceItems
+  if (state.knownManagerItems !== null) value.knownManagerItems = state.knownManagerItems
+  return value
 }
 
 export function readShellPreferences(storage: Pick<Storage, 'getItem'>) {

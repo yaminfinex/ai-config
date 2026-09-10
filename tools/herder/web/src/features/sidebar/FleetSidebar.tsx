@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { AgentStatusDot, gapLabel } from '../../shared/presentation'
-import { agentNodeID, buildSidebarNodes, buildSupervisionNodes, collapsedLabel } from './sidebarNodes'
+import { agentNodeID, buildSidebarNodes, buildSupervisionNodes, collapsedLabel, expandedLabel } from './sidebarNodes'
 import type { SidebarNode } from './sidebarNodes'
-import { agentKinds, defaultExpanded, managerItems } from './sidebarView'
+import { agentKinds, reconcileExpansion } from './sidebarView'
 import type { FleetView } from '../layout/shellPreferences'
 import type { Board, Pane } from '../../types'
 import { unattributedTerminalWarning } from '../screen/screenPresentation'
@@ -38,31 +38,11 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
 
   useEffect(() => {
     if (!board) return
-    const workspaceItems = [...placementNodes.values()].filter((node) => node.kind === 'workspace').map((node) => node.id)
-    const managers = managerItems(supervisionNodes)
-    if (expandedItems === null) {
-      onExpandedItems([...new Set([...defaultExpanded(placementNodes), ...defaultExpanded(supervisionNodes)])])
-      onKnownWorkspaceItems(workspaceItems)
-      onKnownManagerItems(managers)
-      return
-    }
-    if (knownWorkspaceItems === null) {
-      onKnownWorkspaceItems(workspaceItems)
-      return
-    }
-    if (knownManagerItems === null) {
-      // First visit of the supervision view on a browser that already had
-      // placement state: open every manager subtree once.
-      onExpandedItems([...new Set([...expandedItems, ...defaultExpanded(supervisionNodes)])])
-      onKnownManagerItems(managers)
-      return
-    }
-    const known = new Set([...knownWorkspaceItems, ...knownManagerItems])
-    const unseen = [...workspaceItems, ...managers].filter((id) => !known.has(id))
-    if (unseen.length === 0) return
-    onExpandedItems([...new Set([...expandedItems, ...unseen])])
-    onKnownWorkspaceItems([...new Set([...knownWorkspaceItems, ...workspaceItems])])
-    onKnownManagerItems([...new Set([...knownManagerItems, ...managers])])
+    const next = reconcileExpansion(placementNodes, supervisionNodes, { expandedItems, knownWorkspaceItems, knownManagerItems })
+    if (!next) return
+    if (next.expandedItems) onExpandedItems(next.expandedItems)
+    if (next.knownWorkspaceItems) onKnownWorkspaceItems(next.knownWorkspaceItems)
+    if (next.knownManagerItems) onKnownManagerItems(next.knownManagerItems)
   }, [board, expandedItems, knownManagerItems, knownWorkspaceItems, onExpandedItems, onKnownManagerItems, onKnownWorkspaceItems, placementNodes, supervisionNodes])
 
   useEffect(() => {
@@ -141,7 +121,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
           focused={item.isFocused()}
           className={`${agentRow ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' || node.kind === 'unadopted' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${node.kind === 'tombstone' ? ' tombstone-row' : ''}${node.kind === 'unknown-manager' ? ' unknown-manager-row' : ''}${node.kind === 'operator' ? ' operator-row' : ''}`}
           icon={icon}
-          label={<span className="tree-label">{folded ? collapsedLabel(node) : node.name}{node.secondary && !folded && <span className="tree-secondary">{node.secondary}</span>}</span>}
+          label={<span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total} · {node.summary.active} active)</span>}</span>}
           trailing={<>{node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
             {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
