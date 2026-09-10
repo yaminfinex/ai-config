@@ -188,6 +188,33 @@ func TestSnapshotPlusTailEqualsFullReplayByteForByte(t *testing.T) {
 	if tail.EventsOffset != full.EventsOffset || len(tail.Agents["impl-gime"]) != 2 {
 		t.Fatalf("offset %d/%d incarnations %d", tail.EventsOffset, full.EventsOffset, len(tail.Agents["impl-gime"]))
 	}
+
+	_, aliasStore := scratch(t)
+	aliasReq := ev(KindLaunchRequested, "", 11, func(e *Event) {
+		e.Tool, e.Tag, e.By, e.ByKind = "codex", "impl", "ubuntu", "user"
+		e.Placement = &Placement{Workspace: "w80"}
+	})
+	mustAppend(t, aliasStore, aliasReq)
+	mustAppend(t, aliasStore, ev(KindLaunchReady, "impl-nife", 12, func(e *Event) {
+		e.Request, e.By, e.ByKind = aliasReq.ID, "ubuntu", "user"
+	}))
+	if snapshot, loadErr := aliasStore.Load(); loadErr != nil || snapshot.SnapshotErr != nil {
+		t.Fatalf("alias snapshot: projection=%+v err=%v", snapshot, loadErr)
+	}
+	mustAppend(t, aliasStore, ev(KindMirrorReady, "nife", 13, func(e *Event) { e.By, e.ByKind = "ziru", "mirror" }))
+	aliasTail, err := aliasStore.LoadNoSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasFull, err := aliasStore.Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasTailJSON, _ := aliasTail.Marshal()
+	aliasFullJSON, _ := aliasFull.Marshal()
+	if !bytes.Equal(aliasTailJSON, aliasFullJSON) {
+		t.Fatalf("alias snapshot+tail != full replay\n%s\n%s", aliasTailJSON, aliasFullJSON)
+	}
 	// A snapshot pointing past the file (rotation / repair) is ignored.
 	if err := os.WriteFile(s.SnapshotPath(), []byte(`{"version":1,"events_offset":999999,"agents":{},"requests":{}}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -245,6 +272,56 @@ func TestAliasDoesNotGreedilyMergeSameBaseAcrossTags(t *testing.T) {
 	}
 }
 
+func TestAliasWindowEndLeavesLaterMirrorRecordSeparate(t *testing.T) {
+	_, s := scratch(t)
+	req := ev(KindLaunchRequested, "", 1, func(e *Event) {
+		e.Tool, e.Tag = "codex", "impl"
+		e.Placement = &Placement{Workspace: "w80"}
+	})
+	mustAppend(t, s, req)
+	mustAppend(t, s, ev(KindLaunchReady, "impl-nife", 2, func(e *Event) { e.Request = req.ID }))
+	mustAppend(t, s, ev(KindCulled, "impl-nife", 4, func(e *Event) { e.Pane, e.Close = "p1", "managed" }))
+	mustAppend(t, s, ev(KindMirrorReady, "nife", 5, func(e *Event) { e.ByKind = "mirror" }))
+	projection, err := s.Replay()
+	if err != nil || projection.Latest("nife") == nil || projection.Latest("impl-nife") == nil {
+		t.Fatalf("post-window mirror was merged: err=%v names=%v", err, projection.Names())
+	}
+}
+
+func TestAliasPreservesExplicitReparent(t *testing.T) {
+	state, s := scratch(t)
+	fixture, err := os.ReadFile("testdata/live-alias-nife.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(state, "agents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.EventsPath(), fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustAppend(t, s, ev(KindReparent, "impl-nife", 4, func(e *Event) { e.Manager = "vara" }))
+	projection, err := s.Replay()
+	if err != nil || projection.Latest("impl-nife").Manager != "vara" {
+		t.Fatalf("reparent lost during alias repair: err=%v view=%+v", err, projection.Latest("impl-nife"))
+	}
+}
+
+func TestAliasManagerRepairDoesNotOverrideAgentLauncher(t *testing.T) {
+	_, s := scratch(t)
+	req := ev(KindLaunchRequested, "", 1, func(e *Event) {
+		e.Tool, e.Tag, e.By = "codex", "impl", "impl-pimi"
+		e.Placement = &Placement{Workspace: "w80"}
+	})
+	mustAppend(t, s, req)
+	mustAppend(t, s, ev(KindLaunchReady, "impl-x", 2, func(e *Event) { e.Request, e.By = req.ID, "impl-pimi" }))
+	mustAppend(t, s, ev(KindMirrorReady, "x", 3, func(e *Event) { e.By, e.ByKind = "pimi", "mirror" }))
+	projection, err := s.Replay()
+	if err != nil || projection.Latest("impl-x").Manager != "impl-pimi" {
+		t.Fatalf("agent launcher manager overwritten: err=%v view=%+v", err, projection.Latest("impl-x"))
+	}
+}
+
 func TestOldProjectionVersionForcesReplay(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindAnnotate, "real", 1, func(e *Event) { e.Title = "from journal" }))
@@ -252,8 +329,7 @@ func TestOldProjectionVersionForcesReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldVersion := ProjectionVersion - 1
-	raw := fmt.Sprintf(`{"version":%d,"events_offset":%d,"agents":{"stale":[]},"requests":{},"unnamed_sessions":{}}`, oldVersion, stat.Size())
+	raw := fmt.Sprintf(`{"version":1,"events_offset":%d,"agents":{"stale":[]},"requests":{},"unnamed_sessions":{}}`, stat.Size())
 	if err := os.WriteFile(s.SnapshotPath(), []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}

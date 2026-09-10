@@ -53,6 +53,8 @@ const (
 	webNoteEnd              = "[HERDER_WEB_OPERATOR_NOTE_END]"
 )
 
+var errRosterPending = errors.New("roster not polled yet")
+
 type dependencies struct {
 	buildIdentity        string
 	snapshot             func() (herdrcli.Snapshot, error)
@@ -110,7 +112,7 @@ func (c *rosterCache) set(rows []hcomidentity.Row) {
 
 func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
 	if c == nil {
-		return nil, true
+		return nil, false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -407,7 +409,7 @@ func startLifeMirror(ctx context.Context, stateDir string, deps dependencies) {
 				}
 				roster, rosterReady := deps.rosterCache.get()
 				if !rosterReady {
-					return agentstore.ErrUnavailable
+					return errRosterPending
 				}
 				resolve := func(raw string) string {
 					if row, ok := hcomidentity.ByUniqueBaseName(roster, raw); ok {

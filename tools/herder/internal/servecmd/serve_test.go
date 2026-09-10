@@ -35,6 +35,8 @@ import (
 )
 
 func fixtureDeps() dependencies {
+	cache := &rosterCache{}
+	cache.set(nil)
 	return dependencies{
 		buildIdentity: "source:fixture731",
 		snapshot: func() (herdrcli.Snapshot, error) {
@@ -82,6 +84,7 @@ func fixtureDeps() dependencies {
 		now:              time.Now,
 		audit:            func(string, ...any) {},
 		inputSerial:      &paneInputSerial{},
+		rosterCache:      cache,
 	}
 }
 

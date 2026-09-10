@@ -52,7 +52,7 @@ func (s *Store) Replay() (*Projection, error) {
 	}
 	for _, alias := range aliases {
 		for _, view := range proj.Agents[alias.full] {
-			if alias.contains(view.FirstSeen) && view.ManagerAt == nil && alias.manager != "" {
+			if alias.contains(view.FirstSeen) && view.ManagerAt == nil && view.Provenance.LauncherKind == "user" && alias.manager != "" {
 				view.Manager = alias.manager
 			}
 		}
@@ -67,6 +67,7 @@ type replayAlias struct {
 }
 
 func (a replayAlias) contains(at time.Time) bool {
+	// Windows are half-open [start,end); a zero end means still open.
 	return !at.Before(a.start) && (a.end.IsZero() || at.Before(a.end))
 }
 
@@ -142,12 +143,21 @@ func (s *Store) load() (*Projection, error) {
 	if !ok {
 		return s.Replay()
 	}
-	end, err := s.scanEnd(proj.EventsOffset, proj.Apply)
+	replayTail := false
+	end, err := s.scanEnd(proj.EventsOffset, func(event Event, offset int64) {
+		if strings.HasPrefix(event.Kind, "mirror.") && event.Name != "" && proj.Latest(event.Name) == nil {
+			replayTail = true
+		}
+		proj.Apply(event, offset)
+	})
 	if errors.Is(err, os.ErrNotExist) {
 		return s.Replay()
 	}
 	if err != nil {
 		return nil, err
+	}
+	if replayTail {
+		return s.Replay()
 	}
 	proj.EventsOffset = end
 	return proj, nil
