@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildSupervisionNodes, collapsedLabel, expandedLabel } from '../src/features/sidebar/sidebarNodes.ts'
+import { buildSidebarNodes, buildSupervisionNodes, collapsedLabel, expandedLabel } from '../src/features/sidebar/sidebarNodes.ts'
 import type { Board, Pane, Row } from '../src/types.ts'
 
 function agent(name: string, extra: Partial<Row> & { pane_id?: string }): Row {
@@ -66,22 +66,28 @@ test('supervision tree groups by manager: operator roots, creation order, tombst
   assert.equal(nodes.get('terminals')?.count, 1)
 })
 
-test('supervision rows carry title over bus name and the placement chip', () => {
+test('supervision rows carry only title over bus name while placement retains status text', () => {
   const nodes = buildSupervisionNodes(liveShapedBoard())
   const tume = nodes.get('agent:grill-confirm-tume')
   assert.equal(tume?.name, 'grill confirm')
   assert.equal(tume?.secondary, 'grill-confirm-tume')
-  assert.equal(tume?.paneChip, 'w97:p1')
+  assert.equal(tume?.statusText, undefined)
+  assert.deepEqual(tume?.summary, { total: 1, active: 1 })
   assert.equal(tume?.workspaceLabel, 'fleet')
   const nego = nodes.get('agent:durlog-grill-nego')
   assert.equal(nego?.name, 'durlog-grill-nego')
   assert.equal(nego?.secondary, undefined)
-  assert.equal(nego?.paneChip, undefined)
+  assert.equal(nego?.statusText, undefined)
+  const placement = buildSidebarNodes(liveShapedBoard())
+  const placedTume = [...placement.values()].find((node) => node.pane?.agent === 'grill-confirm-tume')
+  assert.equal(placedTume?.name, 'grill confirm')
+  assert.equal(placedTume?.secondary, 'grill-confirm-tume')
+  assert.equal(placedTume?.statusText, 'listening')
 })
 
-test('a collapsed manager subtree reads name (descendants · active)', () => {
+test('a collapsed manager subtree reads as its recursive report total', () => {
   const nodes = buildSupervisionNodes(liveShapedBoard())
-  assert.equal(collapsedLabel(nodes.get('agent:riko')!), 'riko (4 · 2 active)')
+  assert.equal(collapsedLabel(nodes.get('agent:riko')!), 'riko (4)')
   assert.equal(collapsedLabel(nodes.get('agent:vara')!), 'vara')
   assert.equal(collapsedLabel(nodes.get('operator')!), 'you (9 · 2 active)')
 })
@@ -93,7 +99,7 @@ test('collapsing keeps identity and state text: tombstone "name · ended", title
   assert.equal(collapsedLabel(tombstone), 'orch-hamo · ended (2 · 0 active)')
   const tume = nodes.get('agent:grill-confirm-tume')!
   assert.equal(expandedLabel(tume), 'grill confirm · grill-confirm-tume')
-  assert.equal(collapsedLabel(tume), 'grill confirm · grill-confirm-tume (1 · 1 active)')
+  assert.equal(collapsedLabel(tume), 'grill confirm · grill-confirm-tume (1)')
   const fimu = nodes.get('unknown:fimu')!
   assert.equal(expandedLabel(fimu), 'fimu · unknown')
   assert.equal(collapsedLabel(fimu), 'fimu · unknown (1 · 1 active)')

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -34,7 +35,7 @@ type Store struct {
 	ImportErr   error     // set by Open when the first-open import could not create events.jsonl
 
 	importFault func(edges int) error // test hook: fail the import after N edges
-	replays     int                   // test observation: full journal folds by this Store
+	replays     atomic.Int64          // test observation: full journal folds by this Store
 }
 
 // Receipt is what Append returns; a replayed id returns the receipt of the

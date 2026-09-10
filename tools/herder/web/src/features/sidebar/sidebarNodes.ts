@@ -15,10 +15,10 @@ export type SidebarNode = {
   pane?: Pane | Row
   workspace?: Workspace
   tabLabel?: string
-  // Supervision view only: bus name under a title (or "ended"/"unknown" on
-  // group nodes), placement as a trailing chip, and the folded summary.
+  // Secondary is shared identity/state; statusText is placement-only, while
+  // summary is the folded supervision total.
   secondary?: string
-  paneChip?: string
+  statusText?: string
   workspaceLabel?: string
   summary?: SupervisionSummary
 }
@@ -66,12 +66,17 @@ function addAgentNode(result: Map<string, SidebarNode>, id: string, pane: Pane |
   result.set(id, {
     id,
     kind: pane.parent_agent ? 'subagent' : 'pane',
-    name: pane.agent !== '-' ? pane.agent : screenPanePresentation(pane as Pane).label,
+    ...(pane.agent !== '-' ? agentLabel(pane) : { name: screenPanePresentation(pane as Pane).label }),
     children,
     pane,
     tabLabel,
+    statusText: pane.agent !== '-' && pane.bus_status !== '-' ? pane.bus_status : undefined,
   })
   for (const [index, child] of (pane.subagents ?? []).entries()) addAgentNode(result, children[index], child)
+}
+
+export function agentLabel(row: Pick<Row, 'agent' | 'title'>) {
+  return { name: row.title || row.agent, secondary: row.title ? row.agent : undefined }
 }
 
 // Supervision view: the tree is the manager edge, never placement. Every
@@ -90,7 +95,7 @@ const operatorID = 'operator'
 const unadoptedID = 'unadopted'
 const terminalsID = 'terminals'
 
-type FlatRow = { row: Row, paneChip?: string, workspaceLabel?: string, tabLabel?: string }
+type FlatRow = { row: Row, workspaceLabel?: string, tabLabel?: string }
 
 export function agentNodeID(name: string) {
   return `agent:${name}`
@@ -119,7 +124,7 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
         terminals.set(workspace.workspace_id, entry)
         return
       }
-      collect(pane, { paneChip: pane.pane_id, workspaceLabel: label, tabLabel })
+      collect(pane, { workspaceLabel: label, tabLabel })
     }))
   })
   board.unplaced.forEach((row) => collect(row, {}))
@@ -169,9 +174,8 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
       children.push(addAgent(flatChild))
     }
     result.set(id, {
-      id, kind: row.parent_agent ? 'subagent' : 'agent', name: row.title || row.agent, children, pane: row,
-      secondary: row.title ? row.agent : undefined, paneChip: flat.paneChip, workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel,
-      summary: summarise(result, children),
+      id, kind: row.parent_agent ? 'subagent' : 'agent', ...agentLabel(row), children, pane: row,
+      workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel, summary: summarise(result, children),
     })
     return id
   }
@@ -237,11 +241,12 @@ export function expandedLabel(node: SidebarNode) {
 }
 
 // collapsedLabel is what a folded subtree reads: the same identity and state
-// text plus the descendant summary, `ziru (4 · 1 active)` or
+// text plus the descendant summary, `ziru (4)` or
 // `fimu · ended (3 · 1 active)`. Nothing is dropped when folding.
 export function collapsedLabel(node: SidebarNode) {
   const label = expandedLabel(node)
   if (!node.summary || node.summary.total === 0) return label
+  if (node.kind === 'agent' || node.kind === 'subagent') return `${label} (${node.summary.total})`
   return `${label} (${node.summary.total} · ${node.summary.active} active)`
 }
 
@@ -265,10 +270,9 @@ function summarise(result: Map<string, SidebarNode>, children: string[]): Superv
       total += 1
       if (child.pane.bus_status === 'active') active += 1
     }
-    if (child.summary) {
-      total += child.summary.total
-      active += child.summary.active
-    }
+    const descendants = child.summary ?? summarise(result, child.children)
+    total += descendants.total
+    active += descendants.active
   }
   return { total, active }
 }
