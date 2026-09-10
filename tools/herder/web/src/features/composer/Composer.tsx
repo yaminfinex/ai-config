@@ -8,7 +8,7 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
   name: string
   identityReadOnly: string
   hasNotes?: boolean
-  onNotesFocus?: () => void
+  onNotesFocus: () => void
   onViewer: (viewer: string) => void
   onProblem: (detail: string) => void
   onSend: () => void
@@ -68,7 +68,7 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
         if (blurComposerOnEscape(event)) return
         if (composerArrowUpAction({ ...event, isComposing: event.nativeEvent.isComposing, value: message, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd, hasNotes }) === 'notes') {
           event.preventDefault()
-          onNotesFocus?.()
+          onNotesFocus()
           return
         }
         if (isComposerQueueShortcut(event) && !event.nativeEvent.isComposing) {

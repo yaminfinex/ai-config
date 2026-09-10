@@ -66,8 +66,8 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange, focusReq
   // A focus request (ArrowUp from the strip's composer) lands on the last-focused card, else that agent's first note, else the first card.
   // The effect runs on mount too, so a list mounted by the request lands without a second one.
   useEffect(() => {
-    if (!focusRequest) return
-    const landing = notesFocusLanding(selection, notes, returnTo ?? '')
+    if (!focusRequest || !returnTo) return
+    const landing = notesFocusLanding(selection, notes, returnTo)
     if (!landing) return
     setSelection(selectionAfterClick(selection, ids, landing, { shift: false, command: false }))
     focus(landing)

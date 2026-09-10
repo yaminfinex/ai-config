@@ -6,23 +6,24 @@ import { noteTransferText } from './notesPresentation.ts'
 import { useGroupNotes } from './NotesProvider.tsx'
 import { useScheduledFrame } from '../../shared/lifecycle.ts'
 
-export function AgentNotesStrip({ agent, agents, focusRequest = 0 }: { agent: string, agents: string[], focusRequest?: number }) {
+export function AgentNotesStrip({ agent, agents, focusRequest }: { agent: string, agents: string[], focusRequest: number }) {
   const notes = useGroupNotes(agent)
   const scheduleFrame = useScheduledFrame()
   const [collapsed, setCollapsed] = useState(true)
   const [editing, setEditing] = useState(false)
-  // The request this strip un-collapsed for; the toggle resets it so a manual re-expand does not replay the landing.
+  // One-shot: the request un-collapses the strip, the list lands on it (child effects run first), then it clears so no later remount replays it.
   const [expandedBy, setExpandedBy] = useState(0)
   useEffect(() => {
     if (!focusRequest) return
     setCollapsed(false)
     setExpandedBy(focusRequest)
   }, [focusRequest])
+  useEffect(() => { if (expandedBy) setExpandedBy(0) }, [expandedBy])
   const count = notes.length
   if (count === 0 && !editing) return null
   return <section className="agent-notes-strip" aria-label={`${agent} notes`}>
     <header className="agent-notes-header">
-      <button type="button" className="agent-notes-toggle" aria-expanded={!collapsed} onClick={() => { setCollapsed((current) => !current); setExpandedBy(0) }}><span aria-hidden="true">{collapsed ? '▸' : '▾'}</span> Notes <span>{count}</span></button>
+      <button type="button" className="agent-notes-toggle" aria-expanded={!collapsed} onClick={() => setCollapsed((current) => !current)}><span aria-hidden="true">{collapsed ? '▸' : '▾'}</span> Notes <span>{count}</span></button>
       <NoteQuickAdd group={agent} label={agent} />
     </header>
     {!collapsed && <NotesList groups={[{ group: agent, label: agent }]} agents={agents} focusRequest={expandedBy} returnTo={agent} onEditingChange={setEditing} onHandOff={(target, notes) => {
