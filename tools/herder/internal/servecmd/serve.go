@@ -98,6 +98,8 @@ type rosterCache struct {
 	mu          sync.RWMutex
 	rows        []hcomidentity.Row
 	initialized bool
+	remembered  map[string]string
+	ambiguous   map[string]bool
 }
 
 func (c *rosterCache) set(rows []hcomidentity.Row) {
@@ -107,6 +109,21 @@ func (c *rosterCache) set(rows []hcomidentity.Row) {
 	c.mu.Lock()
 	c.rows = append([]hcomidentity.Row(nil), rows...)
 	c.initialized = true
+	if c.remembered == nil {
+		c.remembered = map[string]string{}
+		c.ambiguous = map[string]bool{}
+	}
+	for _, row := range rows {
+		if row.BaseName == "" || c.ambiguous[row.BaseName] {
+			continue
+		}
+		if name := c.remembered[row.BaseName]; name != "" && name != row.Name {
+			delete(c.remembered, row.BaseName)
+			c.ambiguous[row.BaseName] = true
+			continue
+		}
+		c.remembered[row.BaseName] = row.Name
+	}
 	c.mu.Unlock()
 }
 
@@ -117,6 +134,23 @@ func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return append([]hcomidentity.Row(nil), c.rows...), c.initialized
+}
+
+func (c *rosterCache) resolve(raw string) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if row, ok := hcomidentity.ByUniqueBaseName(c.rows, raw); ok {
+		return row.Name
+	}
+	for _, row := range c.rows {
+		if row.BaseName == raw {
+			return raw
+		}
+	}
+	if !c.ambiguous[raw] && c.remembered[raw] != "" {
+		return c.remembered[raw]
+	}
+	return raw
 }
 
 var liveDependencies = dependencies{
@@ -409,13 +443,14 @@ func startLifeMirror(ctx context.Context, stateDir string, deps dependencies) {
 				}
 				roster, rosterReady := deps.rosterCache.get()
 				if !rosterReady {
-					return errRosterPending
+					roster, err = deps.roster()
+					if err != nil {
+						return errRosterPending
+					}
+					deps.rosterCache.set(roster)
 				}
 				resolve := func(raw string) string {
-					if row, ok := hcomidentity.ByUniqueBaseName(roster, raw); ok {
-						return row.Name
-					}
-					return raw
+					return deps.rosterCache.resolve(raw)
 				}
 				name := resolve(life.Instance)
 				if kind == agentstore.KindMirrorBatch {
