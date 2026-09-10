@@ -1,6 +1,7 @@
 // server.go owns the listening end: stale-socket probe, bind with mode 0600,
 // one goroutine per accepted connection, Close. It does not decide answers
-// (the caller's answer func does) and does not know the client's budget.
+// (the caller's answer func does) and does not own the client's fallback
+// policy (client.go does; the stale-listener probe only borrows ClientBudget).
 package herdersock
 
 import (

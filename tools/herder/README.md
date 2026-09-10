@@ -29,7 +29,7 @@ When running Go directly from this module, use `env -u GOROOT go ...`.
 - `internal/sessionvitals/` — the ONE vitals reader (`ReadDirect`, `Seed`, `Advance`) and the ONE cache-then-direct lookup body (`ReadWith`; `Read` = socket cache for the CLI).
 - `internal/observer/` — serve-scoped in-memory session vitals: roster discovery, seed, fsnotify tail, phases, 24 h TTL. Never persisted.
 - `internal/herdersock/` — the local socket protocol, client and server (`<state dir>/herder.sock`, one JSON line each way, op `vitals`).
-- `internal/servecmd/` — HTTP serve; `observe.go` wires observer, socket and the shared agent-store projection.
+- `internal/servecmd/` — HTTP serve; `observe.go` wires the observer and the socket; `projection.go` owns the shared agent-store projection (its refresh triggers and the broker).
 - `internal/showcmd/` — one-agent store and live-vitals rendering (`--json` carries `source: cache|direct`).
 - `tests/` — hermetic contracts for the surviving surface.
 
@@ -43,7 +43,7 @@ transcript read. If the file exists it dials once; a refused connection is a
 stale socket from a dead serve, so the client unlinks it and reads directly. A
 live serve gets one JSON line `{"op":"vitals","tool":…,"session":…}` and must
 answer within 150 ms; the answer carries the observer's vitals, its
-`observed_at` stamp and phase, and show prints `source: cache`. Any miss,
+`observed_at` stamp, and show prints `source: cache`. Any miss,
 timeout or malformed reply falls to the direct read, `source: direct`. Inside
 the serve the socket server hands each request to `observer.Lookup`; the
 observer's entries were seeded by the same `sessionvitals` reader the direct

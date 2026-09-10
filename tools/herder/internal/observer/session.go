@@ -31,8 +31,8 @@ func KeyFor(row hcomidentity.Row) Key {
 	return key
 }
 
-// Phase is the session's tail state. The same words appear in the socket
-// response and in docs.
+// Phase is the session's tail state inside the observer. The same words are
+// used in docs; it is internal state and never crosses the socket.
 type Phase string
 
 const (
