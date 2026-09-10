@@ -121,7 +121,6 @@ test('history replay rejects unknown or malformed state instead of resurrecting 
 
 test('popstate restores the recorded space before its panel without growing history', () => {
   let currentSpaceID = 'B'
-  const historyLength = 3
   const calls: string[] = []
   const replay = (spaceID: string, panel: string) => replayHistoryRoute(
     routeFromHistory(`/agents/${panel}`, `?space=${spaceID}`, historyEntryForPanel(agent(panel), spaceID).state),
@@ -137,7 +136,11 @@ test('popstate restores the recorded space before its panel without growing hist
   replay('A', 'pane-1')
   replay('B', 'pane-2')
   assert.deepEqual(calls, ['space:A', 'panel:pane-1', 'space:B', 'panel:pane-2'])
-  assert.equal(historyLength, 3)
+
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  const popstate = controller.match(/useDOMEvent\(window, 'popstate',[\s\S]*?\n {2}\}\)/)?.[0] ?? ''
+  assert.match(popstate, /replayHistoryRoute/)
+  assert.doesNotMatch(popstate, /pushState/)
 })
 
 test('a history entry for a deleted space stays put and restores only an existing panel', () => {

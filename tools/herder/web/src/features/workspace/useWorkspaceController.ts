@@ -242,7 +242,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         setRevision((value) => value + 1)
       },
     })
-  }, [activeSpaceID, historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
+  }, [historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
 
   useEffect(() => {
     const store = spacesRuntime.store

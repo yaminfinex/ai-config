@@ -69,11 +69,9 @@ export function replayHistoryRoute(
   },
 ) {
   if (route.page === 'missing') return
-  const requestedDifferentSpace = Boolean(route.spaceID && route.spaceID !== currentSpaceID)
-  if (requestedDifferentSpace) {
-    const available = route.spaceID !== null && spaceExists(route.spaceID)
-    if (available && route.spaceID !== null && !actions.switchSpace(route.spaceID)) return
-    if (!available && route.page === 'panel' && !panelExists(route.params)) return
+  if (route.spaceID && route.spaceID !== currentSpaceID) {
+    if (spaceExists(route.spaceID)) { if (!actions.switchSpace(route.spaceID)) return }
+    else if (route.page === 'panel' && !panelExists(route.params)) return
   }
   actions.applyRoute(route)
 }
