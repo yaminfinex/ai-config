@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"ai-config/tools/herder/internal/hcomidentity"
 )
@@ -55,6 +56,12 @@ func Resolve(home string, row hcomidentity.Row) (string, error) {
 	}
 	if !sessionIDPattern.MatchString(row.SessionID) {
 		return "", &ResolveError{Reason: ResolveInvalidSession}
+	}
+	// The roster already carries the path; the glob over ~/.codex/sessions is the fallback and is the whole cost of a list sweep.
+	if base := filepath.Base(row.TranscriptPath); row.TranscriptPath != "" && strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, "-"+row.SessionID+".jsonl") {
+		if info, err := os.Stat(row.TranscriptPath); err == nil && info.Mode().IsRegular() {
+			return row.TranscriptPath, nil
+		}
 	}
 	pattern := filepath.Join(home, ".codex", "sessions", "*", "*", "*", "rollout-*-"+row.SessionID+".jsonl")
 	matches, err := filepath.Glob(pattern)

@@ -14,6 +14,13 @@ failure never fails the lifecycle action (the wrapper logs one line and
 continues). Reads never gate anything either: `list` and `show` print with
 degraded columns when the store cannot be written or read.
 
+`herder show <name>` (or `herder show --session <current-session-id>`) adds a
+live `vitals` block with model, context used/window/percent, transcript mtime,
+and session file. Its JSON output carries the same facts under `vitals`, with
+non-fatal transcript read failures in `vitals_error`. `herder list` adds MODEL
+and CONTEXT (`82k/258k 32%`) columns. These changing values are reverse-scanned
+from current transcripts on demand and are never persisted in the agent store.
+
 ## Files
 
 | file | writer | contents |

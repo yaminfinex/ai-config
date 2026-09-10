@@ -11,29 +11,52 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
+	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herderstate"
+	"ai-config/tools/herder/internal/sessionvitals"
 )
 
 type dependencies struct {
 	roster func() ([]hcomidentity.Row, error)
+	vitals func(hcomidentity.Row) (claudesession.Vitals, string, time.Time, error)
 }
 
-var liveDependencies = dependencies{roster: hcomidentity.List}
+var liveDependencies = dependencies{roster: hcomidentity.List, vitals: sessionvitals.Read}
+
+type showVitals struct {
+	claudesession.Vitals
+	ObservedAt  *time.Time `json:"observed_at,omitempty"`
+	SessionFile string     `json:"session_file,omitempty"`
+}
+
+type showOutput struct {
+	*agentstore.AgentView
+	Vitals      showVitals `json:"vitals"`
+	VitalsError string     `json:"vitals_error,omitempty"`
+}
 
 func Run(args []string, stdout, stderr io.Writer) int {
 	return run(args, stdout, stderr, liveDependencies)
 }
 
 func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
-	name, asJSON := "", false
-	for _, arg := range args {
+	name, sessionID, asJSON := "", "", false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch {
 		case arg == "-h" || arg == "--help":
 			fmt.Fprint(stdout, help)
 			return 0
 		case arg == "--json":
 			asJSON = true
+		case arg == "--session":
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "-") {
+				fmt.Fprintln(stderr, "herder show: --session requires an id")
+				return 2
+			}
+			i++
+			sessionID = args[i]
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(stderr, "herder show: unknown flag %q\n", arg)
 			return 2
@@ -44,9 +67,30 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 			return 2
 		}
 	}
-	if name == "" {
-		fmt.Fprint(stderr, "herder show: an agent name is required\n"+help)
+	if name != "" && sessionID != "" {
+		fmt.Fprintln(stderr, "herder show: agent name and --session are mutually exclusive")
 		return 2
+	}
+	if name == "" && sessionID == "" {
+		fmt.Fprint(stderr, "herder show: an agent name or --session is required\n"+help)
+		return 2
+	}
+	rows, rosterErr := deps.roster()
+	if sessionID != "" {
+		if rosterErr != nil {
+			fmt.Fprintf(stderr, "herder show: cannot read live hcom roster: %v\n", rosterErr)
+			return 1
+		}
+		for i := range rows {
+			if rows[i].SessionID == sessionID {
+				name = rows[i].Name
+				break
+			}
+		}
+		if name == "" {
+			fmt.Fprintf(stderr, "herder show: session %q not found\n", sessionID)
+			return 1
+		}
 	}
 	stateDir, err := herderstate.Dir()
 	if err != nil {
@@ -63,8 +107,8 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		proj = agentstore.NewProjection()
 	}
 	var rosterRow *hcomidentity.Row
-	if rows, err := deps.roster(); err != nil {
-		fmt.Fprintf(stderr, "herder show: live hcom roster unavailable (%v); store-only view\n", err)
+	if rosterErr != nil {
+		fmt.Fprintf(stderr, "herder show: live hcom roster unavailable (%v); store-only view\n", rosterErr)
 	} else {
 		for i := range rows {
 			if rows[i].Name == name {
@@ -83,8 +127,24 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 			}
 		}
 	}
+	var outputVitals showVitals
+	var vitalsErr string
+	if rosterRow != nil && deps.vitals != nil {
+		// This is today's on-demand reverse transcript scan. Once the
+		// observer/daemon exists, it becomes a central context cache read over the
+		// local socket; the transcript remains the authority behind that cache.
+		vitals, path, observedAt, readErr := deps.vitals(*rosterRow)
+		outputVitals.Vitals, outputVitals.SessionFile = vitals, path
+		if !observedAt.IsZero() {
+			observedAt = observedAt.UTC()
+			outputVitals.ObservedAt = &observedAt
+		}
+		if readErr != nil {
+			vitalsErr = readErr.Error()
+		}
+	}
 	if asJSON {
-		encoded, err := json.MarshalIndent(view, "", "  ")
+		encoded, err := json.MarshalIndent(showOutput{AgentView: view, Vitals: outputVitals, VitalsError: vitalsErr}, "", "  ")
 		if err != nil {
 			fmt.Fprintf(stderr, "herder show: %v\n", err)
 			return 1
@@ -92,7 +152,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stdout, "%s\n", encoded)
 		return 0
 	}
-	writeText(stdout, view)
+	writeText(stdout, view, outputVitals)
 	return 0
 }
 
@@ -100,14 +160,16 @@ const help = `herder show — the agent store's view of one agent.
 
 Usage:
   herder show <name> [--json]
+  herder show --session <id> [--json]
 
 Prints provenance (launcher, requested model/effort/placement), the mutable
 manager pointer, assignment, annotation, session history and the last 32
-store events. Folds the live hcom roster when available (binding: verified,
-pending or conflict); the roster's session is always current.
+store events and live model/context vitals. Folds the live hcom roster when
+available (binding: verified, pending or conflict); the roster's session is
+always current. --session matches that current roster session exactly.
 `
 
-func writeText(out io.Writer, v *agentstore.AgentView) {
+func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	field := func(label, value string) {
 		if value == "" {
@@ -177,6 +239,39 @@ func writeText(out io.Writer, v *agentstore.AgentView) {
 	} else {
 		field("session", "")
 	}
+	fmt.Fprintln(w, "vitals:")
+	field("  model", vitals.Model)
+	if vitals.ContextUsage == nil {
+		field("  context_used", "")
+		field("  context_window", "")
+		field("  context_percent", "")
+	} else {
+		used := ""
+		if vitals.ContextUsage.UsedTokens > 0 {
+			used = sessionvitals.Kilo(vitals.ContextUsage.UsedTokens) + " tokens"
+		}
+		field("  context_used", used)
+		if vitals.ContextUsage.WindowTokens == nil {
+			field("  context_window", "")
+		} else {
+			window := ""
+			if *vitals.ContextUsage.WindowTokens > 0 {
+				window = sessionvitals.Kilo(*vitals.ContextUsage.WindowTokens) + " tokens"
+			}
+			field("  context_window", window)
+		}
+		if vitals.ContextUsage.UsedPercent == nil {
+			field("  context_percent", "")
+		} else {
+			field("  context_percent", fmt.Sprintf("%.0f%% used", *vitals.ContextUsage.UsedPercent))
+		}
+	}
+	if vitals.ObservedAt == nil {
+		field("  observed_at", "")
+	} else {
+		field("  observed_at", vitals.ObservedAt.Format(time.RFC3339))
+	}
+	field("  session_file", vitals.SessionFile)
 	_ = w.Flush()
 	if len(v.Sessions) > 0 {
 		fmt.Fprintln(out, "\nsessions (newest first):")
