@@ -5,9 +5,6 @@
 
 set -euo pipefail
 
-# The suite opts into hcom-seat behavior only in fully pinned cases.
-unset HCOM_NAME HCOM_TAG HCOM_INSTANCE_NAME HCOM_PROCESS_ID
-
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 FLEET=$ROOT/tools/fleet
 TEST_ROOT=$(mktemp -d)
@@ -301,7 +298,7 @@ env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test
   HERDER_STATE_DIR="$fallback_state" FLEET_TEST_SELF_MODE=fail \
   PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/real-fallback-spawn.out" \
-  2>"$TEST_ROOT/real-fallback-spawn.err"
+  2>"$TEST_ROOT/real-fallback-spawn.err" || fail "fallback spawn exited non-zero"
 cmp -s "$TEST_ROOT/real-spawn.out" "$TEST_ROOT/real-fallback-spawn.out" \
   || fail "failed hcom self lookup changed spawn stdout"
 jq -s -e 'length == 2 and all(.[]; .by == "impl-fimu" and .by_kind == "agent")' \

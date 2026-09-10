@@ -9,6 +9,6 @@ fleet_self_name() {
   [[ -z ${FLEET_LAUNCHER:-} ]] || return 0
   [[ -n ${HCOM_PROCESS_ID:-} ]] || return 0
   name=$(timeout --foreground 2s hcom list self --json 2>/dev/null \
-    | jq -er '.name | strings | select(length > 0)' 2>/dev/null) || return 0
+    | jq -r '.name // empty' 2>/dev/null) || return 0
   printf '%s\n' "$name"
 }
