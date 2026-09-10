@@ -9,7 +9,7 @@ test('health ticks stay red with distinct waiting hover until each signal is pro
   }), [
     { label: 'herdr', healthy: false, title: 'Herdr not yet proven — waiting for the first fleet snapshot.' },
     { label: 'hcom', healthy: false, title: 'hcom not yet proven — waiting for bus health.' },
-    { label: 'SSE', healthy: false, title: 'Connecting to live fleet…' },
+    { label: 'SSE', healthy: false, title: 'Connecting to live fleet…', note: 'connecting…' },
   ])
 })
 
@@ -30,6 +30,34 @@ test('source faults beat transport loss while unobservable substrates turn red w
   }), [
     { label: 'herdr', healthy: false, title: 'Herdr unavailable — socket refused' },
     { label: 'hcom', healthy: false, title: 'hcom health unavailable while SSE reconnects.' },
-    { label: 'SSE', healthy: false, title: 'Live stream disconnected; reconnecting…' },
+    { label: 'SSE', healthy: false, title: 'Live stream disconnected; reconnecting…', note: 'reconnecting…' },
   ])
+})
+
+test('the SSE tick notes that the live stream is connecting', () => {
+  const sse = statusBarHealth({
+    problems: { stream: 'Connecting to live fleet…' }, substrateProof: { herdr: false, hcom: false }, lastEventLabel: '—',
+  }).find((tick) => tick.label === 'SSE')
+  assert.equal(sse?.note, 'connecting…')
+})
+
+test('the SSE tick notes that a disconnected live stream is reconnecting', () => {
+  const sse = statusBarHealth({
+    problems: { stream: 'Live stream disconnected; reconnecting…' }, substrateProof: { herdr: true, hcom: true }, lastEventLabel: '12:34:56 PM',
+  }).find((tick) => tick.label === 'SSE')
+  assert.equal(sse?.note, 'reconnecting…')
+})
+
+test('the SSE tick notes that a timed-out live stream is reconnecting', () => {
+  const sse = statusBarHealth({
+    problems: { stream: 'Live stream timed out; reconnecting…' }, substrateProof: { herdr: true, hcom: true }, lastEventLabel: '12:34:56 PM',
+  }).find((tick) => tick.label === 'SSE')
+  assert.equal(sse?.note, 'reconnecting…')
+})
+
+test('the healthy SSE tick has no stream note', () => {
+  const sse = statusBarHealth({
+    problems: {}, substrateProof: { herdr: true, hcom: true }, lastEventLabel: '12:34:56 PM',
+  }).find((tick) => tick.label === 'SSE')
+  assert.equal(sse?.note, undefined)
 })

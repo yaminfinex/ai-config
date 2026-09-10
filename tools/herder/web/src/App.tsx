@@ -28,7 +28,7 @@ const herderTheme: DockviewTheme = {
 }
 
 function StatusTick({ tick }: { tick: HealthTick }) {
-  return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}</span>
+  return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}{tick.note && <span className="health-note">{tick.note}</span>}</span>
 }
 
 function NotesCount() {
@@ -46,7 +46,7 @@ function StreamBanners({ fleetProblem, viewerProblem, spaceProblem, flushLayout 
   const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
   return <div className="shell-banners">
     {stream.serverUpdated && <div className="banner server-update" role="alert"><strong>update</strong><span>Server updated — refresh to load the new version</span><button type="button" onClick={() => { flushLayout(); window.location.reload() }}>Refresh</button></div>}
-    {viewerProblem && <Banner source="viewer" detail={viewerProblem} />}{spaceProblem && <Banner source="space" detail={spaceProblem} tone={spaceProblem === serverSpaceLookupMessage || spaceProblem.startsWith(browserOnlySpacesMessage) ? 'info' : 'error'} />}{Object.entries(problems).map(([source, detail]) => <Banner source={source} detail={detail} tone={source === 'stream' && detail === 'Connecting to live fleet…' ? 'info' : 'error'} key={source} />)}
+    {viewerProblem && <Banner source="viewer" detail={viewerProblem} />}{spaceProblem && <Banner source="space" detail={spaceProblem} tone={spaceProblem === serverSpaceLookupMessage || spaceProblem.startsWith(browserOnlySpacesMessage) ? 'info' : 'error'} />}{Object.entries(problems).filter(([source]) => source !== 'stream').map(([source, detail]) => <Banner source={source} detail={detail} key={source} />)}
   </div>
 }
 

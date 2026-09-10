@@ -233,6 +233,7 @@ h2, h3, p { margin-top: 0; }
 .theme-toggle { display: flex; height: 20px; align-items: center; gap: 5px; padding: 0 7px; border-color: var(--border); background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .theme-toggle:hover:not(:disabled) { color: var(--text); }
 .health-tick { display: inline-flex; align-items: center; gap: 4px; }
+.health-note { color: var(--dim); }
 .health-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; }
 .health-dot.healthy { background: var(--green); }
 .health-dot.fault { background: var(--red); }

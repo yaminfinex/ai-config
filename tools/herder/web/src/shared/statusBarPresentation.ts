@@ -2,6 +2,7 @@ export type HealthTick = {
   label: 'herdr' | 'hcom' | 'SSE'
   healthy: boolean
   title: string
+  note?: string
 }
 
 type HealthInput = {
@@ -43,7 +44,12 @@ export function statusBarHealth({ problems, substrateProof, lastEventLabel }: He
     substrateTick('herdr', problems, substrateProof.herdr),
     substrateTick('hcom', problems, substrateProof.hcom),
     problems.stream
-      ? { label: 'SSE', healthy: false, title: problems.stream }
+      ? {
+          label: 'SSE',
+          healthy: false,
+          title: problems.stream,
+          note: problems.stream === 'Connecting to live fleet…' ? 'connecting…' : 'reconnecting…',
+        }
       : { label: 'SSE', healthy: true, title: `SSE connected — last activity ${lastEventLabel}.` },
   ]
 }
