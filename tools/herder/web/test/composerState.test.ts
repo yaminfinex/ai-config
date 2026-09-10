@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   appendComposerDraft,
@@ -251,15 +251,50 @@ test('ArrowUp moves into the notes list only from the start of the prompt with n
   assert.equal(composerArrowUpAction({ ...base, key: 'ArrowDown' }), null)
 })
 
-test('the composer dispatches the notes focus event, the list answers it, and Escape with nothing selected returns to that composer', () => {
+test('ArrowUp travels as props: the composer calls back, the panel counts a request, the strip un-collapses, the list lands', () => {
   const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
-  assert.match(composer, /composerArrowUpAction\(\{[^}]*hasNotes \}\) === 'notes'[\s\S]*new CustomEvent<NotesFocusDetail>\(notesFocusEvent, \{ detail: \{ agent: name \} \}\)/)
+  assert.match(composer, /composerArrowUpAction\(\{[^}]*hasNotes \}\) === 'notes'[\s\S]*?event\.preventDefault\(\)\n\s*onNotesFocus\(\)/)
+  assert.match(composer, /onNotesFocus: \(\) => void\n/)
+  const panel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /onNotesFocus=\{\(\) => setNotesFocusRequest\(\(current\) => current \+ 1\)\}/)
+  assert.match(panel, /<AgentNotesStrip [^>]*focusRequest=\{notesFocusRequest\}/)
+  const strip = readFileSync(new URL('../src/features/notes/AgentNotesStrip.tsx', import.meta.url), 'utf8')
+  assert.match(strip, /if \(!focusRequest\) return\n\s*setCollapsed\(false\)\n\s*setExpandedBy\(focusRequest\)\n\s*\}, \[focusRequest\]\)/)
+  assert.match(strip, /focusRequest: number \}/)
+  assert.match(strip, /useEffect\(\(\) => \{ if \(expandedBy\) setExpandedBy\(0\) \}, \[expandedBy\]\)/)
+  assert.match(strip, /onClick=\{\(\) => setCollapsed\(\(current\) => !current\)\}/)
+  assert.equal(strip.match(/setExpandedBy\(0\)/g)?.length, 1)
+  assert.match(strip, /<NotesList [^>]*focusRequest=\{expandedBy\} returnTo=\{agent\}/)
   const list = readFileSync(new URL('../src/features/notes/NotesList.tsx', import.meta.url), 'utf8')
-  assert.match(list, /useDOMEvent<CustomEvent<NotesFocusDetail>>\(window, notesFocusEvent/)
-  assert.match(list, /action === 'clear' && selection\.selected\.size === 0 && returnTo\.current[\s\S]*getElementById\(composerFieldId\(returnTo\.current\)\)\?\.focus\(\)/)
-  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
-  assert.match(controller, /useDOMEvent\(window, notesFocusEvent/)
-  assert.match(list, /const landing = notesFocusLanding\(selection, notes, event\.detail\.agent\)[\s\S]*setSelection\(selectionAfterClick\(selection, ids, landing, \{ shift: false, command: false \}\)\)\n\s*focus\(landing\)/)
+  assert.match(list, /if \(!focusRequest \|\| !returnTo\) return\n\s*const landing = notesFocusLanding\(selection, notes, returnTo\)[\s\S]*?setSelection\(selectionAfterClick\(selection, ids, landing, \{ shift: false, command: false \}\)\)\n\s*focus\(landing\)[\s\S]*?\}, \[focusRequest\]\)/)
   const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
   assert.match(actions, /field\.disabled \? field\.closest<HTMLElement>\('\.agent-page'\)/)
+})
+
+test('the notes focus window event no longer exists anywhere in src', () => {
+  const root = new URL('../src/', import.meta.url)
+  const walk = (dir: URL): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const child = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir)
+    return entry.isDirectory() ? walk(child) : [readFileSync(child, 'utf8')]
+  })
+  for (const source of walk(root)) {
+    assert.doesNotMatch(source, /herder:notes-focus|notesFocusEvent|NotesFocusDetail/)
+  }
+})
+
+test('the notes rail never reacts to a focus request: no window listener in the list, no request props from the rail', () => {
+  const list = readFileSync(new URL('../src/features/notes/NotesList.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(list, /useDOMEvent\(window|useDOMEvent<[^>]*>\(window/)
+  const rail = readFileSync(new URL('../src/features/notes/NotesRail.tsx', import.meta.url), 'utf8')
+  assert.doesNotMatch(rail, /focusRequest|returnTo/)
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(controller, /notesFocusEvent/)
+  assert.match(controller, /const notesFocusReturn = useRef<HTMLElement \| null>\(null\)/)
+})
+
+test('Escape with nothing selected in the strip list returns to that agent composer', () => {
+  const list = readFileSync(new URL('../src/features/notes/NotesList.tsx', import.meta.url), 'utf8')
+  assert.match(list, /action === 'clear' && selection\.selected\.size === 0 && returnTo\) \{\n\s*document\.getElementById\(composerFieldId\(returnTo\)\)\?\.focus\(\)/)
+  const strip = readFileSync(new URL('../src/features/notes/AgentNotesStrip.tsx', import.meta.url), 'utf8')
+  assert.match(strip, /returnTo=\{agent\}/)
 })

@@ -19,8 +19,7 @@ import type { Note } from './notesStore.ts'
 import { useAllNotes, useNotes, useNotesGroups } from './NotesProvider.tsx'
 import { NotesSelector } from './NotesSelector.tsx'
 import { selectorRows } from './notesSelectorModel.ts'
-import { useDOMEvent, useScheduledFrame } from '../../shared/lifecycle.ts'
-import { notesFocusEvent, type NotesFocusDetail } from '../../shared/selectionPopoverEvents.ts'
+import { useScheduledFrame } from '../../shared/lifecycle.ts'
 import { composerFieldId } from '../../composerState.ts'
 import { beginNoteEdit, noteEditDisplay, updateNoteEdit, type NoteEditDraft } from './noteEditModel.ts'
 
@@ -42,7 +41,7 @@ function LiveNotesSelector({ selected, agents, mode, initialValue, initialQuery,
   return <NotesSelector notes={notes} selected={selected} agents={agents} mode={mode} initialValue={initialValue} initialQuery={initialQuery} onCancel={onCancel} onChoose={onChoose} />
 }
 
-export function NotesList({ groups, agents, onHandOff, onEditingChange }: { groups: NotesListGroup[], agents: string[], onHandOff: NotesHandOff, onEditingChange?: (editing: boolean) => void }) {
+export function NotesList({ groups, agents, onHandOff, onEditingChange, focusRequest = 0, returnTo }: { groups: NotesListGroup[], agents: string[], onHandOff: NotesHandOff, onEditingChange?: (editing: boolean) => void, focusRequest?: number, returnTo?: string }) {
   const { store, announce, handOffGuard } = useNotes()
   const subscribedNotes = useNotesGroups(groups.map(({ group }) => group))
   const listRef = useRef<HTMLDivElement>(null)
@@ -64,15 +63,15 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange }: { grou
   const notesByGroup = useMemo(() => new Map(displayGroups.map(({ group }) => [group, displayNotes.filter((note) => note.group === group)])), [displayGroups, displayNotes])
 
   useEffect(() => { setSelection((current) => pruneNoteSelection(current, ids)) }, [ids])
-  // ArrowUp from a composer lands on the last-focused card, else that agent's first note, else the first card.
-  const returnTo = useRef<string | undefined>(undefined)
-  useDOMEvent<CustomEvent<NotesFocusDetail>>(window, notesFocusEvent, (event) => {
-    returnTo.current = event.detail.agent
-    const landing = notesFocusLanding(selection, notes, event.detail.agent)
+  // A focus request (ArrowUp from the strip's composer) lands on the last-focused card, else that agent's first note, else the first card.
+  // The effect runs on mount too, so a list mounted by the request lands without a second one.
+  useEffect(() => {
+    if (!focusRequest || !returnTo) return
+    const landing = notesFocusLanding(selection, notes, returnTo)
     if (!landing) return
     setSelection(selectionAfterClick(selection, ids, landing, { shift: false, command: false }))
     focus(landing)
-  })
+  }, [focusRequest])
   useEffect(() => {
     onEditingChange?.(editingActive)
     return () => onEditingChange?.(false)
@@ -153,8 +152,8 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange }: { grou
       setSelection(next); focus(next.cursor); event.preventDefault(); return
     }
     const action = noteListAction(event, editable)
-    if (action === 'clear' && selection.selected.size === 0 && returnTo.current) {
-      document.getElementById(composerFieldId(returnTo.current))?.focus()
+    if (action === 'clear' && selection.selected.size === 0 && returnTo) {
+      document.getElementById(composerFieldId(returnTo))?.focus()
       event.preventDefault()
       return
     }

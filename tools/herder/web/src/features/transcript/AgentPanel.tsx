@@ -54,6 +54,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
   const retired = agent?.bus_status === 'retired'
   const composerReadOnly = retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly
   const hasNotes = useGroupNotes(name).length > 0
+  const [notesFocusRequest, setNotesFocusRequest] = useState(0)
   // The capture chip's quick send is the Composer's own send sequence. Only viewer
   // attribution counts as read-only here; a retired agent is simply not on the live roster.
   const quickSend = useMemo(() => ({
@@ -127,8 +128,8 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     </div>}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />
-    {agent && <AgentNotesStrip agent={name} agents={agents} />}
-    {agent && <Composer name={name} hasNotes={hasNotes} onViewer={onViewer} identityReadOnly={composerReadOnly} onProblem={setSendProblem} onSend={onSend} onQueue={(text) => {
+    {agent && <AgentNotesStrip agent={name} agents={agents} focusRequest={notesFocusRequest} />}
+    {agent && <Composer name={name} hasNotes={hasNotes} onNotesFocus={() => setNotesFocusRequest((current) => current + 1)} onViewer={onViewer} identityReadOnly={composerReadOnly} onProblem={setSendProblem} onSend={onSend} onQueue={(text) => {
       const result = queueComposerNote(notesStore, name, text)
       if (!result.ok) return result
       announceNote(`Queued a note for ${name}.`)
