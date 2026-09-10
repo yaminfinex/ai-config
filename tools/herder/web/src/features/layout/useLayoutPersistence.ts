@@ -14,9 +14,11 @@ import { panelPresentation } from '../workspace/panelRegistryModel.ts'
 import { persistLayoutSnapshot } from './layoutPersistenceModel.ts'
 import { defaultRailPreferences, type RailPreference } from './utilityRailModel'
 import {
+  defaultFleetView,
   readShellPreferences,
+  shellPreferencesValue,
   writeShellPreferences,
-  type StoredShellPreferences,
+  type FleetView,
 } from './shellPreferences.ts'
 import {
   activeSpaceSessionKey,
@@ -39,6 +41,8 @@ export type InitialLayout = {
   notesRail: RailPreference
   expandedItems: string[] | null
   knownWorkspaceItems: string[] | null
+  knownManagerItems: string[] | null
+  fleetView: FleetView
 }
 
 function legacyInitial(initialization: Extract<SpacesInitialization, { mode: 'legacy' }>): InitialLayout {
@@ -52,6 +56,8 @@ function legacyInitial(initialization: Extract<SpacesInitialization, { mode: 'le
     notesRail: rails.notes,
     expandedItems: source?.expandedItems ?? null,
     knownWorkspaceItems: source?.knownWorkspaceItems ?? null,
+    knownManagerItems: null,
+    fleetView: defaultFleetView,
   }
 }
 
@@ -69,6 +75,8 @@ function spacesInitial(spaceID: string): InitialLayout {
     notesRail: shell.stored.rails.notes,
     expandedItems: shell.stored.expandedItems ?? null,
     knownWorkspaceItems: shell.stored.knownWorkspaceItems ?? null,
+    knownManagerItems: shell.stored.knownManagerItems ?? null,
+    fleetView: shell.stored.fleetView ?? defaultFleetView,
   }
 }
 
@@ -94,6 +102,8 @@ export function useLayoutPersistence(
   const [notesRail, setNotesRail] = useState(initial.notesRail)
   const [expandedItems, setExpandedItems] = useState<string[] | null>(initial.expandedItems)
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
+  const [knownManagerItems, setKnownManagerItems] = useState<string[] | null>(initial.knownManagerItems)
+  const [fleetView, setFleetView] = useState<FleetView>(initial.fleetView)
   const [dockReady, setDockReady] = useState(false)
   const persistenceReady = useRef(false)
   const layoutDirty = useRef(false)
@@ -105,7 +115,7 @@ export function useLayoutPersistence(
   const spaceStates = useRef(new Map<string, LayoutWriteState>())
   const [initialShellState] = useState(initialShellWriteState)
   const shellState = useRef<LayoutWriteState>(initialShellState)
-  const preferenceSnapshot = useRef(JSON.stringify([initial.fleetRail, initial.notesRail, initial.expandedItems, initial.knownWorkspaceItems]))
+  const preferenceSnapshot = useRef(JSON.stringify([initial.fleetRail, initial.notesRail, initial.expandedItems, initial.knownWorkspaceItems, initial.knownManagerItems, initial.fleetView]))
 
   const cancelTimer = useCallback(() => {
     if (timer.current === undefined) return
@@ -142,16 +152,14 @@ export function useLayoutPersistence(
 
   const flushShell = useCallback(() => {
     if (initialization.mode !== 'spaces' || !shellDirty.current) return false
-    const value: StoredShellPreferences = { version: 1, rails: { fleet: fleetRail, notes: notesRail } }
-    if (expandedItems !== null) value.expandedItems = expandedItems
-    if (knownWorkspaceItems !== null) value.knownWorkspaceItems = knownWorkspaceItems
+    const value = shellPreferencesValue({ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView })
     const previous = shellState.current
     const next = writeShellPreferences(localStorage, JSON.stringify(value), previous)
     if (next === previous) return false
     shellState.current = next
     shellDirty.current = false
     return true
-  }, [expandedItems, fleetRail, initialization.mode, knownWorkspaceItems, notesRail])
+  }, [expandedItems, fleetRail, fleetView, initialization.mode, knownManagerItems, knownWorkspaceItems, notesRail])
 
   const flushLayout = useCallback(() => {
     if (!persistenceReady.current || !layoutDirty.current) return false
@@ -216,7 +224,7 @@ export function useLayoutPersistence(
 
   useEffect(() => {
     if (!dockReady) return
-    const nextPreferences = JSON.stringify([fleetRail, notesRail, expandedItems, knownWorkspaceItems])
+    const nextPreferences = JSON.stringify([fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView])
     if (preferenceSnapshot.current !== nextPreferences) {
       preferenceSnapshot.current = nextPreferences
       if (initialization.mode === 'spaces') shellDirty.current = true
@@ -230,7 +238,7 @@ export function useLayoutPersistence(
       if (scheduledGeneration === generation.current) flushAll()
     }, 120)
     return cancelTimer
-  }, [cancelTimer, dockReady, expandedItems, fleetRail, flushAll, initialization.mode, knownWorkspaceItems, notesRail, revision])
+  }, [cancelTimer, dockReady, expandedItems, fleetRail, fleetView, flushAll, initialization.mode, knownManagerItems, knownWorkspaceItems, notesRail, revision])
 
   useDOMEvent(window, 'pagehide', () => { flushAll() })
   useDOMEvent<StorageEvent>(window, 'storage', (event) => {
@@ -257,6 +265,10 @@ export function useLayoutPersistence(
     setExpandedItems,
     knownWorkspaceItems,
     setKnownWorkspaceItems,
+    knownManagerItems,
+    setKnownManagerItems,
+    fleetView,
+    setFleetView,
     markDirty,
     noteBackupRecovery,
     beginRestore,

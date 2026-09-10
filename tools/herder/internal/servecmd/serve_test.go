@@ -122,7 +122,8 @@ func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
 		}
 		return nil
 	}
-	startLifeMirror(ctx, state, deps)
+	deps.store = agentstore.Open(state, nil)
+	startLifeMirror(ctx, deps)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -167,7 +168,8 @@ func TestLifeMirrorResolvesFullName(t *testing.T) {
 		}
 		return emit(hcomevents.Life{ID: 102, TS: "2026-09-09T05:00:03Z", Instance: "shared", Action: "ready", By: "ziru"})
 	}
-	startLifeMirror(ctx, state, deps)
+	deps.store = agentstore.Open(state, nil)
+	startLifeMirror(ctx, deps)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -203,7 +205,8 @@ func TestLifeMirrorSeedsRosterOnColdStart(t *testing.T) {
 		defer cancel()
 		return emit(hcomevents.Life{ID: 201, TS: "2026-09-09T05:00:02Z", Instance: "nife", Action: "ready", By: "ziru"})
 	}
-	startLifeMirror(ctx, state, deps)
+	deps.store = agentstore.Open(state, nil)
+	startLifeMirror(ctx, deps)
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -235,7 +238,8 @@ func TestLifeMirrorRemembersStoppedRowFullName(t *testing.T) {
 		}
 		return emit(hcomevents.Life{ID: 302, TS: "2026-09-09T05:00:03Z", Instance: "shared", Action: "stopped", By: "session"})
 	}
-	startLifeMirror(ctx, state, deps)
+	deps.store = agentstore.Open(state, nil)
+	startLifeMirror(ctx, deps)
 	select {
 	case <-done:
 	case <-time.After(time.Second):

@@ -92,6 +92,9 @@ type dependencies struct {
 	state                webstate.Store
 	stateChanges         *stateChangeBroker
 	rosterCache          *rosterCache
+	// store is the agent store the serve opens once at Run: the life mirror
+	// appends to it and the board folds a read-only projection from it.
+	store *agentstore.Store
 }
 
 type rosterCache struct {
@@ -418,16 +421,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		} else {
 			runtimeDependencies.state = store
 		}
-		startLifeMirror(ctx, stateDir, runtimeDependencies)
+		runtimeDependencies.store = agentstore.Open(stateDir, nil)
+		startLifeMirror(ctx, runtimeDependencies)
 	}
 	return serve(listeners, newHandler(runtimeDependencies), reload, ReloadDrainTimeout, stdout, stderr)
 }
 
-func startLifeMirror(ctx context.Context, stateDir string, deps dependencies) {
-	if deps.life == nil {
+func startLifeMirror(ctx context.Context, deps dependencies) {
+	if deps.life == nil || deps.store == nil {
 		return
 	}
-	store := agentstore.Open(stateDir, nil)
+	store := deps.store
 	go func() {
 		cursor := &hcomevents.Cursor{}
 		lastError := ""
@@ -924,6 +928,7 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 		}
 	}
 	board := fleetview.Build(snapshot, roster, parents)
+	fleetview.FoldBoard(&board, roster, readProjection(deps))
 	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace
@@ -941,6 +946,24 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 		board.Workspaces[index].Git = repository.Git
 	}
 	return board, nil
+}
+
+// readProjection is the board's read-only view of the agent store: snapshot
+// plus journal tail, never a snapshot write. A missing or unreadable store
+// folds every row as unregistered (manager_state unknown) rather than
+// failing the board; the store is augmenting data, never lifecycle authority.
+func readProjection(deps dependencies) *agentstore.Projection {
+	if deps.store == nil {
+		return nil
+	}
+	proj, err := deps.store.LoadNoSnapshot()
+	if err != nil {
+		if deps.audit != nil {
+			deps.audit("herder serve: agent store read failed; board folds without it: %v", err)
+		}
+		return nil
+	}
+	return proj
 }
 
 func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, error) {
@@ -1532,6 +1555,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if fileWatches != nil {
 		fileChangeCh = fileWatches.Facts
 	}
+	storeChangeCh := startStoreWatch(ctx, deps)
 	var screenReader screenSource
 	go func() {
 		cursor := &hcomevents.Cursor{}
@@ -1917,6 +1941,66 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 	}
 
+	// refreshBoard is the poll body, shared with the store watch: rebuild,
+	// emit fleet only when the encoded board changed, then sync transcripts
+	// and screens. False means the client is gone.
+	refreshBoard := func() bool {
+		nextBoard, nextRoster, nextPanes, boardErr := readEventBoard()
+		if boardErr != nil {
+			var sourced sourceError
+			source := "unknown"
+			if errors.As(boardErr, &sourced) {
+				source = sourced.source
+			}
+			if source == "hcom" {
+				hcomRosterDown = true
+			}
+			if !unreachable[source] && !emitFailure(boardErr) {
+				return false
+			}
+			return true
+		}
+		hcomRosterDown = false
+		for _, source := range []string{"herdr", "hcom"} {
+			if source == "hcom" && hcomEventsDown {
+				continue
+			}
+			if unreachable[source] {
+				unreachable[source] = false
+				if !emit("substrate", substrate{Source: source, Status: "recovered"}) {
+					return false
+				}
+				if source == "hcom" {
+					hcomHealthAnnounced = true
+				}
+			}
+		}
+		encoded, _ := json.Marshal(nextBoard)
+		if !bytes.Equal(previous, encoded) {
+			previous = encoded
+			if !emit("fleet", nextBoard) {
+				return false
+			}
+		}
+		roster = nextRoster
+		panes = nextPanes
+		ok, pathsChanged := syncTranscripts(roster, false, map[string]bool{})
+		if !ok {
+			return false
+		}
+		if pathsChanged {
+			reconcileTranscriptWatches(false)
+		}
+		if screenReader == nil && len(screens) > 0 {
+			if source, sourceErr := deps.screens(); sourceErr == nil {
+				screenReader = source
+			}
+		}
+		if !syncScreenRequests(panes, true) || !flushScreens(time.Now(), false) || (focusedScreen != "" && !flushScreens(time.Now(), true)) {
+			return false
+		}
+		return true
+	}
 	ticker := time.NewTicker(deps.poll)
 	defer ticker.Stop()
 	heartbeat := time.NewTicker(deps.heartbeat)
@@ -2008,61 +2092,15 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 				return
 			}
 			reconcileTranscriptWatches(true)
+		case <-storeChangeCh:
+			if !refreshBoard() {
+				return
+			}
 		case <-ticker.C:
-			nextBoard, nextRoster, nextPanes, boardErr := readEventBoard()
-			if boardErr != nil {
-				var sourced sourceError
-				source := "unknown"
-				if errors.As(boardErr, &sourced) {
-					source = sourced.source
-				}
-				if source == "hcom" {
-					hcomRosterDown = true
-				}
-				if !unreachable[source] && !emitFailure(boardErr) {
-					return
-				}
-				continue
-			}
-			hcomRosterDown = false
-			for _, source := range []string{"herdr", "hcom"} {
-				if source == "hcom" && hcomEventsDown {
-					continue
-				}
-				if unreachable[source] {
-					unreachable[source] = false
-					if !emit("substrate", substrate{Source: source, Status: "recovered"}) {
-						return
-					}
-					if source == "hcom" {
-						hcomHealthAnnounced = true
-					}
-				}
-			}
-			encoded, _ := json.Marshal(nextBoard)
-			if !bytes.Equal(previous, encoded) {
-				previous = encoded
-				if !emit("fleet", nextBoard) {
-					return
-				}
-			}
-			roster = nextRoster
-			panes = nextPanes
-			ok, pathsChanged := syncTranscripts(roster, false, map[string]bool{})
-			if !ok {
+			if !refreshBoard() {
 				return
 			}
-			if pathsChanged {
-				reconcileTranscriptWatches(false)
-			}
-			if screenReader == nil && len(screens) > 0 {
-				if source, sourceErr := deps.screens(); sourceErr == nil {
-					screenReader = source
-				}
-			}
-			if !syncScreenRequests(panes, true) || !flushScreens(time.Now(), false) || (focusedScreen != "" && !flushScreens(time.Now(), true)) {
-				return
-			}
+
 		}
 	}
 }
