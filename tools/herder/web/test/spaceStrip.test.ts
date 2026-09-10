@@ -9,6 +9,10 @@ test('the focused active space starts rename with Enter or F2', () => {
   assert.match(source, /if \(space\.id === props\.activeID\) beginRename\(space\)/)
 })
 
+test('space chips do not advertise browser-owned Meta or Control arrow shortcuts', () => {
+  assert.doesNotMatch(source, /aria-keyshortcuts=[^\n]*(?:Meta|Control)\+Arrow/)
+})
+
 test('the history button renders only when something can be reopened', () => {
   assert.match(source, /\{props\.recent\.length > 0 && <div ref=\{historyMenu\}/)
   assert.match(source, /className="space-history" aria-label="Recently closed spaces" title="Recently closed spaces"\s+aria-haspopup="menu" aria-expanded=\{historyOpen\}/)
