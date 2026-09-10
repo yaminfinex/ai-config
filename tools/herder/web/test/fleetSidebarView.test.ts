@@ -98,4 +98,6 @@ test('expandedItems survive a view switch: the transition never runs on the view
   assert.equal(effects.filter((deps) => /\bview\b/.test(deps)).length, 1, 'only the selection effect depends on view')
   assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : supervisionNodes/)
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)
+  assert.match(sidebar, /<ContextUsed value=\{node\.contextUsed\} \/>/)
+  assert.match(sidebar, /\$\{contextUsedTooltip\(node\.contextUsed\)\}/)
 })

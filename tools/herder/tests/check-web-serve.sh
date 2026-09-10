@@ -331,7 +331,9 @@ assert pane["tool"] == "codex"
 assert pane["gap"] == "-"
 assert "worktree_of" not in board["workspaces"][0]
 assert board["workspaces"][1]["worktree_of"] == "w1"
-assert board["workspaces"][1]["tabs"][0]["panes"][0]["agent"] == "zira"
+zira = board["workspaces"][1]["tabs"][0]["panes"][0]
+assert zira["agent"] == "zira"
+assert "context_used" not in zira
 assert board["unplaced"][0]["agent"] == "vile"
 assert board["unplaced"][0]["context_used"] == 1121
 assert [child["agent"] for child in board["unplaced"][0]["subagents"]] == ["vile_general_purpose_1"]

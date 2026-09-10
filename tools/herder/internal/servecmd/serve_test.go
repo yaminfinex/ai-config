@@ -633,18 +633,29 @@ func TestFleetEndpointPinsPathAndBoardJSONShape(t *testing.T) {
 
 func TestBuildBoardAddsOnlyObserverContextUsedToEveryAgentRow(t *testing.T) {
 	deps := fixtureDeps()
-	directCalls := 0
-	deps.agentVitals = func(hcomidentity.Row) (claudesession.Vitals, error) {
-		directCalls++
-		return claudesession.Vitals{}, errors.New("board must not read transcripts directly")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	vileDirectory := "/invented/direct-readable"
+	vileSession := "73100000-0000-4000-8000-000000000731"
+	vilePath := filepath.Join(home, ".claude", "projects", claudesession.Slug(vileDirectory), vileSession+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(vilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(vilePath, []byte("{\"type\":\"assistant\",\"uuid\":\"invented-direct-answer\",\"timestamp\":\"2026-01-02T03:04:06.000Z\",\"message\":{\"role\":\"assistant\",\"model\":\"invented-claude-model\",\"content\":[{\"type\":\"text\",\"text\":\"Readable direct fixture.\"}],\"usage\":{\"input_tokens\":11,\"cache_creation_input_tokens\":101,\"cache_read_input_tokens\":1009,\"output_tokens\":19}}}\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	roster := []hcomidentity.Row{
 		{Name: "dore", BaseName: "dore-base", Tool: "codex", Status: "active", SessionID: "session-dore", LaunchContext: hcomidentity.LaunchContext{PaneID: "p1"}},
 		{Name: "dore-task", BaseName: "dore-task-base", ParentName: "dore-base", AgentID: "task-1", Tool: "codex", Status: "active", SessionID: "session-task"},
-		{Name: "vile", BaseName: "vile-base", Tool: "claude", Status: "listening", SessionID: "session-vile"},
+		{Name: "vile", BaseName: "vile-base", Tool: "claude", Status: "listening", SessionID: vileSession, Directory: vileDirectory},
+		{Name: "vile-task", BaseName: "vile-task-base", ParentName: "vile-base", AgentID: "task-2", Tool: "claude", Status: "active", SessionID: "session-vile-task"},
+	}
+	direct, err := sessionvitals.ReadWith(nil, roster[2])
+	if err != nil || direct.Vitals.ContextUsage == nil || direct.Vitals.ContextUsage.UsedTokens != 1121 {
+		t.Fatalf("direct-read fixture = (%v, %v), want 1121 tokens", direct.Vitals.ContextUsage, err)
 	}
 	deps.boardVitals = func(row hcomidentity.Row) (sessionvitals.Result, bool) {
-		used := map[string]int64{"dore": 243787, "dore-task": 1121}
+		used := map[string]int64{"dore": 243787, "dore-task": 1121, "vile-task": 2222}
 		value, ok := used[row.Name]
 		if !ok {
 			return sessionvitals.Result{}, false
@@ -660,12 +671,17 @@ func TestBuildBoardAddsOnlyObserverContextUsedToEveryAgentRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(board.Workspaces) != 1 || len(board.Workspaces[0].Tabs) != 1 || len(board.Workspaces[0].Tabs[0].Panes) != 1 || len(board.Workspaces[0].Tabs[0].Panes[0].Subagents) != 1 || len(board.Unplaced) != 1 || board.Unplaced[0].Subagents == nil || len(*board.Unplaced[0].Subagents) != 1 {
+		t.Fatalf("board shape = workspaces %d, unplaced %d", len(board.Workspaces), len(board.Unplaced))
+	}
 	pane := board.Workspaces[0].Tabs[0].Panes[0]
-	if pane.ContextUsed != 243787 || len(pane.Subagents) != 1 || pane.Subagents[0].ContextUsed != 1121 {
-		t.Fatalf("context-used board = %#v", board)
+	placedSubagent := pane.Subagents[0].ContextUsed
+	unplacedSubagent := (*board.Unplaced[0].Subagents)[0].ContextUsed
+	if pane.ContextUsed != 243787 || placedSubagent != 1121 || unplacedSubagent != 2222 {
+		t.Fatalf("context used = pane %d, placed subagent %d, unplaced subagent %d", pane.ContextUsed, placedSubagent, unplacedSubagent)
 	}
 	if len(board.Unplaced) != 1 || board.Unplaced[0].Agent != "vile" || board.Unplaced[0].ContextUsed != 0 {
-		t.Fatalf("miss row = %#v", board.Unplaced)
+		t.Fatalf("unplaced = count %d, parent context %d, subagent context %d", len(board.Unplaced), board.Unplaced[0].ContextUsed, unplacedSubagent)
 	}
 	payload, err := json.Marshal(board)
 	if err != nil {
@@ -678,9 +694,6 @@ func TestBuildBoardAddsOnlyObserverContextUsedToEveryAgentRow(t *testing.T) {
 	miss := encoded["unplaced"].([]any)[0].(map[string]any)
 	if _, present := miss["context_used"]; present {
 		t.Fatalf("observer miss was serialized: %s", payload)
-	}
-	if directCalls != 0 {
-		t.Fatalf("direct transcript reader called %d time(s)", directCalls)
 	}
 }
 

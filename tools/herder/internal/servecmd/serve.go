@@ -74,7 +74,7 @@ type dependencies struct {
 	entryPath            func(hcomidentity.Row) (string, error)
 	agentQueueExclusions func(hcomidentity.Row, map[string]queueCandidate) (map[string]bool, error)
 	agentVitals          func(hcomidentity.Row) (claudesession.Vitals, error)
-	boardVitals          sessionvitals.Lookup
+	boardVitals          sessionvitals.Lookup // Cache-only board lookup; nil means omit context numbers.
 	sender               func(context.Context, string) (string, error)
 	send                 func(context.Context, string, string, string) error
 	spawn                func(context.Context, []string, string) (webaction.Result, error)
@@ -998,15 +998,24 @@ func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup s
 	if lookup == nil {
 		return
 	}
+	// A missing name yields a zero Row, which cannot hit: the observer stores
+	// only rows with tool claude|codex and a session ID.
 	byName := make(map[string]hcomidentity.Row, len(roster))
 	for _, row := range roster {
 		byName[row.Name] = row
 	}
+	used := func(name string) (int64, bool) {
+		result, ok := lookup(byName[name])
+		if !ok || result.Vitals.ContextUsage == nil {
+			return 0, false
+		}
+		return result.Vitals.ContextUsage.UsedTokens, true
+	}
 	var foldRows func([]fleetview.Row)
 	foldRows = func(rows []fleetview.Row) {
 		for i := range rows {
-			if result, ok := lookup(byName[rows[i].Agent]); ok && result.Vitals.ContextUsage != nil {
-				rows[i].ContextUsed = result.Vitals.ContextUsage.UsedTokens
+			if value, ok := used(rows[i].Agent); ok {
+				rows[i].ContextUsed = value
 			}
 			if rows[i].Subagents != nil {
 				foldRows(*rows[i].Subagents)
@@ -1018,10 +1027,8 @@ func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup s
 			panes := board.Workspaces[workspaceIndex].Tabs[tabIndex].Panes
 			for paneIndex := range panes {
 				pane := &panes[paneIndex]
-				if pane.Agent != "-" {
-					if result, ok := lookup(byName[pane.Agent]); ok && result.Vitals.ContextUsage != nil {
-						pane.ContextUsed = result.Vitals.ContextUsage.UsedTokens
-					}
+				if value, ok := used(pane.Agent); ok {
+					pane.ContextUsed = value
 				}
 				foldRows(pane.Subagents)
 			}
