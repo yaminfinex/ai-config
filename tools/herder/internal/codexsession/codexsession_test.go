@@ -65,6 +65,71 @@ func TestResolveDatedRollout(t *testing.T) {
 	}
 }
 
+func TestResolvePrefersMatchingRosterTranscriptPath(t *testing.T) {
+	home := t.TempDir()
+	id := "73500000-0000-4000-8000-000000000735"
+	path := filepath.Join(t.TempDir(), "rollout-invented-"+id+".jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	row := hcomidentity.Row{Tool: "codex", SessionID: id, TranscriptPath: path}
+	if got, err := Resolve(home, row); err != nil || got != path {
+		t.Fatalf("Resolve() = %q, %v; want roster transcript %q", got, err, path)
+	}
+}
+
+func TestResolveIgnoresRosterTranscriptForDifferentSession(t *testing.T) {
+	home := t.TempDir()
+	id := "73600000-0000-4000-8000-000000000736"
+	otherID := "73700000-0000-4000-8000-000000000737"
+	rosterPath := filepath.Join(t.TempDir(), "rollout-invented-"+otherID+".jsonl")
+	if err := os.WriteFile(rosterPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".codex", "sessions", "2026", "01", "02", "rollout-invented-"+id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	row := hcomidentity.Row{Tool: "codex", SessionID: id, TranscriptPath: rosterPath}
+	if got, err := Resolve(home, row); err != nil || got != want {
+		t.Fatalf("Resolve() = %q, %v; want glob fallback %q", got, err, want)
+	}
+}
+
+func TestResolveFallsBackWhenRosterTranscriptIsMissing(t *testing.T) {
+	home := t.TempDir()
+	id := "73800000-0000-4000-8000-000000000738"
+	rosterPath := filepath.Join(t.TempDir(), "rollout-missing-"+id+".jsonl")
+	want := filepath.Join(home, ".codex", "sessions", "2026", "01", "02", "rollout-invented-"+id+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	row := hcomidentity.Row{Tool: "codex", SessionID: id, TranscriptPath: rosterPath}
+	if got, err := Resolve(home, row); err != nil || got != want {
+		t.Fatalf("Resolve() = %q, %v; want glob fallback %q", got, err, want)
+	}
+}
+
+func TestResolveValidatesToolBeforeRosterTranscriptFastPath(t *testing.T) {
+	home := t.TempDir()
+	id := "73900000-0000-4000-8000-000000000739"
+	path := filepath.Join(t.TempDir(), "rollout-invented-"+id+".jsonl")
+	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Resolve(home, hcomidentity.Row{Tool: "claude", SessionID: id, TranscriptPath: path})
+	var typed *ResolveError
+	if !errors.As(err, &typed) || typed.Reason != ResolveWrongTool {
+		t.Fatalf("Resolve error = %#v, want reason %q", err, ResolveWrongTool)
+	}
+}
+
 func TestTaxonomyFixtureAndDuplicateSuppression(t *testing.T) {
 	t.Parallel()
 	result, err := ReadFrom(filepath.Join("testdata", "taxonomy.jsonl"), 0)
