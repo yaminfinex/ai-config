@@ -32,6 +32,23 @@ test('per-event stream state is isolated from the workspace controller and dock 
   assert.doesNotMatch(context, /StreamState|streamProblems|stream:/)
 })
 
+test('stream state leaves the banner stack without removing its other problem sources', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const banners = app.slice(app.indexOf('function StreamBanners'), app.indexOf('function StreamStatusBar'))
+  assert.match(banners, /Object\.entries\(problems\)\.filter\(\(\[source\]\) => source !== 'stream'\)/)
+  assert.match(banners, /streamProblems\(stream\.problems, fleetProblem\)/)
+  assert.match(banners, /stream\.serverUpdated && <div className="banner server-update" role="alert">/)
+  assert.match(banners, /viewerProblem && <Banner source="viewer" detail=\{viewerProblem\} \/>/)
+  assert.match(banners, /spaceProblem && <Banner source="space" detail=\{spaceProblem\}/)
+  assert.match(app, /return \{ \.\.\.problems, \.\.\.\(fleetProblem \? \{ fleet: fleetProblem \} : \{\}\) \}/)
+})
+
+test('the optional stream note renders on its status tick', () => {
+  const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+  const tick = app.slice(app.indexOf('function StatusTick'), app.indexOf('function NotesCount'))
+  assert.match(tick, /\{tick\.note && <span className="health-note" role="status">\{tick\.note\}<\/span>\}/)
+})
+
 test('browser persistence stays outside the App composition root', () => {
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const persistence = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
