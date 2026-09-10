@@ -21,6 +21,9 @@ func TestAnnotationEndpoint(t *testing.T) {
 	deps := supervisionDeps(t)
 	deps.poll = time.Hour
 	deps.fileWatcher = fsnotify.NewWatcher
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	deps = startStoreProjection(ctx, deps)
 	server := httptest.NewServer(newHandler(deps))
 	defer server.Close()
 	stream, err := http.Get(server.URL + "/api/events")
