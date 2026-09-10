@@ -348,6 +348,39 @@ func TestOldProjectionVersionForcesReplay(t *testing.T) {
 	}
 }
 
+func TestAnnotateFoldsFieldWise(t *testing.T) {
+	for _, order := range []string{"note-title", "title-note"} {
+		t.Run(order, func(t *testing.T) {
+			_, s := scratch(t)
+			first, second := ev(KindAnnotate, "a", 1, func(e *Event) { e.Note = "kept note" }), ev(KindAnnotate, "a", 2, func(e *Event) { e.Title = "kept title"; e.By = "latest" })
+			if order == "title-note" {
+				first, second = ev(KindAnnotate, "a", 1, func(e *Event) { e.Title = "kept title" }), ev(KindAnnotate, "a", 2, func(e *Event) { e.Note = "kept note"; e.By = "latest" })
+			}
+			mustAppend(t, s, first)
+			mustAppend(t, s, second)
+			view, _ := s.Replay()
+			annotation := view.Latest("a").Annotation
+			if annotation.Title != "kept title" || annotation.Note != "kept note" || annotation.By != "latest" || !annotation.At.Equal(second.At) {
+				t.Fatalf("annotation = %+v", annotation)
+			}
+		})
+	}
+}
+
+func TestAnnotateTitleValidation(t *testing.T) {
+	for name, title := range map[string]string{
+		"control character":  "bad\tname",
+		"more than 80 runes": strings.Repeat("界", 81),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, s := scratch(t)
+			if _, err := s.Append(ev(KindAnnotate, "a", 1, func(e *Event) { e.Title = title })); err == nil {
+				t.Fatal("invalid title accepted")
+			}
+		})
+	}
+}
+
 func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Pane = "w80:p1"; e.Tool = "codex" }))

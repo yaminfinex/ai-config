@@ -165,6 +165,14 @@ export function sendMessage(name: string, text: string, fetcher?: Fetcher) {
   }, fetcher)
 }
 
+export function renameAgent(name: string, title: string, fetcher?: Fetcher) {
+  return requestJSON<{ name: string, title: string, by: string }>(`/api/agents/${encodeURIComponent(name)}/annotation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  }, fetcher)
+}
+
 export type SpawnRequest = {
   tool: 'claude' | 'codex'
   model?: string

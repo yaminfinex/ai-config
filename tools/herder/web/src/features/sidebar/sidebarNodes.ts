@@ -19,6 +19,7 @@ export type SidebarNode = {
   // group nodes), placement as a trailing chip, and the folded summary.
   secondary?: string
   paneChip?: string
+  statusText?: string
   workspaceLabel?: string
   summary?: SupervisionSummary
 }
@@ -66,12 +67,17 @@ function addAgentNode(result: Map<string, SidebarNode>, id: string, pane: Pane |
   result.set(id, {
     id,
     kind: pane.parent_agent ? 'subagent' : 'pane',
-    name: pane.agent !== '-' ? pane.agent : screenPanePresentation(pane as Pane).label,
+    ...(pane.agent !== '-' ? agentLabel(pane) : { name: screenPanePresentation(pane as Pane).label }),
     children,
     pane,
     tabLabel,
+    statusText: pane.agent !== '-' && pane.bus_status !== '-' ? pane.bus_status : undefined,
   })
   for (const [index, child] of (pane.subagents ?? []).entries()) addAgentNode(result, children[index], child)
+}
+
+export function agentLabel(row: Pick<Row, 'agent' | 'title'>) {
+  return { name: row.title || row.agent, secondary: row.title ? row.agent : undefined }
 }
 
 // Supervision view: the tree is the manager edge, never placement. Every
@@ -169,9 +175,8 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
       children.push(addAgent(flatChild))
     }
     result.set(id, {
-      id, kind: row.parent_agent ? 'subagent' : 'agent', name: row.title || row.agent, children, pane: row,
-      secondary: row.title ? row.agent : undefined, paneChip: flat.paneChip, workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel,
-      summary: summarise(result, children),
+      id, kind: row.parent_agent ? 'subagent' : 'agent', ...agentLabel(row), children, pane: row,
+      workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel,
     })
     return id
   }
@@ -265,10 +270,9 @@ function summarise(result: Map<string, SidebarNode>, children: string[]): Superv
       total += 1
       if (child.pane.bus_status === 'active') active += 1
     }
-    if (child.summary) {
-      total += child.summary.total
-      active += child.summary.active
-    }
+    const descendants = child.summary ?? summarise(result, child.children)
+    total += descendants.total
+    active += descendants.active
   }
   return { total, active }
 }

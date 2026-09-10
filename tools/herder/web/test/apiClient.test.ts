@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, getState, lifecycleProblem, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
+import { getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, getState, lifecycleProblem, renameAgent, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
@@ -76,11 +76,13 @@ test('mutations use pinned JSON request shapes', async () => {
   }) as typeof fetch
 
   await sendMessage('vile', 'hello', fetcher)
+  await renameAgent('vile/name', 'operator seat', fetcher)
   await sendPaneInput('w1:p/1', { text: '\x03\x1b[A' }, fetcher)
   await sendPaneInput('w1:p/1', { keys: ['ctrl+c', 'up'] }, fetcher)
   await spawnAgent({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', workspace: 'w1' }, fetcher)
   assert.deepEqual(requests.map(({ path, init }) => [path, init?.method, init?.body]), [
     ['/api/agents/vile/message', 'POST', JSON.stringify({ text: 'hello' })],
+    ['/api/agents/vile%2Fname/annotation', 'POST', JSON.stringify({ title: 'operator seat' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ text: '\x03\x1b[A' })],
     ['/api/panes/w1%3Ap%2F1/input', 'POST', JSON.stringify({ keys: ['ctrl+c', 'up'] })],
     ['/api/spawn', 'POST', JSON.stringify({ tool: 'codex', model: 'gpt-5.4-mini', effort: 'high', tag: 'impl', workspace: 'w1' })],
