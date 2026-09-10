@@ -67,12 +67,20 @@ identity and `FLEET_LAUNCHER_KIND=web`; direct shell launches leave both unset
 and use register's normal attribution default. Requested placement also accepts
 `worktree_branch` with its required `repo`.
 
+Register's normal `by` precedence is `$HCOM_NAME`, then the current seat as
+`${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME`, then `$USER`, then `unknown`.
+The hcom choices are agents; `$USER` is a user. Empty values are skipped.
+
 The serve mirrors hcom life events (`created`, `ready`, `stopped`, and
 `batch_launched`) through the same append API with `by_kind=mirror`. It catches
 up the latest 500 life events at startup, then subscribes until the serve
 context ends. `hcom_event` preserves the bus id and the event id is derived from
 `hcom-life:<id>`, so replay appends nothing. Other life actions are ignored.
 Refused life events are audited once and skipped; an unavailable store is retried.
+
+Before append, the mirror resolves `instance`, `by`, and every `instances`
+entry through the last roster already polled by the serve: exactly one matching
+`base_name` becomes that row's full `name`; zero or multiple matches stay raw.
 
 Mission assignment (the `assign` kind, `fleetview.Row.Mission`) is recorded
 but not displayed in `herder list` until the mission model is specced
@@ -141,6 +149,13 @@ ordered by event time, so an older one arriving late never overwrites a
 newer manager. A registered `launch-ready` supersedes weaker `mirror.*`
 attribution for launcher/launcher_kind (and the default manager, unless a
 reparent was explicit).
+
+On full replay, an old base-name mirror record is folded into a registered
+full-name twin only when exactly one tagged launch incarnation contains the
+base record's `mirror.ready`; base-only and ambiguous records remain separate.
+At display time, `list` and `show` may read a remaining mirror-only base record
+for a full roster name, but only when exactly one roster row owns that
+`base_name`; this fallback never re-keys or writes the store.
 
 Binding: when a register event claimed session S and the roster says S′,
 the view records `binding: conflict {claimed: S, roster: S′}` and keeps S′

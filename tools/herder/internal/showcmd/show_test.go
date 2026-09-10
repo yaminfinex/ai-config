@@ -82,6 +82,29 @@ func TestShowFoldsSnapshotTailWithoutRewritingSnapshot(t *testing.T) {
 	}
 }
 
+func TestShowFallsBackToUniqueBaseName(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("HERDER_STATE_DIR", state)
+	at := time.Date(2026, 9, 10, 5, 0, 0, 0, time.UTC)
+	store := agentstore.Open(state, nil)
+	if _, err := store.Append(agentstore.Event{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindMirrorReady, By: "hamo", ByKind: "mirror", Name: "kele"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := []hcomidentity.Row{{Name: "sesh-kele", BaseName: "kele", Tool: "claude", CreatedAt: at.Add(-time.Second)}}
+	deps := dependencies{roster: func() ([]hcomidentity.Row, error) { return rows, nil }}
+	var out, errBuf bytes.Buffer
+	if code := run([]string{"sesh-kele"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 || !strings.Contains(out.String(), "manager          hamo") || !strings.Contains(out.String(), "name             sesh-kele") {
+		t.Fatalf("unique fallback: code=%d out=%q err=%q", code, out.String(), errBuf.String())
+	}
+
+	rows = append(rows, hcomidentity.Row{Name: "other-kele", BaseName: "kele", CreatedAt: at.Add(-time.Second)})
+	out.Reset()
+	errBuf.Reset()
+	if code := run([]string{"sesh-kele"}, &out, &errBuf, deps); code != 0 || !strings.Contains(out.String(), "manager          -") {
+		t.Fatalf("ambiguous fallback: code=%d out=%q err=%q", code, out.String(), errBuf.String())
+	}
+}
+
 func TestShowReadsCorrectProjectionWhenStateDirectoryIsReadOnly(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")

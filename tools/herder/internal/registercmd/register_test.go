@@ -34,6 +34,8 @@ func TestRegisterAppendsWithDefaultsAndEchoesJSON(t *testing.T) {
 		t.Fatalf("event = %+v", e)
 	}
 	t.Setenv("HCOM_NAME", "")
+	t.Setenv("HCOM_INSTANCE_NAME", "")
+	t.Setenv("HCOM_TAG", "")
 	t.Setenv("USER", "yamen")
 	code, stdout, _ = run(t, "launch-ready", "--name", "impl-gime", "--request", e.ID, "--pane", "w80:p1", "--cwd", "/x", "--at", "2026-09-09T05:00:00Z")
 	if code != 0 || !strings.HasPrefix(stdout, "id=") {
@@ -49,6 +51,29 @@ func TestRegisterAppendsWithDefaultsAndEchoesJSON(t *testing.T) {
 	}
 	if n := bytes.Count(mustRead(t, filepath.Join(state, "agents", "events.jsonl")), []byte("\n")); n != 2 {
 		t.Fatalf("lines = %d", n)
+	}
+}
+
+func TestDefaultByFromHcomEnv(t *testing.T) {
+	t.Setenv("HCOM_NAME", "")
+	t.Setenv("HCOM_TAG", "impl")
+	t.Setenv("HCOM_INSTANCE_NAME", "nife")
+	t.Setenv("USER", "yamen")
+	if by, kind := defaultBy(); by != "impl-nife" || kind != "agent" {
+		t.Fatalf("tagged seat = %q/%q", by, kind)
+	}
+	t.Setenv("HCOM_TAG", "")
+	if by, kind := defaultBy(); by != "nife" || kind != "agent" {
+		t.Fatalf("untagged seat = %q/%q", by, kind)
+	}
+	t.Setenv("HCOM_NAME", "legacy-full")
+	if by, kind := defaultBy(); by != "legacy-full" || kind != "agent" {
+		t.Fatalf("HCOM_NAME winner = %q/%q", by, kind)
+	}
+	t.Setenv("HCOM_NAME", "")
+	t.Setenv("HCOM_INSTANCE_NAME", "")
+	if by, kind := defaultBy(); by != "yamen" || kind != "user" {
+		t.Fatalf("USER fallback = %q/%q", by, kind)
 	}
 }
 

@@ -174,10 +174,16 @@ func boolToCode(usageOnly bool) int {
 	return 0
 }
 
-// defaultBy is $HCOM_NAME (an agent) else $USER (a human at a shell).
+// defaultBy prefers the current hcom seat, then a human at a shell.
 func defaultBy() (string, string) {
 	if name := strings.TrimSpace(os.Getenv("HCOM_NAME")); name != "" {
 		return name, "agent"
+	}
+	if instance := strings.TrimSpace(os.Getenv("HCOM_INSTANCE_NAME")); instance != "" {
+		if tag := strings.TrimSpace(os.Getenv("HCOM_TAG")); tag != "" {
+			return tag + "-" + instance, "agent"
+		}
+		return instance, "agent"
 	}
 	if user := strings.TrimSpace(os.Getenv("USER")); user != "" {
 		return user, "user"
@@ -191,7 +197,8 @@ func usage() string {
 	b.WriteString("Usage:\n  herder register <kind> [--name NAME] [--by WHO] [--at RFC3339] [--id UUID] [--json] …kind flags\n\n")
 	b.WriteString("Appends exactly one line to $HERDER_STATE_DIR/agents/events.jsonl under a bounded\n")
 	b.WriteString("file lock. Never talks to hcom or herdr; nothing consults the store before acting.\n")
-	b.WriteString("--by defaults to $HCOM_NAME, else $USER. --id makes a retry idempotent (same receipt,\n")
+	b.WriteString("--by defaults to $HCOM_NAME, else ${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME, else $USER.\n")
+	b.WriteString("--id makes a retry idempotent (same receipt,\n")
 	b.WriteString("no second line). Exit 0 appended or replayed, 2 usage, 3 store unavailable.\n\nKinds:\n")
 	for _, kind := range agentstore.Kinds {
 		sp, _ := agentstore.SpecFor(kind)

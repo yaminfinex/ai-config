@@ -102,6 +102,20 @@ func TestParentUsesOnlyOneExactBaseName(t *testing.T) {
 	}
 }
 
+func TestByUniqueBaseNameKeepsUnknownAndAmbiguousRaw(t *testing.T) {
+	rows := []Row{{Name: "impl-nife", BaseName: "nife"}}
+	if row, ok := ByUniqueBaseName(rows, "nife"); !ok || row.Name != "impl-nife" {
+		t.Fatalf("unique match = %#v/%v", row, ok)
+	}
+	if _, ok := ByUniqueBaseName(rows, "unknown"); ok {
+		t.Fatal("unknown base resolved")
+	}
+	rows = append(rows, Row{Name: "review-nife", BaseName: "nife"})
+	if _, ok := ByUniqueBaseName(rows, "nife"); ok {
+		t.Fatal("ambiguous base resolved")
+	}
+}
+
 func TestDecodeEnrichesOnlyProvenParentSession(t *testing.T) {
 	rows, err := Decode([]byte(`[
 		{"name":"probe-fame","base_name":"fame","session_id":"parent-session","directory":"/probe"},

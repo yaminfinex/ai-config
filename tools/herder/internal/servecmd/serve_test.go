@@ -35,6 +35,8 @@ import (
 )
 
 func fixtureDeps() dependencies {
+	cache := &rosterCache{}
+	cache.set(nil)
 	return dependencies{
 		buildIdentity: "source:fixture731",
 		snapshot: func() (herdrcli.Snapshot, error) {
@@ -82,6 +84,7 @@ func fixtureDeps() dependencies {
 		now:              time.Now,
 		audit:            func(string, ...any) {},
 		inputSerial:      &paneInputSerial{},
+		rosterCache:      cache,
 	}
 }
 
@@ -141,6 +144,109 @@ func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
 	}
 	if got := projection.Latest("a"); got == nil || got.Events[0].HcomEvent != "1" || got.Parent != "root" {
 		t.Fatalf("a=%+v", got)
+	}
+}
+
+func TestLifeMirrorResolvesFullName(t *testing.T) {
+	state := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	deps := fixtureDeps()
+	deps.rosterCache = &rosterCache{}
+	deps.rosterCache.set([]hcomidentity.Row{
+		{Name: "impl-nife", BaseName: "nife"},
+		{Name: "one-shared", BaseName: "shared"},
+		{Name: "two-shared", BaseName: "shared"},
+	})
+	deps.life = func(_ context.Context, _ *hcomevents.Cursor, emit func(hcomevents.Life) error) error {
+		defer close(done)
+		defer cancel()
+		if err := emit(hcomevents.Life{ID: 101, TS: "2026-09-09T05:00:02Z", Instance: "nife", Action: "ready", By: "ziru"}); err != nil {
+			return err
+		}
+		return emit(hcomevents.Life{ID: 102, TS: "2026-09-09T05:00:03Z", Instance: "shared", Action: "ready", By: "ziru"})
+	}
+	startLifeMirror(ctx, state, deps)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("life mirror did not finish")
+	}
+	projection, err := agentstore.Open(state, nil).Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := projection.Latest("impl-nife")
+	if view == nil || view.Provenance.Launcher != "ziru" || projection.Latest("nife") != nil {
+		t.Fatalf("resolved view=%+v names=%v", view, projection.Names())
+	}
+	if projection.Latest("shared") == nil {
+		t.Fatalf("ambiguous base was resolved: names=%v", projection.Names())
+	}
+}
+
+func TestLifeMirrorSeedsRosterOnColdStart(t *testing.T) {
+	state := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	deps := fixtureDeps()
+	deps.rosterCache = &rosterCache{}
+	rosterCalls := 0
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rosterCalls++
+		return []hcomidentity.Row{{Name: "impl-nife", BaseName: "nife"}}, nil
+	}
+	deps.life = func(_ context.Context, _ *hcomevents.Cursor, emit func(hcomevents.Life) error) error {
+		defer close(done)
+		defer cancel()
+		return emit(hcomevents.Life{ID: 201, TS: "2026-09-09T05:00:02Z", Instance: "nife", Action: "ready", By: "ziru"})
+	}
+	startLifeMirror(ctx, state, deps)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("life mirror did not finish")
+	}
+	projection, err := agentstore.Open(state, nil).Replay()
+	if err != nil || projection.Latest("impl-nife") == nil || rosterCalls != 1 {
+		t.Fatalf("cold-start seed: err=%v calls=%d names=%v", err, rosterCalls, projection.Names())
+	}
+}
+
+func TestLifeMirrorRemembersStoppedRowFullName(t *testing.T) {
+	state := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	deps := fixtureDeps()
+	deps.rosterCache = &rosterCache{}
+	deps.rosterCache.set([]hcomidentity.Row{{Name: "impl-nife", BaseName: "nife"}})
+	deps.rosterCache.set(nil)
+	deps.rosterCache.set([]hcomidentity.Row{{Name: "impl-shared", BaseName: "shared"}})
+	deps.rosterCache.set([]hcomidentity.Row{{Name: "review-shared", BaseName: "shared"}})
+	deps.rosterCache.set(nil)
+	deps.life = func(_ context.Context, _ *hcomevents.Cursor, emit func(hcomevents.Life) error) error {
+		defer close(done)
+		defer cancel()
+		if err := emit(hcomevents.Life{ID: 301, TS: "2026-09-09T05:00:02Z", Instance: "nife", Action: "stopped", By: "session"}); err != nil {
+			return err
+		}
+		return emit(hcomevents.Life{ID: 302, TS: "2026-09-09T05:00:03Z", Instance: "shared", Action: "stopped", By: "session"})
+	}
+	startLifeMirror(ctx, state, deps)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("life mirror did not finish")
+	}
+	projection, err := agentstore.Open(state, nil).Replay()
+	if err != nil || projection.Latest("impl-nife") == nil || projection.Latest("nife") != nil {
+		t.Fatalf("remembered stop: err=%v names=%v", err, projection.Names())
+	}
+	if projection.Latest("shared") == nil || projection.Latest("impl-shared") != nil || projection.Latest("review-shared") != nil {
+		t.Fatalf("ambiguous memory resolved: names=%v", projection.Names())
 	}
 }
 
