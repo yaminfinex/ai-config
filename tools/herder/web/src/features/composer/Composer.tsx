@@ -3,12 +3,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, viewerReadOnlyMessage } from '../../api/client'
 import { blurComposerOnEscape, composerArrowUpAction, composerFieldId, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
 import { sendWithRefresh } from '../../sendRefresh'
-import { notesFocusEvent, type NotesFocusDetail } from '../../shared/selectionPopoverEvents'
 
-export function Composer({ name, identityReadOnly, hasNotes = false, onViewer, onProblem, onSend, onQueue }: {
+export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocus, onViewer, onProblem, onSend, onQueue }: {
   name: string
   identityReadOnly: string
   hasNotes?: boolean
+  onNotesFocus?: () => void
   onViewer: (viewer: string) => void
   onProblem: (detail: string) => void
   onSend: () => void
@@ -68,7 +68,7 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onViewer, o
         if (blurComposerOnEscape(event)) return
         if (composerArrowUpAction({ ...event, isComposing: event.nativeEvent.isComposing, value: message, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd, hasNotes }) === 'notes') {
           event.preventDefault()
-          window.dispatchEvent(new CustomEvent<NotesFocusDetail>(notesFocusEvent, { detail: { agent: name } }))
+          onNotesFocus?.()
           return
         }
         if (isComposerQueueShortcut(event) && !event.nativeEvent.isComposing) {
