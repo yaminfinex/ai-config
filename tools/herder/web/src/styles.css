@@ -276,7 +276,6 @@ h2, h3, p { margin-top: 0; }
 .space-overflow { position: relative; display: flex; flex: 0 0 auto; }
 .space-more { border: 1px solid var(--border2); background: var(--chip); }
 .space-history { border: 1px solid var(--border2); background: var(--chip); color: var(--status-bar-text); }
-.space-history-wrap { margin-left: auto; }
 .space-history-wrap .space-overflow-menu { left: auto; right: 0; }
 .space-overflow-menu { position: absolute; z-index: 70; bottom: 22px; left: 0; display: grid; min-width: 150px; overflow: hidden; padding: 4px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); box-shadow: 0 12px 36px var(--floating-shadow); }
 .space-overflow-menu button { padding: 6px 8px; border: 0; background: transparent; color: var(--text); font: 11px var(--mono); text-align: left; }
