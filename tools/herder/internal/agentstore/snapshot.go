@@ -29,6 +29,7 @@ func (s *Store) LoadNoSnapshot() (*Projection, error) { return s.load() }
 
 // Replay ignores the snapshot and folds every event from byte 0.
 func (s *Store) Replay() (*Projection, error) {
+	s.replays++
 	proj := NewProjection()
 	var events []Event
 	end, err := s.scanEnd(0, func(event Event, _ int64) { events = append(events, event) })

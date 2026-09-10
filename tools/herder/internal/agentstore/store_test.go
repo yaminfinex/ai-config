@@ -169,12 +169,16 @@ func TestSnapshotPlusTailEqualsFullReplayByteForByte(t *testing.T) {
 	if err != nil || snap.SnapshotErr != nil {
 		t.Fatalf("load: %v snapshotErr %v", err, snap.SnapshotErr)
 	}
+	s.replays = 0
 	mustAppend(t, s, ev(KindReparent, "impl-gime", 4, func(e *Event) { e.Manager = "vara" }))
 	mustAppend(t, s, ev(KindCulled, "impl-gime", 5, func(e *Event) { e.Pane, e.Close = "w80:p1", "managed" }))
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 6, func(e *Event) { e.Tool = "claude" }))
 	tail, err := s.LoadNoSnapshot()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if s.replays != 0 {
+		t.Fatalf("clean snapshot tail triggered %d full replay(s)", s.replays)
 	}
 	full, err := s.Replay()
 	if err != nil {
@@ -201,10 +205,14 @@ func TestSnapshotPlusTailEqualsFullReplayByteForByte(t *testing.T) {
 	if snapshot, loadErr := aliasStore.Load(); loadErr != nil || snapshot.SnapshotErr != nil {
 		t.Fatalf("alias snapshot: projection=%+v err=%v", snapshot, loadErr)
 	}
+	aliasStore.replays = 0
 	mustAppend(t, aliasStore, ev(KindMirrorReady, "nife", 13, func(e *Event) { e.By, e.ByKind = "ziru", "mirror" }))
 	aliasTail, err := aliasStore.LoadNoSnapshot()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if aliasStore.replays != 1 {
+		t.Fatalf("unaliased mirror tail triggered %d full replay(s), want 1", aliasStore.replays)
 	}
 	aliasFull, err := aliasStore.Replay()
 	if err != nil {
@@ -300,7 +308,8 @@ func TestAliasPreservesExplicitReparent(t *testing.T) {
 	if err := os.WriteFile(s.EventsPath(), fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mustAppend(t, s, ev(KindReparent, "impl-nife", 4, func(e *Event) { e.Manager = "vara" }))
+	reparentAt := time.Date(2026, 9, 10, 5, 28, 0, 0, time.UTC)
+	mustAppend(t, s, Event{ID: NewID(reparentAt), At: reparentAt, Kind: KindReparent, By: "ziru", ByKind: "agent", Name: "impl-nife", Manager: "vara"})
 	projection, err := s.Replay()
 	if err != nil || projection.Latest("impl-nife").Manager != "vara" {
 		t.Fatalf("reparent lost during alias repair: err=%v view=%+v", err, projection.Latest("impl-nife"))
