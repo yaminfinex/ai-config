@@ -197,7 +197,8 @@ func usage() string {
 	b.WriteString("Usage:\n  herder register <kind> [--name NAME] [--by WHO] [--at RFC3339] [--id UUID] [--json] …kind flags\n\n")
 	b.WriteString("Appends exactly one line to $HERDER_STATE_DIR/agents/events.jsonl under a bounded\n")
 	b.WriteString("file lock. Never talks to hcom or herdr; nothing consults the store before acting.\n")
-	b.WriteString("--by defaults to $HCOM_NAME, else ${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME, else $USER.\n")
+	b.WriteString("--by defaults best-effort to $HCOM_NAME, else ${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME, else $USER.\n")
+	b.WriteString("Fleet wrappers pass --by from hcom self; the env fallback can be stale on a renamed or resumed seat.\n")
 	b.WriteString("--id makes a retry idempotent (same receipt,\n")
 	b.WriteString("no second line). Exit 0 appended or replayed, 2 usage, 3 store unavailable.\n\nKinds:\n")
 	for _, kind := range agentstore.Kinds {

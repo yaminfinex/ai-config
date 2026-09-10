@@ -63,13 +63,17 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 
 `spawn.sh` records requested and ready (or failed) around the existing launch.
 When a serve launches it, `FLEET_LAUNCHER` carries the server-derived web
-identity and `FLEET_LAUNCHER_KIND=web`; direct shell launches leave both unset
-and use register's normal attribution default. Requested placement also accepts
-`worktree_branch` with its required `repo`.
+identity and `FLEET_LAUNCHER_KIND=web`. Outside the serve, the fleet wrappers
+pass `--by` and `--by-kind=agent` from `hcom list self --json` when the process
+is an hcom seat. Requested placement also accepts `worktree_branch` with its
+required `repo`.
 
-Register's normal `by` precedence is `$HCOM_NAME`, then the current seat as
+Register's best-effort `by` fallback precedence is `$HCOM_NAME`, then the seat
+environment as
 `${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME`, then `$USER`, then `unknown`.
-The hcom choices are agents; `$USER` is a user. Empty values are skipped.
+The fleet wrappers prefer hcom self because the environment fallback can be
+stale on a renamed or resumed seat. The hcom choices are agents; `$USER` is a
+user. Empty values are skipped.
 
 The serve mirrors hcom life events (`created`, `ready`, `stopped`, and
 `batch_launched`) through the same append API with `by_kind=mirror`. It catches
