@@ -109,3 +109,9 @@ export function sendAllPlan(groups: Array<{ group: string, orphaned?: boolean }>
   }
   return { handOffs, skipped }
 }
+
+// Where ArrowUp from a composer lands: the last cursor, else that agent's first note, else the first card.
+export function notesFocusLanding(state: NoteSelection, notes: Array<Pick<Note, 'id' | 'group'>>, agent: string) {
+  if (state.cursor && notes.some((note) => note.id === state.cursor)) return state.cursor
+  return notes.find((note) => note.group === agent)?.id ?? notes[0]?.id
+}

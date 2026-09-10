@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
+import { apiProblem, viewerReadOnlyMessage } from '../../api/client'
 import { blurComposerOnEscape, composerArrowUpAction, composerFieldId, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
-import { beginSendRefresh, settleSendRefresh } from '../../sendRefresh'
+import { sendWithRefresh } from '../../sendRefresh'
 import { notesFocusEvent, type NotesFocusDetail } from '../../shared/selectionPopoverEvents'
 
 export function Composer({ name, identityReadOnly, hasNotes = false, onViewer, onProblem, onSend, onQueue }: {
@@ -20,7 +20,7 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onViewer, o
   const queryClient = useQueryClient()
   const composerRef = useRef<HTMLTextAreaElement>(null)
   const measureRef = useRef<HTMLTextAreaElement>(null)
-  const mutation = useMutation({ mutationFn: (text: string) => sendMessage(name, text) })
+  const mutation = useMutation({ mutationFn: (text: string) => sendWithRefresh(queryClient, name, text) })
   const effectiveReadOnly = identityReadOnly || readOnly
   const fieldId = composerFieldId(name)
 
@@ -39,20 +39,13 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onViewer, o
     if (!message.trim() || mutation.isPending || effectiveReadOnly) return
     onSend()
     setSendProblem('')
-    const sendRefresh = beginSendRefresh(queryClient, name)
-    const refresh = () => Promise.all([
-      queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true }),
-      queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true }),
-    ])
     try {
       const result = await mutation.mutateAsync(message)
       onViewer(result.from)
       persistComposerDraft(name, '')
       setMessage('')
-      await settleSendRefresh(sendRefresh, true, refresh)
       onProblem('')
     } catch (error: unknown) {
-      await settleSendRefresh(sendRefresh, false, refresh)
       const { response, problem } = apiProblem(error)
       if (response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')) setReadOnly(viewerReadOnlyMessage(problem, response.status))
       else if (response?.status === 502) onProblem(problem.detail)

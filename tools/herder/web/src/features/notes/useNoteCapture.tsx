@@ -155,9 +155,8 @@ export function useNoteCapture({ active, source, agents, quickSend }: { active: 
     })
     close()
   }
-  const appendToPrompt = (group: string, text: string, reason: string) => {
-    if (!quickSend) return false
-    const result = quickSend.append(group, text)
+  const appendToPrompt = (quick: NoteQuickSend, group: string, text: string, reason: string) => {
+    const result = quick.append(group, text)
     announce(result.ok ? `${reason} — added to ${group}'s prompt instead.` : result.reason)
     return result.ok
   }
@@ -173,13 +172,13 @@ export function useNoteCapture({ active, source, agents, quickSend }: { active: 
     }
     const text = noteTransferText(note)
     if (action === 'append') {
-      if (appendToPrompt(group, text, quickSend.readOnly ? 'Read-only' : `${group} is not live`)) close()
+      if (appendToPrompt(quickSend, group, text, quickSend.readOnly ? 'Read-only' : `${group} is not live`)) close()
       return
     }
     close()
     void quickSend.send(group, text).then(
       () => announce(`Sent a note to ${group}.`),
-      (error: unknown) => appendToPrompt(group, text, `Send failed (${error instanceof Error ? error.message : String(error)})`),
+      (error: unknown) => appendToPrompt(quickSend, group, text, `Send failed (${error instanceof Error ? error.message : String(error)})`),
     )
   }
   const element = capture ? <NoteCaptureChip capture={capture} agents={agents} readOnly={quickSend?.readOnly ?? ''} onSave={save} onAbandon={close} /> : null

@@ -6,6 +6,7 @@ import {
   dragNoteIDs,
   handOffRoute,
   noteListAction,
+  notesFocusLanding,
   pruneNoteSelection,
   selectionAfterArrow,
   selectionAfterClick,
@@ -67,7 +68,10 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange }: { grou
   const returnTo = useRef<string | undefined>(undefined)
   useDOMEvent<CustomEvent<NotesFocusDetail>>(window, notesFocusEvent, (event) => {
     returnTo.current = event.detail.agent
-    focus(selection.cursor ?? notes.find((note) => note.group === event.detail.agent)?.id ?? ids[0])
+    const landing = notesFocusLanding(selection, notes, event.detail.agent)
+    if (!landing) return
+    setSelection(selectionAfterClick(selection, ids, landing, { shift: false, command: false }))
+    focus(landing)
   })
   useEffect(() => {
     onEditingChange?.(editingActive)

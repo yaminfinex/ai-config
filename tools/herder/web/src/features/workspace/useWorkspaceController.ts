@@ -516,15 +516,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
   // A composer asking for the notes list expands the rail first; the list itself picks the card.
-  useEffect(() => {
-    const expand = () => {
-      if (!layout.notesRail.collapsed) return
-      notesFocusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-      layout.setNotesRail((rail) => ({ ...rail, collapsed: false }))
-    }
-    window.addEventListener(notesFocusEvent, expand)
-    return () => window.removeEventListener(notesFocusEvent, expand)
-  }, [layout.notesRail.collapsed, layout.setNotesRail])
+  useDOMEvent(window, notesFocusEvent, () => {
+    if (!layout.notesRail.collapsed) return
+    notesFocusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    layout.setNotesRail((rail) => ({ ...rail, collapsed: false }))
+  })
   useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace, reorderSpace })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'

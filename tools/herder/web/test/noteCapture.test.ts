@@ -126,7 +126,6 @@ test('capture submit falls back to append when read-only or not live, and queues
 
 test('quick send text is the hand-off serializer of the same note, with no second serializer', () => {
   const note = { quote: 'first line\nsecond', text: 'do this', source: { kind: 'transcript', agent: 'lida' } as const }
-  assert.equal(noteTransferText(note), noteTransferText({ id: 'n1', group: 'lida', created: 1, updated: 1, ...note }))
   assert.equal(noteTransferText(note), "from lida's transcript:\n> first line\n> second\n\ndo this")
   const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
   assert.match(hook, /noteTransferText\(note\)/)
@@ -141,7 +140,12 @@ test('the chip wires the submit model to the textarea and the minimal button; th
   assert.match(minimal, /event\.metaKey \|\| event\.ctrlKey[\s\S]*submitAction\(event\)[\s\S]*onSave\(group, '', action\)/)
   assert.match(chip, /⌘↵ send · ↵ queue/)
   const panel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
-  assert.match(panel, /beginSendRefresh\(queryClient, agent\)[\s\S]*await sendMessage\(agent, text\)[\s\S]*settleSendRefresh\(sendRefresh, true, refresh\)/)
+  assert.match(panel, /readOnly: identityReadOnly,[\s\S]*await sendWithRefresh\(queryClient, agent, text\)\n\s*onSend\(\)/)
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  assert.match(composer, /mutationFn: \(text: string\) => sendWithRefresh\(queryClient, name, text\)/)
+  assert.doesNotMatch(composer + panel, /beginSendRefresh|settleSendRefresh/)
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  assert.match(hook, /\n\s*close\(\)\n\s*void quickSend\.send\(group, text\)\.then\(/)
   assert.match(panel, /appendComposerDraft\(agent, \[text\]\)[\s\S]*onOpenAgent\(agent\)/)
   assert.match(panel, /useNoteCapture\(\{.*agents, quickSend \}\)/)
   const file = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')

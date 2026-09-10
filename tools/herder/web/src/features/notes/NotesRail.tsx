@@ -31,7 +31,7 @@ export function NotesRail({ board, onOpenAgent }: { board: Board | undefined, on
       moved += pending.length
       prompts += 1
     }
-    announce(`Moved ${plural(moved, 'note')} into ${plural(prompts, 'prompt')}.${plan.skipped ? ` ${plural(plan.skipped, 'note')} without a live agent stay.` : ''}`)
+    announce(`Moved ${plural(moved, 'note')} into ${plural(prompts, 'prompt')}.${plan.skipped ? ` ${plural(plan.skipped, 'note')} without a live agent ${plan.skipped === 1 ? 'stays' : 'stay'}.` : ''}`)
   }
   const sendAllTitle = plan.handOffs.length ? 'Send all notes to their agents' : 'No note is assigned to a live agent'
   return <div className="notes-rail-view">

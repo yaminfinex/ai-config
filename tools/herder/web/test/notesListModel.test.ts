@@ -6,6 +6,7 @@ import type { Note } from '../src/features/notes/notesStore.ts'
 import {
   dragNoteIDs,
   handOffRoute,
+  notesFocusLanding,
   sendAllPlan,
   noteListAction,
   selectionAfterRemoval,
@@ -153,4 +154,17 @@ test('the rail button runs send all through the shared hand-off function', () =>
   assert.match(rail, /sendAllPlan\(groups,/)
   assert.match(rail, /plan\.handOffs\)[\s\S]*handOffSelectedNotes\(\{ target: group, notes: pending, guard: handOffGuard, append: handOff/)
   assert.match(rail, /aria-label="Send all notes to their agents"[^>]*disabled=\{plan\.handOffs\.length === 0\}[^>]*onClick=\{sendAll\}/)
+})
+
+test("ArrowUp from a composer lands on the cursor, else that agent's first note, else the first card, and selects it", () => {
+  const notes = [note('g1', 'general'), note('a1', 'ann'), note('a2', 'ann')]
+  const ids = notes.map((item) => item.id)
+  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: 'a2' }, notes, 'ann'), 'a2')
+  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: 'gone' }, notes, 'ann'), 'a1')
+  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: undefined }, notes, 'zed'), 'g1')
+  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: undefined }, [], 'ann'), undefined)
+  const landed = selectionAfterClick({ selected: new Set(['g1']), anchor: 'g1', cursor: 'g1' }, ids, 'a1', { shift: false, command: false })
+  assert.deepEqual([...landed.selected], ['a1'])
+  assert.equal(landed.anchor, 'a1')
+  assert.equal(landed.cursor, 'a1')
 })

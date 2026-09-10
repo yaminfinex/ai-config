@@ -133,5 +133,5 @@ export function composerArrowUpAction(state: {
 }): 'notes' | null {
   if (state.key !== 'ArrowUp' || state.altKey || state.ctrlKey || state.metaKey || state.shiftKey || state.isComposing) return null
   if (!state.hasNotes) return null
-  return state.value === '' || (state.selectionStart === 0 && state.selectionEnd === 0) ? 'notes' : null
+  return state.value === '' || state.selectionEnd === 0 ? 'notes' : null
 }

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getAgent, queryKeys, sendMessage } from '../../api/client'
+import { getAgent, queryKeys } from '../../api/client'
 import { appendComposerDraft } from '../../composerState'
-import { beginSendRefresh, settleSendRefresh } from '../../sendRefresh'
+import { sendWithRefresh } from '../../sendRefresh'
 import { entriesQueryOptions } from '../../api/queries'
 import { Banner, ToolBadge } from '../../shared/presentation'
 import { transcriptNotice } from '../../shared/loadingPresentation'
@@ -54,30 +54,20 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
   const retired = agent?.bus_status === 'retired'
   const composerReadOnly = retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly
   const hasNotes = useGroupNotes(name).length > 0
-  // The capture chip's quick send is the Composer's own request: same endpoint, same refresh markers.
+  // The capture chip's quick send is the Composer's own send sequence. Only viewer
+  // attribution counts as read-only here; a retired agent is simply not on the live roster.
   const quickSend = useMemo(() => ({
-    readOnly: composerReadOnly,
+    readOnly: identityReadOnly,
     send: async (agent: string, text: string) => {
-      const sendRefresh = beginSendRefresh(queryClient, agent)
-      const refresh = () => Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.agent(agent), exact: true }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.entries(agent), exact: true }),
-      ])
-      try {
-        await sendMessage(agent, text)
-      } catch (error: unknown) {
-        await settleSendRefresh(sendRefresh, false, refresh)
-        throw error
-      }
+      await sendWithRefresh(queryClient, agent, text)
       onSend()
-      await settleSendRefresh(sendRefresh, true, refresh)
     },
     append: (agent: string, text: string) => {
       const result = appendComposerDraft(agent, [text])
       if (result.ok) onOpenAgent(agent)
       return result.ok ? { ok: true as const } : result
     },
-  }), [composerReadOnly, onOpenAgent, onSend, queryClient])
+  }), [identityReadOnly, onOpenAgent, onSend, queryClient])
   const noteCapture = useNoteCapture({ active: active && !screenMode, source: { kind: 'transcript', agent: name }, agents, quickSend })
   const { store: notesStore, announce: announceNote } = useNotes()
 
@@ -102,7 +92,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     <PanelState className="not-found tombstone" title="No retained agent evidence" detail={<>No live or retained session evidence for <span>{name}</span>. This tab is safe to close.</>} />
   </main>
 
-  return <main className="agent-page" ref={noteCapture.containerRef} onDoubleClickCapture={noteCapture.onDoubleClick}>
+  return <main className="agent-page" tabIndex={-1} ref={noteCapture.containerRef} onDoubleClickCapture={noteCapture.onDoubleClick}>
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
       <ToolBadge tool={agent?.tool} />
