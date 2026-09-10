@@ -71,7 +71,7 @@ export function unsubscribedScreenPaneIDs(previous: string[], current: string[])
   return [...new Set(previous)].filter((paneID) => !subscribed.has(paneID))
 }
 
-export const connectingBannerGrace = 150
+const connectingBannerGrace = 150
 
 export function subscribeToFleet(
   queryClient: QueryClient,
@@ -139,8 +139,7 @@ export function subscribeToFleet(
     if (!active) return
     lastActivity = Date.now()
     update((current) => ({ ...current, substrateProof: { herdr: false, hcom: false } }))
-    // A pane open resubscribes the stream; a healthy socket opens well inside the grace,
-    // so the banner (which sits above the pane grid) never enters the flow and never shifts it.
+    // Avoid shifting the pane grid during a fast stream resubscribe.
     connectingTimer = timers.setTimeout(() => {
       connectingTimer = null
       update((current) => ({ ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } }))

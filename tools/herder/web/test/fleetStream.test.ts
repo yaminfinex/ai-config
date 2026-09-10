@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
-import { connectingBannerGrace, deferFleetSubscription, eventStreamURL, recordBuildIdentity, streamAlerts, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
+import { deferFleetSubscription, eventStreamURL, recordBuildIdentity, streamAlerts, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
 import { beginSendRefresh, settleSendRefresh } from '../src/sendRefresh.ts'
 
@@ -303,7 +303,7 @@ test('an own-send marker suppresses only the duplicate message invalidation', as
 function graceHarness() {
   // A pane open resubscribes after the first socket already opened, so the stream problem is absent.
   const queryClient = new QueryClient()
-  queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, substrateProof: { herdr: false, hcom: false }, serverUpdated: false } as StreamState)
+  queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, substrateProof: { herdr: false, hcom: false }, serverUpdated: false, lastEvent: null, loadedBuild: null })
   const sources: FakeEventSource[] = []
   const timeouts = new Map<number, { callback: () => void, delay: number }>()
   let timerID = 0
@@ -314,9 +314,9 @@ function graceHarness() {
     clearInterval: (() => undefined) as typeof window.clearInterval,
   }
   const stop = subscribeToFleet(queryClient, ['vile'], [], [], undefined, () => { const source = new FakeEventSource(); sources.push(source); return source }, timers)
-  const graceTimers = () => [...timeouts.values()].filter((entry) => entry.delay === connectingBannerGrace)
+  const graceTimers = () => [...timeouts.values()].filter((entry) => entry.delay === 150)
   const streamProblem = () => queryClient.getQueryData<StreamState>(queryKeys.stream)?.problems.stream
-  return { sources, timeouts, stop, graceTimers, streamProblem }
+  return { sources, stop, graceTimers, streamProblem }
 }
 
 test('a resubscribe that opens within the grace window never posts the connecting banner', () => {
