@@ -102,7 +102,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 	if store.ImportErr != nil {
 		fmt.Fprintf(stderr, "herder show: agent store unavailable (%v); showing %s as unregistered\n", store.ImportErr, name)
 		proj = agentstore.NewProjection()
-	} else if proj, err = store.Load(); err != nil {
+	} else if proj, err = store.LoadNoSnapshot(); err != nil {
 		fmt.Fprintf(stderr, "herder show: cannot read agent store (%v); showing %s as unregistered\n", err, name)
 		proj = agentstore.NewProjection()
 	}

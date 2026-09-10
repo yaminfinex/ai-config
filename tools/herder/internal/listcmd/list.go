@@ -1,7 +1,7 @@
 // Package listcmd renders a live, read-only join of herdr placement and the
 // hcom roster, folded with the agent store's provenance columns. The join
-// owns no persisted state; the store is read (and its snapshot refreshed)
-// but a store failure only degrades the columns, never the list.
+// owns no persisted state; a store failure only degrades the columns, never
+// the list.
 package listcmd
 
 import (
@@ -34,8 +34,7 @@ var liveDependencies = dependencies{
 }
 
 // loadStore never fails a list: an unwritable first-open import or an
-// unreadable log prints one warning and folds every row as unregistered; a
-// snapshot rewrite failure is silent (full replay still happened).
+// unreadable log prints one warning and folds every row as unregistered.
 func loadStore(stderr io.Writer) *agentstore.Projection {
 	stateDir, err := herderstate.Dir()
 	if err != nil {
@@ -47,7 +46,7 @@ func loadStore(stderr io.Writer) *agentstore.Projection {
 		fmt.Fprintf(stderr, "herder list: agent store unavailable (%v); rows shown as unregistered\n", store.ImportErr)
 		return nil
 	}
-	proj, err := store.Load()
+	proj, err := store.LoadNoSnapshot()
 	if err != nil {
 		fmt.Fprintf(stderr, "herder list: cannot read agent store (%v); rows shown as unregistered\n", err)
 		return nil

@@ -26,7 +26,7 @@ from current transcripts on demand and are never persisted in the agent store.
 | file | writer | contents |
 |---|---|---|
 | `events.jsonl` | `Store.Append` only (CLI now, serve later) | append-only, one JSON object per line |
-| `snapshot.json` | whoever replays (`list`/`show` now, serve later) | `{version, events_offset, agents, requests}` — rebuildable, never authoritative |
+| `snapshot.json` | the long-lived serve | `{version, events_offset, agents, requests}` — rebuildable, never authoritative |
 
 `launch-edges.jsonl` (the serve's old web-launch record, one directory up)
 is imported once on first open when `events.jsonl` is absent: each edge
@@ -114,11 +114,11 @@ an id set or offset cache waits for a measurement showing the scan matters.
 
 ## Snapshot
 
-`snapshot.json` is the projection at `events_offset`. A reader loads it,
-replays the tail, and rewrites it (temp + rename). The snapshot is trusted
-only when its offset lands on a record boundary of the current file;
+`snapshot.json` is the projection at `events_offset`. One-shot `list` and
+`show` reads never rewrite it; the long-lived serve maintains it. The snapshot
+is trusted only when its offset lands on a record boundary of the current file;
 otherwise full replay. Replay from a snapshot plus tail equals full replay
-byte-for-byte (tested). A snapshot write failure is silent for reads.
+byte-for-byte (tested).
 
 ## Identity key: (name, incarnation)
 
