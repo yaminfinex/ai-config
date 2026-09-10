@@ -436,6 +436,14 @@ fi
 [[ ! -s $FLEET_TEST_CALLS ]] || fail "open helper touched herdr without FLEET_TOOL"
 pass "open helper requires the fleet tool marker"
 
+: >"$FLEET_TEST_CALLS"
+if PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test FLEET_TOOL=bogus \
+  "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]' >/dev/null 2>&1; then
+  fail "open helper accepted a bogus FLEET_TOOL"
+fi
+[[ ! -s $FLEET_TEST_CALLS ]] || fail "open helper touched herdr with a bogus FLEET_TOOL"
+pass "open helper rejects unsupported fleet tools before touching herdr"
+
 if "$FLEET/selfcompact.sh" '../wrong' steer continue >/dev/null 2>&1; then
   fail "selfcompact accepted an unsafe hcom name"
 fi
