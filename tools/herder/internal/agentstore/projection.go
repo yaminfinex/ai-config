@@ -545,23 +545,113 @@ func (p *Projection) View(name string, roster *hcomidentity.Row) *AgentView {
 	return &view
 }
 
-// ViewForRoster resolves a roster row by its full name, then falls back to a
-// mirror-only base-name record when this row is the roster's unique owner of
-// that base name. The fallback changes only the returned display copy.
+// ViewForRoster resolves a roster row by its full name and, when this row is
+// the roster's unique owner of its base name, fills fields missing from that
+// view with the remaining base-name record. That record is a pre-unit-1
+// artefact of the same agent; unit 2's reparent repairs it under the full name,
+// after which the overlay is inert. With no full-name record, the base record
+// remains the fallback. Neither path re-keys or writes the store.
 func (p *Projection) ViewForRoster(row *hcomidentity.Row, roster []hcomidentity.Row) *AgentView {
 	if row == nil {
 		return nil
 	}
-	if view := p.View(row.Name, row); view != nil {
-		return view
-	}
+	full := p.View(row.Name, row)
 	owner, unique := hcomidentity.ByUniqueBaseName(roster, row.BaseName)
 	if !unique || owner.Name != row.Name {
-		return nil
+		return full
 	}
-	view := p.View(row.BaseName, row)
-	if view != nil {
-		view.Name = row.Name
+	base := p.View(row.BaseName, row)
+	if full == nil {
+		if base != nil {
+			base.Name = row.Name
+		}
+		return base
 	}
-	return view
+	if base != nil {
+		overlayMissing(full, base)
+	}
+	return full
+}
+
+// overlayMissing fills only absent full-name fields. Both arguments are
+// display copies, so the stored projection remains untouched.
+func overlayMissing(full, base *AgentView) {
+	fillString := func(dst *string, src string) {
+		if *dst == "" {
+			*dst = src
+		}
+	}
+	fillTime := func(dst *time.Time, src time.Time) {
+		if dst.IsZero() {
+			*dst = src
+		}
+	}
+
+	fillString(&full.BaseName, base.BaseName)
+	fillString(&full.Tool, base.Tool)
+	fillString(&full.Tag, base.Tag)
+	fillTime(&full.Incarnation, base.Incarnation)
+	fillTime(&full.FirstSeen, base.FirstSeen)
+	fillTime(&full.LastSeen, base.LastSeen)
+	if full.Closed == nil {
+		full.Closed = base.Closed
+	}
+	fillString(&full.CloseReason, base.CloseReason)
+	overlayProvenance(&full.Provenance, base.Provenance)
+	if full.Assignment == nil {
+		full.Assignment = base.Assignment
+	}
+	if full.Annotation == nil {
+		full.Annotation = base.Annotation
+	}
+	fillString(&full.Manager, base.Manager)
+	fillString(&full.ManagerBy, base.ManagerBy)
+	if full.ManagerAt == nil {
+		full.ManagerAt = base.ManagerAt
+	}
+	fillString(&full.Parent, base.Parent)
+	fillString(&full.FromName, base.FromName)
+	if full.Binding == nil {
+		full.Binding = base.Binding
+	}
+	if full.Session == nil {
+		full.Session = base.Session
+	}
+	if len(full.Sessions) == 0 {
+		full.Sessions = base.Sessions
+	}
+	if len(full.Events) == 0 {
+		full.Events = base.Events
+	}
+	if full.EventCount == 0 {
+		full.EventCount = base.EventCount
+	}
+}
+
+func overlayProvenance(full *Provenance, base Provenance) {
+	if full.Kind == "" || full.Kind == "unregistered" {
+		full.Kind = base.Kind
+	}
+	fillString := func(dst *string, src string) {
+		if *dst == "" {
+			*dst = src
+		}
+	}
+	fillString(&full.Launcher, base.Launcher)
+	fillString(&full.LauncherKind, base.LauncherKind)
+	fillString(&full.ModelRequested, base.ModelRequested)
+	fillString(&full.Effort, base.Effort)
+	fillString(&full.Workspace, base.Workspace)
+	fillString(&full.PaneRequested, base.PaneRequested)
+	fillString(&full.Pane, base.Pane)
+	fillString(&full.Cwd, base.Cwd)
+	fillString(&full.Batch, base.Batch)
+	fillString(&full.Request, base.Request)
+	if full.RequestedAt == nil {
+		full.RequestedAt = base.RequestedAt
+	}
+	if full.ReadyAt == nil {
+		full.ReadyAt = base.ReadyAt
+	}
+	fillString(&full.State, base.State)
 }

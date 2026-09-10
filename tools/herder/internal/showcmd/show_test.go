@@ -107,6 +107,27 @@ func TestShowFallsBackToUniqueBaseName(t *testing.T) {
 	}
 }
 
+func TestShowOverlaysFullNameAnnotationOnUniqueBase(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("HERDER_STATE_DIR", state)
+	at := time.Date(2026, 9, 10, 5, 0, 0, 0, time.UTC)
+	store := agentstore.Open(state, nil)
+	for _, event := range []agentstore.Event{
+		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindMirrorReady, By: "hamo", ByKind: "mirror", Name: "mesa"},
+		{ID: agentstore.NewID(at.Add(time.Second)), At: at.Add(time.Second), Kind: agentstore.KindAnnotate, By: "web-owner", ByKind: "web", Name: "sesh-mesa", Title: "sesh-measurement"},
+	} {
+		if _, err := store.Append(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := []hcomidentity.Row{{Name: "sesh-mesa", BaseName: "mesa", Tool: "claude", CreatedAt: at.Add(-time.Second)}}
+	deps := dependencies{roster: func() ([]hcomidentity.Row, error) { return rows, nil }}
+	var out, errBuf bytes.Buffer
+	if code := run([]string{"sesh-mesa"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 || !strings.Contains(out.String(), "manager          hamo") || !strings.Contains(out.String(), "title            sesh-measurement") {
+		t.Fatalf("overlay: code=%d out=%q err=%q", code, out.String(), errBuf.String())
+	}
+}
+
 func TestShowReadsCorrectProjectionWhenStateDirectoryIsReadOnly(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")

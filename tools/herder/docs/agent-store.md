@@ -162,7 +162,13 @@ full-name twin only when exactly one tagged launch incarnation contains the
 base record's `mirror.ready`; base-only and ambiguous records remain separate.
 At display time, `list` and `show` may read a remaining mirror-only base record
 for a full roster name, but only when exactly one roster row owns that
-`base_name`; this fallback never re-keys or writes the store.
+`base_name`. If a web write has since created a sparse full-name record, the
+display view overlays that record on the unique base record: populated
+full-name fields win and absent fields retain the base record's provenance,
+manager and other lifecycle facts. The base record is a pre-unit-1 artefact of
+the same agent; reparent repair writes those facts under the full name and
+makes the overlay inert. Ambiguous base names are never overlaid. This display
+rule never re-keys or writes the store.
 
 Binding: when a register event claimed session S and the roster says S′,
 the view records `binding: conflict {claimed: S, roster: S′}` and keeps S′
