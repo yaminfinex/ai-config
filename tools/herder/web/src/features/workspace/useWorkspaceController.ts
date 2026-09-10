@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DockviewApi, DockviewReadyEvent } from 'dockview-react'
 import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from '../../api/client'
+import { notesFocusEvent } from '../../shared/selectionPopoverEvents'
 import { viewerQueryOptions } from '../../api/queries'
 import type { FileTarget } from '../../types'
 import { agentBusStatus } from '../../shared/agentStatus'
@@ -513,6 +514,16 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       notesFocusReturn.current = null
       window.requestAnimationFrame(() => target?.isConnected && target.focus())
     }
+  }, [layout.notesRail.collapsed, layout.setNotesRail])
+  // A composer asking for the notes list expands the rail first; the list itself picks the card.
+  useEffect(() => {
+    const expand = () => {
+      if (!layout.notesRail.collapsed) return
+      notesFocusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      layout.setNotesRail((rail) => ({ ...rail, collapsed: false }))
+    }
+    window.addEventListener(notesFocusEvent, expand)
+    return () => window.removeEventListener(notesFocusEvent, expand)
   }, [layout.notesRail.collapsed, layout.setNotesRail])
   useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace, reorderSpace })
 

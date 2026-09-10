@@ -7,6 +7,7 @@ import {
   composerFieldId,
   composerDraftKey,
   blurComposerOnEscape,
+  composerArrowUpAction,
   isComposerQueueShortcut,
   isComposerSendShortcut,
   persistComposerDraft,
@@ -231,4 +232,27 @@ test('mirror measurement preserves every TASK-82 composer scenario', () => {
   const mirrorRule = css.match(/\.send-box textarea\.composer-measure \{([^}]*)\}/)?.[1] ?? ''
   assert.match(mirrorRule, /position: absolute/)
   assert.doesNotMatch(mirrorRule, /min-height: 0/)
+})
+
+test('ArrowUp moves into the notes list only from the start of the prompt with notes present and no modifiers', () => {
+  const base = { key: 'ArrowUp', altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, value: '', selectionStart: 0, selectionEnd: 0, hasNotes: true }
+  assert.equal(composerArrowUpAction(base), 'notes')
+  assert.equal(composerArrowUpAction({ ...base, value: 'draft' }), 'notes')
+  assert.equal(composerArrowUpAction({ ...base, value: 'draft', selectionStart: 2, selectionEnd: 2 }), null)
+  assert.equal(composerArrowUpAction({ ...base, value: 'draft', selectionStart: 0, selectionEnd: 3 }), null)
+  assert.equal(composerArrowUpAction({ ...base, hasNotes: false }), null)
+  assert.equal(composerArrowUpAction({ ...base, shiftKey: true }), null)
+  assert.equal(composerArrowUpAction({ ...base, metaKey: true }), null)
+  assert.equal(composerArrowUpAction({ ...base, isComposing: true }), null)
+  assert.equal(composerArrowUpAction({ ...base, key: 'ArrowDown' }), null)
+})
+
+test('the composer dispatches the notes focus event, the list answers it, and Escape with nothing selected returns to that composer', () => {
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  assert.match(composer, /composerArrowUpAction\(\{[^}]*hasNotes \}\) === 'notes'[\s\S]*new CustomEvent<NotesFocusDetail>\(notesFocusEvent, \{ detail: \{ agent: name \} \}\)/)
+  const list = readFileSync(new URL('../src/features/notes/NotesList.tsx', import.meta.url), 'utf8')
+  assert.match(list, /useDOMEvent<CustomEvent<NotesFocusDetail>>\(window, notesFocusEvent/)
+  assert.match(list, /action === 'clear' && selection\.selected\.size === 0 && returnTo\.current[\s\S]*getElementById\(composerFieldId\(returnTo\.current\)\)\?\.focus\(\)/)
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  assert.match(controller, /addEventListener\(notesFocusEvent, expand\)/)
 })

@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState, type MouseEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { getAgent, queryKeys } from '../../api/client'
+import { getAgent, queryKeys, sendMessage } from '../../api/client'
+import { appendComposerDraft } from '../../composerState'
+import { beginSendRefresh, settleSendRefresh } from '../../sendRefresh'
 import { entriesQueryOptions } from '../../api/queries'
 import { Banner, ToolBadge } from '../../shared/presentation'
 import { transcriptNotice } from '../../shared/loadingPresentation'
@@ -21,7 +23,7 @@ import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../
 import { PanelState } from '../../shared/PanelState'
 import { AgentNotesStrip } from '../notes/AgentNotesStrip'
 import { useNoteCapture } from '../notes/useNoteCapture'
-import { useNotes } from '../notes/NotesProvider'
+import { useGroupNotes, useNotes } from '../notes/NotesProvider'
 import { queueComposerNote } from '../notes/noteQueue'
 
 export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
@@ -49,7 +51,34 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     persistTranscriptViewMode(name, mode)
   }
   const fileResolver = useTranscriptFileResolver(name, active && !screenMode, onOpenFile, onOpenFolder)
-  const noteCapture = useNoteCapture({ active: active && !screenMode, source: { kind: 'transcript', agent: name }, agents })
+  const retired = agent?.bus_status === 'retired'
+  const composerReadOnly = retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly
+  const hasNotes = useGroupNotes(name).length > 0
+  // The capture chip's quick send is the Composer's own request: same endpoint, same refresh markers.
+  const quickSend = useMemo(() => ({
+    readOnly: composerReadOnly,
+    send: async (agent: string, text: string) => {
+      const sendRefresh = beginSendRefresh(queryClient, agent)
+      const refresh = () => Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.agent(agent), exact: true }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.entries(agent), exact: true }),
+      ])
+      try {
+        await sendMessage(agent, text)
+      } catch (error: unknown) {
+        await settleSendRefresh(sendRefresh, false, refresh)
+        throw error
+      }
+      onSend()
+      await settleSendRefresh(sendRefresh, true, refresh)
+    },
+    append: (agent: string, text: string) => {
+      const result = appendComposerDraft(agent, [text])
+      if (result.ok) onOpenAgent(agent)
+      return result.ok ? { ok: true as const } : result
+    },
+  }), [composerReadOnly, onOpenAgent, onSend, queryClient])
+  const noteCapture = useNoteCapture({ active: active && !screenMode, source: { kind: 'transcript', agent: name }, agents, quickSend })
   const { store: notesStore, announce: announceNote } = useNotes()
 
   useEffect(() => {
@@ -73,7 +102,6 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     <PanelState className="not-found tombstone" title="No retained agent evidence" detail={<>No live or retained session evidence for <span>{name}</span>. This tab is safe to close.</>} />
   </main>
 
-  const retired = agent?.bus_status === 'retired'
   return <main className="agent-page" ref={noteCapture.containerRef} onDoubleClickCapture={noteCapture.onDoubleClick}>
     <header className="agent-header">
       <strong className="agent-name">{name}</strong>
@@ -110,7 +138,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />
     {agent && <AgentNotesStrip agent={name} agents={agents} />}
-    {agent && <Composer name={name} onViewer={onViewer} identityReadOnly={retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly} onProblem={setSendProblem} onSend={onSend} onQueue={(text) => {
+    {agent && <Composer name={name} hasNotes={hasNotes} onViewer={onViewer} identityReadOnly={composerReadOnly} onProblem={setSendProblem} onSend={onSend} onQueue={(text) => {
       const result = queueComposerNote(notesStore, name, text)
       if (!result.ok) return result
       announceNote(`Queued a note for ${name}.`)

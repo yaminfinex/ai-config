@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, queryKeys, sendMessage, viewerReadOnlyMessage } from '../../api/client'
-import { blurComposerOnEscape, composerFieldId, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
+import { blurComposerOnEscape, composerArrowUpAction, composerFieldId, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
 import { beginSendRefresh, settleSendRefresh } from '../../sendRefresh'
+import { notesFocusEvent, type NotesFocusDetail } from '../../shared/selectionPopoverEvents'
 
-export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend, onQueue }: {
+export function Composer({ name, identityReadOnly, hasNotes = false, onViewer, onProblem, onSend, onQueue }: {
   name: string
   identityReadOnly: string
+  hasNotes?: boolean
   onViewer: (viewer: string) => void
   onProblem: (detail: string) => void
   onSend: () => void
@@ -71,6 +73,11 @@ export function Composer({ name, identityReadOnly, onViewer, onProblem, onSend, 
       onChange={(event) => setMessage(event.target.value)}
       onKeyDown={(event) => {
         if (blurComposerOnEscape(event)) return
+        if (composerArrowUpAction({ ...event, isComposing: event.nativeEvent.isComposing, value: message, selectionStart: event.currentTarget.selectionStart, selectionEnd: event.currentTarget.selectionEnd, hasNotes }) === 'notes') {
+          event.preventDefault()
+          window.dispatchEvent(new CustomEvent<NotesFocusDetail>(notesFocusEvent, { detail: { agent: name } }))
+          return
+        }
         if (isComposerQueueShortcut(event) && !event.nativeEvent.isComposing) {
           event.preventDefault()
           if (!message.trim()) return

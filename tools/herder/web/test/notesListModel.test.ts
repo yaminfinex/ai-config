@@ -6,6 +6,7 @@ import type { Note } from '../src/features/notes/notesStore.ts'
 import {
   dragNoteIDs,
   handOffRoute,
+  sendAllPlan,
   noteListAction,
   selectionAfterRemoval,
   selectionAfterArrow,
@@ -130,4 +131,26 @@ test('dragging an unselected card moves only it; dragging a selected card moves 
   assert.deepEqual(dragNoteIDs('c', selected), ['c'])
   assert.deepEqual(dragNoteIDs('b', selected), ['a', 'b'])
   assert.deepEqual([...selected], ['a', 'b'], 'dragging must not disturb selection')
+})
+
+test('send all plans one hand-off per live group in list order and counts the rest as skipped', () => {
+  const groups = [{ group: 'general' }, { group: 'zed' }, { group: 'ann' }, { group: 'gone', orphaned: true }, { group: 'empty' }]
+  const notesByGroup = new Map<string, Note[]>([
+    ['general', [note('g1', 'general'), note('g2', 'general')]],
+    ['zed', [note('z1', 'zed')]],
+    ['ann', [note('a1', 'ann'), note('a2', 'ann')]],
+    ['gone', [note('o1', 'gone')]],
+    ['empty', []],
+  ])
+  const plan = sendAllPlan(groups, notesByGroup, ['ann', 'zed', 'empty'])
+  assert.deepEqual(plan.handOffs.map(({ group, notes }) => [group, notes.map((item) => item.id)]), [['zed', ['z1']], ['ann', ['a1', 'a2']]])
+  assert.equal(plan.skipped, 3)
+  assert.deepEqual(sendAllPlan([{ group: 'ann' }], notesByGroup, []), { handOffs: [], skipped: 2 })
+})
+
+test('the rail button runs send all through the shared hand-off function', () => {
+  const rail = readFileSync(new URL('../src/features/notes/NotesRail.tsx', import.meta.url), 'utf8')
+  assert.match(rail, /sendAllPlan\(groups,/)
+  assert.match(rail, /plan\.handOffs\)[\s\S]*handOffSelectedNotes\(\{ target: group, notes: pending, guard: handOffGuard, append: handOff/)
+  assert.match(rail, /aria-label="Send all notes to their agents"[^>]*disabled=\{plan\.handOffs\.length === 0\}[^>]*onClick=\{sendAll\}/)
 })

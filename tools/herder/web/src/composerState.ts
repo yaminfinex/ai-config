@@ -124,3 +124,14 @@ export function focusComposerWhenReady<Handle>(
     if (cancel && scheduled !== undefined) cancel(scheduled)
   }
 }
+
+// ArrowUp at the very start of the prompt (or on an empty draft) moves focus into
+// the notes list when there are notes to act on; otherwise it stays a caret move.
+export function composerArrowUpAction(state: {
+  key: string, altKey: boolean, ctrlKey: boolean, metaKey: boolean, shiftKey: boolean, isComposing?: boolean
+  value: string, selectionStart: number, selectionEnd: number, hasNotes: boolean
+}): 'notes' | null {
+  if (state.key !== 'ArrowUp' || state.altKey || state.ctrlKey || state.metaKey || state.shiftKey || state.isComposing) return null
+  if (!state.hasNotes) return null
+  return state.value === '' || (state.selectionStart === 0 && state.selectionEnd === 0) ? 'notes' : null
+}

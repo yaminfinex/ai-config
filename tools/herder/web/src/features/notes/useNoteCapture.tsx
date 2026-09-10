@@ -8,8 +8,10 @@ import {
   isReservedFileResolutionSelection,
   reserveSelectionForFileResolution,
   sharedCaptureSurface,
+  type CaptureSubmitAction,
   type ReservedSelection,
 } from './noteCaptureModel.ts'
+import { noteTransferText } from './notesPresentation.ts'
 import { NoteCaptureChip, type NoteCaptureDraft } from './NoteCaptureChip.tsx'
 import type { NoteSource } from './notesStore.ts'
 import { useNotes } from './NotesProvider.tsx'
@@ -77,7 +79,15 @@ function selectedLine(node: Node | null) {
   return Number(raw)
 }
 
-export function useNoteCapture({ active, source, agents }: { active: boolean, source: NoteSource, agents: string[] }) {
+// quickSend is the transcript panel's send path (the Composer's request and refresh
+// markers) plus the hand-off append; without it cmd+enter still queues.
+export type NoteQuickSend = {
+  readOnly: string
+  send: (agent: string, text: string) => Promise<void>
+  append: (agent: string, text: string) => { ok: true } | { ok: false, reason: string }
+}
+
+export function useNoteCapture({ active, source, agents, quickSend }: { active: boolean, source: NoteSource, agents: string[], quickSend?: NoteQuickSend }) {
   const { store, announce } = useNotes()
   const containerRef = useRef<HTMLElement>(null)
   const pointer = useRef(false)
@@ -145,13 +155,33 @@ export function useNoteCapture({ active, source, agents }: { active: boolean, so
     })
     close()
   }
-  const save = (group: string, comment: string) => {
-    if (!capture) return
-    const result = store.add({ group, quote: capture.quote, text: comment, source: capture.source })
-    if (!result.ok) { announce(result.reason); return }
-    announce(`Saved a note in ${group === 'general' ? 'unassigned' : group}.`)
-    close()
+  const appendToPrompt = (group: string, text: string, reason: string) => {
+    if (!quickSend) return false
+    const result = quickSend.append(group, text)
+    announce(result.ok ? `${reason} — added to ${group}'s prompt instead.` : result.reason)
+    return result.ok
   }
-  const element = capture ? <NoteCaptureChip capture={capture} agents={agents} onSave={save} onAbandon={close} /> : null
+  const save = (group: string, comment: string, action: CaptureSubmitAction) => {
+    if (!capture) return
+    const note = { group, quote: capture.quote, text: comment, source: capture.source }
+    if (action === 'queue' || !quickSend) {
+      const result = store.add(note)
+      if (!result.ok) { announce(result.reason); return }
+      announce(`Saved a note in ${group === 'general' ? 'unassigned' : group}.`)
+      close()
+      return
+    }
+    const text = noteTransferText(note)
+    if (action === 'append') {
+      if (appendToPrompt(group, text, quickSend.readOnly ? 'Read-only' : `${group} is not live`)) close()
+      return
+    }
+    close()
+    void quickSend.send(group, text).then(
+      () => announce(`Sent a note to ${group}.`),
+      (error: unknown) => appendToPrompt(group, text, `Send failed (${error instanceof Error ? error.message : String(error)})`),
+    )
+  }
+  const element = capture ? <NoteCaptureChip capture={capture} agents={agents} readOnly={quickSend?.readOnly ?? ''} onSave={save} onAbandon={close} /> : null
   return { containerRef, onDoubleClick, element, show, close }
 }
