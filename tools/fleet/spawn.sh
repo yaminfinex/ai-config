@@ -278,7 +278,7 @@ trap 'rm -f -- "${launch_output_file:-}"' EXIT
 launch_timeout=${FLEET_LAUNCH_TIMEOUT_SECONDS:-150}
 [[ $launch_timeout =~ ^[1-9][0-9]*$ ]] || die "FLEET_LAUNCH_TIMEOUT_SECONDS must be a positive integer"
 set +e
-FLEET_PANE=$pane_id HCOM_TERMINAL=fleet timeout --foreground "${launch_timeout}s" "${launch[@]}" >"$launch_output_file" 2>&1
+FLEET_PANE=$pane_id FLEET_TOOL=$tool HCOM_TERMINAL=fleet timeout --foreground "${launch_timeout}s" "${launch[@]}" >"$launch_output_file" 2>&1
 launch_rc=$?
 set -e
 launch_output=$(<"$launch_output_file")

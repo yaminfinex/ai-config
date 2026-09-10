@@ -197,6 +197,7 @@ _aic_launch() {
     for _aic_env_entry in "${_aic_herdr_env[@]}"; do
       export "$_aic_env_entry"
     done
+    export HERDR_AGENT=$tool
     if [ -n "$pin" ]; then
       PATH="$pin:$PATH"
     fi

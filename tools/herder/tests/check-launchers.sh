@@ -46,6 +46,7 @@ for tool in claude codex grok; do
   printf 'env_herdr_tab=%s\n' "${HERDR_TAB_ID-UNSET}"
   printf 'env_herdr_workspace=%s\n' "${HERDR_WORKSPACE_ID-UNSET}"
   printf 'env_herdr_future=%s\n' "${HERDR_FUTURE_BINDING-UNSET}"
+  printf 'env_herdr_agent=%s\n' "${HERDR_AGENT-UNSET}"
 } >"$LAUNCHER_TEST_LOG"
 exit 23
 EOF
@@ -64,6 +65,7 @@ cat >"$TEST_ROOT/hcom-bin/hcom" <<'EOF'
   printf 'env_herdr_tab=%s\n' "${HERDR_TAB_ID-UNSET}"
   printf 'env_herdr_workspace=%s\n' "${HERDR_WORKSPACE_ID-UNSET}"
   printf 'env_herdr_future=%s\n' "${HERDR_FUTURE_BINDING-UNSET}"
+  printf 'env_herdr_agent=%s\n' "${HERDR_AGENT-UNSET}"
   printf 'env_hcom_dir=%s\n' "${HCOM_DIR-UNSET}"
   printf 'env_inflight=%s\n' "${HCOM_LAUNCH_INFLIGHT-UNSET}"
 } >"$LAUNCHER_TEST_LOG"
@@ -91,6 +93,7 @@ export HERDR_TAB_ID="current-tab"
 export HERDR_WORKSPACE_ID="current-workspace"
 export HERDR_FUTURE_BINDING="future value=preserved"
 export HCOM_DIR="$TEST_ROOT/busdir"
+unset HERDR_AGENT
 # shellcheck source=../../../lib/launchers.sh
 source "$ROOT/lib/launchers.sh"
 
@@ -131,6 +134,8 @@ pass "hand-typed claude launches on-bus via hcom --run-here with the vendor pinn
 log_has 'env_process_id=UNSET' || fail "ambient HCOM_PROCESS_ID leaked into the launch (identity hijack)"
 log_has 'env_herder_guid=UNSET' || fail "ambient HERDER_GUID leaked into the launch"
 assert_herdr_tuple_present "Claude on-bus launch"
+log_has 'env_herdr_agent=claude' || fail "Claude on-bus launch omitted HERDR_AGENT=claude"
+[[ -z "${HERDR_AGENT-}" ]] || fail "HERDR_AGENT leaked into the caller shell"
 log_has "env_hcom_dir=$TEST_ROOT/busdir" || fail "HCOM_DIR (bus location) was not preserved"
 log_has 'env_inflight=1' || fail "HCOM_LAUNCH_INFLIGHT guard not set"
 [[ "${HCOM_PROCESS_ID-}" == "stale-caller-row" ]] \
@@ -148,6 +153,7 @@ log_has 'arg=-p' || fail "print bypass lost the -p flag"
 log_has 'env_process_id=UNSET' || fail "print bypass leaked ambient identity"
 log_has 'env_herder_guid=UNSET' || fail "print bypass leaked ambient HERDER identity"
 assert_herdr_tuple_absent "Claude print bypass"
+log_has 'env_herdr_agent=UNSET' || fail "Claude print bypass set HERDR_AGENT"
 pass "claude -p bypasses hcom and execs the vendor directly"
 
 set +e
@@ -162,6 +168,7 @@ head -n 6 "$LAUNCHER_TEST_LOG" | grep -Fx 'arg=codex' >/dev/null || fail "hcom w
 log_has 'arg=--run-here' || fail "codex launch missing --run-here"
 log_has 'arg=exec' && log_has 'arg=hello' || fail "Codex override lost caller args"
 assert_herdr_tuple_present "Codex on-bus launch"
+log_has 'env_herdr_agent=codex' || fail "Codex on-bus launch omitted HERDR_AGENT=codex"
 pass "codex routes on-bus; empty launcher override preserves ask-mode behavior"
 
 set +e
