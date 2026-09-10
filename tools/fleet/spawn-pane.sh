@@ -14,7 +14,7 @@ die() {
 
 [[ $# -eq 2 ]] || die "usage: spawn-pane.sh <hcom-script> <pane-title>"
 [[ -n ${FLEET_PANE:-} ]] || die "FLEET_PANE is required"
-[[ -n ${FLEET_TOOL:-} ]] || die "FLEET_TOOL is required"
+[[ ${FLEET_TOOL:-} =~ ^(claude|codex)$ ]] || die "FLEET_TOOL must be claude or codex"
 
 launch_script=$1
 pane_title=$2

@@ -211,31 +211,23 @@ type serverStatus struct {
 	compatible bool
 }
 
-// A newer server may extend the protocol without breaking older clients. Herdr
-// reports that relationship explicitly; older servers cannot satisfy fields a
-// client built for this protocol may require.
+// Compatible reports herdr's CLI-to-server protocol check. supportedProtocol
+// is herder's independent minimum protocol floor.
 func supportsServerProtocol(status serverStatus) bool {
 	return status.compatible && status.protocol >= supportedProtocol
 }
 
 func parseServerStatus(out []byte) (serverStatus, error) {
-	var envelope struct {
-		Result struct {
-			Socket     string      `json:"socket"`
-			Protocol   json.Number `json:"protocol"`
-			Compatible bool        `json:"compatible"`
-		} `json:"result"`
-		Socket     string      `json:"socket"`
-		Protocol   json.Number `json:"protocol"`
-		Compatible bool        `json:"compatible"`
+	var statusJSON struct {
+		Socket     string `json:"socket"`
+		Protocol   int    `json:"protocol"`
+		Compatible bool   `json:"compatible"`
 	}
-	decoder := json.NewDecoder(bytes.NewReader(out))
-	decoder.UseNumber()
-	if err := decoder.Decode(&envelope); err == nil {
+	if err := json.Unmarshal(out, &statusJSON); err == nil {
 		status := serverStatus{
-			socket:     firstNonEmpty(envelope.Result.Socket, envelope.Socket),
-			protocol:   firstNonZero(numberInt(envelope.Result.Protocol), numberInt(envelope.Protocol)),
-			compatible: envelope.Result.Compatible || envelope.Compatible,
+			socket:     statusJSON.Socket,
+			protocol:   statusJSON.Protocol,
+			compatible: statusJSON.Compatible,
 		}
 		if status.socket == "" {
 			return serverStatus{}, fmt.Errorf("herdr status server did not report a socket")
@@ -365,27 +357,4 @@ func ParseSessionSnapshotResult(result []byte) (Snapshot, error) {
 
 func emptySnapshot(snapshot Snapshot) bool {
 	return snapshot.Protocol == 0 && len(snapshot.Panes) == 0 && len(snapshot.Agents) == 0
-}
-
-func numberInt(value json.Number) int {
-	n, _ := value.Int64()
-	return int(n)
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func firstNonZero(values ...int) int {
-	for _, value := range values {
-		if value != 0 {
-			return value
-		}
-	}
-	return 0
 }

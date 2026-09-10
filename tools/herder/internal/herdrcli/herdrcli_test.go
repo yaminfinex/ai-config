@@ -59,16 +59,6 @@ func TestParseServerStatusJSONVersions(t *testing.T) {
 			}
 		})
 	}
-
-	t.Run("socket only", func(t *testing.T) {
-		status, err := parseServerStatus([]byte(`{"result":{"socket":"/tmp/herdr.sock"}}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if status.socket != "/tmp/herdr.sock" || status.protocol != 0 || status.compatible {
-			t.Fatalf("status = %#v", status)
-		}
-	})
 }
 
 func TestLiveSocketRequestsJSONStatus(t *testing.T) {

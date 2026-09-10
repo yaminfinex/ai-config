@@ -135,6 +135,7 @@ log_has 'env_process_id=UNSET' || fail "ambient HCOM_PROCESS_ID leaked into the 
 log_has 'env_herder_guid=UNSET' || fail "ambient HERDER_GUID leaked into the launch"
 assert_herdr_tuple_present "Claude on-bus launch"
 log_has 'env_herdr_agent=claude' || fail "Claude on-bus launch omitted HERDR_AGENT=claude"
+[[ -z "${HERDR_AGENT-}" ]] || fail "HERDR_AGENT leaked into the caller shell"
 log_has "env_hcom_dir=$TEST_ROOT/busdir" || fail "HCOM_DIR (bus location) was not preserved"
 log_has 'env_inflight=1' || fail "HCOM_LAUNCH_INFLIGHT guard not set"
 [[ "${HCOM_PROCESS_ID-}" == "stale-caller-row" ]] \

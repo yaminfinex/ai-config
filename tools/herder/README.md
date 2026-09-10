@@ -15,7 +15,7 @@ When running Go directly from this module, use `env -u GOROOT go ...`.
 ## Layout
 
 - `cmd/herder/` — binary entry point.
-- `internal/herdrcli/` — herdr socket snapshot and response decoding.
+- `internal/herdrcli/` — herdr socket snapshots and the `herdr status server --json` discovery contract.
 - `internal/hcomidentity/` — hcom roster decoding and identity helpers.
 - `internal/listcmd/` — exact-coordinate live join and table rendering.
 - `tests/` — hermetic contracts for the surviving surface.

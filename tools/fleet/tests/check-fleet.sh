@@ -417,7 +417,7 @@ first_line=$(PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test FLEET_TOOL=codex "$FL
 [[ $first_line == p-test ]] || fail "open helper did not print pane id first"
 printf -v launch_q '%q' "$launch_script"
 printf -v run_q '%q' "HERDR_AGENT=codex bash $launch_q"
-grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null || fail "open helper lost script-path quoting"
+grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null || fail "open helper omitted the Codex marker"
 pass "open helper marks Codex and preserves first-line id and script quoting"
 
 : >"$FLEET_TEST_CALLS"
@@ -428,10 +428,12 @@ grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null \
   || fail "open helper used the wrong Claude marker"
 pass "open helper marks Claude with the canonical tool"
 
+: >"$FLEET_TEST_CALLS"
 if PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test \
   "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]' >/dev/null 2>&1; then
   fail "open helper accepted a missing FLEET_TOOL"
 fi
+[[ ! -s $FLEET_TEST_CALLS ]] || fail "open helper touched herdr without FLEET_TOOL"
 pass "open helper requires the fleet tool marker"
 
 if "$FLEET/selfcompact.sh" '../wrong' steer continue >/dev/null 2>&1; then
