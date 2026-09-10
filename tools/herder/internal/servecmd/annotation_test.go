@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/webidentity"
 	"github.com/fsnotify/fsnotify"
@@ -77,6 +78,79 @@ func TestAnnotationEndpoint(t *testing.T) {
 		}
 	case <-deadline:
 		t.Fatal("annotation append did not re-emit fleet")
+	}
+}
+
+func TestAnnotationEndpointKeepsUniqueBaseManagerInFleet(t *testing.T) {
+	deps := supervisionDeps(t)
+	created := time.Date(2026, 9, 10, 8, 0, 0, 0, time.UTC)
+	oldRoster := deps.roster
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rows, err := oldRoster()
+		// Match the copy's bare hcom manager name from mirror.ready.
+		for i := range rows {
+			if rows[i].Name == "orch-hamo" {
+				rows[i].Name = "hamo"
+				rows[i].BaseName = "hamo"
+			}
+		}
+		return append(rows, hcomidentity.Row{Name: "sesh-mesa", BaseName: "mesa", Tool: "claude", Status: "active", SessionID: "s-mesa", CreatedAt: created}), err
+	}
+	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("annotation-base-mesa")), At: created.Add(time.Minute), Kind: agentstore.KindMirrorReady, By: "hamo", ByKind: "mirror", Name: "mesa"}); err != nil {
+		t.Fatal(err)
+	}
+	deps.poll = time.Hour
+	deps.fileWatcher = fsnotify.NewWatcher
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	deps = startStoreProjection(ctx, deps)
+	server := httptest.NewServer(newHandler(deps))
+	defer server.Close()
+	stream, err := http.Get(server.URL + "/api/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	reader := bufio.NewReader(stream.Body)
+	for {
+		event, _ := readEvent(t, reader)
+		if event == "fleet" {
+			break
+		}
+	}
+
+	response, err := http.Post(server.URL+"/api/agents/sesh-mesa/annotation", "application/json", strings.NewReader(`{"title":"sesh-measurement"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("annotation status = %d", response.StatusCode)
+	}
+
+	deadline := time.After(2 * time.Second)
+	got := make(chan string, 1)
+	go func() {
+		for {
+			event, data := readEvent(t, reader)
+			if event == "fleet" {
+				got <- data
+				return
+			}
+		}
+	}()
+	select {
+	case data := <-got:
+		start := strings.Index(data, `"agent":"sesh-mesa"`)
+		end := -1
+		if start >= 0 {
+			end = strings.Index(data[start:], "}")
+		}
+		if start < 0 || end < 0 || !strings.Contains(data[start:start+end], `"manager":"hamo","manager_state":"live"`) || !strings.Contains(data[start:start+end], `"title":"sesh-measurement"`) {
+			t.Fatalf("fleet after base-name annotation = %s", data)
+		}
+	case <-deadline:
+		t.Fatal("annotation append did not re-emit fleet within the debounce")
 	}
 }
 

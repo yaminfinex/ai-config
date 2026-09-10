@@ -259,6 +259,54 @@ func TestAliasMergesBaseRecord(t *testing.T) {
 	}
 }
 
+func TestViewForRosterOverlaysUniqueBaseRecord(t *testing.T) {
+	created := at(1)
+	row := hcomidentity.Row{Name: "sesh-mesa", BaseName: "mesa", Tool: "claude", CreatedAt: created}
+	base := Event{ID: NewID(at(2)), At: at(2), Kind: KindMirrorReady, By: "hamo", ByKind: "mirror", Name: "mesa", Batch: "batch-1", ParentName: "parent-1"}
+	annotate := Event{ID: NewID(at(3)), At: at(3), Kind: KindAnnotate, By: "web-owner", ByKind: "web", Name: "sesh-mesa", Title: "sesh-measurement"}
+
+	t.Run("full annotation keeps base manager and provenance", func(t *testing.T) {
+		projection := NewProjection()
+		projection.Apply(base, 0)
+		projection.Apply(annotate, 0)
+		view := projection.ViewForRoster(&row, []hcomidentity.Row{row})
+		if view == nil || view.Manager != "hamo" || view.Annotation == nil || view.Annotation.Title != "sesh-measurement" || view.Provenance.Launcher != "hamo" || view.Provenance.Kind != "mirrored" || view.Provenance.State != "ready" || view.Parent != "parent-1" || view.EventCount != 2 || view.Events[0].Kind != KindMirrorReady {
+			t.Fatalf("overlaid view = %+v", view)
+		}
+	})
+
+	t.Run("later full-name reparent wins", func(t *testing.T) {
+		projection := NewProjection()
+		projection.Apply(base, 0)
+		projection.Apply(annotate, 0)
+		projection.Apply(Event{ID: NewID(at(4)), At: at(4), Kind: KindReparent, By: "ziru", ByKind: "agent", Name: "sesh-mesa", Manager: "new-manager"}, 0)
+		view := projection.ViewForRoster(&row, []hcomidentity.Row{row})
+		if view == nil || view.Manager != "new-manager" || view.ManagerBy != "ziru" || view.ManagerAt == nil || !view.ManagerAt.Equal(at(4)) {
+			t.Fatalf("full-name manager lost: %+v", view)
+		}
+	})
+
+	t.Run("ambiguous base does not overlay", func(t *testing.T) {
+		projection := NewProjection()
+		projection.Apply(base, 0)
+		projection.Apply(annotate, 0)
+		roster := []hcomidentity.Row{row, {Name: "other-mesa", BaseName: "mesa", CreatedAt: created}}
+		view := projection.ViewForRoster(&row, roster)
+		if view == nil || view.Manager != "" || view.Provenance.Kind != "unregistered" || view.Annotation == nil || view.Annotation.Title != "sesh-measurement" {
+			t.Fatalf("ambiguous base overlaid: %+v", view)
+		}
+	})
+
+	t.Run("absent base leaves full view unchanged", func(t *testing.T) {
+		projection := NewProjection()
+		projection.Apply(annotate, 0)
+		view := projection.ViewForRoster(&row, []hcomidentity.Row{row})
+		if view == nil || view.Manager != "" || view.Provenance.Kind != "unregistered" || view.Annotation == nil || view.Annotation.Title != "sesh-measurement" {
+			t.Fatalf("view without base = %+v", view)
+		}
+	})
+}
+
 func TestAliasDoesNotGreedilyMergeSameBaseAcrossTags(t *testing.T) {
 	_, s := scratch(t)
 	for i, tagged := range []struct{ name, tag string }{{"impl-nife", "impl"}, {"review-nife", "review"}} {

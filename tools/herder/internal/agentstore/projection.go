@@ -2,6 +2,7 @@ package agentstore
 
 import (
 	"encoding/json"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -545,23 +546,64 @@ func (p *Projection) View(name string, roster *hcomidentity.Row) *AgentView {
 	return &view
 }
 
-// ViewForRoster resolves a roster row by its full name, then falls back to a
-// mirror-only base-name record when this row is the roster's unique owner of
-// that base name. The fallback changes only the returned display copy.
+// ViewForRoster resolves a roster row by its full name and, when this row is
+// the roster's unique owner of its base name, fills fields missing from that
+// view with the remaining base-name record. That record is a pre-unit-1
+// artefact of the same agent; unit 2's reparent repairs it under the full name,
+// after which the overlay is inert for the manager. With no full-name record,
+// the base record remains the fallback. Neither path re-keys or writes the
+// store.
 func (p *Projection) ViewForRoster(row *hcomidentity.Row, roster []hcomidentity.Row) *AgentView {
 	if row == nil {
 		return nil
 	}
-	if view := p.View(row.Name, row); view != nil {
-		return view
-	}
+	full := p.View(row.Name, row)
 	owner, unique := hcomidentity.ByUniqueBaseName(roster, row.BaseName)
 	if !unique || owner.Name != row.Name {
-		return nil
+		return full
 	}
-	view := p.View(row.BaseName, row)
-	if view != nil {
-		view.Name = row.Name
+	base := p.View(row.BaseName, row)
+	if full == nil {
+		if base != nil {
+			base.Name = row.Name
+		}
+		return base
 	}
-	return view
+	if base != nil {
+		overlayMissing(full, base)
+	}
+	return full
+}
+
+// overlayMissing fills only absent full-name fields and joins both records'
+// event histories. Both arguments are display copies, so the stored projection
+// remains untouched.
+func overlayMissing(full, base *AgentView) {
+	if full.Provenance.Kind == "unregistered" { // record()'s placeholder, not a fact
+		full.Provenance.Kind = ""
+	}
+	full.Events = append(append([]Event(nil), base.Events...), full.Events...)
+	sort.SliceStable(full.Events, func(i, j int) bool { return full.Events[i].At.Before(full.Events[j].At) })
+	if n := len(full.Events); n > EventsKept {
+		full.Events = full.Events[n-EventsKept:]
+	}
+	full.EventCount += base.EventCount
+	fillZero(reflect.ValueOf(full).Elem(), reflect.ValueOf(base).Elem())
+}
+
+var timeType = reflect.TypeOf(time.Time{})
+
+// fillZero is herder's one production use of reflect: a field added to
+// AgentView or Provenance later must be overlaid without anyone remembering
+// this function.
+func fillZero(dst, src reflect.Value) {
+	for i := 0; i < dst.NumField(); i++ {
+		d, s := dst.Field(i), src.Field(i)
+		switch {
+		case d.Kind() == reflect.Struct && d.Type() != timeType:
+			fillZero(d, s)
+		case d.IsZero():
+			d.Set(s)
+		}
+	}
 }
