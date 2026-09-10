@@ -8,6 +8,7 @@ import {
   isRangeSelection,
   isReservedFileResolutionSelection,
   placeCaretAtEnd,
+  proposedCaptureGroup,
   reserveSelectionForFileResolution,
   sharedCaptureSurface,
 } from '../src/features/notes/noteCaptureModel.ts'
@@ -150,4 +151,23 @@ test('the chip wires the submit model to the textarea and the minimal button; th
   assert.match(panel, /useNoteCapture\(\{.*agents, quickSend \}\)/)
   const file = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(file, /quickSend/)
+})
+
+test('file-pane capture proposes the remembered agent (reddens: memory dropped from the proposal)', () => {
+  assert.equal(proposedCaptureGroup({ kind: 'file', path: 'a.md' }, 'doza', ['doza', 'ziru']), 'doza')
+  assert.equal(proposedCaptureGroup({ kind: 'diff', path: 'a.md', base: 'HEAD' }, 'doza', ['doza']), 'doza')
+  assert.equal(proposedCaptureGroup({ kind: 'file', path: 'a.md' }, null, ['doza']), 'general')
+})
+
+test('a remembered agent that left the roster falls back to unassigned (reddens: fallback removed)', () => {
+  assert.equal(proposedCaptureGroup({ kind: 'file', path: 'a.md' }, 'gone', ['doza']), 'general')
+  assert.equal(proposedCaptureGroup({ kind: 'file', path: 'a.md' }, 'gone', []), 'general')
+})
+
+test('transcript-pane capture proposes its own agent regardless of the memory (reddens: preference leaks into agent panes)', () => {
+  assert.equal(proposedCaptureGroup({ kind: 'transcript', agent: 'ziru' }, 'doza', ['ziru', 'doza']), 'ziru')
+  const hook = readFileSync(new URL('../src/features/notes/useNoteCapture.tsx', import.meta.url), 'utf8')
+  assert.match(hook, /group: proposedCaptureGroup\(source, store\.lastTarget\(\), agents\)/)
+  assert.match(hook, /if \(capture\.source\.kind !== 'transcript'\) store\.rememberTarget\(group\)/)
+  assert.equal(hook.match(/rememberTarget\(/g)?.length, 1)
 })

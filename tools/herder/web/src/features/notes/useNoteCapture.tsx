@@ -6,6 +6,7 @@ import {
   captureSourceWithRange,
   isRangeSelection,
   isReservedFileResolutionSelection,
+  proposedCaptureGroup,
   reserveSelectionForFileResolution,
   sharedCaptureSurface,
   type CaptureSubmitAction,
@@ -110,9 +111,9 @@ export function useNoteCapture({ active, source, agents, quickSend }: { active: 
     const rect = range.getBoundingClientRect()
     const position = capturePosition(rect, window.innerWidth, window.innerHeight)
     const provenSource = captureSourceWithRange(source, selectedLine(range.startContainer), range.endOffset === 0 ? undefined : selectedLine(range.endContainer))
-    setCapture({ quote, source: provenSource, ...position, group: source.kind === 'transcript' ? source.agent : 'general' })
+    setCapture({ quote, source: provenSource, ...position, group: proposedCaptureGroup(source, store.lastTarget(), agents) })
     return true
-  }, [active, source])
+  }, [active, agents, source, store])
 
   useEffect(() => { if (!active) close() }, [active, close])
   useDOMEvent<KeyboardEvent>(document, 'keydown', (event) => {
@@ -163,6 +164,7 @@ export function useNoteCapture({ active, source, agents, quickSend }: { active: 
   const save = (group: string, comment: string, action: CaptureSubmitAction) => {
     if (!capture) return
     const note = { group, quote: capture.quote, text: comment, source: capture.source }
+    if (capture.source.kind !== 'transcript') store.rememberTarget(group)
     if (action === 'queue' || !quickSend) {
       const result = store.add(note)
       if (!result.ok) { announce(result.reason); return }
