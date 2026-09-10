@@ -270,7 +270,7 @@ func TestViewForRosterOverlaysUniqueBaseRecord(t *testing.T) {
 		projection.Apply(base, 0)
 		projection.Apply(annotate, 0)
 		view := projection.ViewForRoster(&row, []hcomidentity.Row{row})
-		if view == nil || view.Manager != "hamo" || view.Annotation == nil || view.Annotation.Title != "sesh-measurement" || view.Provenance.Launcher != "hamo" || view.Provenance.Kind != "mirrored" || view.Provenance.State != "ready" || view.Parent != "parent-1" {
+		if view == nil || view.Manager != "hamo" || view.Annotation == nil || view.Annotation.Title != "sesh-measurement" || view.Provenance.Launcher != "hamo" || view.Provenance.Kind != "mirrored" || view.Provenance.State != "ready" || view.Parent != "parent-1" || view.EventCount != 2 || view.Events[0].Kind != KindMirrorReady {
 			t.Fatalf("overlaid view = %+v", view)
 		}
 	})

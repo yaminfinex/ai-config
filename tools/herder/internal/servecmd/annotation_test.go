@@ -87,6 +87,7 @@ func TestAnnotationEndpointKeepsUniqueBaseManagerInFleet(t *testing.T) {
 	oldRoster := deps.roster
 	deps.roster = func() ([]hcomidentity.Row, error) {
 		rows, err := oldRoster()
+		// Match the copy's bare hcom manager name from mirror.ready.
 		for i := range rows {
 			if rows[i].Name == "orch-hamo" {
 				rows[i].Name = "hamo"

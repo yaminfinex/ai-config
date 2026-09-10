@@ -2,6 +2,7 @@ package agentstore
 
 import (
 	"encoding/json"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -549,8 +550,9 @@ func (p *Projection) View(name string, roster *hcomidentity.Row) *AgentView {
 // the roster's unique owner of its base name, fills fields missing from that
 // view with the remaining base-name record. That record is a pre-unit-1
 // artefact of the same agent; unit 2's reparent repairs it under the full name,
-// after which the overlay is inert. With no full-name record, the base record
-// remains the fallback. Neither path re-keys or writes the store.
+// after which the overlay is inert for the manager. With no full-name record,
+// the base record remains the fallback. Neither path re-keys or writes the
+// store.
 func (p *Projection) ViewForRoster(row *hcomidentity.Row, roster []hcomidentity.Row) *AgentView {
 	if row == nil {
 		return nil
@@ -573,85 +575,35 @@ func (p *Projection) ViewForRoster(row *hcomidentity.Row, roster []hcomidentity.
 	return full
 }
 
-// overlayMissing fills only absent full-name fields. Both arguments are
-// display copies, so the stored projection remains untouched.
+// overlayMissing fills only absent full-name fields and joins both records'
+// event histories. Both arguments are display copies, so the stored projection
+// remains untouched.
 func overlayMissing(full, base *AgentView) {
-	fillString := func(dst *string, src string) {
-		if *dst == "" {
-			*dst = src
-		}
+	if full.Provenance.Kind == "unregistered" { // record()'s placeholder, not a fact
+		full.Provenance.Kind = ""
 	}
-	fillTime := func(dst *time.Time, src time.Time) {
-		if dst.IsZero() {
-			*dst = src
-		}
+	full.Events = append(append([]Event(nil), base.Events...), full.Events...)
+	sort.SliceStable(full.Events, func(i, j int) bool { return full.Events[i].At.Before(full.Events[j].At) })
+	if n := len(full.Events); n > EventsKept {
+		full.Events = full.Events[n-EventsKept:]
 	}
-
-	fillString(&full.BaseName, base.BaseName)
-	fillString(&full.Tool, base.Tool)
-	fillString(&full.Tag, base.Tag)
-	fillTime(&full.Incarnation, base.Incarnation)
-	fillTime(&full.FirstSeen, base.FirstSeen)
-	fillTime(&full.LastSeen, base.LastSeen)
-	if full.Closed == nil {
-		full.Closed = base.Closed
-	}
-	fillString(&full.CloseReason, base.CloseReason)
-	overlayProvenance(&full.Provenance, base.Provenance)
-	if full.Assignment == nil {
-		full.Assignment = base.Assignment
-	}
-	if full.Annotation == nil {
-		full.Annotation = base.Annotation
-	}
-	fillString(&full.Manager, base.Manager)
-	fillString(&full.ManagerBy, base.ManagerBy)
-	if full.ManagerAt == nil {
-		full.ManagerAt = base.ManagerAt
-	}
-	fillString(&full.Parent, base.Parent)
-	fillString(&full.FromName, base.FromName)
-	if full.Binding == nil {
-		full.Binding = base.Binding
-	}
-	if full.Session == nil {
-		full.Session = base.Session
-	}
-	if len(full.Sessions) == 0 {
-		full.Sessions = base.Sessions
-	}
-	if len(full.Events) == 0 {
-		full.Events = base.Events
-	}
-	if full.EventCount == 0 {
-		full.EventCount = base.EventCount
-	}
+	full.EventCount += base.EventCount
+	fillZero(reflect.ValueOf(full).Elem(), reflect.ValueOf(base).Elem())
 }
 
-func overlayProvenance(full *Provenance, base Provenance) {
-	if full.Kind == "" || full.Kind == "unregistered" {
-		full.Kind = base.Kind
-	}
-	fillString := func(dst *string, src string) {
-		if *dst == "" {
-			*dst = src
+var timeType = reflect.TypeOf(time.Time{})
+
+// fillZero is herder's one production use of reflect: a field added to
+// AgentView or Provenance later must be overlaid without anyone remembering
+// this function.
+func fillZero(dst, src reflect.Value) {
+	for i := 0; i < dst.NumField(); i++ {
+		d, s := dst.Field(i), src.Field(i)
+		switch {
+		case d.Kind() == reflect.Struct && d.Type() != timeType:
+			fillZero(d, s)
+		case d.IsZero():
+			d.Set(s)
 		}
 	}
-	fillString(&full.Launcher, base.Launcher)
-	fillString(&full.LauncherKind, base.LauncherKind)
-	fillString(&full.ModelRequested, base.ModelRequested)
-	fillString(&full.Effort, base.Effort)
-	fillString(&full.Workspace, base.Workspace)
-	fillString(&full.PaneRequested, base.PaneRequested)
-	fillString(&full.Pane, base.Pane)
-	fillString(&full.Cwd, base.Cwd)
-	fillString(&full.Batch, base.Batch)
-	fillString(&full.Request, base.Request)
-	if full.RequestedAt == nil {
-		full.RequestedAt = base.RequestedAt
-	}
-	if full.ReadyAt == nil {
-		full.ReadyAt = base.ReadyAt
-	}
-	fillString(&full.State, base.State)
 }

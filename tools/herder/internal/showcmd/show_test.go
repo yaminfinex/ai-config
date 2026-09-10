@@ -123,7 +123,7 @@ func TestShowOverlaysFullNameAnnotationOnUniqueBase(t *testing.T) {
 	rows := []hcomidentity.Row{{Name: "sesh-mesa", BaseName: "mesa", Tool: "claude", CreatedAt: at.Add(-time.Second)}}
 	deps := dependencies{roster: func() ([]hcomidentity.Row, error) { return rows, nil }}
 	var out, errBuf bytes.Buffer
-	if code := run([]string{"sesh-mesa"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 || !strings.Contains(out.String(), "manager          hamo") || !strings.Contains(out.String(), "title            sesh-measurement") {
+	if code := run([]string{"sesh-mesa"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 || !strings.Contains(out.String(), "launcher         mirrored: hamo") || !strings.Contains(out.String(), "manager          hamo") || !strings.Contains(out.String(), "title            sesh-measurement") {
 		t.Fatalf("overlay: code=%d out=%q err=%q", code, out.String(), errBuf.String())
 	}
 }

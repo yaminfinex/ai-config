@@ -167,8 +167,9 @@ display view overlays that record on the unique base record: populated
 full-name fields win and absent fields retain the base record's provenance,
 manager and other lifecycle facts. The base record is a pre-unit-1 artefact of
 the same agent; reparent repair writes those facts under the full name and
-makes the overlay inert. Ambiguous base names are never overlaid. This display
-rule never re-keys or writes the store.
+makes the overlay inert for the manager. Both records' events show as one
+history. Ambiguous base names are never overlaid. This display rule never
+re-keys or writes the store.
 
 Binding: when a register event claimed session S and the roster says S′,
 the view records `binding: conflict {claimed: S, roster: S′}` and keeps S′
