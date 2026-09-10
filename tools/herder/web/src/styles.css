@@ -180,6 +180,7 @@ h2, h3, p { margin-top: 0; }
 .status-dot.retired { background: var(--amber); }
 .status-dot.unknown { background: var(--status-unknown); }
 .bus-status { margin-left: auto; color: var(--dimmer); font-size: 10px; }
+.context-used { color: var(--dimmer); font: 9px var(--mono); }
 .gap-badge, .pane-chip, .tool-chip { padding: 0 5px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); color: var(--dim); font: 10px var(--mono); white-space: nowrap; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
 .unplaced-row { color: var(--dim); }

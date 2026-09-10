@@ -19,6 +19,7 @@ export type SidebarNode = {
   // summary is the folded supervision total.
   secondary?: string
   statusText?: string
+  contextUsed?: number
   workspaceLabel?: string
   summary?: SupervisionSummary
 }
@@ -71,6 +72,7 @@ function addAgentNode(result: Map<string, SidebarNode>, id: string, pane: Pane |
     pane,
     tabLabel,
     statusText: pane.agent !== '-' && pane.bus_status !== '-' ? pane.bus_status : undefined,
+    contextUsed: pane.context_used,
   })
   for (const [index, child] of (pane.subagents ?? []).entries()) addAgentNode(result, children[index], child)
 }
@@ -176,6 +178,7 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
     result.set(id, {
       id, kind: row.parent_agent ? 'subagent' : 'agent', ...agentLabel(row), children, pane: row,
       workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel, summary: summarise(result, children),
+      contextUsed: row.context_used,
     })
     return id
   }

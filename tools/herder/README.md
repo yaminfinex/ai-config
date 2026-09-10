@@ -14,6 +14,8 @@ serve` keeps an in-memory, never-persisted cache of session vitals (the
 observer) and answers the CLI over a local socket; without a serve the CLI
 reads transcripts directly, so nothing depends on the serve being up. Spawn, message,
 compact, cull, resume, and fork compose through `tools/fleet`, hcom, and herdr.
+The web board reads that observer in-process for per-row used-token counts and
+never scans transcripts on the board path.
 
 The self-building launcher at `bin/herder` hashes this module's Go sources and
 reuses a checkout-specific last-good binary if a rebuild temporarily fails.

@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+
+import { ContextUsed, contextUsedTooltip } from '../src/features/sidebar/ContextUsed.ts'
 import { buildSidebarNodes, buildSupervisionNodes } from '../src/features/sidebar/sidebarNodes.ts'
 import { defaultExpanded, managerItems, reconcileExpansion } from '../src/features/sidebar/sidebarView.ts'
 import { defaultFleetView, parseShellPreferences, shellPreferencesValue } from '../src/features/layout/shellPreferences.ts'
@@ -12,7 +16,7 @@ const board: Board = {
   workspaces: [{
     workspace_id: 'w1', number: 1, label: 'repo', focused: false, pane_count: 2, tab_count: 1, active_tab_id: 't1', agent_status: 'active',
     tabs: [{ tab_id: 't1', number: 1, label: 'seats', focused: false, pane_count: 2, agent_status: 'active', panes: [
-      { pane_id: 'w1:p1', agent: 'ziru', tool: 'claude', herdr_status: 'working', bus_status: 'active', gap: '-', manager: 'operator', manager_state: 'operator', created_at: '2026-09-10T08:00:00Z' },
+      { pane_id: 'w1:p1', agent: 'ziru', tool: 'claude', herdr_status: 'working', bus_status: 'active', gap: '-', manager: 'operator', manager_state: 'operator', created_at: '2026-09-10T08:00:00Z', context_used: 243787 },
       { pane_id: 'w1:p2', agent: 'impl-kolo', tool: 'claude', herdr_status: 'working', bus_status: 'active', gap: '-', manager: 'ziru', manager_state: 'live', created_at: '2026-09-10T08:01:00Z' },
     ] }],
   }],
@@ -21,6 +25,23 @@ const board: Board = {
 const placement = buildSidebarNodes(board)
 const supervision = buildSupervisionNodes(board)
 const rails = { fleetRail: { width: 260, collapsed: false }, notesRail: { width: 300, collapsed: true } }
+
+test('context used survives both tree projections and renders on agent rows only', () => {
+  assert.equal(placement.get('pane:w1:p1')?.contextUsed, 243787)
+  assert.equal(supervision.get('agent:ziru')?.contextUsed, 243787)
+  assert.equal(placement.get('pane:w1:p2')?.contextUsed, undefined)
+
+  const nestedBoard: Board = { ...board, workspaces: board.workspaces.map((workspace) => ({ ...workspace, tabs: workspace.tabs.map((tab) => ({ ...tab, panes: tab.panes.map((pane) => pane.agent === 'ziru' ? { ...pane, subagents: [{ pane_id: '-', agent: 'ziru-task', tool: 'claude', herdr_status: '-', bus_status: 'active', gap: 'no visible pane', parent_agent: 'ziru', context_used: 1121 }] } : pane) })) })) }
+  assert.equal(buildSidebarNodes(nestedBoard).get('pane:w1:p1:subagent:ziru-task')?.contextUsed, 1121)
+  assert.equal(buildSupervisionNodes(nestedBoard).get('agent:ziru-task')?.contextUsed, 1121)
+
+  const html = renderToStaticMarkup(createElement('div', { className: 'agent-row', title: contextUsedTooltip(243787) },
+    createElement(ContextUsed, { value: 243787 }), createElement(ContextUsed, {})))
+  assert.match(html, /class="context-used">244k<\/span>/)
+  assert.equal((html.match(/class="context-used"/g) ?? []).length, 1)
+  assert.match(html, /context 243,787 tokens/)
+  assert.doesNotMatch(html, /context-used">[^<]*%/)
+})
 
 test('row click guard contains every trailing interactive control', () => {
   assert.match(treeClickGuardSelector, /\.tree-disclosure/)
@@ -77,4 +98,6 @@ test('expandedItems survive a view switch: the transition never runs on the view
   assert.equal(effects.filter((deps) => /\bview\b/.test(deps)).length, 1, 'only the selection effect depends on view')
   assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : supervisionNodes/)
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)
+  assert.match(sidebar, /<ContextUsed value=\{node\.contextUsed\} \/>/)
+  assert.match(sidebar, /\$\{contextUsedTooltip\(node\.contextUsed\)\}/)
 })
