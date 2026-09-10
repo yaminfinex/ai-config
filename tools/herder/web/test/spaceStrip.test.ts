@@ -29,4 +29,5 @@ test('choosing a history item reopens that space and closes the menu (reddens: c
 test('the history menu effect registers Escape to close (reddens: Escape listener dropped)', () => {
   const effect = source.slice(source.indexOf('if (!historyOpen) return'), source.indexOf('}, [historyOpen])'))
   assert.match(effect, /if \(event\.key === 'Escape'\) setHistoryOpen\(false\)/)
+  assert.match(effect, /document\.addEventListener\('keydown', escape, true\)/)
 })
