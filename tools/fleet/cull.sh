@@ -5,8 +5,13 @@
 
 set -euo pipefail
 
+fleet_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=tools/fleet/lib.sh
+source "$fleet_dir/lib.sh"
+
 register_disabled=0
 REGISTER_OUTPUT=
+attrib=()
 fleet_tool=cull
 
 register_event() {
@@ -20,7 +25,7 @@ register_event() {
     return 0
   fi
   set +e
-  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" 2>&1)
+  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" "${attrib[@]}" 2>&1)
   rc=$?
   set -e
   if ((rc != 0)); then
@@ -51,6 +56,9 @@ label_matches() {
 [[ $# -eq 1 ]] || die "usage: cull.sh <hcom-name>"
 name=$1
 command -v jq >/dev/null || die "jq is required"
+
+self_name=$(fleet_self_name)
+[[ -z $self_name ]] || attrib=(--by "$self_name" --by-kind agent)
 
 agents=$(hcom list --json) || die "cannot read hcom agents"
 matches=$(jq -c --arg name "$name" '[.[] | select(.name == $name or .base_name == $name)]' <<<"$agents")

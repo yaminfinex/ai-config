@@ -5,6 +5,8 @@
 
 set -euo pipefail
 
+unset HCOM_PROCESS_ID
+
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 FLEET=$ROOT/tools/fleet
 TEST_ROOT=$(mktemp -d)
@@ -111,6 +113,15 @@ printf 'hcom FLEET_PANE=%q FLEET_TOOL=%q HCOM_TERMINAL=%q HCOM_NOTES_SET=%q' \
   "${FLEET_PANE:-}" "${FLEET_TOOL:-}" "${HCOM_TERMINAL:-}" "${HCOM_NOTES+x}" >>"$FLEET_TEST_CALLS"
 printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
+if [[ ${1:-} == list && ${2:-} == self && ${3:-} == --json ]]; then
+  case ${FLEET_TEST_SELF_MODE:-} in
+    name) printf '%s\n' '{"name":"ziru"}' ;;
+    fail) exit 1 ;;
+    forbid) exit 99 ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
 if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
   case "${1:-} ${2:-}" in
     'list --json')
@@ -217,10 +228,15 @@ grep -F 'register launch-ready --request 018f0000-0000-7000-8000-000000000001 --
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
 
 : >"$FLEET_TEST_CALLS"
-FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web PATH="$TEST_ROOT/bin:$PATH" \
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  FLEET_TEST_SELF_MODE=forbid FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web \
+  PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-web.out" 2>"$TEST_ROOT/spawn-web.err"
-[[ $(grep -c 'herder .*register launch-.*--by web-x --by-kind web --launcher-kind web' "$FLEET_TEST_CALLS") -eq 2 ]] \
+[[ $(grep 'herder .*register launch-' "$FLEET_TEST_CALLS" \
+  | grep -c -- '--launcher-kind web .*--by web-x --by-kind web') -eq 2 ]] \
   || fail "spawn did not attribute both web registration calls"
+! grep -F 'hcom ' "$FLEET_TEST_CALLS" | grep -F ' list self --json' >/dev/null \
+  || fail "spawn queried hcom self despite serve attribution"
 : >"$FLEET_TEST_CALLS"
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-direct.out" 2>"$TEST_ROOT/spawn-direct.err"
 ! grep -F -- '--by' "$FLEET_TEST_CALLS" >/dev/null || fail "spawn forced attribution on a direct launch"
@@ -264,13 +280,33 @@ mkdir -p "$TEST_ROOT/real-bin"
 real_state=$TEST_ROOT/real-state
 mkdir -p "$real_state"
 : >"$FLEET_TEST_CALLS"
-HERDER_STATE_DIR="$real_state" HCOM_NAME=conductor PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  HERDER_STATE_DIR="$real_state" FLEET_TEST_SELF_MODE=name \
+  PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/real-spawn.out" 2>"$TEST_ROOT/real-spawn.err"
-jq -s -e 'length == 2 and .[0].kind == "launch-requested" and .[1].kind == "launch-ready" and .[1].request == .[0].id' \
-  "$real_state/agents/events.jsonl" >/dev/null || fail "real register rejected the wrapper event contract"
+jq -s -e 'length == 2 and .[0].kind == "launch-requested" and .[1].kind == "launch-ready"
+  and .[1].request == .[0].id and all(.[]; .by == "ziru" and .by_kind == "agent")' \
+  "$real_state/agents/events.jsonl" >/dev/null \
+  || { sed -n '1,2p' "$real_state/agents/events.jsonl" >&2; sed -n '1,12p' "$FLEET_TEST_CALLS" >&2; fail "real register rejected the wrapper event contract"; }
 HERDER_STATE_DIR="$real_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
   "$TEST_ROOT/real-bin/herder" show gate-vava --json | jq -e '.provenance.kind == "registered"' >/dev/null \
   || fail "real show did not project the registered launch"
+pass "spawn prefers hcom self over stale seat environment"
+
+fallback_state=$TEST_ROOT/real-fallback-state
+mkdir -p "$fallback_state"
+: >"$FLEET_TEST_CALLS"
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  HERDER_STATE_DIR="$fallback_state" FLEET_TEST_SELF_MODE=fail \
+  PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/real-fallback-spawn.out" \
+  2>"$TEST_ROOT/real-fallback-spawn.err" || fail "fallback spawn exited non-zero"
+cmp -s "$TEST_ROOT/real-spawn.out" "$TEST_ROOT/real-fallback-spawn.out" \
+  || fail "failed hcom self lookup changed spawn stdout"
+jq -s -e 'length == 2 and all(.[]; .by == "impl-fimu" and .by_kind == "agent")' \
+  "$fallback_state/agents/events.jsonl" >/dev/null \
+  || fail "failed hcom self lookup did not leave attribution to register default"
+pass "missing hcom self is fail-open with unchanged spawn output and register fallback"
 web_state=$TEST_ROOT/real-web-state
 mkdir -p "$web_state"
 HERDER_STATE_DIR="$web_state" FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web \
@@ -380,7 +416,8 @@ grep -Fx 'pane=p-test' "$TEST_ROOT/codex-unbound.out" >/dev/null \
   || fail "spawn did not report the ready Codex placement"
 pass "spawn accepts ready Codex launch with pty-only binding"
 
-if FLEET_TEST_HOOKS_BOUND=0 PATH="$TEST_ROOT/bin:$PATH" \
+if env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  FLEET_TEST_SELF_MODE=name FLEET_TEST_HOOKS_BOUND=0 PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" claude --tag gate --pane p-test >"$TEST_ROOT/claude-unbound.out" 2>"$TEST_ROOT/claude-unbound.err"; then
   fail "spawn accepted a ready Claude launch without bound hooks"
 fi
@@ -389,8 +426,9 @@ grep -F 'ready launch is not hook-bound in hcom roster: gate-vava' "$TEST_ROOT/c
 grep -F 'pane=p-test' "$TEST_ROOT/claude-unbound.err" >/dev/null \
   || fail "spawn did not name the placement left by an unbound ready Claude launch"
 pass "spawn still requires hook binding for ready Claude launches"
-[[ $(grep -c 'herder .*register launch-failed .*--request 018f0000-0000-7000-8000-000000000001 .*--pane p-test .*--batch batch-test' "$FLEET_TEST_CALLS") -eq 1 ]] \
+[[ $(grep -c 'herder .*register launch-failed .*--request 018f0000-0000-7000-8000-000000000001 .*--pane p-test .*--batch batch-test .*--by ziru --by-kind agent' "$FLEET_TEST_CALLS") -eq 1 ]] \
   || fail "spawn did not register the post-placement failure exactly once with coordinates"
+pass "spawn keeps hcom-self attribution on launch failure"
 
 if FLEET_TEST_PROCESS_SHAPE=no-shell-pid PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/no-shell.out" 2>"$TEST_ROOT/no-shell.err"; then
@@ -523,6 +561,21 @@ if grep -F 'herdr pane close' "$FLEET_TEST_CALLS" >/dev/null; then
   fail "cull closed a pane explicitly after managed close was verified"
 fi
 pass "cull sends courtesy before kill and verifies managed close"
+
+cull_attrib_state=$TEST_ROOT/real-cull-state
+mkdir -p "$cull_attrib_state"
+rm -f "$cull_state/killed" "$cull_state/closed"
+: >"$FLEET_TEST_CALLS"
+env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
+  HERDER_STATE_DIR="$cull_attrib_state" FLEET_TEST_SELF_MODE=name \
+  FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
+  PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava \
+  >"$TEST_ROOT/cull-attrib.out"
+jq -s -e 'length == 2 and .[0].kind == "cull-requested" and .[1].kind == "culled"
+  and all(.[]; .by == "ziru" and .by_kind == "agent")' \
+  "$cull_attrib_state/agents/events.jsonl" >/dev/null \
+  || fail "cull did not carry hcom-self attribution through requested and culled events"
+pass "cull prefers hcom self over stale seat environment"
 
 for mode in exit3 sleep; do
   rm -f "$cull_state/killed" "$cull_state/closed"

@@ -5,6 +5,10 @@
 
 set -euo pipefail
 
+fleet_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=tools/fleet/lib.sh
+source "$fleet_dir/lib.sh"
+
 # A parent seat's snapshot must not override hcom's current configured notes.
 unset HCOM_NOTES
 
@@ -14,6 +18,7 @@ batch_id=
 register_disabled=0
 REGISTER_OUTPUT=
 attrib=()
+launcher_attrib=()
 fleet_tool=spawn
 
 register_event() {
@@ -27,7 +32,7 @@ register_event() {
     return 0
   fi
   set +e
-  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" 2>&1)
+  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" "${attrib[@]}" 2>&1)
   rc=$?
   set -e
   if ((rc != 0)); then
@@ -171,7 +176,11 @@ command -v herdr >/dev/null || die "herdr is required"
 command -v timeout >/dev/null || die "timeout is required"
 
 if [[ -n ${FLEET_LAUNCHER:-} && -n ${FLEET_LAUNCHER_KIND:-} ]]; then
-  attrib=(--by "$FLEET_LAUNCHER" --by-kind "$FLEET_LAUNCHER_KIND" --launcher-kind "$FLEET_LAUNCHER_KIND")
+  attrib=(--by "$FLEET_LAUNCHER" --by-kind "$FLEET_LAUNCHER_KIND")
+  launcher_attrib=(--launcher-kind "$FLEET_LAUNCHER_KIND")
+else
+  self_name=$(fleet_self_name)
+  [[ -z $self_name ]] || attrib=(--by "$self_name" --by-kind agent)
 fi
 
 requested_args=(--tool "$tool" --tag "$tag")
@@ -186,7 +195,7 @@ elif [[ -n $pane ]]; then
 else
   requested_args+=(--split-from "$split_from")
 fi
-requested_args+=("${attrib[@]}")
+requested_args+=("${launcher_attrib[@]}")
 register_event launch-requested "${requested_args[@]}"
 request=$(sed -n 's/^request=//p' <<<"$REGISTER_OUTPUT" | head -n 1)
 
@@ -338,7 +347,7 @@ fi
 ready_args=(--request "$request" --name "$full_name" --batch "$batch_id" --pane "$pane_id" --cwd "$cwd")
 session_id=$(jq -r '.session_id // empty' <<<"$roster_entry")
 [[ -z $session_id ]] || ready_args+=(--session "$session_id")
-ready_args+=("${attrib[@]}")
+ready_args+=("${launcher_attrib[@]}")
 register_event launch-ready "${ready_args[@]}"
 
 printf 'name=%s\n' "$full_name"
