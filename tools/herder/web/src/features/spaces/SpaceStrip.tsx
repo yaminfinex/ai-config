@@ -30,6 +30,8 @@ export function SpaceStrip(props: Props) {
   const [available, setAvailable] = useState(Number.POSITIVE_INFINITY)
   const [widths, setWidths] = useState<Record<string, number>>({})
   const [moreOpen, setMoreOpen] = useState(false)
+  const historyMenu = useRef<HTMLDivElement | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [dragging, setDragging] = useState<string | null>(null)
   const draggingID = useRef<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string, after: boolean } | null>(null)
@@ -55,6 +57,14 @@ export function SpaceStrip(props: Props) {
     document.addEventListener('keydown', escape, true)
     return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', escape, true) }
   }, [moreOpen])
+  useEffect(() => {
+    if (!historyOpen) return
+    const dismiss = (event: PointerEvent) => { if (!historyMenu.current?.contains(event.target as Node)) setHistoryOpen(false) }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setHistoryOpen(false) }
+    document.addEventListener('pointerdown', dismiss, true)
+    document.addEventListener('keydown', escape, true)
+    return () => { document.removeEventListener('pointerdown', dismiss, true); document.removeEventListener('keydown', escape, true) }
+  }, [historyOpen])
 
   if (!props.enabled) return <div className="space-strip degraded" role="status" title={props.problem || props.status.problem}>
     <span>spaces unavailable · layout still saved</span>
@@ -76,7 +86,7 @@ export function SpaceStrip(props: Props) {
     const result = props.rename(editing, name)
     if (result.ok) setEditing(null)
   }
-  const overflow = visibleSpaceIDs(props.items.map((space) => space.id), props.activeID, widths, available, 27, 58)
+  const overflow = visibleSpaceIDs(props.items.map((space) => space.id), props.activeID, widths, available, 27 + (props.recent.length > 0 ? 23 : 0), 58)
   const visible = new Set(overflow.visible)
 
   return <div ref={strip} className="space-strip" role="group" aria-label={`${props.items.length} spaces`}>
@@ -141,8 +151,14 @@ export function SpaceStrip(props: Props) {
         </div>}
       </div>}
       <button type="button" className="space-create" aria-label="Create space" title="Create space" onClick={() => props.create()}>+</button>
-      {props.recent.map((space) => <button type="button" className="space-reopen" key={space.id}
-        title={`Reopen ${space.name}`} onClick={() => props.reopen(space.id)}>reopen {space.name}</button>)}
+      {props.recent.length > 0 && <div ref={historyMenu} className="space-overflow space-history-wrap">
+        <button type="button" className="space-history" aria-label="Recently closed spaces" title="Recently closed spaces"
+          aria-haspopup="menu" aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}>↺</button>
+        {historyOpen && <div className="space-overflow-menu" role="menu" aria-label="Recently closed spaces">
+          {props.recent.slice(0, 8).map((space) => <button type="button" role="menuitem" key={space.id} title={`Reopen ${space.name}`}
+            onClick={() => { props.reopen(space.id); setHistoryOpen(false) }}>{space.name}</button>)}
+        </div>}
+      </div>}
     </div>
     <div ref={measurements} className="space-measure-rack" aria-hidden="true">
       {props.items.map((space) => <span className={`space-chip${space.id === props.activeID ? ' active' : ''}`} data-space-measure={space.id} key={space.id}>
