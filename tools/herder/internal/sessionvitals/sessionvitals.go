@@ -4,6 +4,7 @@ package sessionvitals
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -58,8 +59,17 @@ func ResolvePath(home string, row hcomidentity.Row) (string, error) {
 	case "codex":
 		return codexsession.Resolve(home, row)
 	default:
+		// Preserve the existing non-file-tool refusal category.
 		return claudesession.Resolve(home, row)
 	}
+}
+
+// Kilo formats token counts with the same nearest-thousand rounding as the web.
+func Kilo(value int64) string {
+	if value < 1000 {
+		return fmt.Sprintf("%d", value)
+	}
+	return fmt.Sprintf("%dk", (value+500)/1000)
 }
 
 func isSubagent(row hcomidentity.Row) bool {

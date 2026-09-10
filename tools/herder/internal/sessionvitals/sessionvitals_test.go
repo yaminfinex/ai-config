@@ -63,6 +63,24 @@ func TestReadTreatsUnresolvablePathAsMissingVitals(t *testing.T) {
 	}
 }
 
+func TestKilo(t *testing.T) {
+	tests := []struct {
+		value int64
+		want  string
+	}{
+		{0, "0"},
+		{820, "820"},
+		{82000, "82k"},
+		{82499, "82k"},
+		{82500, "83k"},
+	}
+	for _, tc := range tests {
+		if got := Kilo(tc.value); got != tc.want {
+			t.Errorf("Kilo(%d) = %q, want %q", tc.value, got, tc.want)
+		}
+	}
+}
+
 func copyFixture(t *testing.T, source, target string, observed time.Time) {
 	t.Helper()
 	raw, err := os.ReadFile(source)

@@ -7,7 +7,6 @@ package listcmd
 import (
 	"fmt"
 	"io"
-	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -86,37 +85,20 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stderr, "herder list: cannot read live hcom roster: %v\n", err)
 		return 1
 	}
-	roster = hcomidentity.WithParents(roster)
-
 	var proj *agentstore.Projection
 	if deps.store != nil {
 		proj = deps.store(stderr)
 	}
 	rows := fleetview.FoldStore(Join(snapshot, roster), roster, proj)
 	vitals := make(map[string]claudesession.Vitals, len(roster))
-	observed := make([]claudesession.Vitals, len(roster))
-	var reads sync.WaitGroup
 	if deps.vitals != nil {
-		reads.Add(len(roster))
-	}
-	for i, row := range roster {
-		if deps.vitals == nil {
-			break
+		for _, row := range roster {
+			// This is today's per-row on-demand reverse transcript scan. Once the
+			// observer/daemon exists, it becomes a central context cache read over the
+			// local socket; the transcript remains the authority behind that cache.
+			read, _, _, _ := deps.vitals(row)
+			vitals[row.Name] = read
 		}
-		// This is today's per-row on-demand reverse transcript scan. Once the
-		// observer/daemon exists, it becomes a central context cache read over the
-		// local socket; the transcript remains the authority behind that cache.
-		go func() {
-			defer reads.Done()
-			read, _, _, readErr := deps.vitals(row)
-			if readErr == nil {
-				observed[i] = read
-			}
-		}()
-	}
-	reads.Wait()
-	for i, row := range roster {
-		vitals[row.Name] = observed[i]
 	}
 	writeTable(stdout, rows, vitals)
 	return 0
@@ -167,19 +149,12 @@ func contextLabel(usage *claudesession.ContextUsage) string {
 	}
 	window, percent := "-", "-"
 	if usage.WindowTokens != nil && *usage.WindowTokens > 0 {
-		window = compactTokens(*usage.WindowTokens)
+		window = sessionvitals.Kilo(*usage.WindowTokens)
 	}
 	if usage.UsedPercent != nil {
 		percent = fmt.Sprintf("%.0f%%", *usage.UsedPercent)
 	}
-	return fmt.Sprintf("%s/%s %s", compactTokens(usage.UsedTokens), window, percent)
-}
-
-func compactTokens(value int64) string {
-	if value < 1000 {
-		return fmt.Sprintf("%d", value)
-	}
-	return fmt.Sprintf("%dk", (value+500)/1000)
+	return fmt.Sprintf("%s/%s %s", sessionvitals.Kilo(usage.UsedTokens), window, percent)
 }
 
 // bindingLabel is "-" when the store made no session claim, "verified" or

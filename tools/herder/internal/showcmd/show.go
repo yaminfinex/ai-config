@@ -25,10 +25,9 @@ type dependencies struct {
 var liveDependencies = dependencies{roster: hcomidentity.List, vitals: sessionvitals.Read}
 
 type showVitals struct {
-	Model        string                      `json:"model,omitempty"`
-	ContextUsage *claudesession.ContextUsage `json:"context_usage,omitempty"`
-	ObservedAt   *time.Time                  `json:"observed_at,omitempty"`
-	SessionFile  string                      `json:"session_file,omitempty"`
+	claudesession.Vitals
+	ObservedAt  *time.Time `json:"observed_at,omitempty"`
+	SessionFile string     `json:"session_file,omitempty"`
 }
 
 type showOutput struct {
@@ -58,12 +57,6 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 			}
 			i++
 			sessionID = args[i]
-		case strings.HasPrefix(arg, "--session="):
-			sessionID = strings.TrimPrefix(arg, "--session=")
-			if sessionID == "" {
-				fmt.Fprintln(stderr, "herder show: --session requires an id")
-				return 2
-			}
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(stderr, "herder show: unknown flag %q\n", arg)
 			return 2
@@ -82,11 +75,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprint(stderr, "herder show: an agent name or --session is required\n"+help)
 		return 2
 	}
-	var rows []hcomidentity.Row
 	rows, rosterErr := deps.roster()
-	if rosterErr == nil {
-		rows = hcomidentity.WithParents(rows)
-	}
 	if sessionID != "" {
 		if rosterErr != nil {
 			fmt.Fprintf(stderr, "herder show: cannot read live hcom roster: %v\n", rosterErr)
@@ -145,7 +134,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		// observer/daemon exists, it becomes a central context cache read over the
 		// local socket; the transcript remains the authority behind that cache.
 		vitals, path, observedAt, readErr := deps.vitals(*rosterRow)
-		outputVitals.Model, outputVitals.ContextUsage, outputVitals.SessionFile = vitals.Model, vitals.ContextUsage, path
+		outputVitals.Vitals, outputVitals.SessionFile = vitals, path
 		if !observedAt.IsZero() {
 			observedAt = observedAt.UTC()
 			outputVitals.ObservedAt = &observedAt
@@ -250,39 +239,39 @@ func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
 	} else {
 		field("session", "")
 	}
-	_ = w.Flush()
-	fmt.Fprintln(out, "vitals:")
-	w = tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	field = func(label, value string) {
-		if value == "" {
-			value = "-"
-		}
-		fmt.Fprintf(w, "  %s\t%s\n", label, value)
-	}
-	field("model", vitals.Model)
+	fmt.Fprintln(w, "vitals:")
+	field("  model", vitals.Model)
 	if vitals.ContextUsage == nil {
-		field("context_used", "")
-		field("context_window", "")
-		field("context_percent", "")
+		field("  context_used", "")
+		field("  context_window", "")
+		field("  context_percent", "")
 	} else {
-		field("context_used", tokenCount(vitals.ContextUsage.UsedTokens))
+		used := ""
+		if vitals.ContextUsage.UsedTokens > 0 {
+			used = sessionvitals.Kilo(vitals.ContextUsage.UsedTokens) + " tokens"
+		}
+		field("  context_used", used)
 		if vitals.ContextUsage.WindowTokens == nil {
-			field("context_window", "")
+			field("  context_window", "")
 		} else {
-			field("context_window", tokenCount(*vitals.ContextUsage.WindowTokens))
+			window := ""
+			if *vitals.ContextUsage.WindowTokens > 0 {
+				window = sessionvitals.Kilo(*vitals.ContextUsage.WindowTokens) + " tokens"
+			}
+			field("  context_window", window)
 		}
 		if vitals.ContextUsage.UsedPercent == nil {
-			field("context_percent", "")
+			field("  context_percent", "")
 		} else {
-			field("context_percent", fmt.Sprintf("%.0f%% used", *vitals.ContextUsage.UsedPercent))
+			field("  context_percent", fmt.Sprintf("%.0f%% used", *vitals.ContextUsage.UsedPercent))
 		}
 	}
 	if vitals.ObservedAt == nil {
-		field("observed_at", "")
+		field("  observed_at", "")
 	} else {
-		field("observed_at", vitals.ObservedAt.UTC().Format(time.RFC3339))
+		field("  observed_at", vitals.ObservedAt.Format(time.RFC3339))
 	}
-	field("session_file", vitals.SessionFile)
+	field("  session_file", vitals.SessionFile)
 	_ = w.Flush()
 	if len(v.Sessions) > 0 {
 		fmt.Fprintln(out, "\nsessions (newest first):")
@@ -298,16 +287,6 @@ func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
 	for _, e := range v.Events {
 		fmt.Fprintf(out, "  %s  %-18s by %s  %s\n", e.At.UTC().Format(time.RFC3339), e.Kind, e.By, summary(e))
 	}
-}
-
-func tokenCount(value int64) string {
-	if value <= 0 {
-		return ""
-	}
-	if value < 1000 {
-		return fmt.Sprintf("%d tokens", value)
-	}
-	return fmt.Sprintf("%dk tokens", (value+500)/1000)
 }
 
 func launcherLabel(pr agentstore.Provenance) string {

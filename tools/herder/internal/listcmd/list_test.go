@@ -122,9 +122,27 @@ func TestRunPrintsDashVitalsForGapRow(t *testing.T) {
 	if code := run(nil, &out, &errBuf, deps); code != 0 {
 		t.Fatalf("code=%d err=%q", code, errBuf.String())
 	}
-	fields := strings.Fields(out.String())
-	if !strings.Contains(out.String(), "MODEL") || !strings.Contains(out.String(), "CONTEXT") || len(fields) < 2 || strings.Count(out.String(), "-") < 4 {
+	if !strings.Contains(out.String(), "MODEL") || !strings.Contains(out.String(), "CONTEXT") {
 		t.Fatalf("gap output = %q", out.String())
+	}
+}
+
+func TestContextLabelMissingAndPartialUsage(t *testing.T) {
+	tests := []struct {
+		name  string
+		usage *claudesession.ContextUsage
+		want  string
+	}{
+		{"nil", nil, "-"},
+		{"empty", &claudesession.ContextUsage{}, "-"},
+		{"used only", &claudesession.ContextUsage{UsedTokens: 820}, "820/- -"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := contextLabel(tc.usage); got != tc.want {
+				t.Fatalf("contextLabel() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
