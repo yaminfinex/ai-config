@@ -59,10 +59,16 @@ func Parent(rows []Row, child Row) (Row, bool) {
 	if child.ParentName == "" {
 		return Row{}, false
 	}
+	return ByUniqueBaseName(rows, child.ParentName)
+}
+
+// ByUniqueBaseName returns the roster row only when exactly one row exposes
+// the supplied hcom base name. Names and tags are deliberately not evidence.
+func ByUniqueBaseName(rows []Row, baseName string) (Row, bool) {
 	var parent Row
 	matches := 0
 	for _, candidate := range rows {
-		if candidate.BaseName == child.ParentName {
+		if candidate.BaseName == baseName {
 			parent = candidate
 			matches++
 		}

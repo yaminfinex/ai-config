@@ -308,3 +308,22 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 		t.Fatalf("binding fold = %+v", folded[2])
 	}
 }
+
+func TestFoldStoreFallsBackToUniqueBaseName(t *testing.T) {
+	proj := agentstore.NewProjection()
+	at := time.Date(2026, 9, 10, 5, 0, 0, 0, time.UTC)
+	proj.Apply(agentstore.Event{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindMirrorReady, By: "hamo", ByKind: "mirror", Name: "kele"}, 0)
+	rows := []Row{{Pane: "p1", Agent: "sesh-kele", BusStatus: "listening"}}
+	roster := []hcomidentity.Row{{Name: "sesh-kele", BaseName: "kele", CreatedAt: at.Add(-time.Second)}}
+
+	got := FoldStore(rows, roster, proj)
+	if got[0].Manager != "hamo" || got[0].Launcher != "mirrored: hamo" {
+		t.Fatalf("unique base fallback = %+v", got[0])
+	}
+
+	roster = append(roster, hcomidentity.Row{Name: "other-kele", BaseName: "kele", CreatedAt: at.Add(-time.Second)})
+	got = FoldStore(rows, roster, proj)
+	if got[0].Manager != "-" || got[0].Launcher != "unregistered" {
+		t.Fatalf("ambiguous base fallback = %+v", got[0])
+	}
+}

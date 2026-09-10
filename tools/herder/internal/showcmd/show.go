@@ -117,7 +117,12 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 			}
 		}
 	}
-	view := proj.View(name, rosterRow)
+	var view *agentstore.AgentView
+	if rosterRow != nil {
+		view = proj.ViewForRoster(rosterRow, rows)
+	} else {
+		view = proj.View(name, nil)
+	}
 	if view == nil {
 		view = &agentstore.AgentView{Name: name, Provenance: agentstore.Provenance{Kind: "unregistered"}, Events: []agentstore.Event{}}
 		if rosterRow != nil {

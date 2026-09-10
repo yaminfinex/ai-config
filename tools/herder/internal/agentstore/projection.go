@@ -11,7 +11,7 @@ import (
 
 // ProjectionVersion changes whenever Apply's fold changes, so a stale
 // snapshot is replayed instead of trusted.
-const ProjectionVersion = 1
+const ProjectionVersion = 2
 
 // EventsKept is how many trailing events each agent record retains.
 const EventsKept = 32
@@ -534,4 +534,25 @@ func (p *Projection) View(name string, roster *hcomidentity.Row) *AgentView {
 		view.Session = &SessionView{SessionID: roster.SessionID, Tool: roster.Tool, Path: roster.TranscriptPath}
 	}
 	return &view
+}
+
+// ViewForRoster resolves a roster row by its full name, then falls back to a
+// mirror-only base-name record when this row is the roster's unique owner of
+// that base name. The fallback changes only the returned display copy.
+func (p *Projection) ViewForRoster(row *hcomidentity.Row, roster []hcomidentity.Row) *AgentView {
+	if row == nil {
+		return nil
+	}
+	if view := p.View(row.Name, row); view != nil {
+		return view
+	}
+	owner, unique := hcomidentity.ByUniqueBaseName(roster, row.BaseName)
+	if !unique || owner.Name != row.Name {
+		return nil
+	}
+	view := p.View(row.BaseName, row)
+	if view != nil {
+		view.Name = row.Name
+	}
+	return view
 }

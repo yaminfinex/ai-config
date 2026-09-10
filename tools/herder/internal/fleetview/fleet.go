@@ -62,7 +62,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		}
 		var view *agentstore.AgentView
 		if bus, ok := byName[row.Agent]; ok && proj != nil {
-			view = proj.View(row.Agent, bus)
+			view = proj.ViewForRoster(bus, roster)
 		}
 		if view == nil {
 			row.Launcher, row.Manager, row.Mission = "unregistered", "-", "-"

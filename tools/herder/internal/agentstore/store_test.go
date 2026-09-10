@@ -198,6 +198,71 @@ func TestSnapshotPlusTailEqualsFullReplayByteForByte(t *testing.T) {
 	}
 }
 
+func TestAliasMergesBaseRecord(t *testing.T) {
+	state, s := scratch(t)
+	fixture, err := os.ReadFile("testdata/live-alias-nife.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(state, "agents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(s.EventsPath(), fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	projection, err := s.Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Latest("nife") != nil {
+		t.Fatal("base-name alias was retained")
+	}
+	view := projection.Latest("impl-nife")
+	if view == nil || view.Provenance.Kind != "registered" || view.Manager != "ziru" {
+		t.Fatalf("merged view = %+v", view)
+	}
+}
+
+func TestAliasDoesNotGreedilyMergeSameBaseAcrossTags(t *testing.T) {
+	_, s := scratch(t)
+	for i, tagged := range []struct{ name, tag string }{{"impl-nife", "impl"}, {"review-nife", "review"}} {
+		req := ev(KindLaunchRequested, "", 1+i, func(e *Event) {
+			e.Tool, e.Tag, e.By = "codex", tagged.tag, "ubuntu"
+			e.Placement = &Placement{Workspace: "w80"}
+		})
+		mustAppend(t, s, req)
+		mustAppend(t, s, ev(KindLaunchReady, tagged.name, 3+i, func(e *Event) { e.Request, e.By = req.ID, "ubuntu" }))
+	}
+	mustAppend(t, s, ev(KindMirrorReady, "nife", 5, func(e *Event) { e.By, e.ByKind = "ziru", "mirror" }))
+
+	projection, err := s.Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Latest("nife") == nil || projection.Latest("impl-nife") == nil || projection.Latest("review-nife") == nil {
+		t.Fatalf("ambiguous base was greedily merged: names=%v", projection.Names())
+	}
+}
+
+func TestOldProjectionVersionForcesReplay(t *testing.T) {
+	_, s := scratch(t)
+	mustAppend(t, s, ev(KindAnnotate, "real", 1, func(e *Event) { e.Title = "from journal" }))
+	stat, err := os.Stat(s.EventsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldVersion := ProjectionVersion - 1
+	raw := fmt.Sprintf(`{"version":%d,"events_offset":%d,"agents":{"stale":[]},"requests":{},"unnamed_sessions":{}}`, oldVersion, stat.Size())
+	if err := os.WriteFile(s.SnapshotPath(), []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	projection, err := s.LoadNoSnapshot()
+	if err != nil || projection.Latest("real") == nil || projection.Latest("stale") != nil {
+		t.Fatalf("old snapshot was trusted: err=%v names=%v", err, projection.Names())
+	}
+}
+
 func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Pane = "w80:p1"; e.Tool = "codex" }))

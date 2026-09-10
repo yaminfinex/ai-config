@@ -89,6 +89,32 @@ type dependencies struct {
 	inputSerial          *paneInputSerial
 	state                webstate.Store
 	stateChanges         *stateChangeBroker
+	rosterCache          *rosterCache
+}
+
+type rosterCache struct {
+	mu          sync.RWMutex
+	rows        []hcomidentity.Row
+	initialized bool
+}
+
+func (c *rosterCache) set(rows []hcomidentity.Row) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.rows = append([]hcomidentity.Row(nil), rows...)
+	c.initialized = true
+	c.mu.Unlock()
+}
+
+func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
+	if c == nil {
+		return nil, true
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return append([]hcomidentity.Row(nil), c.rows...), c.initialized
 }
 
 var liveDependencies = dependencies{
@@ -345,6 +371,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.buildIdentity = buildIdentity
 	runtimeDependencies.configuredRoots = configuredRoots
 	runtimeDependencies.stateChanges = newStateChangeBroker()
+	runtimeDependencies.rosterCache = &rosterCache{}
 	stateDir, stateDirErr := herderstate.Dir()
 	if stateDirErr != nil {
 		runtimeDependencies.state = webstate.Unavailable(stateDirErr)
@@ -378,14 +405,28 @@ func startLifeMirror(ctx context.Context, stateDir string, deps dependencies) {
 				if err != nil {
 					return fmt.Errorf("hcom life event %d has invalid timestamp: %w", life.ID, err)
 				}
-				name := life.Instance
+				roster, rosterReady := deps.rosterCache.get()
+				if !rosterReady {
+					return agentstore.ErrUnavailable
+				}
+				resolve := func(raw string) string {
+					if row, ok := hcomidentity.ByUniqueBaseName(roster, raw); ok {
+						return row.Name
+					}
+					return raw
+				}
+				name := resolve(life.Instance)
 				if kind == agentstore.KindMirrorBatch {
 					name = ""
 				}
+				instances := append([]string(nil), life.Instances...)
+				for i := range instances {
+					instances[i] = resolve(instances[i])
+				}
 				event := agentstore.Event{
 					ID: agentstore.DerivedID([]byte(fmt.Sprintf("hcom-life:%d", life.ID))), At: at.UTC(), Kind: kind,
-					By: life.By, ByKind: "mirror", Name: name, Reason: life.Reason,
-					Batch: life.Batch, Instances: life.Instances, ParentName: life.ParentName,
+					By: resolve(life.By), ByKind: "mirror", Name: name, Reason: life.Reason,
+					Batch: life.Batch, Instances: instances, ParentName: life.ParentName,
 					IsHcomLaunched: life.IsHcomLaunched, HcomEvent: strconv.FormatInt(life.ID, 10),
 				}
 				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
@@ -880,6 +921,7 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
+	deps.rosterCache.set(roster)
 	return snapshot, hcomidentity.WithParents(roster), nil
 }
 
