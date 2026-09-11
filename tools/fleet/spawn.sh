@@ -15,32 +15,38 @@ unset HCOM_NOTES
 request=
 pane_id=
 batch_id=
-register_disabled=0
-REGISTER_OUTPUT=
+mutation_disabled=0
+HERDER_OUTPUT=
 attrib=()
 launcher_attrib=()
 fleet_tool=spawn
 
-register_event() {
-  local kind=$1 herder_bin rc detail
+herder_mutation() {
+  local label=$1 herder_bin rc detail
   shift
-  REGISTER_OUTPUT=
-  ((register_disabled == 0)) || return 0
+  HERDER_OUTPUT=
+  ((mutation_disabled == 0)) || return 0
   if ! herder_bin=$(command -v herder); then
-    printf 'fleet %s: register %s skipped: herder not found\n' "$fleet_tool" "$kind" >&2
-    register_disabled=1
+    printf 'fleet %s: %s skipped: herder not found\n' "$fleet_tool" "$label" >&2
+    mutation_disabled=1
     return 0
   fi
   set +e
-  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" "${attrib[@]}" 2>&1)
+  HERDER_OUTPUT=$(timeout --foreground 10s "$herder_bin" "$@" "${attrib[@]}" 2>&1)
   rc=$?
   set -e
   if ((rc != 0)); then
-    detail=${REGISTER_OUTPUT//$'\n'/; }
-    printf 'fleet %s: register %s skipped: %s\n' "$fleet_tool" "$kind" "${detail:-exit $rc}" >&2
-    REGISTER_OUTPUT=
-    register_disabled=1
+    detail=${HERDER_OUTPUT//$'\n'/; }
+    printf 'fleet %s: %s skipped: %s\n' "$fleet_tool" "$label" "${detail:-exit $rc}" >&2
+    HERDER_OUTPUT=
+    mutation_disabled=1
   fi
+}
+
+register_event() {
+  local kind=$1
+  shift
+  herder_mutation "register $kind" register "$kind" "$@"
 }
 
 die() {
@@ -54,16 +60,25 @@ die() {
   exit 1
 }
 
+refuse() {
+  printf 'fleet spawn: %s\n' "$*" >&2
+  exit 2
+}
+
 usage() {
   local rc=${1:-2}
   cat >&2 <<'EOF'
 usage: spawn.sh <claude|codex> [--model MODEL] [--effort LEVEL] --tag TAG
-                (--workspace ID | --worktree-branch NAME --repo PATH |
-                 --pane ID | --split-from PANE_ID|self)
+                [--workspace ID | --worktree-branch NAME --repo PATH |
+                 --pane ID | --split-from PANE_ID|self]
                 [--split-direction right|down] [--prompt TEXT]
+                [--group NAME] [--title TEXT]
 
 --split-from self splits beside the caller's own pane (herdr pane current).
 --split-direction defaults to right.
+With no placement flag, spawn opens a new tab in the caller's workspace.
+An absent --group inherits the launching agent's group; --group '' suppresses it.
+Group and title events are stated after hcom returns the name and before launch-ready.
 EOF
   exit "$rc"
 }
@@ -83,6 +98,10 @@ pane=
 split_from=
 split_direction=
 prompt=
+group=
+group_set=0
+title=
+title_set=0
 
 while (($# > 0)); do
   case $1 in
@@ -136,6 +155,18 @@ while (($# > 0)); do
       prompt=$2
       shift 2
       ;;
+    --group)
+      [[ $# -ge 2 ]] || usage
+      group=$2
+      group_set=1
+      shift 2
+      ;;
+    --title)
+      [[ $# -ge 2 ]] || usage
+      title=$2
+      title_set=1
+      shift 2
+      ;;
     -h | --help)
       usage 0
       ;;
@@ -161,6 +192,12 @@ placements=0
 [[ -n $worktree_branch || -n $repo ]] && ((placements += 1))
 [[ -n $pane ]] && ((placements += 1))
 [[ -n $split_from ]] && ((placements += 1))
+if ((placements == 0)); then
+  current_output=$(herdr pane current 2>/dev/null) || usage
+  workspace=$(jq -er '.result.pane.workspace_id | select(length > 0)' <<<"$current_output" 2>/dev/null) \
+    || usage
+  placements=1
+fi
 ((placements == 1)) || die "choose exactly one placement: --workspace, --worktree-branch with --repo, --pane, or --split-from"
 if [[ -n $worktree_branch || -n $repo ]]; then
   [[ -n $worktree_branch && -n $repo ]] || die "--worktree-branch and --repo must be used together"
@@ -175,12 +212,52 @@ command -v hcom >/dev/null || die "hcom is required"
 command -v herdr >/dev/null || die "herdr is required"
 command -v timeout >/dev/null || die "timeout is required"
 
+trimmed=$(jq -rn --arg value "$group" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
+group=$trimmed
+if ((group_set == 1)) && [[ -n $group ]]; then
+  [[ $group != *[$'\r\n\t']* ]] || refuse "--group must not contain control characters"
+  ((${#group} <= 80)) || refuse "--group must not exceed 80 characters"
+fi
+if ((title_set == 1)); then
+  title=$(jq -rn --arg value "$title" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
+  [[ -n $title ]] || refuse "--title must not be empty"
+  [[ $title != *[$'\r\n\t']* ]] || refuse "--title must not contain control characters"
+  ((${#title} <= 80)) || refuse "--title must not exceed 80 characters"
+fi
+
+self_name=
 if [[ -n ${FLEET_LAUNCHER:-} && -n ${FLEET_LAUNCHER_KIND:-} ]]; then
   attrib=(--by "$FLEET_LAUNCHER" --by-kind "$FLEET_LAUNCHER_KIND")
   launcher_attrib=(--launcher-kind "$FLEET_LAUNCHER_KIND")
 else
   self_name=$(fleet_self_name)
   [[ -z $self_name ]] || attrib=(--by "$self_name" --by-kind agent)
+fi
+
+if ((group_set == 0)) && [[ -n $self_name ]]; then
+  if [[ -z ${HCOM_TAG:-} ]]; then
+    printf 'fleet spawn: group inheritance skipped: HCOM_TAG is unset\n' >&2
+  else
+    inheritance_name=$self_name
+    [[ $inheritance_name == "$HCOM_TAG-"* ]] || inheritance_name="$HCOM_TAG-$inheritance_name"
+    set +e
+    inherit_output=$(timeout --foreground 10s herder show "$inheritance_name" --json 2>&1)
+    inherit_rc=$?
+    set -e
+    if ((inherit_rc != 0)); then
+      inherit_detail=${inherit_output//$'\n'/; }
+      printf 'fleet spawn: group inheritance skipped: %s\n' "${inherit_detail:-exit $inherit_rc}" >&2
+    else
+      set +e
+      group=$(jq -r '.assignment.group // empty' <<<"$inherit_output" 2>/dev/null)
+      inherit_rc=$?
+      set -e
+      if ((inherit_rc != 0)); then
+        printf 'fleet spawn: group inheritance skipped: invalid herder show JSON\n' >&2
+        group=
+      fi
+    fi
+  fi
 fi
 
 requested_args=(--tool "$tool" --tag "$tag")
@@ -197,7 +274,7 @@ else
 fi
 requested_args+=("${launcher_attrib[@]}")
 register_event launch-requested "${requested_args[@]}"
-request=$(sed -n 's/^request=//p' <<<"$REGISTER_OUTPUT" | head -n 1)
+request=$(sed -n 's/^request=//p' <<<"$HERDER_OUTPUT" | head -n 1)
 
 placement_kind=
 placement_detail=
@@ -299,6 +376,15 @@ if ((launch_rc == 124)); then
   die "launcher timed out after ${launch_timeout}s (name=${hcom_name:-unknown}, batch=${batch_id:-unknown}, pane=$pane_id left for explicit cleanup)"
 fi
 [[ -n $hcom_name && $hcom_name != *,* ]] || die "hcom did not report exactly one launched name (placement left at $pane_id)"
+
+spawned_name=$hcom_name
+[[ $spawned_name == "$tag-"* ]] || spawned_name="$tag-$spawned_name"
+if [[ -n $group ]]; then
+  herder_mutation "assign group" assign "$spawned_name" --group "$group"
+fi
+if ((title_set == 1)); then
+  herder_mutation "register annotate" register annotate --name "$spawned_name" --title "$title"
+fi
 
 if [[ -z $batch_id ]]; then
   batch_id=$(hcom events --action batch_launched --last 100 \

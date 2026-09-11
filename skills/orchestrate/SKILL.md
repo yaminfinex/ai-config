@@ -45,10 +45,11 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 
 ## Lifecycle
 
-- **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh` with exactly one placement: an existing
-  herdr workspace, a herdr-managed worktree, or a verified idle pane. Dispatch one line:
+- **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh`; it opens a new tab in your current herdr
+  workspace by default. Use an explicit workspace, managed worktree, or verified idle pane when
+  needed; use sibling panes (`--split-from`) only when the operator directs it. Dispatch one line:
   "read <playbook> in full, then execute <unit>". The wrapper owns `--go`, cwd, autonomy,
-  readiness, hook binding, pane stamping, and failure coordinates.
+  readiness, hook binding, pane stamping, group/title events, and failure coordinates.
 - **Message.** Use `hcom send` with an intent and one thread per unit. A `queued` result is
   delivered work: send once. Resolve uncertain names with `hcom list`; inspect a screen with
   `hcom term <name>`.
@@ -62,7 +63,7 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 - **Cull.** Use `$AI_CONFIG_ROOT/tools/fleet/cull.sh <exact-hcom-name>`. It sends one courtesy
   release notice, kills the hcom process, and verifies managed pane closure. Remove a disposable
   checkout only after that exact cull is verified.
-- **Supervision.** The wrapper records you as manager of every seat you spawn. To fix or take over a seat, run `herder assign <seat> --manager <your-name>`; use `--manager human` to hand it to the operator. After spawning each seat, run `herder assign <seat> --group <unit>`; `herder assign --help` explains the event.
+- **Supervision.** The wrapper records you as manager of every seat you spawn. Spawn with `--group <unit>` (or rely on inheritance) so the groups view shows the unit together. To fix a group later, run `herder assign <seat> --group <unit>`. To fix or take over a seat, run `herder assign <seat> --manager <your-name>`; use `--manager human` to hand it to the operator. `herder assign --help` explains the event.
 - **Resume / fork.** Create a verified idle target pane, then place the operation with
   `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom r <name-or-uuid>` or the same form with `hcom f`.
   Resume keeps the hcom name; fork mints a new one.
