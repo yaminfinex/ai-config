@@ -199,8 +199,8 @@ h2, h3, p { margin-top: 0; }
 .rename-agent-input { width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--accent); }
 .sidebar-problem { padding: 4px 7px; color: var(--error-text); background: var(--error-bg); border: 1px solid var(--error-border); font-size: 10px; white-space: normal; }
 .fleet-tree.drop-target, .panel-tree-row.drop-target { outline: 1px solid var(--accent); outline-offset: -1px; }
-.rail-heading > .fleet-view-toggle { display: inline-flex; margin-left: auto; gap: 1px; letter-spacing: 0; text-transform: none; }
-.rail-heading > .fleet-view-toggle + .rail-toggle { margin-left: 0; }
+.rail-subheading { display: flex; flex: 0 0 24px; align-items: center; padding: 0 10px; border-bottom: 1px solid var(--border); }
+.rail-subheading > .fleet-view-toggle { display: inline-flex; gap: 1px; }
 .fleet-view-option { padding: 1px 6px; border: 1px solid var(--border2); background: transparent; color: var(--dimmer); font: 10px var(--mono); cursor: pointer; }
 .fleet-view-option:first-child { border-radius: 4px 0 0 4px; }
 .fleet-view-option:last-child { border-radius: 0 4px 4px 0; }
