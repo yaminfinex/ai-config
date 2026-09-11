@@ -14,6 +14,7 @@ import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
 import { apiProblem, lifecycleProblem, renameAgent, viewerReadOnlyMessage } from '../../api/client'
 import { beginRename, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
+import { primaryTreeRowClick, toggleTreeRow } from './sidebarInteractions'
 
 const emptyExpandedItems: string[] = []
 
@@ -129,14 +130,14 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
         const folded = folder && !item.isExpanded() && node.summary !== undefined
         const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
           : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
-            : node.kind === 'operator' ? <span>◉</span>
-              : node.kind === 'tombstone' ? <span className="tombstone-glyph">⊘</span>
-                : <span>▰</span>
+            : node.kind === 'tombstone' ? <span className="tombstone-glyph">⊘</span>
+              : <span>▰</span>
         return <TreeRow
           key={item.getId()}
           itemProps={{
             ...treeItemProps,
             onFocus: () => item.setFocused(),
+            onClick: () => primaryTreeRowClick(item, setSelectedItems),
             onClickCapture: (event) => {
               if (!event.altKey || (event.target as Element).closest(treeClickGuardSelector)) return
               event.preventDefault()
@@ -168,7 +169,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
           expanded={item.isExpanded()}
           selected={item.isSelected()}
           focused={item.isFocused()}
-          className={`${agentRow ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' || node.kind === 'unadopted' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${node.kind === 'tombstone' ? ' tombstone-row' : ''}${node.kind === 'unknown-manager' ? ' unknown-manager-row' : ''}${node.kind === 'operator' ? ' operator-row' : ''}`}
+          className={`${agentRow ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${node.kind === 'tombstone' ? ' tombstone-row' : ''}`}
           icon={icon}
           label={editing
             ? <span className="tree-label"><input ref={renameInput} className="rename-agent-input" aria-label={`Rename ${editing.name}`} value={editing.value} maxLength={80}
@@ -178,7 +179,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
                 if (event.key === 'Enter') event.currentTarget.blur()
                 if (event.key === 'Escape') { cancelOnBlur.current = true; event.currentTarget.blur() }
               }} /></span>
-            : <span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total}{agentRow ? '' : ` · ${node.summary.active} active`})</span>}</span>}
+            : <span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{node.marker === 'unknown-manager' && <span className="unknown-manager-marker" title="manager unknown · adopt to take it on"> ?</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total}{agentRow ? '' : ` · ${node.summary.active} active`})</span>}</span>}
           trailing={<>{node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
             {pane?.agent && pane.agent !== '-' && <ContextUsed value={node.contextUsed} />}
             {pane?.agent && pane.agent !== '-' && !renaming && <button type="button" className="rename-agent-button" aria-label={`Rename ${pane.agent}`} title={`Rename ${pane.agent}`}
@@ -186,8 +187,8 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
             {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
-          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)} · ${sideHint}` : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.kind === 'unknown-manager' ? `${node.name} · no live seat or record by this name` : node.name}
-          onToggle={() => { if (item.isExpanded()) item.collapse(); else item.expand() }}
+          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)} · ${sideHint}` : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
+          onToggle={() => toggleTreeRow(item)}
         />
       })}
     </div>}

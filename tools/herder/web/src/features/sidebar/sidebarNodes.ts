@@ -4,7 +4,7 @@ import type { Board, Pane, Row, Workspace } from '../../types.ts'
 
 export type SidebarNodeKind =
   | 'root' | 'workspace' | 'pane' | 'subagent' | 'unplaced'
-  | 'operator' | 'agent' | 'tombstone' | 'unadopted' | 'unknown-manager' | 'terminals' | 'terminals-workspace'
+  | 'agent' | 'tombstone' | 'terminals' | 'terminals-workspace'
 
 export type SidebarNode = {
   id: string
@@ -22,6 +22,7 @@ export type SidebarNode = {
   contextUsed?: number
   workspaceLabel?: string
   summary?: SupervisionSummary
+  marker?: 'unknown-manager'
 }
 
 export function buildSidebarNodes(board: Board | undefined): Map<string, SidebarNode> {
@@ -84,17 +85,14 @@ export function agentLabel(row: Pick<Row, 'agent' | 'title'>) {
 // Supervision view: the tree is the manager edge, never placement. Every
 // Row on the board (placed panes, unplaced rows, nested subagents) becomes
 // one `agent:<full-name>` node; a row hangs under its manager, a Task
-// subagent under its parent_agent exactly as in the placement view. Roots:
-// the operator ("you") holds manager_state operator rows and, last, a
-// tombstone for every ended manager that still has live reports; unknown or
-// empty managers land in Unadopted (a manager string that names no live row
-// keeps its reports together as "<name> (unknown)"); panes without a bus row
-// are Terminals grouped by workspace. Children sort by roster created_at,
-// oldest first; status is never a sort key.
+// subagent under its parent_agent exactly as in the placement view. Human- or
+// unknown-managed rows sit at the top level beside tombstones for ended
+// managers with live reports. A manager string that names no live row also
+// leaves its row at the top level. Panes without a bus row are Terminals,
+// grouped by workspace and always last. Siblings sort by roster created_at,
+// oldest first, then name; status is never a sort key.
 export type SupervisionSummary = { total: number, active: number }
 
-const operatorID = 'operator'
-const unadoptedID = 'unadopted'
 const terminalsID = 'terminals'
 
 type FlatRow = { row: Row, workspaceLabel?: string, tabLabel?: string }
@@ -133,28 +131,25 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
 
   const reportsOf = new Map<string, FlatRow[]>()
   const tombstones = new Map<string, FlatRow[]>()
-  const unadopted: FlatRow[] = []
-  const unknownGroups = new Map<string, FlatRow[]>()
-  const operatorReports: FlatRow[] = []
+  const topLevel: FlatRow[] = []
   for (const flat of rows.values()) {
     const { row } = flat
     if (row.parent_agent && rows.has(row.parent_agent)) continue
     const manager = row.manager ?? ''
     switch (row.manager_state) {
       case 'operator':
-        operatorReports.push(flat)
+        topLevel.push(flat)
         break
       case 'live':
         if (manager && rows.has(manager) && manager !== row.agent) push(reportsOf, manager, flat)
-        else unadopted.push(flat)
+        else topLevel.push(flat)
         break
       case 'ended':
         if (manager) push(tombstones, manager, flat)
-        else unadopted.push(flat)
+        else topLevel.push(flat)
         break
       default:
-        if (manager) push(unknownGroups, manager, flat)
-        else unadopted.push(flat)
+        topLevel.push(flat)
     }
   }
 
@@ -179,44 +174,34 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
       id, kind: row.parent_agent ? 'subagent' : 'agent', ...agentLabel(row), children, pane: row,
       workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel, summary: summarise(result, children),
       contextUsed: row.context_used,
+      ...(row.manager_state === 'unknown' ? { marker: 'unknown-manager' as const } : {}),
     })
     return id
   }
 
-  const operator: SidebarNode = { id: operatorID, kind: 'operator', name: 'you', children: [] }
-  result.set(operator.id, operator)
-  root.children.push(operator.id)
-  for (const flat of byCreation(operatorReports)) operator.children.push(addAgent(flat))
-  for (const [manager, reports] of [...tombstones.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    const id = `tombstone:${manager}`
-    const children = byCreation(reports).filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat))
-    result.set(id, { id, kind: 'tombstone', name: manager, children, secondary: 'ended', summary: summarise(result, children) })
-    operator.children.push(id)
-  }
-  operator.summary = summarise(result, operator.children)
-
-  const unadoptedNode: SidebarNode = { id: unadoptedID, kind: 'unadopted', name: 'Unadopted', children: [] }
-  for (const flat of byCreation(unadopted)) {
+  type RootEntry = { id: string, createdAt: string, name: string }
+  const rootEntries: RootEntry[] = []
+  for (const flat of byCreation(topLevel)) {
     if (placed.has(flat.row.agent)) continue
-    unadoptedNode.children.push(addAgent(flat))
+    rootEntries.push({ id: addAgent(flat), createdAt: flat.row.created_at ?? '', name: flat.row.agent })
   }
-  for (const [manager, reports] of [...unknownGroups.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    const id = `unknown:${manager}`
-    const children = byCreation(reports).filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat))
+  for (const [manager, reports] of tombstones) {
+    const id = `tombstone:${manager}`
+    const orderedReports = byCreation(reports)
+    const children = orderedReports.filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat))
     if (children.length === 0) continue
-    result.set(id, { id, kind: 'unknown-manager', name: manager, children, secondary: 'unknown', summary: summarise(result, children) })
-    unadoptedNode.children.push(id)
+    result.set(id, { id, kind: 'tombstone', name: manager, children, secondary: 'ended', summary: summarise(result, children) })
+    rootEntries.push({ id, createdAt: orderedReports[0]?.row.created_at ?? '', name: manager })
   }
   // A live report whose manager subtree was never reached (its manager sits
   // under a cycle or was itself skipped) still needs a home.
   for (const flat of byCreation([...rows.values()])) {
     if (placed.has(flat.row.agent) || (flat.row.parent_agent && rows.has(flat.row.parent_agent) && placed.has(flat.row.parent_agent))) continue
-    unadoptedNode.children.push(addAgent(flat))
+    rootEntries.push({ id: addAgent(flat), createdAt: flat.row.created_at ?? '', name: flat.row.agent })
   }
-  unadoptedNode.summary = summarise(result, unadoptedNode.children)
-  unadoptedNode.count = unadoptedNode.summary.total
-  result.set(unadoptedNode.id, unadoptedNode)
-  root.children.push(unadoptedNode.id)
+  root.children.push(...rootEntries
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.name.localeCompare(right.name))
+    .map((entry) => entry.id))
 
   const terminalsNode: SidebarNode = { id: terminalsID, kind: 'terminals', name: 'Terminals', children: [], count: 0 }
   for (const [workspaceID, entry] of terminals) {
@@ -237,8 +222,8 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
 }
 
 // expandedLabel is the row text in either state: identity plus its
-// secondary (bus name under a title, "ended" on a tombstone, "unknown" on an
-// unresolved manager group), joined by the ruled separator.
+// secondary (a bus name under a title or "ended" on a tombstone), joined by
+// the ruled separator.
 export function expandedLabel(node: SidebarNode) {
   return node.secondary ? `${node.name} · ${node.secondary}` : node.name
 }
@@ -260,7 +245,7 @@ function push<T>(map: Map<string, T[]>, key: string, value: T) {
 }
 
 function byCreation(flats: FlatRow[]) {
-  return [...flats].sort((left, right) => (left.row.created_at ?? '').localeCompare(right.row.created_at ?? ''))
+  return [...flats].sort((left, right) => (left.row.created_at ?? '').localeCompare(right.row.created_at ?? '') || left.row.agent.localeCompare(right.row.agent))
 }
 
 function summarise(result: Map<string, SidebarNode>, children: string[]): SupervisionSummary {
