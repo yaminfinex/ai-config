@@ -99,11 +99,12 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
     <UtilityRail side="left" label="Fleet" headingStart={<span className="status-dot listening" />}
-      headingAction={<FleetViewToggle view={fleetView} onView={setFleetView} />}
+      subheading={<FleetViewToggle view={fleetView} onView={setFleetView} />}
       width={fleetRail.width} collapsed={fleetRail.collapsed}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
       <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
         onPreviewAgent={(name, placement) => openAgent(name, true, placement, true)} onPinAgent={(name, placement) => openAgent(name, false, placement, true)} onPreviewPane={(pane, placement) => openScreen(pane, true, placement)} onPinPane={(pane, placement) => openScreen(pane, false, placement)}
+        onOpenGroupAsSpace={workspace.spaces.openGroup}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems}
         knownManagerItems={knownManagerItems} onKnownManagerItems={setKnownManagerItems} />
     </UtilityRail>

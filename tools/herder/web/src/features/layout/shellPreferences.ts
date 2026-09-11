@@ -3,11 +3,11 @@ import { defaultRailPreferences, type RailPreferences } from './utilityRailModel
 export const shellStorageKey = 'herder.web.shell.v1'
 export const shellStorageBackupKey = 'herder.web.shell.v1.last-good'
 
-export type FleetView = 'supervision' | 'placement'
+export type FleetView = 'supervision' | 'placement' | 'groups'
 export const defaultFleetView: FleetView = 'supervision'
 
 export function isFleetView(value: unknown): value is FleetView {
-  return value === 'supervision' || value === 'placement'
+  return value === 'supervision' || value === 'placement' || value === 'groups'
 }
 
 export type StoredShellPreferences = {

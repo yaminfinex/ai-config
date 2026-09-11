@@ -1,0 +1,55 @@
+import type { FleetView } from '../layout/shellPreferences.ts'
+import type { SidebarNode } from './sidebarNodes.ts'
+
+// Groups view drag: an agent row dropped on a group header sets that agent's
+// group to the header's label; the Ungrouped header (label '') clears it. The
+// plan is null in every other case, so nothing else on the tree is a drop
+// target: the supervision and placement views, agent rows, workspaces.
+export type GroupDrop = { name: string, group: string }
+
+export function planGroupDrop(view: FleetView, source: string | null | undefined, target: SidebarNode | undefined): GroupDrop | null {
+  if (view !== 'groups' || !source || source === '-' || !target) return null
+  if (target.kind !== 'group' && target.kind !== 'ungrouped') return null
+  return { name: source, group: target.group ?? '' }
+}
+
+export function groupHeaderTooltip(node: SidebarNode, members: number) {
+  const seats = `${members} ${members === 1 ? 'agent' : 'agents'}`
+  return node.kind === 'ungrouped'
+    ? `Ungrouped · ${seats} · drop an agent here to clear its group`
+    : `group ${node.name} · ${seats} · drop an agent here to set its group`
+}
+
+export function openGroupTooltip(name: string, members: number) {
+  return `Open or refresh space ${name} with ${members} pinned ${members === 1 ? 'transcript' : 'transcripts'}; matched by name, with no saved link.`
+}
+
+// Open-as-space: the ruling is "creates or refreshes" — an existing space
+// named exactly after the group is switched to, else one is created with
+// that name; then every member not yet open there is opened pinned. Nothing
+// is closed and no link between group and space is stored.
+export type OpenGroupPlan = { action: 'switch', id: string } | { action: 'create', name: string }
+
+export function planOpenGroupAsSpace(name: string, spaces: { id: string, name: string }[]): OpenGroupPlan {
+  const existing = spaces.find((space) => space.name === name)
+  return existing ? { action: 'switch', id: existing.id } : { action: 'create', name }
+}
+
+// runOpenGroupAsSpace executes the plan: switch only when the matched space
+// is not already active (switching to the active space is a no-op the
+// store reports as false, and must not abort the refresh), else create; then
+// ALWAYS open every member pinned so a refresh on the active space reopens
+// missing transcripts and pins previews. Returns false only when the space
+// could not be reached.
+export function runOpenGroupAsSpace(plan: OpenGroupPlan, members: string[], dependencies: {
+  activeID: string | null
+  switchTo: (id: string) => boolean
+  createNamed: (name: string) => boolean
+  open: (member: string) => void
+}) {
+  if (plan.action === 'switch') {
+    if (dependencies.activeID !== plan.id && !dependencies.switchTo(plan.id)) return false
+  } else if (!dependencies.createNamed(plan.name)) return false
+  members.forEach(dependencies.open)
+  return true
+}

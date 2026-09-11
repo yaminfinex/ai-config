@@ -1,4 +1,7 @@
 import type { SidebarNode } from './sidebarNodes.ts'
+import type { FleetView } from '../layout/shellPreferences.ts'
+import type { AssignmentPatch } from '../../api/client.ts'
+import { planGroupDrop } from './groupDropModel.ts'
 
 export type ReparentDrop = { name: string, assignment: { manager: string } }
 export type DropRefusal = 'placement view' | 'source is not a live agent' | 'self' | 'descendant' | 'tombstone' | 'terminal' | 'target is not a live agent'
@@ -19,9 +22,28 @@ export function reparentDrop(view: 'placement' | 'supervision', sourceID: string
   return { name: source.pane.agent, assignment: { manager: target.pane.agent } }
 }
 
-export function dropAssignment(view: 'placement' | 'supervision', sourceID: string | null, targetID: string | null, nodes: Map<string, SidebarNode>, submit: (name: string, assignment: { manager: string }) => void) {
+// planSidebarDrop is the ONE drop seam the sidebar calls: node ids in, one
+// assignment out. The plan is chosen by view — groups → a header sets or
+// clears the group (planGroupDrop), supervision → a row or the empty top
+// level sets the manager (reparentDrop) — so every row carries one set of
+// drag handlers whatever view is showing. Null means the drop is refused.
+export type SidebarDrop = { name: string, assignment: AssignmentPatch }
+
+export function planSidebarDrop(view: FleetView, sourceID: string | null, targetID: string | null, nodes: Map<string, SidebarNode>): SidebarDrop | null {
+  if (sourceID === null) return null
+  if (view === 'groups') {
+    const plan = planGroupDrop(view, nodes.get(sourceID)?.pane?.agent, targetID === null ? undefined : nodes.get(targetID))
+    return plan ? { name: plan.name, assignment: { group: plan.group } } : null
+  }
   const result = reparentDrop(view, sourceID, targetID, nodes)
-  if ('refusal' in result) return false
+  return 'refusal' in result ? null : result
+}
+
+// dropAssignment is what both drop handlers (row and container) call: one
+// plan through the seam, one submit when it is accepted, false on refusal.
+export function dropAssignment(view: FleetView, sourceID: string | null, targetID: string | null, nodes: Map<string, SidebarNode>, submit: (name: string, assignment: AssignmentPatch) => void) {
+  const result = planSidebarDrop(view, sourceID, targetID, nodes)
+  if (!result) return false
   submit(result.name, result.assignment)
   return true
 }

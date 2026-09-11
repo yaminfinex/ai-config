@@ -30,6 +30,7 @@ import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import { useNotes } from '../notes/NotesProvider.tsx'
+import { planOpenGroupAsSpace, runOpenGroupAsSpace } from '../sidebar/groupDropModel.ts'
 import {
   createSpacesStore,
   browserSpacesTransport,
@@ -405,6 +406,21 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setSpaceProblem(result.ok ? store.status().problem : result.reason)
     return result.ok
   }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
+  // openGroupAsSpace: switch to the space named exactly after the group (or
+  // stay, when it is already active), else create one with that name; then
+  // open every member's transcript pinned (an already-open transcript is only
+  // activated / pinned). Nothing is closed and no group/space link is
+  // persisted — the space itself is the only write.
+  const openGroupAsSpace = useCallback((group: string, members: string[]) => {
+    const store = spacesRuntime.store
+    if (!store) { setSpaceProblem(spacesRuntime.problem); return false }
+    return runOpenGroupAsSpace(planOpenGroupAsSpace(group, store.list()), members, {
+      activeID: activeSpaceIDRef.current,
+      switchTo: switchSpace,
+      createNamed: createNamedSpace,
+      open: (member) => openAgent(member, false),
+    })
+  }, [createNamedSpace, openAgent, spacesRuntime.problem, spacesRuntime.store, switchSpace])
   const renameSpace = useCallback((id: string, name: string) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
@@ -567,6 +583,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       switch: switchSpace,
       create: createSpace,
       createNamed: createNamedSpace,
+      openGroup: openGroupAsSpace,
       rename: renameSpace,
       reorder: reorderSpace,
       close: closeSpace,

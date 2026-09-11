@@ -155,6 +155,10 @@ GET `/api/fleet`
     neither a live roster row nor a store record, or an ambiguous base name).
   - `group` — the current assignment group from the agent store, when set.
   - `title` — the annotation title from the agent store, when one is set.
+  - `group` — the agent's group label, the latest `assign` event's `group`
+    from the agent store, when one is set. Absent when none was ever set or
+    the last assign cleared it. Herder-mastered augmenting data, never
+    lifecycle authority; hcom tags are not groups.
   - `created_at` — hcom's roster creation time for the row, RFC3339 UTC.
   - `context_used` — used tokens from the serve's in-process observer. It is
     absent when the observer does not know the session and is never persisted;
@@ -174,6 +178,22 @@ GET `/api/fleet`
   (`$HERDER_STATE_DIR/agents/events.jsonl`) rebuilds the board and re-emits
   `fleet` within the serve's debounce, with no herdr or hcom change required.
   The terminal `herder list` output is unchanged by this payload.
+
+  Groups view (sidebar). The third fleet view is its own client-side
+  builder over the same payload: one header per distinct `group` label
+  (alphabetical) and an "Ungrouped" header last, drawn only while it has
+  rows. Membership is derived upward: an agent belongs to a group when its
+  own label or any descendant's label (reports by `manager`, Task subagents
+  by `parent_agent`) matches, so an orchestrator with reports in two groups
+  appears under both headers and a leaf appears exactly once; under a
+  header the tree is the manager tree restricted to members. The supervision
+  view draws no group nodes. Dragging an agent row onto a header issues one
+  `POST /api/agents/{bus-name}/assignment` with `{"group":"<header>"}`
+  (the Ungrouped header sends `""`, which clears); the client updates
+  nothing optimistically and the next `fleet` frame re-groups. "Open group
+  as space" on a header switches to the space named exactly after the group
+  or creates one, then opens every member transcript pinned; it closes
+  nothing and stores no link between the group and the space.
 
 GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap

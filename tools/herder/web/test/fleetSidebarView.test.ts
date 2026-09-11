@@ -52,8 +52,8 @@ test('Adopt is keyed off the unknown-manager row marker in supervision view', ()
 
 test('starting a rename retires a stale assignment refusal', () => {
   const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
-  assert.match(sidebar, /const startRename = \(name: string, title\?: string\) => \{\s*setAssignmentProblem\(null\)/)
-  assert.equal(sidebar.match(/startRename\(pane\.agent, pane\.title\)/g)?.length, 2)
+  assert.match(sidebar, /const startRename = \(name: string, nodeID: string, title\?: string\) => \{\s*setAssignmentProblem\(null\)/)
+  assert.equal(sidebar.match(/startRename\(pane\.agent, node\.id, pane\.title\)/g)?.length, 2)
 })
 
 test('row click guard contains every trailing interactive control', () => {
@@ -71,6 +71,7 @@ test('the fleet view persists through the real shell serializer and parser (defa
   assert.deepEqual(read?.knownManagerItems, ['agent:ziru'])
   assert.equal(read?.knownWorkspaceItems, undefined)
   assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision' })))?.fleetView, 'supervision')
+  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'groups' })))?.fleetView, 'groups')
   // The hook writes through the serializer, so the field cannot be dropped on one path only.
   const hook = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
   assert.match(hook, /shellPreferencesValue\(\{ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView \}\)/)
@@ -109,7 +110,10 @@ test('expandedItems survive a view switch: the transition never runs on the view
   assert.equal((sidebar.match(/onExpandedItems\(/g) ?? []).length, 2, 'expected the tree setter wiring and the transition apply, nothing else')
   const effects = [...sidebar.matchAll(/useEffect\([\s\S]*?\}, \[([^\]]*)\]\)/g)].map((match) => match[1])
   assert.equal(effects.filter((deps) => /\bview\b/.test(deps)).length, 1, 'only the selection effect depends on view')
-  assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : supervisionNodes/)
+  assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : view === 'groups' \? groupNodes : supervisionNodes/)
+  // The groups map is one more input to the same single transition, never a separate expansion path.
+  assert.equal((sidebar.match(/reconcileExpansion\(/g) ?? []).length, 1)
+  assert.match(sidebar, /reconcileExpansion\(placementNodes, supervisionNodes, \{ expandedItems, knownWorkspaceItems, knownManagerItems \}, groupNodes\)/)
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)
   assert.match(sidebar, /<ContextUsed value=\{node\.contextUsed\} \/>/)
   assert.match(sidebar, /\$\{contextUsedTooltip\(node\.contextUsed\)\}/)
