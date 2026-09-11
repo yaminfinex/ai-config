@@ -12,7 +12,7 @@ import (
 
 // ProjectionVersion changes whenever Apply's fold changes, so a stale
 // snapshot is replayed instead of trusted.
-const ProjectionVersion = 3
+const ProjectionVersion = 5
 
 // EventsKept is how many trailing events each agent record retains.
 const EventsKept = 32
@@ -44,20 +44,21 @@ type RequestRecord struct {
 // both the stored incarnation record and the fold result (Binding, Session
 // and Incarnation are set from the roster at fold time).
 type AgentView struct {
-	Name        string      `json:"name"`
-	BaseName    string      `json:"base_name,omitempty"`
-	Tool        string      `json:"tool,omitempty"`
-	Tag         string      `json:"tag,omitempty"`
-	Incarnation time.Time   `json:"incarnation"` // roster created_at when known, else the first event's time
-	FirstSeen   time.Time   `json:"first_seen"`
-	LastSeen    time.Time   `json:"last_seen"`
-	Closed      *time.Time  `json:"closed,omitempty"` // culled / launch-failed / mirror.stopped
-	CloseReason string      `json:"close_reason,omitempty"`
-	Provenance  Provenance  `json:"provenance"`
-	Assignment  *Assignment `json:"assignment,omitempty"`
-	Annotation  *Annotation `json:"annotation,omitempty"`
+	Name         string      `json:"name"`
+	BaseName     string      `json:"base_name,omitempty"`
+	Tool         string      `json:"tool,omitempty"`
+	Tag          string      `json:"tag,omitempty"`
+	Incarnation  time.Time   `json:"incarnation"` // roster created_at when known, else the first event's time
+	FirstSeen    time.Time   `json:"first_seen"`
+	LastSeen     time.Time   `json:"last_seen"`
+	Closed       *time.Time  `json:"closed,omitempty"` // culled / launch-failed / mirror.stopped
+	CloseReason  string      `json:"close_reason,omitempty"`
+	Provenance   Provenance  `json:"provenance"`
+	Assignment   *Assignment `json:"assignment,omitempty"`
+	AssignmentAt *time.Time  `json:"assignment_at,omitempty"`
+	Annotation   *Annotation `json:"annotation,omitempty"`
 	// Manager is the mutable hierarchy pointer ("who manages me"): the latest
-	// reparent, else the launcher. Provenance.Launcher is immutable.
+	// assignment, else the launcher. Provenance.Launcher is immutable.
 	Manager    string        `json:"manager,omitempty"`
 	ManagerBy  string        `json:"manager_by,omitempty"`
 	ManagerAt  *time.Time    `json:"manager_at,omitempty"`
@@ -88,12 +89,12 @@ type Provenance struct {
 }
 
 type Assignment struct {
-	Mission string    `json:"mission"`
-	Brief   string    `json:"brief,omitempty"`
-	Thread  string    `json:"thread,omitempty"`
-	Task    string    `json:"task,omitempty"`
-	By      string    `json:"by,omitempty"`
-	At      time.Time `json:"at"`
+	Group  string    `json:"group"`
+	Brief  string    `json:"brief,omitempty"`
+	Thread string    `json:"thread,omitempty"`
+	Task   string    `json:"task,omitempty"`
+	By     string    `json:"by,omitempty"`
+	At     time.Time `json:"at"`
 }
 
 type Annotation struct {
@@ -224,7 +225,7 @@ func (p *Projection) Apply(e Event, _ int64) {
 	}
 	// setLauncher fills an empty launcher; a registered fact (kind != mirror)
 	// also supersedes weaker mirrored attribution, carrying the default
-	// manager along unless someone reparented explicitly.
+	// manager along unless an explicit assignment changed it.
 	setLauncher := func(by, kind string) {
 		if by == "" {
 			return
@@ -328,7 +329,18 @@ func (p *Projection) Apply(e Event, _ int64) {
 	case KindCompactRequested:
 		// recorded in Events only
 	case KindAssign:
-		v.Assignment = &Assignment{Mission: e.Mission, Brief: e.Brief, Thread: e.Thread, Task: e.Task, By: e.By, At: at}
+		if (e.ClearGroup || e.Group != "") && (v.AssignmentAt == nil || !at.Before(*v.AssignmentAt)) {
+			if e.ClearGroup {
+				v.Assignment = nil
+			} else {
+				v.Assignment = &Assignment{Group: e.Group, Brief: e.Brief, Thread: e.Thread, Task: e.Task, By: e.By, At: at}
+			}
+			v.AssignmentAt = &at
+		}
+		if e.Manager != "" && (v.ManagerAt == nil || !at.Before(*v.ManagerAt)) {
+			v.Manager, v.ManagerBy = e.Manager, e.By
+			v.ManagerAt = &at
+		}
 	case KindAnnotate:
 		if v.Annotation == nil {
 			v.Annotation = &Annotation{}
@@ -340,14 +352,6 @@ func (p *Projection) Apply(e Event, _ int64) {
 			v.Annotation.Note = e.Note
 		}
 		v.Annotation.By, v.Annotation.At = e.By, at
-	case KindReparent:
-		// Event time orders reparents, not arrival: an older one landing
-		// late never overwrites a newer manager.
-		if v.ManagerAt != nil && at.Before(*v.ManagerAt) {
-			break
-		}
-		v.Manager, v.ManagerBy = e.Manager, e.By
-		v.ManagerAt = &at
 	case KindMirrorCreated, KindMirrorReady, KindMirrorBatch:
 		if v.Provenance.Kind == "unregistered" {
 			v.Provenance.Kind = "mirrored"
@@ -549,7 +553,7 @@ func (p *Projection) View(name string, roster *hcomidentity.Row) *AgentView {
 // ViewForRoster resolves a roster row by its full name and, when this row is
 // the roster's unique owner of its base name, fills fields missing from that
 // view with the remaining base-name record. That record is a pre-unit-1
-// artefact of the same agent; unit 2's reparent repairs it under the full name,
+// artefact of the same agent; an assignment repairs it under the full name,
 // after which the overlay is inert for the manager. With no full-name record,
 // the base record remains the fallback. Neither path re-keys or writes the
 // store.

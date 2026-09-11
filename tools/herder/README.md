@@ -27,6 +27,8 @@ When running Go directly from this module, use `env -u GOROOT go ...`.
 - `internal/herdrcli/` — herdr socket snapshots and the `herdr status server --json` discovery contract.
 - `internal/hcomidentity/` — hcom roster decoding and identity helpers.
 - `internal/listcmd/` — exact-coordinate live join and table rendering.
+- `internal/eventcmd/` — shared parsing for one-event CLI commands.
+- `internal/assigncmd/` — manager/group assignment as one event append.
 - `internal/claudesession/`, `internal/codexsession/` — per-tool transcript parsing; `ObserveVitals` is each tool's ONE vitals envelope parse.
 - `internal/sessionvitals/` — the ONE vitals reader (`ReadDirect`, `Seed`, `Advance`) and the ONE cache-then-direct lookup body (`ReadWith`; `Read` = socket cache for the CLI).
 - `internal/observer/` — serve-scoped in-memory session vitals: roster discovery, seed, fsnotify tail, phases, 24 h TTL. Never persisted.

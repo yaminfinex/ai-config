@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
-import { groupHeaderTooltip, membersToOpen, openGroupTooltip, planGroupDrop, planOpenGroupAsSpace } from '../src/features/sidebar/groupDropModel.ts'
+import { groupHeaderTooltip, membersToOpen, openGroupTooltip, planGroupDrop, planOpenGroupAsSpace, planSidebarDrop } from '../src/features/sidebar/groupDropModel.ts'
 import { assignAgent } from '../src/api/client.ts'
 import { createAndSwitchSpace } from '../src/features/spaces/spacesControllerModel.ts'
 import type { SidebarNode } from '../src/features/sidebar/sidebarNodes.ts'
@@ -69,4 +69,32 @@ test('the controller opens members pinned and stores no group/space link', () =>
   assert.match(body, /planOpenGroupAsSpace\(group, store\.list\(\)\)/)
   assert.match(body, /members\.forEach\(\(member\) => openAgent\(member, false\)\)/)
   assert.doesNotMatch(body, /localStorage|upsertState|closePanel|store\.write|store\.upsert/)
+})
+
+test('planSidebarDrop is the one seam: groups → header plan by node id, supervision → reparent plan, placement → refused', () => {
+  const live = (agent: string, extra: object = {}) => ({ pane_id: '-', agent, tool: 'claude', herdr_status: '-', bus_status: 'listening', gap: '-', manager_state: 'live', ...extra })
+  const nodes = new Map<string, SidebarNode>([
+    ['group:audit', { ...header, id: 'group:audit', name: 'audit', group: 'audit', children: ['group:audit/agent:ziru'] }],
+    ['group:audit/agent:ziru', { id: 'group:audit/agent:ziru', kind: 'agent', name: 'ziru', children: [], pane: live('ziru') }],
+    ['group:', { ...ungrouped, children: ['group:/agent:impl-hine'] }],
+    ['group:/agent:impl-hine', { id: 'group:/agent:impl-hine', kind: 'agent', name: 'impl-hine', children: [], pane: live('impl-hine') }],
+    ['agent:ziru', { id: 'agent:ziru', kind: 'agent', name: 'ziru', children: [], pane: live('ziru') }],
+    ['agent:impl-hine', { id: 'agent:impl-hine', kind: 'agent', name: 'impl-hine', children: [], pane: live('impl-hine') }],
+  ])
+  assert.deepEqual(planSidebarDrop('groups', 'group:/agent:impl-hine', 'group:audit', nodes), { name: 'impl-hine', assignment: { group: 'audit' } })
+  assert.deepEqual(planSidebarDrop('groups', 'group:audit/agent:ziru', 'group:', nodes), { name: 'ziru', assignment: { group: '' } })
+  assert.equal(planSidebarDrop('groups', 'group:/agent:impl-hine', 'group:audit/agent:ziru', nodes), null, 'a row is never a target in the groups view')
+  assert.equal(planSidebarDrop('groups', 'group:/agent:impl-hine', null, nodes), null, 'the empty top level clears nothing in the groups view')
+  assert.deepEqual(planSidebarDrop('supervision', 'agent:impl-hine', 'agent:ziru', nodes), { name: 'impl-hine', assignment: { manager: 'ziru' } })
+  assert.deepEqual(planSidebarDrop('supervision', 'agent:impl-hine', null, nodes), { name: 'impl-hine', assignment: { manager: 'human' } })
+  assert.equal(planSidebarDrop('supervision', 'agent:impl-hine', 'group:audit', nodes), null)
+  assert.equal(planSidebarDrop('placement', 'agent:impl-hine', 'agent:ziru', nodes), null)
+  // The sidebar has exactly one drag seam: one draggable, one onDragStart, one row onDrop, one container onDrop, one submit.
+  const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
+  assert.equal((sidebar.match(/draggable:/g) ?? []).length, 1)
+  assert.equal((sidebar.match(/onDragStart:/g) ?? []).length, 1)
+  assert.equal((sidebar.match(/onDrop[:=]/g) ?? []).length, 2)
+  assert.equal((sidebar.match(/planSidebarDrop\(/g) ?? []).length, 4)
+  assert.doesNotMatch(sidebar, /reparentDrop|planGroupDrop/)
+  assert.equal((sidebar.match(/role="alert"/g) ?? []).length, 1)
 })

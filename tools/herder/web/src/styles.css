@@ -189,7 +189,7 @@ h2, h3, p { margin-top: 0; }
 .tombstone-row { color: var(--dimmer); }
 .tombstone-row .tree-label { text-decoration: line-through; text-decoration-color: var(--border2); }
 .tombstone-row .tree-secondary { text-decoration: none; }
-.rename-agent-button { visibility: hidden; width: 20px; height: 20px; flex: 0 0 20px; padding: 0; border-color: var(--border2); background: var(--chip); color: var(--dim); font: 12px var(--mono); }
+.rename-agent-button { visibility: hidden; min-width: 20px; height: 20px; flex: 0 0 auto; padding: 0 4px; border-color: var(--border2); background: var(--chip); color: var(--dim); font: 12px var(--mono); }
 .panel-tree-row:hover .rename-agent-button, .panel-tree-row:focus-within .rename-agent-button, .rename-agent-button:focus-visible { visibility: visible; }
 .group-space-button { visibility: hidden; height: 20px; flex: 0 0 auto; padding: 0 6px; border-color: var(--border2); background: var(--chip); color: var(--dim); font: 11px var(--mono); }
 .panel-tree-row:hover .group-space-button, .panel-tree-row:focus-within .group-space-button, .group-space-button:focus-visible { visibility: visible; }
@@ -197,7 +197,8 @@ h2, h3, p { margin-top: 0; }
 .fleet-tree-groups .agent-row.dragging { opacity: .65; }
 .fleet-tree-groups .group-row.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
 .rename-agent-input { width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--accent); }
-.rename-agent-problem { padding: 4px 7px; color: var(--error-text); background: var(--error-bg); border: 1px solid var(--error-border); font-size: 10px; white-space: normal; }
+.sidebar-problem { padding: 4px 7px; color: var(--error-text); background: var(--error-bg); border: 1px solid var(--error-border); font-size: 10px; white-space: normal; }
+.fleet-tree.drop-target, .panel-tree-row.drop-target { outline: 1px solid var(--accent); outline-offset: -1px; }
 .rail-heading > .fleet-view-toggle { display: inline-flex; margin-left: auto; gap: 1px; letter-spacing: 0; text-transform: none; }
 .rail-heading > .fleet-view-toggle + .rail-toggle { margin-left: 0; }
 .fleet-view-option { padding: 1px 6px; border: 1px solid var(--border2); background: transparent; color: var(--dimmer); font: 10px var(--mono); cursor: pointer; }

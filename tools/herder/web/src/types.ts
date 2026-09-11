@@ -14,10 +14,8 @@ export interface Row {
   // created_at is hcom's roster creation time (RFC3339 UTC).
   manager?: string
   manager_state?: ManagerState
-  title?: string
-  // group is the agent's current group label (the latest assign event's
-  // group, herder-mastered augmenting data); absent when none or cleared.
   group?: string
+  title?: string
   created_at?: string
 }
 

@@ -60,6 +60,9 @@ func supervisionDeps(t *testing.T) dependencies {
 		{ID: agentstore.DerivedID([]byte("sup-e6")), At: at.Add(5 * time.Second), Kind: agentstore.KindCulled, Name: "orch-dead", Pane: "p9", Close: "managed", By: "ziru", ByKind: "agent"},
 		{ID: agentstore.DerivedID([]byte("sup-e7")), At: at.Add(6 * time.Second), Kind: agentstore.KindLaunchReady, Name: "sesh-kele", By: "hamo", ByKind: "agent"},
 		{ID: agentstore.DerivedID([]byte("sup-e8")), At: at.Add(7 * time.Second), Kind: agentstore.KindLaunchReady, Name: "kolo_general_purpose_1", By: "impl-kolo", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-group-pane")), At: at.Add(8 * time.Second), Kind: agentstore.KindAssign, Name: "impl-kolo", Group: "builders", By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-group-subagent")), At: at.Add(9 * time.Second), Kind: agentstore.KindAssign, Name: "kolo_general_purpose_1", Group: "helpers", By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-group-unplaced")), At: at.Add(10 * time.Second), Kind: agentstore.KindAssign, Name: "lone", Group: "review", By: "ziru", ByKind: "agent"},
 	}
 	for _, event := range events {
 		if _, err := store.Append(event); err != nil {
@@ -80,25 +83,25 @@ func TestBoardCarriesManager(t *testing.T) {
 	if len(panes) != 3 {
 		t.Fatalf("panes = %d", len(panes))
 	}
-	type edge struct{ manager, state, title, created string }
+	type edge struct{ manager, state, group, title, created string }
 	got := map[string]edge{}
 	for _, pane := range panes {
-		got[pane.Agent] = edge{pane.Manager, pane.ManagerState, pane.Title, pane.CreatedAt}
+		got[pane.Agent] = edge{pane.Manager, pane.ManagerState, pane.Group, pane.Title, pane.CreatedAt}
 		for _, child := range pane.Subagents {
-			got[child.Agent] = edge{child.Manager, child.ManagerState, child.Title, child.CreatedAt}
+			got[child.Agent] = edge{child.Manager, child.ManagerState, child.Group, child.Title, child.CreatedAt}
 		}
 	}
 	for _, row := range board.Unplaced {
-		got[row.Agent] = edge{row.Manager, row.ManagerState, row.Title, row.CreatedAt}
+		got[row.Agent] = edge{row.Manager, row.ManagerState, row.Group, row.Title, row.CreatedAt}
 	}
 	want := map[string]edge{
-		"ziru":                   {"operator", fleetview.ManagerOperator, "", "2026-09-10T08:00:00Z"},
-		"impl-kolo":              {"ziru", fleetview.ManagerLive, "payload builder", "2026-09-10T08:01:00Z"},
-		"kolo_general_purpose_1": {"impl-kolo", fleetview.ManagerLive, "", "2026-09-10T08:02:00Z"},
-		"sesh-nabi":              {"orch-dead", fleetview.ManagerEnded, "", "2026-09-10T08:03:00Z"},
-		"orch-hamo":              {"", fleetview.ManagerUnknown, "", "2026-09-10T08:04:00Z"},
-		"sesh-kele":              {"orch-hamo", fleetview.ManagerLive, "", "2026-09-10T08:05:00Z"},
-		"lone":                   {"", fleetview.ManagerUnknown, "", "2026-09-10T08:06:00Z"},
+		"ziru":                   {"operator", fleetview.ManagerOperator, "", "", "2026-09-10T08:00:00Z"},
+		"impl-kolo":              {"ziru", fleetview.ManagerLive, "builders", "payload builder", "2026-09-10T08:01:00Z"},
+		"kolo_general_purpose_1": {"impl-kolo", fleetview.ManagerLive, "helpers", "", "2026-09-10T08:02:00Z"},
+		"sesh-nabi":              {"orch-dead", fleetview.ManagerEnded, "", "", "2026-09-10T08:03:00Z"},
+		"orch-hamo":              {"", fleetview.ManagerUnknown, "", "", "2026-09-10T08:04:00Z"},
+		"sesh-kele":              {"orch-hamo", fleetview.ManagerLive, "", "", "2026-09-10T08:05:00Z"},
+		"lone":                   {"", fleetview.ManagerUnknown, "review", "", "2026-09-10T08:06:00Z"},
 		"-":                      {},
 	}
 	for name, expected := range want {
@@ -146,14 +149,14 @@ func TestStoreAppendReemitsFleet(t *testing.T) {
 	for {
 		event, data := readEvent(t, reader)
 		if event == "fleet" {
-			if !strings.Contains(data, `"manager":"ziru","manager_state":"live","title":"payload builder"`) || !strings.Contains(data, `"manager":"operator","manager_state":"operator"`) {
+			if !strings.Contains(data, `"manager":"ziru","manager_state":"live","group":"builders","title":"payload builder"`) || !strings.Contains(data, `"manager":"operator","manager_state":"operator"`) {
 				t.Fatalf("initial fleet = %s", data)
 			}
 			break
 		}
 	}
 	time.Sleep(50 * time.Millisecond)
-	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("sup-e9")), At: time.Now().UTC(), Kind: agentstore.KindReparent, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
+	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("sup-e9")), At: time.Now().UTC(), Kind: agentstore.KindAssign, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.After(2 * time.Second)

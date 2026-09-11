@@ -43,6 +43,18 @@ test('context used survives both tree projections and renders on agent rows only
   assert.doesNotMatch(html, /context-used">[^<]*%/)
 })
 
+test('Adopt is limited to live unknown-manager rows in supervision view', () => {
+  const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
+  assert.match(sidebar, /view === 'supervision'[\s\S]*pane\.bus_status !== '-'[\s\S]*pane\.manager_state === 'unknown'[\s\S]*>adopt<\/button>/)
+  assert.match(sidebar, /title=\{`Adopt \$\{pane\.agent\}: set its manager to you \(human\)`\}/)
+})
+
+test('starting a rename retires a stale assignment refusal', () => {
+  const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
+  assert.match(sidebar, /const startRename = \(name: string, title\?: string\) => \{\s*setAssignmentProblem\(null\)/)
+  assert.equal(sidebar.match(/startRename\(pane\.agent, pane\.title\)/g)?.length, 2)
+})
+
 test('row click guard contains every trailing interactive control', () => {
   assert.match(treeClickGuardSelector, /\.tree-disclosure/)
   assert.match(treeClickGuardSelector, /\.launch-agent-button/)

@@ -88,7 +88,7 @@ func TestStoreProjectionSharedAndSnapshotRefreshed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("snapshot.json not written at start: %v", err)
 	}
-	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("obs-e1")), At: time.Now().UTC(), Kind: agentstore.KindReparent, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
+	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("obs-e1")), At: time.Now().UTC(), Kind: agentstore.KindAssign, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -179,7 +179,7 @@ func TestStoreWatcherFailureHasSafetyRefresh(t *testing.T) {
 	if before == nil {
 		t.Fatal("no initial projection")
 	}
-	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("d2-e1")), At: time.Now().UTC(), Kind: agentstore.KindReparent, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
+	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("d2-e1")), At: time.Now().UTC(), Kind: agentstore.KindAssign, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
@@ -271,7 +271,7 @@ func TestTwoConnectionsOneFold(t *testing.T) {
 		readers = append(readers, reader)
 	}
 	foldsBefore := folds.Load()
-	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("m11-e1")), At: time.Now().UTC(), Kind: agentstore.KindReparent, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
+	if _, err := deps.store.Append(agentstore.Event{ID: agentstore.DerivedID([]byte("m11-e1")), At: time.Now().UTC(), Kind: agentstore.KindAssign, Name: "impl-kolo", Manager: "sesh-nabi", By: "ziru", ByKind: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	for i, reader := range readers {

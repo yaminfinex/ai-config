@@ -8,16 +8,13 @@ package registercmd
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
-	"os"
 	"sort"
-	"strconv"
 	"strings"
-	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
+	"ai-config/tools/herder/internal/eventcmd"
 	"ai-config/tools/herder/internal/herderstate"
 )
 
@@ -39,94 +36,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, kindUsage(kind, sp))
 		return 0
 	}
-	fs := flag.NewFlagSet("herder register "+kind, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	values := map[string]*string{}
-	for _, name := range append(append(append(append([]string(nil), agentstore.CommonFlags...), sp.Required...), sp.OneOf...), sp.Optional...) {
-		if _, dup := values[name]; dup {
-			continue
-		}
-		values[name] = fs.String(name, "", "")
-	}
-	asJSON := fs.Bool("json", false, "")
-	if err := fs.Parse(args[1:]); err != nil {
+	e, asJSON, err := eventcmd.Parse(kind, args[1:])
+	if err != nil {
 		fmt.Fprintf(stderr, "herder register %s: %v\n%s", kind, err, kindUsage(kind, sp))
-		return 2
-	}
-	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "herder register %s: unexpected argument %q\n", kind, fs.Arg(0))
-		return 2
-	}
-	get := func(name string) string {
-		if p := values[name]; p != nil {
-			return strings.TrimSpace(*p)
-		}
-		return ""
-	}
-	now := time.Now().UTC()
-	at := now
-	if text := get("at"); text != "" {
-		parsed, err := time.Parse(time.RFC3339Nano, text)
-		if err != nil {
-			fmt.Fprintf(stderr, "herder register %s: --at %q is not RFC3339\n", kind, text)
-			return 2
-		}
-		at = parsed.UTC()
-	}
-	id := get("id")
-	if id == "" {
-		id = agentstore.NewID(now)
-	} else if !agentstore.ValidID(id) {
-		fmt.Fprintf(stderr, "herder register %s: --id %q is not UUID-shaped\n", kind, id)
-		return 2
-	}
-	by := get("by")
-	byKind := get("by-kind")
-	if by == "" {
-		by, byKind = defaultBy()
-	}
-	if byKind == "" {
-		byKind = "agent"
-	}
-	e := agentstore.Event{
-		ID: id, At: at, Kind: kind, By: by, ByKind: byKind, Name: get("name"), Request: get("request"),
-		Tool: get("tool"), Model: get("model"), Effort: get("effort"), Tag: get("tag"), PromptRef: get("prompt-ref"),
-		LauncherKind: get("launcher-kind"), Batch: get("batch"), Pane: get("pane"), Cwd: get("cwd"), Session: get("session"),
-		Reason: get("reason"), Close: get("close"), FromSession: get("from-session"), FromName: get("from"),
-		Mission: get("mission"), Brief: get("brief"), Thread: get("thread"), Task: get("task"), Title: get("title"), Note: get("note"),
-		Manager: get("manager"), HcomEvent: get("hcom-event"), ParentName: get("parent-name"), Path: get("path"),
-	}
-	if ws, pane, split := get("workspace"), get("pane"), get("split-from"); kind == agentstore.KindLaunchRequested {
-		e.Pane = ""
-		e.Placement = &agentstore.Placement{Workspace: ws, Pane: pane, SplitFrom: split, WorktreeBranch: get("worktree-branch"), Repo: get("repo")}
-	} else if ws != "" {
-		e.Placement = &agentstore.Placement{Workspace: ws}
-	}
-	if text := get("steer-chars"); text != "" {
-		n, err := strconv.Atoi(text)
-		if err != nil {
-			fmt.Fprintf(stderr, "herder register %s: --steer-chars %q is not an integer\n", kind, text)
-			return 2
-		}
-		e.SteerChars = &n
-	}
-	if text := get("instances"); text != "" {
-		for _, part := range strings.Split(text, ",") {
-			if part = strings.TrimSpace(part); part != "" {
-				e.Instances = append(e.Instances, part)
-			}
-		}
-	}
-	if text := get("is-hcom-launched"); text != "" {
-		v, err := strconv.ParseBool(text)
-		if err != nil {
-			fmt.Fprintf(stderr, "herder register %s: --is-hcom-launched %q is not a bool\n", kind, text)
-			return 2
-		}
-		e.IsHcomLaunched = &v
-	}
-	if err := e.Validate(); err != nil {
-		fmt.Fprintf(stderr, "herder register %s: %v\n", kind, err)
 		return 2
 	}
 
@@ -149,7 +61,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "herder register %s: %v\n", kind, err)
 		return 2
 	}
-	if *asJSON {
+	if asJSON {
 		encoded, _ := json.Marshal(struct {
 			agentstore.Event
 			Replayed bool `json:"replayed"`
@@ -172,23 +84,6 @@ func boolToCode(usageOnly bool) int {
 		return 2
 	}
 	return 0
-}
-
-// defaultBy prefers the current hcom seat, then a human at a shell.
-func defaultBy() (string, string) {
-	if name := strings.TrimSpace(os.Getenv("HCOM_NAME")); name != "" {
-		return name, "agent"
-	}
-	if instance := strings.TrimSpace(os.Getenv("HCOM_INSTANCE_NAME")); instance != "" {
-		if tag := strings.TrimSpace(os.Getenv("HCOM_TAG")); tag != "" {
-			return tag + "-" + instance, "agent"
-		}
-		return instance, "agent"
-	}
-	if user := strings.TrimSpace(os.Getenv("USER")); user != "" {
-		return user, "user"
-	}
-	return "unknown", "unknown"
 }
 
 func usage() string {
@@ -223,7 +118,11 @@ func kindUsage(kind string, sp agentstore.Spec) string {
 	opts := append([]string(nil), sp.Optional...)
 	sort.Strings(opts)
 	for _, name := range opts {
-		parts = append(parts, "[--"+name+" V]")
+		if name == "clear-group" {
+			parts = append(parts, "[--clear-group]")
+		} else {
+			parts = append(parts, "[--"+name+" V]")
+		}
 	}
 	return "herder register " + kind + " " + strings.Join(parts, " ") + "\n"
 }
