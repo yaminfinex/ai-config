@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Place one Claude or Codex seat in herdr, then launch it through hcom's
 # per-invocation fleet preset. Failed launches leave created placement in place
-# and print its coordinates; cleanup is always explicit.
+# and print its coordinates; cleanup is always explicit. Group and title events
+# are stated after hcom returns the name and before launch-ready.
 
 set -euo pipefail
 
@@ -39,7 +40,7 @@ herder_mutation() {
     detail=${HERDER_OUTPUT//$'\n'/; }
     printf 'fleet %s: %s skipped: %s\n' "$fleet_tool" "$label" "${detail:-exit $rc}" >&2
     HERDER_OUTPUT=
-    mutation_disabled=1
+    ((rc != 124)) || mutation_disabled=1
   fi
 }
 
@@ -78,7 +79,6 @@ usage: spawn.sh <claude|codex> [--model MODEL] [--effort LEVEL] --tag TAG
 --split-direction defaults to right.
 With no placement flag, spawn opens a new tab in the caller's workspace.
 An absent --group inherits the launching agent's group; --group '' suppresses it.
-Group and title events are stated after hcom returns the name and before launch-ready.
 EOF
   exit "$rc"
 }
@@ -193,9 +193,9 @@ placements=0
 [[ -n $pane ]] && ((placements += 1))
 [[ -n $split_from ]] && ((placements += 1))
 if ((placements == 0)); then
-  current_output=$(herdr pane current 2>/dev/null) || usage
-  workspace=$(jq -er '.result.pane.workspace_id | select(length > 0)' <<<"$current_output" 2>/dev/null) \
-    || usage
+  workspace=${HERDR_WORKSPACE_ID:-}
+  [[ -n $workspace ]] \
+    || refuse "no placement flag and no current herdr pane; pass --workspace, --pane, --worktree-branch or --split-from"
   placements=1
 fi
 ((placements == 1)) || die "choose exactly one placement: --workspace, --worktree-branch with --repo, --pane, or --split-from"
@@ -212,8 +212,7 @@ command -v hcom >/dev/null || die "hcom is required"
 command -v herdr >/dev/null || die "herdr is required"
 command -v timeout >/dev/null || die "timeout is required"
 
-trimmed=$(jq -rn --arg value "$group" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
-group=$trimmed
+group=$(jq -rn --arg value "$group" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
 if ((group_set == 1)) && [[ -n $group ]]; then
   [[ $group != *[$'\r\n\t']* ]] || refuse "--group must not contain control characters"
   ((${#group} <= 80)) || refuse "--group must not exceed 80 characters"
@@ -235,28 +234,15 @@ else
 fi
 
 if ((group_set == 0)) && [[ -n $self_name ]]; then
-  if [[ -z ${HCOM_TAG:-} ]]; then
-    printf 'fleet spawn: group inheritance skipped: HCOM_TAG is unset\n' >&2
+  inheritance_name=${HCOM_TAG:+$HCOM_TAG-}$self_name
+  if inherit_output=$(timeout --foreground 10s herder show "$inheritance_name" --json 2>&1); then
+    group=$(jq -r '.assignment.group // empty' <<<"$inherit_output" 2>/dev/null) || {
+      printf 'fleet spawn: group inheritance skipped: invalid herder show JSON\n' >&2
+      group=
+    }
   else
-    inheritance_name=$self_name
-    [[ $inheritance_name == "$HCOM_TAG-"* ]] || inheritance_name="$HCOM_TAG-$inheritance_name"
-    set +e
-    inherit_output=$(timeout --foreground 10s herder show "$inheritance_name" --json 2>&1)
-    inherit_rc=$?
-    set -e
-    if ((inherit_rc != 0)); then
-      inherit_detail=${inherit_output//$'\n'/; }
-      printf 'fleet spawn: group inheritance skipped: %s\n' "${inherit_detail:-exit $inherit_rc}" >&2
-    else
-      set +e
-      group=$(jq -r '.assignment.group // empty' <<<"$inherit_output" 2>/dev/null)
-      inherit_rc=$?
-      set -e
-      if ((inherit_rc != 0)); then
-        printf 'fleet spawn: group inheritance skipped: invalid herder show JSON\n' >&2
-        group=
-      fi
-    fi
+    inherit_detail=${inherit_output//$'\n'/; }
+    printf 'fleet spawn: group inheritance skipped: %s\n' "${inherit_detail:-lookup failed}" >&2
   fi
 fi
 
@@ -380,10 +366,10 @@ fi
 spawned_name=$hcom_name
 [[ $spawned_name == "$tag-"* ]] || spawned_name="$tag-$spawned_name"
 if [[ -n $group ]]; then
-  herder_mutation "assign group" assign "$spawned_name" --group "$group"
+  herder_mutation "assign $spawned_name --group $group" assign "$spawned_name" --group "$group"
 fi
 if ((title_set == 1)); then
-  herder_mutation "register annotate" register annotate --name "$spawned_name" --title "$title"
+  herder_mutation "annotate $spawned_name --title" register annotate --name "$spawned_name" --title "$title"
 fi
 
 if [[ -z $batch_id ]]; then

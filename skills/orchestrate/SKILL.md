@@ -45,11 +45,7 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 
 ## Lifecycle
 
-- **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh`; it opens a new tab in your current herdr
-  workspace by default. Use an explicit workspace, managed worktree, or verified idle pane when
-  needed; use sibling panes (`--split-from`) only when the operator directs it. Dispatch one line:
-  "read <playbook> in full, then execute <unit>". The wrapper owns `--go`, cwd, autonomy,
-  readiness, hook binding, pane stamping, group/title events, and failure coordinates.
+- **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh <claude|codex> --model M --tag T --group <unit> --title '<seat role>' --prompt 'read <playbook> in full, then execute <unit>'`. With no placement flag it opens a new tab in your current herdr workspace; use `--split-from` only when the operator directs it. The wrapper owns `--go`, cwd, autonomy, readiness, hook binding, pane stamping, group/title events, and failure coordinates.
 - **Message.** Use `hcom send` with an intent and one thread per unit. A `queued` result is
   delivered work: send once. Resolve uncertain names with `hcom list`; inspect a screen with
   `hcom term <name>`.
