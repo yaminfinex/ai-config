@@ -515,6 +515,10 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 					Batch: life.Batch, Instances: instances, ParentName: life.ParentName,
 					IsHcomLaunched: life.IsHcomLaunched, HcomEvent: strconv.FormatInt(life.ID, 10),
 				}
+				if kind == agentstore.KindMirrorCreated || kind == agentstore.KindMirrorReady {
+					// A cold-start seed above IS this event's one roster call.
+					event.Session = mirrorSession(deps, name, kind == agentstore.KindMirrorReady && rosterReady)
+				}
 				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
 					deps.audit("hcom life mirror: skip %d: %v", life.ID, err)
 					return nil
@@ -539,6 +543,34 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 			}
 		}
 	}()
+}
+
+// mirrorSession returns the roster session to stamp onto a mirror.created or
+// mirror.ready event for name. rosterCache is fed by fleet reads, so at ready
+// time it may predate the tool's SessionStart hook; a ready event with no
+// cached session refetches the roster at most ONCE (never a loop) and, when
+// the row still carries no session, the event is written without one and the
+// mirror does not error. created stamps only what the cache already holds.
+func mirrorSession(deps dependencies, name string, refetch bool) string {
+	if session := rosterSessionFor(deps.rosterCache, name); session != "" || !refetch {
+		return session
+	}
+	roster, err := deps.roster()
+	if err != nil {
+		return ""
+	}
+	deps.rosterCache.set(roster)
+	return rosterSessionFor(deps.rosterCache, name)
+}
+
+func rosterSessionFor(cache *rosterCache, name string) string {
+	rows, _ := cache.get()
+	for _, row := range rows {
+		if row.Name == name {
+			return row.SessionID
+		}
+	}
+	return ""
 }
 
 type rootFlags []string

@@ -12,7 +12,7 @@ import (
 
 // ProjectionVersion changes whenever Apply's fold changes, so a stale
 // snapshot is replayed instead of trusted.
-const ProjectionVersion = 6
+const ProjectionVersion = 7
 
 // EventsKept is how many trailing events each agent record retains.
 const EventsKept = 32
@@ -309,6 +309,9 @@ func (p *Projection) Apply(e Event, _ int64) {
 		if from != "" {
 			v.endSession(at, "resumed")
 		}
+		if e.Session != "" {
+			v.openSession(e.Session, firstNonEmpty(e.Tool, v.Tool), "", at, "resume")
+		}
 		if e.Pane != "" {
 			v.Provenance.Pane = e.Pane
 		}
@@ -353,6 +356,12 @@ func (p *Projection) Apply(e Event, _ int64) {
 		}
 		if v.Provenance.State == "" && e.Kind == KindMirrorReady {
 			v.Provenance.State = "ready"
+		}
+		// The serve life mirror stamps the roster row's session onto created/ready
+		// so a record opened before the roster row (annotate on a closed life)
+		// carries session evidence and passes the Incarnation guard.
+		if e.Session != "" {
+			v.openSession(e.Session, firstNonEmpty(e.Tool, v.Tool), "", at, "mirror")
 		}
 	case KindMirrorStopped:
 		v.Provenance.State = "stopped"

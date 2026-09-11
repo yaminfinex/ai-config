@@ -145,6 +145,15 @@ accepted as an alias), then rejects it when its first event predates
 kill`, a crash or a missed wrapper records no close, and roster creation is
 the newer evidence. With no roster time it takes the latest. A new
 incarnation inherits nothing: no manager, no assignment, no launcher.
+So that a record opened before the roster row (an annotate or assignment on a
+name whose last life is closed) still passes that check, the serve life mirror
+stamps the roster row's `session` onto `mirror.ready` (and onto
+`mirror.created` when the cached row already carries one) and the fold opens
+that session on the record; a `ready` whose cached row has no session refetches
+the roster at most once and otherwise writes the event without a session.
+`resume` accepts an optional `session` and opens it after ending
+`from-session`. ProjectionVersion 7 (mirror/resume sessions in the fold):
+older snapshots rebuild on load.
 
 `mirror.batch_launched` fans out to its `instances` (name optional).
 `session.observed` without a name is a pane-only session kept under
