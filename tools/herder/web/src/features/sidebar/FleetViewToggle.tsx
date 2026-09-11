@@ -1,7 +1,7 @@
 import type { FleetView } from '../layout/shellPreferences'
 
 const views: { view: FleetView, label: string, title: string }[] = [
-  { view: 'supervision', label: 'supervision', title: 'Supervision tree: who manages whom' },
+  { view: 'supervision', label: 'tree', title: 'Supervision tree: who manages whom' },
   { view: 'placement', label: 'placement', title: 'Placement: workspaces, tabs and panes' },
   { view: 'groups', label: 'groups', title: 'Groups: who works on what' },
 ]
