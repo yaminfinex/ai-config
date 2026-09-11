@@ -1,7 +1,7 @@
 import type { SidebarNode } from './sidebarNodes.ts'
 
 export const agentKinds = new Set<SidebarNode['kind']>(['pane', 'subagent', 'agent'])
-const groupKinds = new Set<SidebarNode['kind']>(['workspace', 'unplaced', 'operator', 'tombstone', 'unadopted', 'unknown-manager', 'terminals', 'terminals-workspace', 'group', 'ungrouped'])
+const groupKinds = new Set<SidebarNode['kind']>(['workspace', 'unplaced', 'tombstone', 'terminals', 'terminals-workspace', 'group', 'ungrouped'])
 
 // defaultExpanded opens every group and every agent that has children; the
 // first paint of either view starts fully open.
@@ -15,7 +15,7 @@ export function defaultExpanded(nodes: Map<string, SidebarNode>) {
 // label that first appears on a later board opens once and then keeps
 // whatever the operator set.
 export function managerItems(nodes: Map<string, SidebarNode>) {
-  return [...nodes.values()].filter((node) => (node.kind === 'agent' || node.kind === 'tombstone' || node.kind === 'unknown-manager' || node.kind === 'group' || node.kind === 'ungrouped') && node.children.length > 0).map((node) => node.id)
+  return [...nodes.values()].filter((node) => (node.kind === 'agent' || node.kind === 'tombstone' || node.kind === 'group' || node.kind === 'ungrouped') && node.children.length > 0).map((node) => node.id)
 }
 
 export type ExpansionState = {

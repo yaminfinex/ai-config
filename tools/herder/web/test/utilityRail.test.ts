@@ -33,6 +33,8 @@ test('the utility rail stays hand-rolled and status toggles stay in permanent sh
   assert.doesNotMatch(rail, /dockview/i)
   assert.match(rail, /RailStatusToggle/)
   assert.doesNotMatch(rail, /rail-toggle-collapsed/)
+  assert.doesNotMatch(rail, /\bdetail\b/)
+  assert.doesNotMatch(app, /herdr truth/)
   assert.match(app, /<UtilityRail[\s\S]*side="left"[\s\S]*<section className="shell-main">[\s\S]*<UtilityRail[\s\S]*side="right"/)
   assert.match(app, /workspace-switcher-slot[\s\S]*side="left"[\s\S]*side="right"/)
   assert.doesNotMatch(controller, /toggleNotesRail[\s\S]{0,300}(?:pushState|replaceState|updateHistory)/)

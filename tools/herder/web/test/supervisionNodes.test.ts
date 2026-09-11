@@ -8,8 +8,8 @@ function agent(name: string, extra: Partial<Row> & { pane_id?: string }): Row {
   return { pane_id: extra.pane_id ?? '-', agent: name, tool: 'claude', herdr_status: extra.pane_id ? 'unknown' : '-', bus_status: 'listening', gap: extra.pane_id ? '-' : 'no visible pane', ...extra }
 }
 
-// Shaped like today's live board: operator roots ziru/vara/riko, riko's
-// seats, kele and mesa under an ENDED hamo, lubo unadopted, a Task subagent
+// Shaped like today's live board: human roots ziru/vara/riko, riko's
+// seats, kele and mesa under an ENDED hamo, lubo with an unknown manager, a Task subagent
 // under tume, and one terminal pane.
 function liveShapedBoard(): Board {
   const panes: Pane[] = [
@@ -38,12 +38,14 @@ function liveShapedBoard(): Board {
   }
 }
 
-test('supervision tree groups by manager: operator roots, creation order, tombstone, unadopted, terminals', () => {
+test('supervision tree has flat human and unknown roots in creation order, then terminals', () => {
   const nodes = buildSupervisionNodes(liveShapedBoard())
-  assert.deepEqual(nodes.get('tree-root')?.children, ['operator', 'unadopted', 'terminals'])
-  // Roots in roster creation order (riko, vara, ziru), not pane order or status; the ended manager's tombstone last.
-  assert.deepEqual(nodes.get('operator')?.children, ['agent:riko', 'agent:vara', 'agent:ziru', 'tombstone:orch-hamo'])
-  assert.equal(nodes.get('operator')?.kind, 'operator')
+  // Roots and tombstones share roster creation order; status is never a sort key. Terminals stays last.
+  assert.deepEqual(nodes.get('tree-root')?.children, [
+    'tombstone:orch-hamo', 'agent:riko', 'agent:vara', 'agent:ziru',
+    'agent:grill-confirm-lubo', 'agent:impl-pono', 'terminals',
+  ])
+  assert.equal([...nodes.values()].some((node) => node.kind === 'operator' || node.kind === 'unadopted'), false)
   // riko's reports by creation order: nego (unplaced) before beri before tume; beri is active but does not jump ahead.
   assert.deepEqual(nodes.get('agent:riko')?.children, ['agent:durlog-grill-nego', 'agent:corestack-review-beri', 'agent:grill-confirm-tume'])
   // A Task subagent nests under its parent_agent, not its manager group.
@@ -55,10 +57,11 @@ test('supervision tree groups by manager: operator roots, creation order, tombst
   assert.equal(tombstone?.name, 'orch-hamo')
   assert.equal(tombstone?.secondary, 'ended')
   assert.deepEqual(tombstone?.children, ['agent:sesh-kele', 'agent:sesh-mesa'])
-  // Unadopted: lubo (no manager) then pono under its unresolvable manager group.
-  assert.deepEqual(nodes.get('unadopted')?.children, ['agent:grill-confirm-lubo', 'unknown:fimu'])
-  assert.equal(nodes.get('unknown:fimu')?.kind, 'unknown-manager')
-  assert.deepEqual(nodes.get('unknown:fimu')?.children, ['agent:impl-pono'])
+  // Unknown rows are top-level agent rows, not synthetic manager groups, and carry the Adopt hook.
+  assert.equal(nodes.get('agent:grill-confirm-lubo')?.marker, 'unknown-manager')
+  assert.equal(nodes.get('agent:impl-pono')?.marker, 'unknown-manager')
+  assert.equal(nodes.has('unknown:fimu'), false)
+  assert.equal(nodes.get('agent:riko')?.marker, undefined)
   // Terminals grouped by workspace; the pane keeps its placement id and kind.
   assert.deepEqual(nodes.get('terminals')?.children, ['terminals:w1'])
   assert.deepEqual(nodes.get('terminals:w1')?.children, ['pane:w94:p1'])
@@ -89,10 +92,9 @@ test('a collapsed manager subtree reads as its recursive report total', () => {
   const nodes = buildSupervisionNodes(liveShapedBoard())
   assert.equal(collapsedLabel(nodes.get('agent:riko')!), 'riko (4)')
   assert.equal(collapsedLabel(nodes.get('agent:vara')!), 'vara')
-  assert.equal(collapsedLabel(nodes.get('operator')!), 'you (9 · 2 active)')
 })
 
-test('collapsing keeps identity and state text: tombstone "name · ended", titled bus name, unknown group', () => {
+test('collapsing keeps identity and state text for tombstones and titled agents', () => {
   const nodes = buildSupervisionNodes(liveShapedBoard())
   const tombstone = nodes.get('tombstone:orch-hamo')!
   assert.equal(expandedLabel(tombstone), 'orch-hamo · ended')
@@ -100,22 +102,32 @@ test('collapsing keeps identity and state text: tombstone "name · ended", title
   const tume = nodes.get('agent:grill-confirm-tume')!
   assert.equal(expandedLabel(tume), 'grill confirm · grill-confirm-tume')
   assert.equal(collapsedLabel(tume), 'grill confirm · grill-confirm-tume (1)')
-  const fimu = nodes.get('unknown:fimu')!
-  assert.equal(expandedLabel(fimu), 'fimu · unknown')
-  assert.equal(collapsedLabel(fimu), 'fimu · unknown (1 · 1 active)')
 })
 
-test('a live manager never becomes a tombstone and an unknown manager never joins the operator', () => {
+test('a live manager never becomes a tombstone and unknown managers stay at top level', () => {
   const board = liveShapedBoard()
   const nodes = buildSupervisionNodes(board)
   assert.equal(nodes.has('tombstone:riko'), false)
-  assert.equal(nodes.get('operator')?.children.includes('agent:grill-confirm-lubo'), false)
-  assert.equal(nodes.get('operator')?.children.includes('agent:impl-pono'), false)
+  assert.equal(nodes.get('tree-root')?.children.includes('agent:grill-confirm-lubo'), true)
+  assert.equal(nodes.get('tree-root')?.children.includes('agent:impl-pono'), true)
 })
 
-test('empty board yields the three empty groups', () => {
+test('empty board yields terminals only', () => {
   const nodes = buildSupervisionNodes({ workspaces: [], unplaced: [] })
-  assert.deepEqual(nodes.get('tree-root')?.children, ['operator', 'unadopted', 'terminals'])
-  assert.deepEqual(nodes.get('operator')?.children, [])
+  assert.deepEqual(nodes.get('tree-root')?.children, ['terminals'])
   assert.equal(buildSupervisionNodes(undefined).size, 1)
+})
+
+test('root creation ties break by agent name', () => {
+  const tied = ['zulu', 'alpha'].map((name) => agent(name, { manager_state: 'unknown', created_at: '2026-09-10T08:00:00Z' }))
+  const nodes = buildSupervisionNodes({ workspaces: [], unplaced: tied })
+  assert.deepEqual(nodes.get('tree-root')?.children, ['agent:alpha', 'agent:zulu', 'terminals'])
+})
+
+test('unknown roots use creation order before name', () => {
+  const nodes = buildSupervisionNodes({ workspaces: [], unplaced: [
+    agent('zulu', { manager_state: 'unknown', created_at: '2026-09-10T08:00:00Z' }),
+    agent('alpha', { manager_state: 'unknown', created_at: '2026-09-10T09:00:00Z' }),
+  ] })
+  assert.deepEqual(nodes.get('tree-root')?.children, ['agent:zulu', 'agent:alpha', 'terminals'])
 })
