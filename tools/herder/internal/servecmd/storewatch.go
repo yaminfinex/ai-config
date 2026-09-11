@@ -9,7 +9,7 @@ import (
 )
 
 // startStoreWatch watches the agent store's journal (events.jsonl) so a store
-// append — a spawn's register, a future reparent — refolds the shared
+// append — a spawn's register or an assignment — refolds the shared
 // projection within the file-watch debounce instead of waiting for the poll.
 // Started once per process by startStoreProjection (projection.go), never
 // per SSE connection. The directory is watched (the journal is appended in

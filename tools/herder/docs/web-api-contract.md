@@ -153,6 +153,7 @@ GET `/api/fleet`
     `ended` (the store holds a record for the manager that is closed or no
     longer on the roster), `operator`, or `unknown` (no manager, a name with
     neither a live roster row nor a store record, or an ambiguous base name).
+  - `group` — the current assignment group from the agent store, when set.
   - `title` — the annotation title from the agent store, when one is set.
   - `created_at` — hcom's roster creation time for the row, RFC3339 UTC.
   - `context_used` — used tokens from the serve's in-process observer. It is
@@ -1110,6 +1111,21 @@ POST `/api/agents/{bus-name}/annotation`
   titles return 400. Missing attribution or a sender collision returns 409;
   unavailable identity or agent-store substrate and every append failure
   return 502.
+
+POST `/api/agents/{bus-name}/assignment`
+  Body: `{"manager":"<live bus-name>|human","group":"<name>"}`; either
+  field may be omitted, but at least one is required. Values are trimmed. An
+  empty group clears it; a non-empty group is limited to 80 Unicode code
+  points. A manager cannot be the target itself and must be `human` or an
+  exact live roster name: unknown and tombstone manager targets return 400.
+  The target agent itself must be live (404 unknown, 409 retired). Success
+  appends exactly one `assign` event with the server-derived `by`,
+  `by_kind: web`, and returns
+  `{"name":"<bus-name>","manager":"<set-or-empty>","group":"<set-or-empty>","by":"<web-sender>"}`.
+  The next ordinary fleet frame carries the new manager/group; `human` folds
+  to `manager_state: operator`. The client does not update optimistically.
+  Invalid input returns 400, missing attribution or collision 409, and
+  unavailable identity/store or append failure 502.
 
 POST `/api/spawn`
   Body: `{"tool": "claude" | "codex", "model": "<optional>",

@@ -113,7 +113,7 @@ Usage:
 Rows are joined only by an exact pane ID. A bus agent without a visible pane
 and a visible agent pane without a bus row are shown explicitly as gaps.
 
-LAUNCHER, MANAGER and BINDING come from the agent store. MODEL and CONTEXT come
+LAUNCHER, MANAGER, GROUP and BINDING come from the agent store. MODEL and CONTEXT come
 from a running herder serve's cache over its local socket when one answers,
 else from each current session transcript; CONTEXT is used/window
 and percent used. Missing live vitals print "-".
@@ -133,13 +133,11 @@ func Join(snapshot herdrcli.Snapshot, roster []hcomidentity.Row) []Row {
 
 func writeTable(out io.Writer, rows []Row, vitals map[string]claudesession.Vitals) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "PANE\tAGENT\tTOOL\tHERDR\tBUS\tLAUNCHER\tMANAGER\tBINDING\tMODEL\tCONTEXT\tGAP")
+	fmt.Fprintln(w, "PANE\tAGENT\tTOOL\tHERDR\tBUS\tLAUNCHER\tMANAGER\tGROUP\tBINDING\tMODEL\tCONTEXT\tGAP")
 	for _, row := range rows {
-		// Row.Mission is folded but not printed: the mission model is not specced
-		// yet (owner ruling 2026-09-09); unit 6 switches the column on.
 		rowVitals := vitals[row.Agent]
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			row.Pane, row.Agent, row.Tool, row.HerdrStatus, row.BusStatus, orDash(row.Launcher), orDash(row.Manager), bindingLabel(row.Binding), orDash(rowVitals.Model), contextLabel(rowVitals.ContextUsage), row.Gap)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			row.Pane, row.Agent, row.Tool, row.HerdrStatus, row.BusStatus, orDash(row.Launcher), orDash(row.Manager), orDash(row.Group), bindingLabel(row.Binding), orDash(rowVitals.Model), contextLabel(rowVitals.ContextUsage), row.Gap)
 	}
 	_ = w.Flush()
 }

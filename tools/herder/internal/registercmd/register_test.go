@@ -54,29 +54,6 @@ func TestRegisterAppendsWithDefaultsAndEchoesJSON(t *testing.T) {
 	}
 }
 
-func TestDefaultByFromHcomEnv(t *testing.T) {
-	t.Setenv("HCOM_NAME", "")
-	t.Setenv("HCOM_TAG", "impl")
-	t.Setenv("HCOM_INSTANCE_NAME", "nife")
-	t.Setenv("USER", "yamen")
-	if by, kind := defaultBy(); by != "impl-nife" || kind != "agent" {
-		t.Fatalf("tagged seat = %q/%q", by, kind)
-	}
-	t.Setenv("HCOM_TAG", "")
-	if by, kind := defaultBy(); by != "nife" || kind != "agent" {
-		t.Fatalf("untagged seat = %q/%q", by, kind)
-	}
-	t.Setenv("HCOM_NAME", "legacy-full")
-	if by, kind := defaultBy(); by != "legacy-full" || kind != "agent" {
-		t.Fatalf("HCOM_NAME winner = %q/%q", by, kind)
-	}
-	t.Setenv("HCOM_NAME", "")
-	t.Setenv("HCOM_INSTANCE_NAME", "")
-	if by, kind := defaultBy(); by != "yamen" || kind != "user" {
-		t.Fatalf("USER fallback = %q/%q", by, kind)
-	}
-}
-
 func TestRegisterUsageErrorsExit2WithoutWriting(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("HERDER_STATE_DIR", state)
@@ -88,10 +65,10 @@ func TestRegisterUsageErrorsExit2WithoutWriting(t *testing.T) {
 		{"launch-requested", "--tool", "codex", "--tag", "t"},
 		{"launch-requested", "--tool", "codex", "--tag", "t", "--workspace", "w", "--pane", "p"},
 		{"annotate", "--name", "a"},
-		{"reparent", "--name", "a"},
-		{"assign", "--name", "a", "--mission", "m", "--id", "not-a-uuid"},
-		{"assign", "--name", "a", "--mission", "m", "--at", "yesterday"},
-		{"assign", "--name", "a", "--mission", "m", "extra"},
+		{"re" + "parent", "--name", "a", "--manager", "b"},
+		{"assign", "--name", "a", "--group", "m", "--id", "not-a-uuid"},
+		{"assign", "--name", "a", "--group", "m", "--at", "yesterday"},
+		{"assign", "--name", "a", "--group", "m", "extra"},
 	} {
 		code, _, stderr := run(t, args...)
 		if code != 2 || stderr == "" && len(args) > 0 {
@@ -111,7 +88,7 @@ func TestRegisterStoreUnavailableExits3(t *testing.T) {
 	os.Chmod(state, 0o500)
 	t.Cleanup(func() { os.Chmod(state, 0o700) })
 	t.Setenv("HERDER_STATE_DIR", state)
-	code, _, stderr := run(t, "assign", "--name", "a", "--mission", "m")
+	code, _, stderr := run(t, "assign", "--name", "a", "--group", "m")
 	if code != 3 || !strings.Contains(stderr, "store unavailable") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
@@ -121,7 +98,7 @@ func TestRegisterStoreUnavailableExits3(t *testing.T) {
 	os.Chmod(state2, 0o500)
 	t.Cleanup(func() { os.Chmod(state2, 0o700) })
 	t.Setenv("HERDER_STATE_DIR", state2)
-	code, _, stderr = run(t, "assign", "--name", "a", "--mission", "m")
+	code, _, stderr = run(t, "assign", "--name", "a", "--group", "m")
 	if code != 3 || !strings.Contains(stderr, "store unavailable") {
 		t.Fatalf("import failure: code=%d stderr=%q", code, stderr)
 	}

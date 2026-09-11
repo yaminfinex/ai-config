@@ -25,8 +25,8 @@ func seed(t *testing.T) string {
 	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
 	for _, e := range []agentstore.Event{
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", ByKind: "agent", Name: "impl-gime", Tool: "codex", Pane: "w80:p1", Session: "claimed-S"},
-		{ID: agentstore.NewID(at), At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "impl-gime", Mission: "fleet-refit", Thread: "agent-store"},
-		{ID: agentstore.NewID(at), At: at.Add(2 * time.Second), Kind: agentstore.KindReparent, By: "bigboss", Name: "impl-gime", Manager: "vara"},
+		{ID: agentstore.NewID(at), At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "impl-gime", Group: "fleet-refit"},
+		{ID: agentstore.NewID(at), At: at.Add(2 * time.Second), Kind: agentstore.KindAssign, By: "bigboss", Name: "impl-gime", Manager: "vara"},
 	} {
 		if _, err := s.Append(e); err != nil {
 			t.Fatal(err)
@@ -56,7 +56,7 @@ func seedStaleSnapshot(t *testing.T) (string, string, []byte, time.Time) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Append(agentstore.Event{ID: agentstore.NewID(at.Add(time.Second)), At: at.Add(time.Second), Kind: agentstore.KindReparent, By: "ziru", Name: "mavu", Manager: "vara"}); err != nil {
+	if _, err := s.Append(agentstore.Event{ID: agentstore.NewID(at.Add(time.Second)), At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Manager: "vara"}); err != nil {
 		t.Fatal(err)
 	}
 	return state, path, before, info.ModTime()
@@ -169,7 +169,7 @@ func TestShowTextAndJSONFoldRosterConflict(t *testing.T) {
 	if code := run([]string{"impl-gime"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 {
 		t.Fatalf("code=%d stderr=%q", code, errBuf.String())
 	}
-	for _, want := range []string{"launcher         ziru", "manager          vara", "mission          fleet-refit", "binding          conflict {claimed: claimed-S, roster: roster-S-prime}", "session          roster-S-prime", "vitals:", "model            gpt-5.6-sol", "context_used     82k tokens", "context_window   258k tokens", "context_percent  32% used", "observed_at      2026-09-10T12:34:56Z", "session_file     /tmp/invented-session.jsonl", "incarnation      2026-09-09T04:59:00Z", "reparent", "events (last 3 of 3)"} {
+	for _, want := range []string{"launcher         ziru", "manager          vara", "group            fleet-refit", "binding          conflict {claimed: claimed-S, roster: roster-S-prime}", "session          roster-S-prime", "vitals:", "model            gpt-5.6-sol", "context_used     82k tokens", "context_window   258k tokens", "context_percent  32% used", "observed_at      2026-09-10T12:34:56Z", "session_file     /tmp/invented-session.jsonl", "incarnation      2026-09-09T04:59:00Z", "assign", "events (last 3 of 3)"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("text lacks %q:\n%s", want, out.String())
 		}
@@ -177,6 +177,9 @@ func TestShowTextAndJSONFoldRosterConflict(t *testing.T) {
 	out.Reset()
 	if code := run([]string{"--json", "impl-gime"}, &out, &errBuf, deps); code != 0 {
 		t.Fatalf("json code=%d", code)
+	}
+	if strings.Contains(out.String(), "assignment_at") || strings.Contains(out.String(), `"assignment":null`) {
+		t.Fatalf("json carries orphan assignment state: %s", out.String())
 	}
 	var view agentstore.AgentView
 	if err := json.Unmarshal(out.Bytes(), &view); err != nil {

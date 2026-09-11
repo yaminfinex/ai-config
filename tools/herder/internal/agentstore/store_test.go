@@ -130,10 +130,10 @@ func TestFiftyRealRegisterProcessesAppendAtomically(t *testing.T) {
 
 func TestReplayingAnIDReturnsSameReceiptAndNoSecondLine(t *testing.T) {
 	state, s := scratch(t)
-	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Mission = "fleet-refit" })
+	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Group = "fleet-refit" })
 	first := mustAppend(t, s, e)
 	second := mustAppend(t, s, e)
-	if !second.Replayed || second.Offset != first.Offset || second.Event.Mission != "fleet-refit" {
+	if !second.Replayed || second.Offset != first.Offset || second.Event.Group != "fleet-refit" {
 		t.Fatalf("replay receipt = %#v, first = %#v", second, first)
 	}
 	if n := len(lines(t, filepath.Join(state, "agents", "events.jsonl"))); n != 1 {
@@ -164,13 +164,13 @@ func TestSnapshotPlusTailEqualsFullReplayByteForByte(t *testing.T) {
 	})
 	mustAppend(t, s, req)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 2, func(e *Event) { e.Request, e.Pane, e.Session, e.Batch = req.ID, "w80:p1", "s-1", "b1" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Mission = "fleet-refit" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Group = "fleet-refit" }))
 	snap, err := s.Load() // writes snapshot at offset after 3 events
 	if err != nil || snap.SnapshotErr != nil {
 		t.Fatalf("load: %v snapshotErr %v", err, snap.SnapshotErr)
 	}
 	s.replays.Store(0)
-	mustAppend(t, s, ev(KindReparent, "impl-gime", 4, func(e *Event) { e.Manager = "vara" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 4, func(e *Event) { e.Manager = "vara" }))
 	mustAppend(t, s, ev(KindCulled, "impl-gime", 5, func(e *Event) { e.Pane, e.Close = "w80:p1", "managed" }))
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 6, func(e *Event) { e.Tool = "claude" }))
 	tail, err := s.LoadNoSnapshot()
@@ -275,11 +275,11 @@ func TestViewForRosterOverlaysUniqueBaseRecord(t *testing.T) {
 		}
 	})
 
-	t.Run("later full-name reparent wins", func(t *testing.T) {
+	t.Run("later full-name assignment wins", func(t *testing.T) {
 		projection := NewProjection()
 		projection.Apply(base, 0)
 		projection.Apply(annotate, 0)
-		projection.Apply(Event{ID: NewID(at(4)), At: at(4), Kind: KindReparent, By: "ziru", ByKind: "agent", Name: "sesh-mesa", Manager: "new-manager"}, 0)
+		projection.Apply(Event{ID: NewID(at(4)), At: at(4), Kind: KindAssign, By: "ziru", ByKind: "agent", Name: "sesh-mesa", Manager: "new-manager"}, 0)
 		view := projection.ViewForRoster(&row, []hcomidentity.Row{row})
 		if view == nil || view.Manager != "new-manager" || view.ManagerBy != "ziru" || view.ManagerAt == nil || !view.ManagerAt.Equal(at(4)) {
 			t.Fatalf("full-name manager lost: %+v", view)
@@ -344,7 +344,7 @@ func TestAliasWindowEndLeavesLaterMirrorRecordSeparate(t *testing.T) {
 	}
 }
 
-func TestAliasPreservesExplicitReparent(t *testing.T) {
+func TestAliasPreservesExplicitAssignment(t *testing.T) {
 	state, s := scratch(t)
 	fixture, err := os.ReadFile("testdata/live-alias-nife.jsonl")
 	if err != nil {
@@ -356,11 +356,11 @@ func TestAliasPreservesExplicitReparent(t *testing.T) {
 	if err := os.WriteFile(s.EventsPath(), fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	reparentAt := time.Date(2026, 9, 10, 5, 28, 0, 0, time.UTC)
-	mustAppend(t, s, Event{ID: NewID(reparentAt), At: reparentAt, Kind: KindReparent, By: "ziru", ByKind: "agent", Name: "impl-nife", Manager: "vara"})
+	assignmentAt := time.Date(2026, 9, 10, 5, 28, 0, 0, time.UTC)
+	mustAppend(t, s, Event{ID: NewID(assignmentAt), At: assignmentAt, Kind: KindAssign, By: "ziru", ByKind: "agent", Name: "impl-nife", Manager: "vara"})
 	projection, err := s.Replay()
 	if err != nil || projection.Latest("impl-nife").Manager != "vara" {
-		t.Fatalf("reparent lost during alias repair: err=%v view=%+v", err, projection.Latest("impl-nife"))
+		t.Fatalf("assignment lost during alias repair: err=%v view=%+v", err, projection.Latest("impl-nife"))
 	}
 }
 
@@ -387,13 +387,32 @@ func TestOldProjectionVersionForcesReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Pin the immediately previous version so every fold change requires a bump.
-	raw := fmt.Sprintf(`{"version":2,"events_offset":%d,"agents":{"stale":[]},"requests":{},"unnamed_sessions":{}}`, stat.Size())
+	raw := fmt.Sprintf(`{"version":%d,"events_offset":%d,"agents":{"stale":[]},"requests":{},"unnamed_sessions":{}}`, ProjectionVersion-1, stat.Size())
 	if err := os.WriteFile(s.SnapshotPath(), []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	projection, err := s.LoadNoSnapshot()
 	if err != nil || projection.Latest("real") == nil || projection.Latest("stale") != nil {
 		t.Fatalf("old snapshot was trusted: err=%v names=%v", err, projection.Names())
+	}
+}
+
+func TestAssignmentGroupUsesEventTimeOrder(t *testing.T) {
+	projection := NewProjection()
+	projection.Apply(ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "new" }), 0)
+	projection.Apply(ev(KindAssign, "impl-gime", 1, func(e *Event) { e.ClearGroup = true }), 0)
+	view := projection.Latest("impl-gime")
+	if view == nil || view.Assignment == nil || view.Assignment.Group != "new" || !view.Assignment.At.Equal(at(2)) {
+		t.Fatalf("backdated clear changed assignment: %+v", view)
+	}
+	projection.Apply(ev(KindAssign, "impl-gime", 3, func(e *Event) { e.ClearGroup = true }), 0)
+	view = projection.Latest("impl-gime")
+	if view.Assignment == nil || view.Assignment.Group != "" || view.Assignment.By == "" || !view.Assignment.At.Equal(at(3)) {
+		t.Fatalf("later clear did not win: %+v", view)
+	}
+	projection.Apply(ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "stale" }), 0)
+	if view = projection.Latest("impl-gime"); view.Assignment == nil || view.Assignment.Group != "" || !view.Assignment.At.Equal(at(3)) {
+		t.Fatalf("backdated group revived cleared assignment: %+v", view)
 	}
 }
 
@@ -433,8 +452,8 @@ func TestAnnotateTitleValidation(t *testing.T) {
 func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Pane = "w80:p1"; e.Tool = "codex" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Mission = "old-mission" }))
-	mustAppend(t, s, ev(KindReparent, "impl-gime", 3, func(e *Event) { e.Manager = "old-manager" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "old-mission" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Manager = "old-manager" }))
 	mustAppend(t, s, ev(KindCulled, "impl-gime", 4, func(e *Event) { e.Pane, e.Close = "w80:p1", "managed" }))
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 10, func(e *Event) { e.By = "vara"; e.Pane = "w81:p1" }))
 	proj, err := s.Replay()
@@ -444,7 +463,7 @@ func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 	old := proj.View("impl-gime", &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(0)})
 	fresh := proj.View("impl-gime", &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(9)})
 	latest := proj.View("impl-gime", &hcomidentity.Row{Name: "impl-gime"})
-	if old == nil || old.Assignment == nil || old.Assignment.Mission != "old-mission" || old.Manager != "old-manager" || old.Closed == nil {
+	if old == nil || old.Assignment == nil || old.Assignment.Group != "old-mission" || old.Manager != "old-manager" || old.Closed == nil {
 		t.Fatalf("old incarnation = %+v", old)
 	}
 	if fresh == nil || fresh.Assignment != nil || fresh.Manager != "vara" || fresh.Provenance.Launcher != "vara" || fresh.Closed != nil || !fresh.Incarnation.Equal(at(9)) {
@@ -461,13 +480,29 @@ func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 	}
 }
 
+func TestResumeKeepsManagerGroupAndTitleInTheSameIncarnation(t *testing.T) {
+	_, store := scratch(t)
+	mustAppend(t, store, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "session-a" }))
+	mustAppend(t, store, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Group = "ziru", "fleet-refit" }))
+	mustAppend(t, store, ev(KindAnnotate, "impl-gime", 3, func(e *Event) { e.Title = "payload builder" }))
+	mustAppend(t, store, ev(KindResume, "impl-gime", 4, func(e *Event) { e.FromSession, e.Pane = "session-a", "w80:p2" }))
+	projection, err := store.Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := projection.Latest("impl-gime")
+	if view == nil || view.Manager != "ziru" || view.Assignment == nil || view.Assignment.Group != "fleet-refit" || view.Annotation == nil || view.Annotation.Title != "payload builder" || view.Provenance.Pane != "w80:p2" {
+		t.Fatalf("resume dropped supervision metadata: %+v", view)
+	}
+}
+
 func TestReusedNameWithoutACloseEventInheritsNothing(t *testing.T) {
 	// Raw `hcom kill`, a crash or a missed wrapper leaves no culled event.
 	// Roster creation after the record's first event is the newer evidence.
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "old-S" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Mission = "old-mission" }))
-	mustAppend(t, s, ev(KindReparent, "impl-gime", 3, func(e *Event) { e.Manager = "old-manager" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "old-mission" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Manager = "old-manager" }))
 	proj, _ := s.Replay()
 	later := &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(10), SessionID: "new-S"}
 	if v := proj.View("impl-gime", later); v != nil {
@@ -485,10 +520,10 @@ func TestReusedNameWithoutACloseEventInheritsNothing(t *testing.T) {
 
 func TestSameIDWithDifferentPayloadIsRejectedNotReplayed(t *testing.T) {
 	state, s := scratch(t)
-	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Mission = "fleet-refit" })
+	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Group = "fleet-refit" })
 	mustAppend(t, s, e)
 	changed := e
-	changed.Mission = "corrected"
+	changed.Group = "corrected"
 	_, err := s.Append(changed)
 	if err == nil || errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "already has a different payload") {
 		t.Fatalf("err = %v", err)
@@ -497,7 +532,7 @@ func TestSameIDWithDifferentPayloadIsRejectedNotReplayed(t *testing.T) {
 		t.Fatalf("lines = %d, want 1", n)
 	}
 	// CLI: exit 2, no line, original retained.
-	cmd := exec.Command(herderBin, "register", "assign", "--name", "impl-lima", "--mission", "corrected", "--id", e.ID)
+	cmd := exec.Command(herderBin, "register", "assign", "--name", "impl-lima", "--group", "corrected", "--id", e.ID)
 	cmd.Env = append(os.Environ(), "HERDER_STATE_DIR="+state)
 	out, cliErr := cmd.CombinedOutput()
 	exit, ok := cliErr.(*exec.ExitError)
@@ -505,7 +540,7 @@ func TestSameIDWithDifferentPayloadIsRejectedNotReplayed(t *testing.T) {
 		t.Fatalf("cli: err=%v out=%s", cliErr, out)
 	}
 	proj, _ := s.Replay()
-	if proj.Latest("impl-lima").Assignment.Mission != "fleet-refit" || len(lines(t, s.EventsPath())) != 1 {
+	if proj.Latest("impl-lima").Assignment.Group != "fleet-refit" || len(lines(t, s.EventsPath())) != 1 {
 		t.Fatal("conflicting payload changed the store")
 	}
 }
@@ -519,7 +554,10 @@ func TestPackageAppendEnforcesTheCLIContract(t *testing.T) {
 		"two placement targets":     ev(KindLaunchRequested, "", 1, func(e *Event) { e.Tool, e.Tag = "claude", "t"; e.Placement = &Placement{Workspace: "w", Pane: "p"} }),
 		"culled without pane":       ev(KindCulled, "a", 1, func(e *Event) { e.Close = "managed" }),
 		"annotate with manager":     ev(KindAnnotate, "a", 1, func(e *Event) { e.Title, e.Manager = "t", "m" }),
-		"invalid by_kind":           ev(KindAssign, "a", 1, func(e *Event) { e.Mission, e.ByKind = "m", "browser" }),
+		"invalid by_kind":           ev(KindAssign, "a", 1, func(e *Event) { e.Group, e.ByKind = "m", "browser" }),
+		"empty assignment":          ev(KindAssign, "a", 1),
+		"group and clear":           ev(KindAssign, "a", 1, func(e *Event) { e.Group, e.ClearGroup = "m", true }),
+		"long group":                ev(KindAssign, "a", 1, func(e *Event) { e.Group = strings.Repeat("界", 81) }),
 		"negative steer_chars":      ev(KindCompactRequested, "a", 1, func(e *Event) { e.SteerChars = &steer }),
 		"top-level pane on request": ev(KindLaunchRequested, "", 1, func(e *Event) { e.Tool, e.Tag, e.Pane = "claude", "t", "p" }),
 	} {
@@ -633,11 +671,11 @@ func TestSessionEndedClosesTheNamedSessionOnly(t *testing.T) {
 	}
 }
 
-func TestOlderReparentArrivingLateDoesNotOverwriteNewerManager(t *testing.T) {
+func TestOlderAssignmentArrivingLateDoesNotOverwriteNewerManager(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "a", 1))
-	mustAppend(t, s, ev(KindReparent, "a", 5, func(e *Event) { e.Manager = "newer" }))
-	mustAppend(t, s, ev(KindReparent, "a", 3, func(e *Event) { e.Manager = "older-arrived-late" }))
+	mustAppend(t, s, ev(KindAssign, "a", 5, func(e *Event) { e.Manager = "newer" }))
+	mustAppend(t, s, ev(KindAssign, "a", 3, func(e *Event) { e.Manager = "older-arrived-late" }))
 	proj, _ := s.Replay()
 	if v := proj.Latest("a"); v.Manager != "newer" || v.EventCount != 3 {
 		t.Fatalf("manager = %q events %d", v.Manager, v.EventCount)
@@ -653,14 +691,14 @@ func TestRegisteredReadySupersedesMirrorAttribution(t *testing.T) {
 	if v.Provenance.Kind != "registered" || v.Provenance.Launcher != "web-owner" || v.Provenance.LauncherKind != "web" || v.Manager != "web-owner" {
 		t.Fatalf("view = %+v", v.Provenance)
 	}
-	// An explicit reparent before the registered ready is kept.
+	// An explicit assignment before the registered ready is kept.
 	_, s2 := scratch(t)
 	mustAppend(t, s2, ev(KindMirrorCreated, "b", 1, func(e *Event) { e.By, e.ByKind = "unknown", "mirror" }))
-	mustAppend(t, s2, ev(KindReparent, "b", 2, func(e *Event) { e.Manager = "vara" }))
+	mustAppend(t, s2, ev(KindAssign, "b", 2, func(e *Event) { e.Manager = "vara" }))
 	mustAppend(t, s2, ev(KindLaunchReady, "b", 3, func(e *Event) { e.By = "ziru" }))
 	proj, _ = s2.Replay()
 	if v := proj.Latest("b"); v.Provenance.Launcher != "ziru" || v.Manager != "vara" {
-		t.Fatalf("explicit reparent lost: launcher=%q manager=%q", v.Provenance.Launcher, v.Manager)
+		t.Fatalf("explicit assignment lost: launcher=%q manager=%q", v.Provenance.Launcher, v.Manager)
 	}
 	// A later mirror never demotes a registered launcher.
 	mustAppend(t, s, ev(KindMirrorReady, "a", 3, func(e *Event) { e.By, e.ByKind = "user", "mirror" }))
@@ -703,7 +741,7 @@ func TestBindingConflictKeepsRosterSessionCurrent(t *testing.T) {
 	}
 }
 
-func TestReparentChangesManagerNotLauncher(t *testing.T) {
+func TestAssignmentChangesManagerNotLauncher(t *testing.T) {
 	_, s := scratch(t)
 	req := ev(KindLaunchRequested, "", 1, func(e *Event) { e.Tool, e.Tag = "claude", "impl"; e.Placement = &Placement{Pane: "w1:p1"} })
 	mustAppend(t, s, req)
@@ -711,13 +749,13 @@ func TestReparentChangesManagerNotLauncher(t *testing.T) {
 	proj, _ := s.Replay()
 	v := proj.Latest("impl-lima")
 	if v.Provenance.Launcher != "ziru" || v.Manager != "ziru" || v.Provenance.PaneRequested != "w1:p1" {
-		t.Fatalf("before reparent: %+v", v)
+		t.Fatalf("before assignment: %+v", v)
 	}
-	mustAppend(t, s, ev(KindReparent, "impl-lima", 3, func(e *Event) { e.Manager, e.By = "vara", "bigboss" }))
+	mustAppend(t, s, ev(KindAssign, "impl-lima", 3, func(e *Event) { e.Manager, e.By = "vara", "bigboss" }))
 	proj, _ = s.Replay()
 	v = proj.Latest("impl-lima")
 	if v.Provenance.Launcher != "ziru" || v.Manager != "vara" || v.ManagerBy != "bigboss" {
-		t.Fatalf("after reparent: launcher=%q manager=%q by=%q", v.Provenance.Launcher, v.Manager, v.ManagerBy)
+		t.Fatalf("after assignment: launcher=%q manager=%q by=%q", v.Provenance.Launcher, v.Manager, v.ManagerBy)
 	}
 }
 
@@ -805,7 +843,7 @@ func TestLockTimeoutIsBoundedAndExits3(t *testing.T) {
 
 func TestUnwritableSnapshotStillLoads(t *testing.T) {
 	state, s := scratch(t)
-	mustAppend(t, s, ev(KindAssign, "a", 1, func(e *Event) { e.Mission = "m" }))
+	mustAppend(t, s, ev(KindAssign, "a", 1, func(e *Event) { e.Group = "m" }))
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
@@ -815,7 +853,7 @@ func TestUnwritableSnapshotStillLoads(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 	proj, err := s.Load()
-	if err != nil || proj.SnapshotErr == nil || proj.Latest("a") == nil || proj.Latest("a").Assignment.Mission != "m" {
+	if err != nil || proj.SnapshotErr == nil || proj.Latest("a") == nil || proj.Latest("a").Assignment.Group != "m" {
 		t.Fatalf("load under read-only dir: err=%v snapshotErr=%v", err, proj.SnapshotErr)
 	}
 	if _, statErr := os.Stat(s.SnapshotPath()); statErr == nil {

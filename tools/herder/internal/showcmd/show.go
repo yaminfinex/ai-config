@@ -225,13 +225,10 @@ func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
 	}
 	if v.Assignment != nil {
 		a := v.Assignment
-		field("mission", a.Mission)
-		field("brief", a.Brief)
-		field("thread", a.Thread)
-		field("task", a.Task)
+		field("group", a.Group)
 		field("assigned", stamp(&a.At)+" by "+a.By)
 	} else {
-		field("mission", "")
+		field("group", "")
 	}
 	if v.Annotation != nil {
 		field("title", v.Annotation.Title)
@@ -327,7 +324,10 @@ func summary(e agentstore.Event) string {
 	add("session", e.Session)
 	add("reason", e.Reason)
 	add("from", e.FromName)
-	add("mission", e.Mission)
+	add("group", e.Group)
+	if e.ClearGroup {
+		parts = append(parts, "clear_group=true")
+	}
 	add("manager", e.Manager)
 	add("title", e.Title)
 	if e.Placement != nil {
