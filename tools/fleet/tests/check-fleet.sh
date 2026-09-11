@@ -83,7 +83,11 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
 fi
 case "$1 $2" in
   'tab create')
-    printf '%s\n' '{"result":{"tab":{"tab_id":"tab-left-behind"}}}'
+    if [[ ${FLEET_TEST_DEFAULT_PLACEMENT:-} == 1 ]]; then
+      printf '%s\n' '{"result":{"tab":{"tab_id":"tab-default"},"root_pane":{"pane_id":"p-default","cwd":"/tmp"}}}'
+    else
+      printf '%s\n' '{"result":{"tab":{"tab_id":"tab-left-behind"}}}'
+    fi
     ;;
   'pane get')
     if [[ ${FLEET_TEST_UNKNOWN_SPLIT:-} == 1 && ${3:-} == p-source ]]; then
@@ -95,7 +99,8 @@ case "$1 $2" in
     printf '%s\n' '{"result":{"pane":{"pane_id":"p-split","cwd":"/tmp"}}}'
     ;;
   'pane current')
-    printf '%s\n' '{"result":{"pane":{"pane_id":"p-self","cwd":"/tmp"}}}'
+    [[ ${FLEET_TEST_UNKNOWN_CURRENT:-} != 1 ]] || exit 1
+    printf '%s\n' '{"result":{"pane":{"pane_id":"p-self","workspace_id":"w-current","cwd":"/tmp"}}}'
     ;;
   'pane process-info')
     if [[ ${FLEET_TEST_PROCESS_SHAPE:-} == no-shell-pid ]]; then
@@ -195,6 +200,14 @@ case ${FLEET_TEST_REGISTER_MODE:-} in
   exit3) printf 'store unavailable\n' >&2; exit 3 ;;
   sleep) exec /bin/sleep 20 ;;
 esac
+if [[ ${1:-} == show && ${3:-} == --json ]]; then
+  if [[ ${FLEET_TEST_SHOW_MODE:-} == fail ]]; then
+    printf 'store unavailable\n' >&2
+    exit 3
+  fi
+  printf '%s\n' '{"name":"'"${2:-}"'","assignment":{"group":"'"${FLEET_TEST_PARENT_GROUP:-}"'"}}'
+  exit 0
+fi
 if [[ ${1:-} == register && ${2:-} == launch-requested ]]; then
   printf '%s\n' 'id=018f0000-0000-7000-8000-000000000001' 'request=018f0000-0000-7000-8000-000000000001'
 else
@@ -228,6 +241,122 @@ grep -F 'register launch-ready --request 018f0000-0000-7000-8000-000000000001 --
 pass "spawn pins placement, cwd, readiness, and Codex autonomy"
 
 : >"$FLEET_TEST_CALLS"
+env -u FLEET_LAUNCHER -u FLEET_LAUNCHER_KIND HCOM_PROCESS_ID=seat-test \
+  FLEET_TEST_SELF_MODE=name PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test --group '  builders  ' \
+  --title '  payload builder  ' >"$TEST_ROOT/spawn-group-title.out"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --group builders --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact explicit group assignment"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' register annotate --name gate-vava --title payload\ builder --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact title annotation"
+requested_line=$(grep -n 'herder .*register launch-requested' "$FLEET_TEST_CALLS" | cut -d: -f1)
+launch_line=$(grep -n 'hcom .* 1 codex' "$FLEET_TEST_CALLS" | cut -d: -f1)
+assign_line=$(grep -n 'herder .* assign gate-vava --group builders' "$FLEET_TEST_CALLS" | cut -d: -f1)
+annotate_line=$(grep -n 'herder .* register annotate --name gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
+ready_line=$(grep -n 'herder .*register launch-ready' "$FLEET_TEST_CALLS" | cut -d: -f1)
+[[ $requested_line -lt $launch_line && $launch_line -lt $assign_line && $assign_line -lt $annotate_line && $annotate_line -lt $ready_line ]] \
+  || fail "spawn group/title events are misordered"
+pass "spawn writes explicit group and title before launch-ready"
+
+: >"$FLEET_TEST_CALLS"
+HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_PARENT_GROUP=builders \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  >"$TEST_ROOT/spawn-inherited-group.out"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --group builders --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact inherited group assignment"
+[[ $(grep -c 'herder .* show impl-ziru --json' "$FLEET_TEST_CALLS") -eq 1 ]] \
+  || fail "spawn did not query its own group exactly once"
+pass "spawn inherits its launching agent's group once"
+
+: >"$FLEET_TEST_CALLS"
+HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_PARENT_GROUP=builders \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --group '' \
+  >"$TEST_ROOT/spawn-empty-group.out"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --group ' >/dev/null \
+  || fail "explicit empty group wrote an assignment"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' show impl-ziru --json' >/dev/null \
+  || fail "explicit empty group queried inheritance"
+pass "explicit empty group suppresses assignment and inheritance"
+
+: >"$FLEET_TEST_CALLS"
+env -u HCOM_PROCESS_ID -u FLEET_LAUNCHER -u FLEET_LAUNCHER_KIND HCOM_TAG=impl \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  >"$TEST_ROOT/spawn-human-group.out"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --group ' >/dev/null \
+  || fail "human launch wrote a group assignment"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' show ' >/dev/null \
+  || fail "human launch queried group inheritance"
+pass "human launch inherits and writes no group"
+
+: >"$FLEET_TEST_CALLS"
+env -u HCOM_TAG HCOM_PROCESS_ID=seat-test FLEET_TEST_SELF_MODE=name \
+  FLEET_TEST_PARENT_GROUP=builders \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  >"$TEST_ROOT/spawn-no-self-tag.out" 2>"$TEST_ROOT/spawn-no-self-tag.err"
+[[ $(grep -c 'herder .* show ziru --json' "$FLEET_TEST_CALLS") -eq 1 ]] \
+  || fail "untagged launcher did not query its own group exactly once"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --group builders --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "untagged launcher did not inherit its group"
+pass "untagged launcher inherits its group"
+
+: >"$FLEET_TEST_CALLS"
+HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_SHOW_MODE=fail \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  >"$TEST_ROOT/spawn-inherit-fail.out" 2>"$TEST_ROOT/spawn-inherit-fail.err"
+[[ $(grep -c 'fleet spawn: group inheritance skipped: store unavailable' "$TEST_ROOT/spawn-inherit-fail.err") -eq 1 ]] \
+  || fail "failed inheritance lookup did not warn exactly once"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --group ' >/dev/null \
+  || fail "failed inheritance lookup wrote a group"
+pass "failed group inheritance is warned and fail-open"
+
+for validation_case in group-long group-control title-empty title-long title-control; do
+  : >"$FLEET_TEST_CALLS"
+  validation_args=()
+  case $validation_case in
+    group-long) validation_args=(--group "$(printf 'g%.0s' {1..81})") ;;
+    group-control) validation_args=(--group $'bad\tgroup') ;;
+    title-empty) validation_args=(--title '   ') ;;
+    title-long) validation_args=(--title "$(printf 't%.0s' {1..81})") ;;
+    title-control) validation_args=(--title $'bad\ntitle') ;;
+  esac
+  set +e
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+    "${validation_args[@]}" >"$TEST_ROOT/validation-$validation_case.out" \
+    2>"$TEST_ROOT/validation-$validation_case.err"
+  validation_rc=$?
+  set -e
+  [[ $validation_rc -eq 2 ]] || fail "$validation_case validation did not exit 2"
+  ! grep -F 'hcom ' "$FLEET_TEST_CALLS" | grep -F ' 1 codex' >/dev/null \
+    || fail "$validation_case validation launched an agent"
+done
+pass "group and title validation refuse before launch"
+
+: >"$FLEET_TEST_CALLS"
+HERDR_WORKSPACE_ID=w-current FLEET_TEST_DEFAULT_PLACEMENT=1 PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate >"$TEST_ROOT/spawn-default-placement.out"
+grep -Fx 'herdr tab create --workspace w-current --no-focus' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "default placement did not create a tab in the caller workspace"
+grep -Fx 'placement=tab' "$TEST_ROOT/spawn-default-placement.out" >/dev/null \
+  || fail "default placement did not report a tab"
+! grep -F 'herdr pane current' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "default placement consulted the focused pane"
+pass "spawn defaults to a new tab in the caller workspace"
+
+: >"$FLEET_TEST_CALLS"
+set +e
+env -u HERDR_WORKSPACE_ID PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate >"$TEST_ROOT/spawn-no-current.out" \
+  2>"$TEST_ROOT/spawn-no-current.err"
+no_current_rc=$?
+set -e
+[[ $no_current_rc -eq 2 ]] || fail "missing caller workspace did not exit 2"
+grep -Fx 'fleet spawn: no placement flag and no current herdr pane; pass --workspace, --pane, --worktree-branch or --split-from' \
+  "$TEST_ROOT/spawn-no-current.err" >/dev/null || fail "missing caller workspace refusal was unclear"
+! grep -F 'hcom ' "$FLEET_TEST_CALLS" | grep -F ' 1 codex' >/dev/null \
+  || fail "missing caller workspace launched an agent"
+pass "spawn refuses no placement outside a herdr workspace"
+
+: >"$FLEET_TEST_CALLS"
 env -u HCOM_NAME HCOM_TAG=impl HCOM_INSTANCE_NAME=fimu HCOM_PROCESS_ID=seat-test \
   FLEET_TEST_SELF_MODE=forbid FLEET_LAUNCHER=web-x FLEET_LAUNCHER_KIND=web \
   PATH="$TEST_ROOT/bin:$PATH" \
@@ -258,16 +387,28 @@ for mode in exit3 absent sleep; do
   : >"$FLEET_TEST_CALLS"
   start=$SECONDS
   test_path="$TEST_ROOT/bin:$PATH"
+  register_args=()
   if [[ $mode == absent ]]; then
     mv "$TEST_ROOT/bin/herder" "$TEST_ROOT/bin/herder.off"
     test_path="$TEST_ROOT/bin:/usr/bin:/bin"
+  elif [[ $mode == exit3 ]]; then
+    register_args=(--group builders --title 'payload builder')
   fi
   FLEET_TEST_REGISTER_MODE=$mode PATH="$test_path" \
-    "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/spawn-$mode.out" 2>"$TEST_ROOT/spawn-$mode.err"
+    "$FLEET/spawn.sh" codex --tag gate --pane p-test "${register_args[@]}" \
+    >"$TEST_ROOT/spawn-$mode.out" 2>"$TEST_ROOT/spawn-$mode.err"
   if [[ $mode == absent ]]; then mv "$TEST_ROOT/bin/herder.off" "$TEST_ROOT/bin/herder"; fi
   cmp -s "$TEST_ROOT/spawn.out" "$TEST_ROOT/spawn-$mode.out" || fail "register $mode changed spawn stdout"
   [[ $(grep -c 'fleet spawn: register launch-requested skipped:' "$TEST_ROOT/spawn-$mode.err") -eq 1 ]] \
     || fail "register $mode did not emit exactly one warning"
+  if [[ $mode == exit3 ]]; then
+    grep -F 'fleet spawn: assign gate-vava --group builders skipped:' "$TEST_ROOT/spawn-$mode.err" >/dev/null \
+      || fail "assign refusal warning omitted the seat or group"
+    grep -F 'fleet spawn: annotate gate-vava --title skipped:' "$TEST_ROOT/spawn-$mode.err" >/dev/null \
+      || fail "annotate refusal warning omitted the seat"
+    grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' register launch-ready ' >/dev/null \
+      || fail "a herder refusal disabled launch-ready registration"
+  fi
   if [[ $mode == sleep ]]; then
     elapsed=$((SECONDS - start))
     ((elapsed >= 9 && elapsed <= 12)) || fail "register timeout took ${elapsed}s instead of about 10s"
