@@ -71,7 +71,7 @@ assert_help() {
   printf 'PASS  %s\n' "$cmd"
 }
 
-for cmd in list show register; do
+for cmd in list show register assign; do
   assert_help "$cmd"
 done
 

@@ -14,6 +14,7 @@ export interface Row {
   // created_at is hcom's roster creation time (RFC3339 UTC).
   manager?: string
   manager_state?: ManagerState
+  group?: string
   title?: string
   created_at?: string
 }

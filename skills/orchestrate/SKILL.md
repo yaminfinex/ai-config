@@ -62,6 +62,9 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 - **Cull.** Use `$AI_CONFIG_ROOT/tools/fleet/cull.sh <exact-hcom-name>`. It sends one courtesy
   release notice, kills the hcom process, and verifies managed pane closure. Remove a disposable
   checkout only after that exact cull is verified.
+- **Supervision.** The wrapper records you as manager of what you spawn. Fix or take over a seat
+  with `herder assign <seat> --manager <your-name>`; `--manager human` hands it to the operator.
+  Put every seat in its unit with `--group <unit>`; `herder assign --help` explains the event.
 - **Resume / fork.** Create a verified idle target pane, then place the operation with
   `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom r <name-or-uuid>` or the same form with `hcom f`.
   Resume keeps the hcom name; fork mints a new one.

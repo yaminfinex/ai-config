@@ -12,8 +12,9 @@ import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
-import { apiProblem, lifecycleProblem, renameAgent, viewerReadOnlyMessage } from '../../api/client'
+import { apiProblem, assignAgent, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
 import { beginRename, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
+import { reparentDrop } from './reparentModel'
 
 const emptyExpandedItems: string[] = []
 
@@ -35,12 +36,37 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
 }) {
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const [renaming, setRenaming] = useState<RenameState | null>(null)
+  const [assignmentProblem, setAssignmentProblem] = useState<LifecycleProblem | null>(null)
+  const [dragSource, setDragSource] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<string | null>(null)
   const renameInput = useRef<HTMLInputElement | null>(null)
   const cancelOnBlur = useRef(false)
   const placementNodes = useMemo(() => buildSidebarNodes(board), [board])
   const supervisionNodes = useMemo(() => buildSupervisionNodes(board), [board])
   const nodes = view === 'placement' ? placementNodes : supervisionNodes
   const sideHint = openInSideLabel(navigator.userAgent)
+
+  const mutationProblem = (error: unknown) => {
+    const { response, problem } = apiProblem(error)
+    return response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')
+      ? { readOnly: viewerReadOnlyMessage(problem, response.status) }
+      : lifecycleProblem(error)
+  }
+
+  const submitAssignment = async (name: string, assignment: AssignmentPatch) => {
+    setAssignmentProblem(null)
+    try {
+      await assignAgent(name, assignment)
+    } catch (error) {
+      setAssignmentProblem(mutationProblem(error))
+    }
+  }
+
+  const startRename = (name: string, title?: string) => {
+    setAssignmentProblem(null)
+    cancelOnBlur.current = false
+    setRenaming(beginRename(name, title))
+  }
 
   // Select when the edited agent changes.
   useEffect(() => { if (renaming) renameInput.current?.select() }, [renaming?.name])
@@ -62,10 +88,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
       await renameAgent(renaming.name, title)
       setRenaming((current) => current?.name === submittedName ? null : current)
     } catch (error) {
-      const { response, problem } = apiProblem(error)
-      const refusal = response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')
-        ? { readOnly: viewerReadOnlyMessage(problem, response.status) }
-        : lifecycleProblem(error)
+      const refusal = mutationProblem(error)
       setRenaming((current) => current?.name === submittedName ? { ...current, problem: refusal } : current)
     }
   }
@@ -114,10 +137,25 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
 
   useEffect(() => { tree.rebuildTree() }, [nodes, tree])
 
-  const renameProblem = renaming?.problem
+  const sidebarProblem = assignmentProblem ?? renaming?.problem
   return <div className="fleet-sidebar-view">
-    {renameProblem && <div className="rename-agent-problem" role="alert">{renameProblem.readOnly ?? renameProblem.banner ?? renameProblem.inline}</div>}
-    {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps(view === 'placement' ? 'Workspaces and agents' : 'Supervision tree')} className={`fleet-tree panel-tree fleet-tree-${view}`}>
+    {sidebarProblem && <div className="sidebar-problem" role="alert">{sidebarProblem.readOnly ?? sidebarProblem.banner ?? sidebarProblem.inline}</div>}
+    {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps(view === 'placement' ? 'Workspaces and agents' : 'Supervision tree')}
+      className={`fleet-tree panel-tree fleet-tree-${view}${dropTarget === 'tree-root' ? ' drop-target' : ''}`}
+      onDragOver={(event) => {
+        if (view !== 'supervision' || event.target !== event.currentTarget) return
+        const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), null, nodes)
+        if ('refusal' in result) return
+        event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget('tree-root')
+      }}
+      onDragLeave={(event) => { if (event.target === event.currentTarget) setDropTarget(null) }}
+      onDrop={(event) => {
+        if (event.target !== event.currentTarget) return
+        const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), null, nodes)
+        setDropTarget(null)
+        if ('refusal' in result) return
+        event.preventDefault(); void submitAssignment(result.name, result.assignment)
+      }}>
       {tree.getItems().map((item) => {
         const node = item.getItemData()
         const pane = node.pane
@@ -136,6 +174,26 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
           key={item.getId()}
           itemProps={{
             ...treeItemProps,
+            draggable: view === 'supervision' && (node.kind === 'agent' || node.kind === 'subagent') && pane?.bus_status !== '-',
+            onDragStart: (event) => {
+              event.dataTransfer.setData('text/plain', item.getId())
+              event.dataTransfer.effectAllowed = 'move'
+              setDragSource(item.getId())
+            },
+            onDragEnd: () => { setDragSource(null); setDropTarget(null) },
+            onDragOver: (event) => {
+              const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), item.getId(), nodes)
+              if ('refusal' in result) return
+              event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDropTarget(item.getId())
+            },
+            onDragLeave: () => { if (dropTarget === item.getId()) setDropTarget(null) },
+            onDrop: (event) => {
+              event.stopPropagation()
+              const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), item.getId(), nodes)
+              setDropTarget(null)
+              if ('refusal' in result) return
+              event.preventDefault(); void submitAssignment(result.name, result.assignment)
+            },
             onFocus: () => item.setFocused(),
             onClickCapture: (event) => {
               if (!event.altKey || (event.target as Element).closest(treeClickGuardSelector)) return
@@ -155,8 +213,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
               if (event.key === 'F2' && pane?.agent && pane.agent !== '-') {
                 event.preventDefault()
                 event.stopPropagation()
-                cancelOnBlur.current = false
-                setRenaming(beginRename(pane.agent, pane.title))
+                startRename(pane.agent, pane.title)
                 return
               }
               treeItemProps.onKeyDown?.(event)
@@ -168,7 +225,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
           expanded={item.isExpanded()}
           selected={item.isSelected()}
           focused={item.isFocused()}
-          className={`${agentRow ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' || node.kind === 'unadopted' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${node.kind === 'tombstone' ? ' tombstone-row' : ''}${node.kind === 'unknown-manager' ? ' unknown-manager-row' : ''}${node.kind === 'operator' ? ' operator-row' : ''}`}
+          className={`${agentRow ? 'pane-row' : 'workspace-row'}${pane?.agent && pane.agent !== '-' ? ' agent-row' : ''}${pane?.agent === '-' ? ' shell-row' : ''}${node.kind === 'unplaced' || node.kind === 'unadopted' ? ' unplaced-row' : ''}${node.kind === 'subagent' ? ' subagent-row' : ''}${node.kind === 'tombstone' ? ' tombstone-row' : ''}${node.kind === 'unknown-manager' ? ' unknown-manager-row' : ''}${node.kind === 'operator' ? ' operator-row' : ''}${dropTarget === item.getId() ? ' drop-target' : ''}`}
           icon={icon}
           label={editing
             ? <span className="tree-label"><input ref={renameInput} className="rename-agent-input" aria-label={`Rename ${editing.name}`} value={editing.value} maxLength={80}
@@ -182,7 +239,9 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
           trailing={<>{node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
             {pane?.agent && pane.agent !== '-' && <ContextUsed value={node.contextUsed} />}
             {pane?.agent && pane.agent !== '-' && !renaming && <button type="button" className="rename-agent-button" aria-label={`Rename ${pane.agent}`} title={`Rename ${pane.agent}`}
-              onClick={(event) => { event.stopPropagation(); cancelOnBlur.current = false; setRenaming(beginRename(pane.agent, pane.title)) }}>✎</button>}
+              onClick={(event) => { event.stopPropagation(); startRename(pane.agent, pane.title) }}>✎</button>}
+            {view === 'supervision' && pane?.agent && pane.agent !== '-' && pane.bus_status !== '-' && pane.manager_state === 'unknown' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
+              onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
             {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}

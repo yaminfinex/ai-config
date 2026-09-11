@@ -1,4 +1,4 @@
-PANE   AGENT  TOOL    HERDR   BUS        LAUNCHER      MANAGER  BINDING  MODEL  CONTEXT  GAP
--      vile   claude  -       active     unregistered  -        -        -      -        no visible pane
-w1:p1  mavu   codex   active  listening  unregistered  -        -        -      -        -
-w2:p1  zira   claude  idle    -          -             -        -        -      -        no bus row
+PANE   AGENT  TOOL    HERDR   BUS        LAUNCHER      MANAGER  GROUP  BINDING  MODEL  CONTEXT  GAP
+-      vile   claude  -       active     unregistered  -        -      -        -      -        no visible pane
+w1:p1  mavu   codex   active  listening  unregistered  -        -      -        -      -        -
+w2:p1  zira   claude  idle    -          -             -        -      -        -      -        no bus row

@@ -28,7 +28,7 @@ type Row struct {
 	ContextUsed int64  `json:"context_used,omitempty"`
 	Subagents   *Rows  `json:"subagents,omitempty"`
 	// Store-folded columns (FoldStore). Launcher is immutable provenance,
-	// Manager the mutable hierarchy pointer, Mission the current assignment.
+	// Manager the mutable hierarchy pointer, Group the current assignment.
 	// A bus row with no store record prints "unregistered"; a pane with no
 	// bus row prints "-".
 	Launcher string `json:"launcher,omitempty"`
@@ -39,7 +39,7 @@ type Row struct {
 	// (no manager, or a name with no record and no roster row).
 	ManagerState string                 `json:"manager_state,omitempty"`
 	CreatedAt    string                 `json:"created_at,omitempty"` // roster created_at, RFC3339 UTC
-	Mission      string                 `json:"mission,omitempty"`
+	Group        string                 `json:"group,omitempty"`
 	Provenance   *ProvenanceSummary     `json:"provenance,omitempty"`
 	Binding      *agentstore.Binding    `json:"binding,omitempty"` // claimed vs roster session; never touches placement
 	Title        string                 `json:"title,omitempty"`
@@ -66,7 +66,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 	for i := range out {
 		row := &out[i]
 		if row.BusStatus == "-" {
-			row.Launcher, row.Manager, row.Mission = "-", "-", "-"
+			row.Launcher, row.Manager, row.Group = "-", "-", "-"
 			continue
 		}
 		var view *agentstore.AgentView
@@ -80,7 +80,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		}
 		if view == nil {
 			row.ManagerState = ManagerUnknown
-			row.Launcher, row.Manager, row.Mission = "unregistered", "-", "-"
+			row.Launcher, row.Manager, row.Group = "unregistered", "-", "-"
 			row.Provenance = &ProvenanceSummary{Kind: "unregistered"}
 			continue
 		}
@@ -97,9 +97,9 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		manager, state := managerEdge(view, roster, proj)
 		row.Manager, row.ManagerState = display(manager), state
 		row.Binding = view.Binding
-		row.Mission = "-"
+		row.Group = "-"
 		if view.Assignment != nil {
-			row.Mission = display(view.Assignment.Mission)
+			row.Group = display(view.Assignment.Group)
 		}
 		if view.Annotation != nil {
 			row.Title = view.Annotation.Title
@@ -134,7 +134,7 @@ func managerEdge(view *agentstore.AgentView, roster []hcomidentity.Row, proj *ag
 		return manager, ManagerUnknown
 	}
 	seededByHuman := view.ManagerAt == nil && (view.Provenance.LauncherKind == "user" || view.Provenance.LauncherKind == "web")
-	if manager == "user" || seededByHuman {
+	if manager == "user" || manager == "human" || seededByHuman {
 		return manager, ManagerOperator
 	}
 	var bus *hcomidentity.Row
@@ -188,6 +188,9 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 		if folded.Manager == "-" || folded.Manager == "unknown" {
 			folded.Manager = ""
 		}
+		if folded.Group == "-" {
+			folded.Group = ""
+		}
 		return folded
 	}
 	var foldRows func(rows []Row)
@@ -197,7 +200,7 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 				continue
 			}
 			folded := fold(rows[i].Agent, rows[i].BusStatus)
-			rows[i].Manager, rows[i].ManagerState, rows[i].Title, rows[i].CreatedAt = folded.Manager, folded.ManagerState, folded.Title, folded.CreatedAt
+			rows[i].Manager, rows[i].ManagerState, rows[i].Group, rows[i].Title, rows[i].CreatedAt = folded.Manager, folded.ManagerState, folded.Group, folded.Title, folded.CreatedAt
 			if rows[i].Subagents != nil {
 				foldRows(*rows[i].Subagents)
 			}
@@ -211,7 +214,7 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 					continue
 				}
 				folded := fold(panes[p].Agent, panes[p].BusStatus)
-				panes[p].Manager, panes[p].ManagerState, panes[p].Title, panes[p].CreatedAt = folded.Manager, folded.ManagerState, folded.Title, folded.CreatedAt
+				panes[p].Manager, panes[p].ManagerState, panes[p].Group, panes[p].Title, panes[p].CreatedAt = folded.Manager, folded.ManagerState, folded.Group, folded.Title, folded.CreatedAt
 				foldRows(panes[p].Subagents)
 			}
 		}
@@ -263,6 +266,7 @@ type Pane struct {
 	Gap            string `json:"gap"`
 	Manager        string `json:"manager,omitempty"`
 	ManagerState   string `json:"manager_state,omitempty"`
+	Group          string `json:"group,omitempty"`
 	Title          string `json:"title,omitempty"`
 	CreatedAt      string `json:"created_at,omitempty"`
 	ContextUsed    int64  `json:"context_used,omitempty"`

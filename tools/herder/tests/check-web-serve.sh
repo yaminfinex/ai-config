@@ -505,6 +505,22 @@ else
   bad "annotation write" "body=$(cat "$ROOT/annotation.json" 2>/dev/null || true) journal=$(cat "$ROOT/home/.local/state/herder/agents/events.jsonl" 2>/dev/null || true)"
 fi
 
+assign_journal="$ROOT/home/.local/state/herder/agents/events.jsonl"
+assign_before="$(wc -l <"$assign_journal")"
+if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"manager":"vile","group":"fleet-refit"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/assignment" >"$ROOT/assignment.json" &&
+  jq -e '. == {name:"mavu",manager:"vile",group:"fleet-refit",by:"web-alice-example-com"}' "$ROOT/assignment.json" >/dev/null &&
+  curl -fsS -X POST -H 'Content-Type: application/json' --data '{"manager":"human"}' \
+  "http://127.0.0.1:$port/api/agents/mavu/assignment" >"$ROOT/adopt.json" &&
+  jq -e '. == {name:"mavu",manager:"human",group:"",by:"web-alice-example-com"}' "$ROOT/adopt.json" >/dev/null &&
+  [ "$(wc -l <"$assign_journal")" -eq "$((assign_before + 2))" ] &&
+  tail -n 2 "$assign_journal" | jq -s -e '.[0] | .kind == "assign" and .manager == "vile" and .group == "fleet-refit" and .by_kind == "web"' >/dev/null &&
+  tail -n 1 "$assign_journal" | jq -e '.kind == "assign" and .manager == "human" and .by_kind == "web"' >/dev/null; then
+  pass "assignment and human adoption append exactly two attributed assign events"
+else
+  bad "assignment writes" "assign=$(cat "$ROOT/assignment.json" 2>/dev/null || true) adopt=$(cat "$ROOT/adopt.json" 2>/dev/null || true) journal=$(tail -n 3 "$assign_journal" 2>/dev/null || true)"
+fi
+
 if [ "$(curl -sS -o "$ROOT/annotation-empty.json" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"title":"  "}' "http://127.0.0.1:$port/api/agents/mavu/annotation")" = 400 ] && jq -e '.detail == "title must not be empty"' "$ROOT/annotation-empty.json" >/dev/null; then
   pass "annotation write refuses an empty title with the web contract wording"
 else

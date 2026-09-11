@@ -55,9 +55,8 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 | `resume` | pane, from_session |
 | `fork` | from_name, pane |
 | `compact-requested` | steer_chars |
-| `assign` | mission, brief, thread, task |
+| `assign` | manager, group, clear_group, brief, thread, task |
 | `annotate` | title, note |
-| `reparent` | manager |
 | `mirror.created/ready/stopped/batch_launched` | hcom_event, reason, batch, instances, parent_name, is_hcom_launched |
 | `session.observed/ended/superseded` | session, tool, path, reason |
 
@@ -86,9 +85,8 @@ Before append, the mirror resolves `instance`, `by`, and every `instances`
 entry through the last roster already polled by the serve: exactly one matching
 `base_name` becomes that row's full `name`; zero or multiple matches stay raw.
 
-Mission assignment (the `assign` kind, `fleetview.Row.Mission`) is recorded
-but not displayed in `herder list` until the mission model is specced
-(owner ruling 2026-09-09); `show` prints it when present.
+An `assign` event can change the manager, group, or both. `herder list` prints
+the folded group in its `GROUP` column and `show` includes the assignment.
 
 ## Locking and atomicity
 
@@ -151,11 +149,11 @@ incarnation inherits nothing: no manager, no assignment, no launcher.
 `mirror.batch_launched` fans out to its `instances` (name optional).
 `session.observed` without a name is a pane-only session kept under
 `unnamed_sessions` keyed tool/session. `session.ended`/`superseded` close
-the session the event names, never "whichever is current". Reparents are
+the session the event names, never "whichever is current". Assignments are
 ordered by event time, so an older one arriving late never overwrites a
 newer manager. A registered `launch-ready` supersedes weaker `mirror.*`
-attribution for launcher/launcher_kind (and the default manager, unless a
-reparent was explicit).
+attribution for launcher/launcher_kind (and the default manager, unless an
+explicit assignment changed it).
 
 On full replay, an old base-name mirror record is folded into a registered
 full-name twin only when exactly one tagged launch incarnation contains the
@@ -166,7 +164,7 @@ for a full roster name, but only when exactly one roster row owns that
 display view overlays that record on the unique base record: populated
 full-name fields win and absent fields retain the base record's provenance,
 manager and other lifecycle facts. The base record is a pre-unit-1 artefact of
-the same agent; reparent repair writes those facts under the full name and
+the same agent; an explicit assignment writes those facts under the full name and
 makes the overlay inert for the manager. Both records' events show as one
 history. Ambiguous base names are never overlaid. This display rule never
 re-keys or writes the store.
@@ -180,9 +178,10 @@ current. The store is never re-keyed.
 `launcher` (from the `by` of `launch-requested`/`launch-ready`, `fork`, or a
 `mirror.*`) is immutable provenance: who launched me. `manager` is the
 mutable hierarchy pointer: who manages me. It defaults to the launcher and
-changes only through `reparent {name, manager, by}` (`herder register
-reparent --name X --manager Y`). Hierarchy views hang off `manager`;
-`launcher` stays for audit.
+changes through `assign {name, manager, by}` (`herder assign X --manager Y`).
+The literal manager `human` adopts the seat to the operator. A group is set with
+`herder assign X --group G` and removed with `--clear-group`. Hierarchy views
+hang off `manager`; `launcher` stays for audit.
 
 The web serve appends `annotate` events for display-name writes with the
 server-derived sender in `by` and `by_kind: web`. Those writes use the same

@@ -14,7 +14,7 @@ import (
 	"unicode/utf8"
 )
 
-// Event kinds (Fable design §4 plus the owner's reparent amendment).
+// Event kinds (Fable design §4 plus later owner amendments).
 const (
 	KindLaunchRequested  = "launch-requested"
 	KindLaunchReady      = "launch-ready"
@@ -26,7 +26,6 @@ const (
 	KindCompactRequested = "compact-requested"
 	KindAssign           = "assign"
 	KindAnnotate         = "annotate"
-	KindReparent         = "reparent"
 	KindMirrorCreated    = "mirror.created"
 	KindMirrorReady      = "mirror.ready"
 	KindMirrorStopped    = "mirror.stopped"
@@ -40,7 +39,7 @@ const (
 var Kinds = []string{
 	KindLaunchRequested, KindLaunchReady, KindLaunchFailed,
 	KindCullRequested, KindCulled, KindResume, KindFork, KindCompactRequested,
-	KindAssign, KindAnnotate, KindReparent,
+	KindAssign, KindAnnotate,
 	KindMirrorCreated, KindMirrorReady, KindMirrorStopped, KindMirrorBatch,
 	KindSessionObserved, KindSessionEnded, KindSessionSupersede,
 }
@@ -86,14 +85,15 @@ type Event struct {
 	FromName    string `json:"from_name,omitempty"`
 	SteerChars  *int   `json:"steer_chars,omitempty"`
 
-	// assign / annotate / reparent
-	Mission string `json:"mission,omitempty"`
-	Brief   string `json:"brief,omitempty"`
-	Thread  string `json:"thread,omitempty"`
-	Task    string `json:"task,omitempty"`
-	Title   string `json:"title,omitempty"`
-	Note    string `json:"note,omitempty"`
-	Manager string `json:"manager,omitempty"`
+	// assign / annotate
+	Group      string `json:"group,omitempty"`
+	ClearGroup bool   `json:"clear_group,omitempty"`
+	Brief      string `json:"brief,omitempty"`
+	Thread     string `json:"thread,omitempty"`
+	Task       string `json:"task,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Note       string `json:"note,omitempty"`
+	Manager    string `json:"manager,omitempty"`
 
 	// mirror.*
 	HcomEvent      string   `json:"hcom_event,omitempty"`
@@ -129,9 +129,8 @@ var specs = map[string]Spec{
 	KindResume:           {Required: []string{"name"}, Optional: []string{"pane", "from-session"}},
 	KindFork:             {Required: []string{"name", "from"}, Optional: []string{"pane"}},
 	KindCompactRequested: {Required: []string{"name"}, Optional: []string{"steer-chars"}},
-	KindAssign:           {Required: []string{"name", "mission"}, Optional: []string{"brief", "thread", "task"}},
+	KindAssign:           {Required: []string{"name"}, Optional: []string{"manager", "group", "clear-group", "brief", "thread", "task"}},
 	KindAnnotate:         {Required: []string{"name"}, Optional: []string{"title", "note"}},
-	KindReparent:         {Required: []string{"name", "manager"}},
 	KindMirrorCreated:    {Required: []string{"name"}, Optional: mirrorFlags},
 	KindMirrorReady:      {Required: []string{"name"}, Optional: mirrorFlags},
 	KindMirrorStopped:    {Required: []string{"name"}, Optional: mirrorFlags},
@@ -176,7 +175,8 @@ func (e Event) present() map[string]bool {
 	set("from-session", e.FromSession != "")
 	set("from", e.FromName != "")
 	set("steer-chars", e.SteerChars != nil)
-	set("mission", e.Mission != "")
+	set("group", e.Group != "")
+	set("clear-group", e.ClearGroup)
 	set("brief", e.Brief != "")
 	set("thread", e.Thread != "")
 	set("task", e.Task != "")
@@ -269,6 +269,18 @@ func (e Event) Validate() error {
 	}
 	if e.Kind == KindAnnotate && e.Title == "" && e.Note == "" {
 		return fmt.Errorf("%s requires --title or --note", e.Kind)
+	}
+	if e.Kind == KindAssign && e.Manager == "" && e.Group == "" && !e.ClearGroup {
+		return fmt.Errorf("assign requires --manager, --group, or --clear-group")
+	}
+	if e.Kind == KindAssign && e.Group != "" && e.ClearGroup {
+		return fmt.Errorf("assign accepts --group or --clear-group, not both")
+	}
+	if strings.ContainsAny(e.Group, "\r\n\t\x00") {
+		return fmt.Errorf("group must not contain control characters")
+	}
+	if utf8.RuneCountInString(strings.TrimSpace(e.Group)) > 80 {
+		return fmt.Errorf("group must not exceed 80 characters")
 	}
 	if strings.ContainsAny(e.Title, "\r\n\t\x00") {
 		return fmt.Errorf("title must not contain control characters")

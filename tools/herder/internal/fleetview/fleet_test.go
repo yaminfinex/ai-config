@@ -264,7 +264,7 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
 	apply := func(e agentstore.Event) { e.ID = agentstore.NewID(at); proj.Apply(e, 0) }
 	apply(agentstore.Event{At: at, Kind: agentstore.KindLaunchReady, By: "ziru", Name: "mavu"})
-	apply(agentstore.Event{At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Mission: "old"})
+	apply(agentstore.Event{At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Group: "old"})
 	apply(agentstore.Event{At: at.Add(2 * time.Second), Kind: agentstore.KindCulled, By: "ziru", Name: "mavu", Pane: "p1", Close: "managed"})
 	apply(agentstore.Event{At: at.Add(10 * time.Second), Kind: agentstore.KindLaunchReady, By: "vara", Name: "mavu"})
 	rows := []Row{
@@ -274,7 +274,7 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 	}
 	roster := []hcomidentity.Row{{Name: "mavu", CreatedAt: at.Add(9 * time.Second)}, {Name: "funa"}}
 	got := FoldStore(rows, roster, proj)
-	if got[0].Launcher != "vara" || got[0].Manager != "vara" || got[0].Mission != "-" || got[0].Provenance == nil || got[0].Provenance.Kind != "registered" {
+	if got[0].Launcher != "vara" || got[0].Manager != "vara" || got[0].Group != "-" || got[0].Provenance == nil || got[0].Provenance.Kind != "registered" {
 		t.Fatalf("reused name folded the old incarnation: %+v", got[0])
 	}
 	if got[1].Launcher != "-" || got[1].Provenance != nil {
@@ -287,17 +287,17 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 		t.Fatal("FoldStore mutated its input")
 	}
 	roster[0].CreatedAt = at.Add(-time.Minute)
-	if old := FoldStore(rows, roster, proj); old[0].Launcher != "ziru" || old[0].Mission != "old" {
+	if old := FoldStore(rows, roster, proj); old[0].Launcher != "ziru" || old[0].Group != "old" {
 		t.Fatalf("earlier created_at must fold the old incarnation: %+v", old[0])
 	}
 	if nilProj := FoldStore(rows, roster, nil); nilProj[0].Launcher != "unregistered" {
 		t.Fatalf("nil projection: %+v", nilProj[0])
 	}
 	// No close event recorded (raw hcom kill): a later created_at must not inherit.
-	apply(agentstore.Event{At: at.Add(20 * time.Second), Kind: agentstore.KindAssign, By: "vara", Name: "mavu", Mission: "second-life"})
+	apply(agentstore.Event{At: at.Add(20 * time.Second), Kind: agentstore.KindAssign, By: "vara", Name: "mavu", Group: "second-life"})
 	roster[0].CreatedAt = at.Add(time.Minute)
 	roster[0].SessionID = "brand-new"
-	if noClose := FoldStore(rows, roster, proj); noClose[0].Launcher != "unregistered" || noClose[0].Mission != "-" || noClose[0].Manager != "-" {
+	if noClose := FoldStore(rows, roster, proj); noClose[0].Launcher != "unregistered" || noClose[0].Group != "-" || noClose[0].Manager != "-" {
 		t.Fatalf("reused name without a close event inherited: %+v", noClose[0])
 	}
 	// Binding folds into the row without touching placement/GAP.

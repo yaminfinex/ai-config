@@ -23,6 +23,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/claudesession"
@@ -313,6 +314,18 @@ type annotationResponse struct {
 	Name  string `json:"name"`
 	Title string `json:"title"`
 	By    string `json:"by"`
+}
+
+type assignmentRequest struct {
+	Manager *string `json:"manager"`
+	Group   *string `json:"group"`
+}
+
+type assignmentResponse struct {
+	Name    string `json:"name"`
+	Manager string `json:"manager"`
+	Group   string `json:"group"`
+	By      string `json:"by"`
 }
 
 type viewerResponse struct {
@@ -896,6 +909,13 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveAnnotation(w, r, deps, r.PathValue("busName"))
 	})
+	mux.HandleFunc("/api/agents/{busName}/assignment", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveAssignment(w, r, deps, r.PathValue("busName"))
+	})
 	mux.HandleFunc("/api/panes/{paneID}/history", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")
@@ -1273,6 +1293,66 @@ func serveAnnotation(w http.ResponseWriter, r *http.Request, deps dependencies, 
 	}
 	deps.audit("annotate time=%s viewer=%s name=%s title=%q", receipt.Event.At.UTC().Format(time.RFC3339Nano), receipt.Event.By, name, title)
 	writeJSON(w, http.StatusOK, annotationResponse{Name: name, Title: title, By: receipt.Event.By})
+}
+
+func serveAssignment(w http.ResponseWriter, r *http.Request, deps dependencies, name string) {
+	roster, ok := resolveLiveAgent(w, deps, name)
+	if !ok {
+		return
+	}
+	var request assignmentRequest
+	if err := decodeWriteBody(w, r, &request, false); err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	if request.Manager == nil && request.Group == nil {
+		refuse(w, http.StatusBadRequest, "bad request", "manager or group required")
+		return
+	}
+	manager, group := "", ""
+	if request.Manager != nil {
+		manager = strings.TrimSpace(*request.Manager)
+		if manager == "" {
+			refuse(w, http.StatusBadRequest, "bad request", "manager must not be empty")
+			return
+		}
+		if manager == name {
+			refuse(w, http.StatusBadRequest, "bad request", "an agent cannot manage itself")
+			return
+		}
+		if manager != "human" {
+			live := false
+			for _, row := range roster {
+				if row.Name == manager {
+					live = true
+					break
+				}
+			}
+			if !live {
+				refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("manager %q is not a live agent", manager))
+				return
+			}
+		}
+	}
+	if request.Group != nil {
+		group = strings.TrimSpace(*request.Group)
+		if strings.ContainsAny(group, "\r\n\t\x00") || utf8.RuneCountInString(group) > 80 {
+			refuse(w, http.StatusBadRequest, "bad request", "group must not exceed 80 characters or contain control characters")
+			return
+		}
+	}
+	sender, ok := webSender(w, r, deps, roster)
+	if !ok {
+		return
+	}
+	now := deps.now().UTC()
+	event := agentstore.Event{Kind: agentstore.KindAssign, Name: name, Manager: manager, Group: group, ClearGroup: request.Group != nil && group == "", By: sender, ByKind: "web", At: now, ID: agentstore.NewID(now)}
+	receipt, ok := appendWebEvent(w, deps, event)
+	if !ok {
+		return
+	}
+	deps.audit("assign time=%s viewer=%s name=%s manager=%q group=%q clear_group=%t", receipt.Event.At.UTC().Format(time.RFC3339Nano), receipt.Event.By, name, manager, group, event.ClearGroup)
+	writeJSON(w, http.StatusOK, assignmentResponse{Name: name, Manager: manager, Group: group, By: receipt.Event.By})
 }
 
 func resolveLiveAgent(w http.ResponseWriter, deps dependencies, name string) ([]hcomidentity.Row, bool) {

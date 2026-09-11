@@ -173,6 +173,16 @@ export function renameAgent(name: string, title: string, fetcher?: Fetcher) {
   }, fetcher)
 }
 
+export type AssignmentPatch = { manager?: string, group?: string }
+
+export function assignAgent(name: string, assignment: AssignmentPatch, fetcher?: Fetcher) {
+  return requestJSON<{ name: string, manager: string, group: string, by: string }>(`/api/agents/${encodeURIComponent(name)}/assignment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(assignment),
+  }, fetcher)
+}
+
 export type SpawnRequest = {
   tool: 'claude' | 'codex'
   model?: string
