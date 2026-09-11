@@ -1,6 +1,6 @@
 import type { LifecycleProblem } from '../../api/client'
 
-export const treeClickGuardSelector = '.tree-disclosure, .launch-agent-button, .rename-agent-button, .rename-agent-input'
+export const treeClickGuardSelector = '.tree-disclosure, .launch-agent-button, .rename-agent-button, .rename-agent-input, .group-space-button'
 
 export type RenameState = {
   name: string

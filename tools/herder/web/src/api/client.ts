@@ -173,6 +173,19 @@ export function renameAgent(name: string, title: string, fetcher?: Fetcher) {
   }, fetcher)
 }
 
+// assignAgent writes one assign event through the serve: a group label
+// (empty string clears), a manager, or both. Owned by the reparent-adopt
+// unit; the groups sidebar only ever sends `{ group }`.
+export type AssignRequest = { group?: string, manager?: string }
+
+export function assignAgent(name: string, body: AssignRequest, fetcher?: Fetcher) {
+  return requestJSON<{ name: string, group?: string, manager?: string, by: string }>(`/api/agents/${encodeURIComponent(name)}/assignment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }, fetcher)
+}
+
 export type SpawnRequest = {
   tool: 'claude' | 'codex'
   model?: string

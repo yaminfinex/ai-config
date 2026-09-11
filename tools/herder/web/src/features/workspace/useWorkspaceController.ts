@@ -30,6 +30,7 @@ import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import { useNotes } from '../notes/NotesProvider.tsx'
+import { planOpenGroupAsSpace } from '../sidebar/groupDropModel.ts'
 import {
   createSpacesStore,
   browserSpacesTransport,
@@ -405,6 +406,30 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setSpaceProblem(result.ok ? store.status().problem : result.reason)
     return result.ok
   }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
+  // openGroupAsSpace: switch to the space named exactly after the group, else
+  // create one with that name; then open every member's transcript pinned
+  // (an already-open transcript is only activated). Nothing is closed and no
+  // group/space link is persisted — the space itself is the only write.
+  const openGroupAsSpace = useCallback((group: string, members: string[]) => {
+    const store = spacesRuntime.store
+    if (!store) { setSpaceProblem(spacesRuntime.problem); return false }
+    const plan = planOpenGroupAsSpace(group, store.list())
+    if (plan.action === 'switch') {
+      if (!switchSpace(plan.id)) return false
+    } else {
+      const result = createAndSwitchSpace(plan.name, {
+        create: store.create,
+        rename: store.rename,
+        switchTo: switchSpace,
+        rollbackCreate: store.rollbackCreate,
+        flush: store.flush,
+      })
+      setSpaceProblem(result.ok ? store.status().problem : result.reason)
+      if (!result.ok) return false
+    }
+    members.forEach((member) => openAgent(member, false))
+    return true
+  }, [openAgent, spacesRuntime.problem, spacesRuntime.store, switchSpace])
   const renameSpace = useCallback((id: string, name: string) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
@@ -567,6 +592,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       switch: switchSpace,
       create: createSpace,
       createNamed: createNamedSpace,
+      openGroup: openGroupAsSpace,
       rename: renameSpace,
       reorder: reorderSpace,
       close: closeSpace,

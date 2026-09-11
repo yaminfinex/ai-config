@@ -104,6 +104,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
       <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
         onPreviewAgent={(name, placement) => openAgent(name, true, placement, true)} onPinAgent={(name, placement) => openAgent(name, false, placement, true)} onPreviewPane={(pane, placement) => openScreen(pane, true, placement)} onPinPane={(pane, placement) => openScreen(pane, false, placement)}
+        onOpenGroupAsSpace={workspace.spaces.openGroup}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems}
         knownManagerItems={knownManagerItems} onKnownManagerItems={setKnownManagerItems} />
     </UtilityRail>

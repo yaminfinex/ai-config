@@ -33,6 +33,7 @@ When running Go directly from this module, use `env -u GOROOT go ...`.
 - `internal/herdersock/` — the local socket protocol, client and server (`<state dir>/herder.sock`, one JSON line each way, op `vitals`).
 - `internal/servecmd/` — HTTP serve; `observe.go` wires the observer and the socket; `projection.go` owns the shared agent-store projection (its refresh triggers and the broker).
 - `internal/showcmd/` — one-agent store and live-vitals rendering (`--json` carries `source: cache|direct`).
+- `web/src/features/sidebar/` — the fleet rail's three tree builders (placement, supervision, groups) and their pure sidecars (`sidebarView.ts` expansion, `renameModel.ts`, `groupDropModel.ts` drag-to-group and open-as-space plans).
 - `tests/` — hermetic contracts for the surviving surface.
 
 ## How a `herder show` call flows

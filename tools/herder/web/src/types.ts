@@ -15,6 +15,9 @@ export interface Row {
   manager?: string
   manager_state?: ManagerState
   title?: string
+  // group is the agent's current group label (the latest assign event's
+  // group, herder-mastered augmenting data); absent when none or cleared.
+  group?: string
   created_at?: string
 }
 
