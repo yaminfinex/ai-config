@@ -8,10 +8,9 @@ import {
   type RailSide,
 } from './utilityRailModel'
 
-export function UtilityRail({ side, label, detail, headingStart, headingAction, width, collapsed, onWidth, onToggle, children }: {
+export function UtilityRail({ side, label, headingStart, headingAction, width, collapsed, onWidth, onToggle, children }: {
   side: RailSide
   label: string
-  detail?: ReactNode
   headingStart?: ReactNode
   headingAction?: ReactNode
   width: number
@@ -29,7 +28,7 @@ export function UtilityRail({ side, label, detail, headingStart, headingAction, 
     disposeUp = subscribeDOMEvent(window, 'pointerup', stop)
   }
   const rail = <aside className={`utility-rail utility-rail-${side}`} aria-label={`${label} rail`} style={{ width }} tabIndex={-1} hidden={collapsed}>
-    <header className="rail-heading">{headingStart}<strong>{label}</strong>{detail && <span>{detail}</span>}{headingAction}<button type="button"
+    <header className="rail-heading">{headingStart}<strong>{label}</strong>{headingAction}<button type="button"
       className={`rail-toggle rail-toggle-${side}`} aria-label={`Collapse ${label} rail`} title={`Collapse ${label} rail`}
       onClick={onToggle}><span aria-hidden="true">{side === 'left' ? '‹' : '›'}</span></button></header>
     {children}

@@ -98,7 +98,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder}
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
-    <UtilityRail side="left" label="Fleet" detail="herdr truth" headingStart={<span className="status-dot listening" />}
+    <UtilityRail side="left" label="Fleet" headingStart={<span className="status-dot listening" />}
       headingAction={<FleetViewToggle view={fleetView} onView={setFleetView} />}
       width={fleetRail.width} collapsed={fleetRail.collapsed}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>

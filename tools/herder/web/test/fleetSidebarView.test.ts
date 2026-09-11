@@ -51,10 +51,10 @@ test('row click guard contains every trailing interactive control', () => {
 
 test('the fleet view persists through the real shell serializer and parser (default supervision)', () => {
   assert.equal(defaultFleetView, 'supervision')
-  const written = shellPreferencesValue({ ...rails, expandedItems: ['operator'], knownWorkspaceItems: null, knownManagerItems: ['agent:ziru'], fleetView: 'placement' })
+  const written = shellPreferencesValue({ ...rails, expandedItems: ['agent:ziru'], knownWorkspaceItems: null, knownManagerItems: ['agent:ziru'], fleetView: 'placement' })
   const read = parseShellPreferences(JSON.stringify(written))
   assert.equal(read?.fleetView, 'placement')
-  assert.deepEqual(read?.expandedItems, ['operator'])
+  assert.deepEqual(read?.expandedItems, ['agent:ziru'])
   assert.deepEqual(read?.knownManagerItems, ['agent:ziru'])
   assert.equal(read?.knownWorkspaceItems, undefined)
   assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision' })))?.fleetView, 'supervision')
@@ -71,23 +71,23 @@ test('the parser rejects an unknown fleet view and keeps it optional', () => {
 
 test('expansion transition: first board opens both trees, later boards only add unseen managers and workspaces', () => {
   assert.deepEqual(defaultExpanded(placement), ['workspace:w1', 'unplaced'])
-  assert.deepEqual(defaultExpanded(supervision), ['operator', 'agent:ziru', 'unadopted', 'terminals'])
+  assert.deepEqual(defaultExpanded(supervision), ['agent:ziru', 'terminals'])
   assert.equal(defaultExpanded(placement).some((id) => defaultExpanded(supervision).includes(id)), false)
   assert.deepEqual(managerItems(supervision), ['agent:ziru'])
   const first = reconcileExpansion(placement, supervision, { expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null })
-  assert.deepEqual(first, { expandedItems: ['workspace:w1', 'unplaced', 'operator', 'agent:ziru', 'unadopted', 'terminals'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru'] })
+  assert.deepEqual(first, { expandedItems: ['workspace:w1', 'unplaced', 'agent:ziru', 'terminals'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru'] })
   // A browser with placement-only state opens the supervision groups once, keeping what it had.
   const upgraded = reconcileExpansion(placement, supervision, { expandedItems: ['unplaced'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: null })
-  assert.deepEqual(upgraded, { expandedItems: ['unplaced', 'operator', 'agent:ziru', 'unadopted', 'terminals'], knownManagerItems: ['agent:ziru'] })
+  assert.deepEqual(upgraded, { expandedItems: ['unplaced', 'agent:ziru', 'terminals'], knownManagerItems: ['agent:ziru'] })
   // A new manager subtree opens; a collapsed known one stays collapsed.
   const grown = buildSupervisionNodes({ ...board, unplaced: [{ pane_id: '-', agent: 'sesh-nabi', tool: 'claude', herdr_status: '-', bus_status: 'listening', gap: 'no visible pane', manager: 'impl-kolo', manager_state: 'live', created_at: '2026-09-10T08:02:00Z' }] })
-  const added = reconcileExpansion(placement, grown, { expandedItems: ['operator'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru'] })
-  assert.deepEqual(added, { expandedItems: ['operator', 'agent:impl-kolo'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru', 'agent:impl-kolo'] })
+  const added = reconcileExpansion(placement, grown, { expandedItems: [], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru'] })
+  assert.deepEqual(added, { expandedItems: ['agent:impl-kolo'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru', 'agent:impl-kolo'] })
 })
 
 test('expandedItems survive a view switch: the transition never runs on the view and never shrinks the array', () => {
-  // A user collapsed riko/ziru and the operator; every re-run with the same board is a no-op, whatever view is showing.
-  const collapsed = { expandedItems: ['unadopted', 'terminals'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru'] }
+  // A user collapsed ziru; every re-run with the same board is a no-op, whatever view is showing.
+  const collapsed = { expandedItems: ['terminals'], knownWorkspaceItems: ['workspace:w1'], knownManagerItems: ['agent:ziru'] }
   assert.equal(reconcileExpansion(placement, supervision, collapsed), null)
   assert.equal(reconcileExpansion(placement, supervision, { ...collapsed, expandedItems: [] }), null)
   // The component applies only this transition: no expansion is computed in the component, and the view is not an effect input.
@@ -100,4 +100,9 @@ test('expandedItems survive a view switch: the transition never runs on the view
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)
   assert.match(sidebar, /<ContextUsed value=\{node\.contextUsed\} \/>/)
   assert.match(sidebar, /\$\{contextUsedTooltip\(node\.contextUsed\)\}/)
+  assert.match(sidebar, /\.\.\.treeItemProps,[\s\S]*?onClick: \(\) => \{ item\.setFocused\(\); setSelectedItems\(\[item\.getId\(\)\]\); item\.primaryAction\(\) \}/)
+  assert.equal((sidebar.match(/item\.(?:expand|collapse)\(\)/g) ?? []).length, 2, 'expand and collapse belong only to the chevron toggle')
+  assert.match(sidebar, /onToggle=\{\(\) => \{ if \(item\.isExpanded\(\)\) item\.collapse\(\); else item\.expand\(\) \}\}/)
+  const hotkeys = sidebar.match(/hotkeys: \{([\s\S]*?)\n {4}\},\n {4}features:/)?.[1] ?? ''
+  assert.deepEqual([...hotkeys.matchAll(/^ {6}(\w+):/gm)].map((match) => match[1]), ['customPrimaryActionEnter', 'customPrimaryActionSpace'])
 })
