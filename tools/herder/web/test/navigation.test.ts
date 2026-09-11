@@ -165,32 +165,61 @@ test('a restored layout wins over an app-created route while deliberate deep lin
   assert.equal(shouldReplayInitialRoute({ page: 'shell' }, layoutRouteState, true), false)
 })
 
-test('the history decision table pushes only distinct unsuppressed user activations', () => {
+test('the history decision table pushes distinct activations and real space switches only', () => {
   const current = historyEntryForPanel(agent('mavu')).state
   const rows = [
     [{ cause: 'activation', suppressed: false, next: agent('nilo') }, 'push'],
     [{ cause: 'activation', suppressed: false, next: agent('mavu') }, 'replace'],
+    [{ cause: 'space-switch', suppressed: false, next: agent('nilo') }, 'push'],
+    [{ cause: 'space-switch', suppressed: true, next: agent('nilo') }, 'replace'],
+    [{ cause: 'space-switch', suppressed: false, next: agent('nilo'), currentState: null }, 'replace'],
     [{ cause: 'merge', suppressed: false, next: agent('nilo') }, 'replace'],
     [{ cause: 'stamp', suppressed: false, next: agent('nilo') }, 'replace'],
     [{ cause: 'replay', suppressed: false, next: agent('nilo') }, 'replace'],
     [{ cause: 'activation', suppressed: true, next: agent('nilo') }, 'replace'],
   ] as const
   for (const [input, expected] of rows) {
-    assert.equal(decideHistoryUpdate(current, input.next, input.cause, input.suppressed).method, expected)
+    assert.equal(decideHistoryUpdate('currentState' in input ? input.currentState : current, input.next, input.cause, input.suppressed).method, expected)
   }
 })
 
-test('dock activation after a space switch stamps the current space without changing push-vs-replace semantics', () => {
+test('a space switch followed by its arrival activation and stamp adds exactly one entry', () => {
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   assert.match(controller, /const activeSpaceIDRef = useRef\(activeSpaceID\)/)
-  assert.match(controller, /activeSpaceIDRef\.current = spaceID\s+setActiveSpaceID\(spaceID\)/)
+  assert.match(controller, /beginHistory: \(\) => updateHistory\(undefined, 'space-switch', spaceID, historyWasSuppressed\)/)
+  assert.match(controller, /suspend: \(\) => \{\s+activeSpaceIDRef\.current = spaceID/)
+  assert.match(controller, /finish: \(\{ restoreFailed, activeSaved \}\) => \{\s+setActiveSpaceID\(spaceID\)/)
   assert.match(controller, /spaceID = activeSpaceIDRef\.current/)
 
   const current = historyEntryForPanel(agent('mavu'), 'main').state
-  const switched = decideHistoryUpdate(current, agent('nilo'), 'activation', false, 'review')
-  assert.equal(switched.entry.path, '/agents/nilo?space=review')
+  const switched = decideHistoryUpdate(current, undefined, 'space-switch', false, 'review')
+  assert.equal(switched.entry.path, '/?space=review')
   assert.equal(switched.method, 'push')
-  assert.equal(decideHistoryUpdate(switched.entry.state, agent('nilo'), 'activation', false, 'review').method, 'replace')
+  const arrival = decideHistoryUpdate(switched.entry.state, agent('nilo'), 'activation', true, 'review')
+  assert.equal(arrival.method, 'replace')
+  assert.equal(arrival.entry.path, '/agents/nilo?space=review')
+  assert.equal(decideHistoryUpdate(arrival.entry.state, agent('nilo'), 'stamp', true, 'review').method, 'replace')
+})
+
+test('switching to an empty space pushes one shell entry and Back restores the previous panel', () => {
+  const previous = historyEntryForPanel(agent('mavu'), 'A')
+  const empty = decideHistoryUpdate(previous.state, undefined, 'space-switch', false, 'B')
+  assert.deepEqual(empty, { method: 'push', entry: { path: '/?space=B', state: layoutRouteState } })
+  assert.equal(decideHistoryUpdate(empty.entry.state, undefined, 'stamp', false, 'B').method, 'replace')
+
+  let currentSpaceID = 'B'
+  const calls: string[] = []
+  replayHistoryRoute(
+    routeFromHistory('/agents/mavu', '?space=A', previous.state),
+    currentSpaceID,
+    () => true,
+    () => true,
+    {
+      switchSpace: (id) => { currentSpaceID = id; calls.push(`space:${id}`); return true },
+      applyRoute: (route) => { if (route.page === 'panel' && route.params.kind === 'agent') calls.push(`panel:${route.params.name}`) },
+    },
+  )
+  assert.deepEqual(calls, ['space:A', 'panel:mavu'])
 })
 
 test('file line retargets dedupe by subject identity and replace the current entry', () => {
