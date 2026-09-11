@@ -63,12 +63,25 @@ func TestAssignUsage(t *testing.T) {
 	}
 }
 
+func TestAssignRequiresAgentBeforeFlags(t *testing.T) {
+	code, _, stderr := run(t, "--manager", "human")
+	if code != 2 || !strings.Contains(stderr, "herder assign: <agent> must come first") {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
+
 func TestAssignHelpDocumentsTheContractAndExamples(t *testing.T) {
 	code, stdout, stderr := run(t, "--help")
 	if code != 0 || stderr != "" {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
-	for _, want := range []string{"one event", "herder register assign", "Later assignment events win by event time", "Exit 0", "--manager ziru", "--manager human", "--group fleet-refit", "--clear-group"} {
+	for _, want := range []string{
+		"one event", "herder register assign", "Later assignment events win by event time", "Exit 0",
+		"  herder assign impl-geni --manager ziru\n",
+		"  herder assign impl-geni --manager human\n",
+		"  herder assign impl-geni --group fleet-refit\n",
+		"  herder assign impl-geni --clear-group\n",
+	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("help lacks %q:\n%s", want, stdout)
 		}

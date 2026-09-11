@@ -88,9 +88,6 @@ type Event struct {
 	// assign / annotate
 	Group      string `json:"group,omitempty"`
 	ClearGroup bool   `json:"clear_group,omitempty"`
-	Brief      string `json:"brief,omitempty"`
-	Thread     string `json:"thread,omitempty"`
-	Task       string `json:"task,omitempty"`
 	Title      string `json:"title,omitempty"`
 	Note       string `json:"note,omitempty"`
 	Manager    string `json:"manager,omitempty"`
@@ -117,6 +114,9 @@ type Spec struct {
 // CommonFlags are accepted by every kind.
 var CommonFlags = []string{"name", "by", "by-kind", "at", "id", "request"}
 
+// BoolFlags identifies event flags that do not take a value.
+var BoolFlags = map[string]bool{"clear-group": true}
+
 var mirrorFlags = []string{"hcom-event", "reason", "batch", "instances", "parent-name", "is-hcom-launched"}
 var sessionFlags = []string{"tool", "path", "reason"}
 
@@ -129,7 +129,7 @@ var specs = map[string]Spec{
 	KindResume:           {Required: []string{"name"}, Optional: []string{"pane", "from-session"}},
 	KindFork:             {Required: []string{"name", "from"}, Optional: []string{"pane"}},
 	KindCompactRequested: {Required: []string{"name"}, Optional: []string{"steer-chars"}},
-	KindAssign:           {Required: []string{"name"}, Optional: []string{"manager", "group", "clear-group", "brief", "thread", "task"}},
+	KindAssign:           {Required: []string{"name"}, Optional: []string{"manager", "group", "clear-group"}},
 	KindAnnotate:         {Required: []string{"name"}, Optional: []string{"title", "note"}},
 	KindMirrorCreated:    {Required: []string{"name"}, Optional: mirrorFlags},
 	KindMirrorReady:      {Required: []string{"name"}, Optional: mirrorFlags},
@@ -177,9 +177,6 @@ func (e Event) present() map[string]bool {
 	set("steer-chars", e.SteerChars != nil)
 	set("group", e.Group != "")
 	set("clear-group", e.ClearGroup)
-	set("brief", e.Brief != "")
-	set("thread", e.Thread != "")
-	set("task", e.Task != "")
 	set("title", e.Title != "")
 	set("note", e.Note != "")
 	set("manager", e.Manager != "")

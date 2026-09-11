@@ -1,7 +1,5 @@
 import type { FleetView } from '../layout/shellPreferences.ts'
 import type { SidebarNode } from './sidebarNodes.ts'
-import { reparentDrop } from './reparentModel.ts'
-import type { AssignmentPatch } from '../../api/client.ts'
 
 // Groups view drag: an agent row dropped on a group header sets that agent's
 // group to the header's label; the Ungrouped header (label '') clears it. The
@@ -54,20 +52,4 @@ export function runOpenGroupAsSpace(plan: OpenGroupPlan, members: string[], depe
   } else if (!dependencies.createNamed(plan.name)) return false
   members.forEach(dependencies.open)
   return true
-}
-
-// planSidebarDrop is the ONE drop seam the sidebar calls: node ids in, one
-// assignment out. The plan is chosen by view — groups → a header sets or
-// clears the group (planGroupDrop), supervision → a row or the empty top
-// level sets the manager (reparentDrop) — so every row carries one set of
-// drag handlers whatever view is showing. Null means the drop is refused.
-export type SidebarDrop = { name: string, assignment: AssignmentPatch }
-
-export function planSidebarDrop(view: FleetView, sourceID: string, targetID: string | null, nodes: Map<string, SidebarNode>): SidebarDrop | null {
-  if (view === 'groups') {
-    const plan = planGroupDrop(view, nodes.get(sourceID)?.pane?.agent, targetID === null ? undefined : nodes.get(targetID))
-    return plan ? { name: plan.name, assignment: { group: plan.group } } : null
-  }
-  const result = reparentDrop(view, sourceID, targetID, nodes)
-  return 'refusal' in result ? null : result
 }

@@ -53,7 +53,11 @@ func TestAssignmentEndpointGroupClear(t *testing.T) {
 		}
 	}
 	projection, err := deps.store.Replay()
-	if err != nil || projection.Latest("impl-kolo").Assignment != nil {
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := projection.Latest("impl-kolo").Assignment
+	if assignment == nil || assignment.Group != "" || assignment.By != "web-alice-example-com" {
 		t.Fatalf("err=%v latest=%+v", err, projection.Latest("impl-kolo"))
 	}
 }

@@ -55,7 +55,7 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 | `resume` | pane, from_session |
 | `fork` | from_name, pane |
 | `compact-requested` | steer_chars |
-| `assign` | manager, group, clear_group, brief, thread, task |
+| `assign` | manager, group, clear_group |
 | `annotate` | title, note |
 | `mirror.created/ready/stopped/batch_launched` | hcom_event, reason, batch, instances, parent_name, is_hcom_launched |
 | `session.observed/ended/superseded` | session, tool, path, reason |

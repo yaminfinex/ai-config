@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
-import { groupHeaderTooltip, openGroupTooltip, planGroupDrop, planOpenGroupAsSpace, planSidebarDrop, runOpenGroupAsSpace } from '../src/features/sidebar/groupDropModel.ts'
+import { groupHeaderTooltip, openGroupTooltip, planGroupDrop, planOpenGroupAsSpace, runOpenGroupAsSpace } from '../src/features/sidebar/groupDropModel.ts'
+import { dropAssignment, planSidebarDrop } from '../src/features/sidebar/reparentModel.ts'
 import { assignAgent } from '../src/api/client.ts'
 import { createAndSwitchSpace } from '../src/features/spaces/spacesControllerModel.ts'
 import type { SidebarNode } from '../src/features/sidebar/sidebarNodes.ts'
@@ -95,8 +96,15 @@ test('planSidebarDrop is the one seam: groups → header plan by node id, superv
   assert.equal((sidebar.match(/draggable:/g) ?? []).length, 1)
   assert.equal((sidebar.match(/onDragStart:/g) ?? []).length, 1)
   assert.equal((sidebar.match(/onDrop[:=]/g) ?? []).length, 2)
-  assert.equal((sidebar.match(/planSidebarDrop\(/g) ?? []).length, 4)
-  assert.doesNotMatch(sidebar, /reparentDrop|planGroupDrop/)
+  assert.equal((sidebar.match(/planSidebarDrop\(/g) ?? []).length, 2, 'dragover: row + container')
+  assert.equal((sidebar.match(/dropAssignment\(/g) ?? []).length, 2, 'drop: row + container')
+  assert.doesNotMatch(sidebar, /reparentDrop|planGroupDrop|getData\(/)
+  // dropAssignment goes through the same seam: one submit for a groups drop, none for a refused one.
+  const submits: unknown[] = []
+  assert.equal(dropAssignment('groups', 'group:/agent:impl-hine', 'group:audit', nodes, (name, assignment) => submits.push({ name, assignment })), true)
+  assert.equal(dropAssignment('groups', 'group:/agent:impl-hine', 'group:audit/agent:ziru', nodes, (name, assignment) => submits.push({ name, assignment })), false)
+  assert.equal(dropAssignment('supervision', 'agent:impl-hine', 'agent:ziru', nodes, (name, assignment) => submits.push({ name, assignment })), true)
+  assert.deepEqual(submits, [{ name: 'impl-hine', assignment: { group: 'audit' } }, { name: 'impl-hine', assignment: { manager: 'ziru' } }])
   assert.equal((sidebar.match(/role="alert"/g) ?? []).length, 1)
 })
 

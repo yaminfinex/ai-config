@@ -25,14 +25,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage())
 		return 0
 	}
+	if strings.HasPrefix(args[0], "-") {
+		fmt.Fprintf(stderr, "herder assign: <agent> must come first\n%s", usage())
+		return 2
+	}
 	for _, arg := range args[1:] {
 		if arg == "-name" || arg == "--name" || strings.HasPrefix(arg, "-name=") || strings.HasPrefix(arg, "--name=") {
 			fmt.Fprintf(stderr, "herder assign: --name is set by the <agent> argument\n%s", usage())
 			return 2
 		}
 	}
-	agent := strings.TrimSpace(args[0])
-	parsed := append([]string{"--name", agent}, args[1:]...)
+	parsed := append([]string{"--name", args[0]}, args[1:]...)
 	event, asJSON, err := eventcmd.Parse(agentstore.KindAssign, parsed)
 	if err != nil {
 		fmt.Fprintf(stderr, "herder assign: %v\n%s", err, usage())
@@ -76,7 +79,7 @@ func usage() string {
 	return `herder assign — assign an agent's manager and/or group with one event.
 
 Usage:
-  herder assign <agent> [--manager NAME|human] [--group NAME] [--clear-group] [--brief REF] [--thread NAME] [--task TEXT] [--by WHO] [--by-kind KIND] [--at RFC3339] [--id UUID] [--json]
+  herder assign <agent> [--manager NAME|human] [--group NAME] [--clear-group] [--by WHO] [--by-kind KIND] [--at RFC3339] [--id UUID] [--json]
 
 At least one of --manager, --group, or --clear-group is required. --manager human
 adopts the seat to the top level. --group replaces the group; --clear-group

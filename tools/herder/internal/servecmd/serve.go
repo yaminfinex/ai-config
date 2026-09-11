@@ -23,7 +23,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/claudesession"
@@ -1336,10 +1335,6 @@ func serveAssignment(w http.ResponseWriter, r *http.Request, deps dependencies, 
 	}
 	if request.Group != nil {
 		group = strings.TrimSpace(*request.Group)
-		if strings.ContainsAny(group, "\r\n\t\x00") || utf8.RuneCountInString(group) > 80 {
-			refuse(w, http.StatusBadRequest, "bad request", "group must not exceed 80 characters or contain control characters")
-			return
-		}
 	}
 	sender, ok := webSender(w, r, deps, roster)
 	if !ok {

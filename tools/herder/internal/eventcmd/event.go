@@ -26,7 +26,7 @@ func Parse(kind string, args []string) (agentstore.Event, bool, error) {
 	values := map[string]*string{}
 	boolValues := map[string]*bool{}
 	for _, name := range append(append(append(append([]string(nil), agentstore.CommonFlags...), sp.Required...), sp.OneOf...), sp.Optional...) {
-		if name == "clear-group" {
+		if agentstore.BoolFlags[name] {
 			boolValues[name] = fs.Bool(name, false, "")
 			continue
 		}
@@ -75,7 +75,7 @@ func Parse(kind string, args []string) (agentstore.Event, bool, error) {
 		Tool: get("tool"), Model: get("model"), Effort: get("effort"), Tag: get("tag"), PromptRef: get("prompt-ref"),
 		LauncherKind: get("launcher-kind"), Batch: get("batch"), Pane: get("pane"), Cwd: get("cwd"), Session: get("session"),
 		Reason: get("reason"), Close: get("close"), FromSession: get("from-session"), FromName: get("from"),
-		Group: get("group"), Brief: get("brief"), Thread: get("thread"), Task: get("task"), Title: get("title"), Note: get("note"),
+		Group: get("group"), Title: get("title"), Note: get("note"),
 		Manager: get("manager"), HcomEvent: get("hcom-event"), ParentName: get("parent-name"), Path: get("path"),
 	}
 	if clear := boolValues["clear-group"]; clear != nil {

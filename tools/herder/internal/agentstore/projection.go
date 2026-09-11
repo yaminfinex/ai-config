@@ -12,7 +12,7 @@ import (
 
 // ProjectionVersion changes whenever Apply's fold changes, so a stale
 // snapshot is replayed instead of trusted.
-const ProjectionVersion = 5
+const ProjectionVersion = 6
 
 // EventsKept is how many trailing events each agent record retains.
 const EventsKept = 32
@@ -44,19 +44,18 @@ type RequestRecord struct {
 // both the stored incarnation record and the fold result (Binding, Session
 // and Incarnation are set from the roster at fold time).
 type AgentView struct {
-	Name         string      `json:"name"`
-	BaseName     string      `json:"base_name,omitempty"`
-	Tool         string      `json:"tool,omitempty"`
-	Tag          string      `json:"tag,omitempty"`
-	Incarnation  time.Time   `json:"incarnation"` // roster created_at when known, else the first event's time
-	FirstSeen    time.Time   `json:"first_seen"`
-	LastSeen     time.Time   `json:"last_seen"`
-	Closed       *time.Time  `json:"closed,omitempty"` // culled / launch-failed / mirror.stopped
-	CloseReason  string      `json:"close_reason,omitempty"`
-	Provenance   Provenance  `json:"provenance"`
-	Assignment   *Assignment `json:"assignment,omitempty"`
-	AssignmentAt *time.Time  `json:"assignment_at,omitempty"`
-	Annotation   *Annotation `json:"annotation,omitempty"`
+	Name        string      `json:"name"`
+	BaseName    string      `json:"base_name,omitempty"`
+	Tool        string      `json:"tool,omitempty"`
+	Tag         string      `json:"tag,omitempty"`
+	Incarnation time.Time   `json:"incarnation"` // roster created_at when known, else the first event's time
+	FirstSeen   time.Time   `json:"first_seen"`
+	LastSeen    time.Time   `json:"last_seen"`
+	Closed      *time.Time  `json:"closed,omitempty"` // culled / launch-failed / mirror.stopped
+	CloseReason string      `json:"close_reason,omitempty"`
+	Provenance  Provenance  `json:"provenance"`
+	Assignment  *Assignment `json:"assignment,omitempty"`
+	Annotation  *Annotation `json:"annotation,omitempty"`
 	// Manager is the mutable hierarchy pointer ("who manages me"): the latest
 	// assignment, else the launcher. Provenance.Launcher is immutable.
 	Manager    string        `json:"manager,omitempty"`
@@ -89,12 +88,9 @@ type Provenance struct {
 }
 
 type Assignment struct {
-	Group  string    `json:"group"`
-	Brief  string    `json:"brief,omitempty"`
-	Thread string    `json:"thread,omitempty"`
-	Task   string    `json:"task,omitempty"`
-	By     string    `json:"by,omitempty"`
-	At     time.Time `json:"at"`
+	Group string    `json:"group"`
+	By    string    `json:"by,omitempty"`
+	At    time.Time `json:"at"`
 }
 
 type Annotation struct {
@@ -329,13 +325,8 @@ func (p *Projection) Apply(e Event, _ int64) {
 	case KindCompactRequested:
 		// recorded in Events only
 	case KindAssign:
-		if (e.ClearGroup || e.Group != "") && (v.AssignmentAt == nil || !at.Before(*v.AssignmentAt)) {
-			if e.ClearGroup {
-				v.Assignment = nil
-			} else {
-				v.Assignment = &Assignment{Group: e.Group, Brief: e.Brief, Thread: e.Thread, Task: e.Task, By: e.By, At: at}
-			}
-			v.AssignmentAt = &at
+		if (e.ClearGroup || e.Group != "") && (v.Assignment == nil || !at.Before(v.Assignment.At)) {
+			v.Assignment = &Assignment{Group: e.Group, By: e.By, At: at}
 		}
 		if e.Manager != "" && (v.ManagerAt == nil || !at.Before(*v.ManagerAt)) {
 			v.Manager, v.ManagerBy = e.Manager, e.By

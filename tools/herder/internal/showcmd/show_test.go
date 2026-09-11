@@ -25,7 +25,7 @@ func seed(t *testing.T) string {
 	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
 	for _, e := range []agentstore.Event{
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", ByKind: "agent", Name: "impl-gime", Tool: "codex", Pane: "w80:p1", Session: "claimed-S"},
-		{ID: agentstore.NewID(at), At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "impl-gime", Group: "fleet-refit", Thread: "agent-store"},
+		{ID: agentstore.NewID(at), At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "impl-gime", Group: "fleet-refit"},
 		{ID: agentstore.NewID(at), At: at.Add(2 * time.Second), Kind: agentstore.KindAssign, By: "bigboss", Name: "impl-gime", Manager: "vara"},
 	} {
 		if _, err := s.Append(e); err != nil {
@@ -177,6 +177,9 @@ func TestShowTextAndJSONFoldRosterConflict(t *testing.T) {
 	out.Reset()
 	if code := run([]string{"--json", "impl-gime"}, &out, &errBuf, deps); code != 0 {
 		t.Fatalf("json code=%d", code)
+	}
+	if strings.Contains(out.String(), "assignment_at") || strings.Contains(out.String(), `"assignment":null`) {
+		t.Fatalf("json carries orphan assignment state: %s", out.String())
 	}
 	var view agentstore.AgentView
 	if err := json.Unmarshal(out.Bytes(), &view); err != nil {

@@ -14,7 +14,8 @@ import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
 import { apiProblem, assignAgent, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
 import { beginRename, editingAt, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
-import { groupHeaderTooltip, openGroupTooltip, planSidebarDrop } from './groupDropModel'
+import { groupHeaderTooltip, openGroupTooltip } from './groupDropModel'
+import { dropAssignment, planSidebarDrop } from './reparentModel'
 
 const emptyExpandedItems: string[] = []
 
@@ -153,17 +154,15 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
       className={`fleet-tree panel-tree fleet-tree-${view}${dropTarget === 'tree-root' ? ' drop-target' : ''}`}
       onDragOver={(event) => {
         if (event.target !== event.currentTarget) return
-        const result = planSidebarDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), null, nodes)
+        const result = planSidebarDrop(view, dragSource, null, nodes)
         if (!result) return
         event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget('tree-root')
       }}
       onDragLeave={(event) => { if (event.target === event.currentTarget) setDropTarget(null) }}
       onDrop={(event) => {
         if (event.target !== event.currentTarget) return
-        const result = planSidebarDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), null, nodes)
         setDropTarget(null)
-        if (!result) return
-        event.preventDefault(); void submitAssignment(result.name, result.assignment)
+        if (dropAssignment(view, dragSource, null, nodes, submitAssignment)) event.preventDefault()
       }}>
       {tree.getItems().map((item) => {
         const node = item.getItemData()
@@ -195,17 +194,15 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
             },
             onDragEnd: () => { setDragSource(null); setDropTarget(null) },
             onDragOver: (event) => {
-              const result = planSidebarDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), item.getId(), nodes)
+              const result = planSidebarDrop(view, dragSource, item.getId(), nodes)
               if (!result) return
               event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDropTarget(item.getId())
             },
             onDragLeave: () => { if (dropTarget === item.getId()) setDropTarget(null) },
             onDrop: (event) => {
               event.stopPropagation()
-              const result = planSidebarDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), item.getId(), nodes)
               setDropTarget(null)
-              if (!result) return
-              event.preventDefault(); void submitAssignment(result.name, result.assignment)
+              if (dropAssignment(view, dragSource, item.getId(), nodes, submitAssignment)) event.preventDefault()
             },
             onFocus: () => item.setFocused(),
             onClick: () => { item.setFocused(); setSelectedItems([item.getId()]); item.primaryAction() },
@@ -257,7 +254,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
             {pane?.agent && pane.agent !== '-' && <ContextUsed value={node.contextUsed} />}
             {pane?.agent && pane.agent !== '-' && !renaming && <button type="button" className="rename-agent-button" aria-label={`Rename ${pane.agent}`} title={`Rename ${pane.agent}`}
               onClick={(event) => { event.stopPropagation(); startRename(pane.agent, node.id, pane.title) }}>✎</button>}
-            {view === 'supervision' && pane?.agent && pane.agent !== '-' && pane.bus_status !== '-' && pane.manager_state === 'unknown' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
+            {view === 'supervision' && node.marker === 'unknown-manager' && pane?.agent && pane.agent !== '-' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
               onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
             {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
