@@ -52,12 +52,12 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 | `launch-ready` | batch, pane, cwd, session (plus tool/model/effort/tag/placement when no request precedes it) |
 | `launch-failed` | reason, batch, pane |
 | `cull-requested`, `culled` | pane, close (`managed\|label-fallback`) |
-| `resume` | pane, from_session |
+| `resume` | pane, from_session, session |
 | `fork` | from_name, pane |
 | `compact-requested` | steer_chars |
 | `assign` | manager, group, clear_group |
 | `annotate` | title, note |
-| `mirror.created/ready/stopped/batch_launched` | hcom_event, reason, batch, instances, parent_name, is_hcom_launched |
+| `mirror.created/ready/stopped/batch_launched` | hcom_event, reason, batch, instances, parent_name, is_hcom_launched; `mirror.ready` also session (stamped by the serve life mirror from the roster) |
 | `session.observed/ended/superseded` | session, tool, path, reason |
 
 `spawn.sh` records requested and ready (or failed) around the existing launch.
@@ -145,6 +145,19 @@ accepted as an alias), then rejects it when its first event predates
 kill`, a crash or a missed wrapper records no close, and roster creation is
 the newer evidence. With no roster time it takes the latest. A new
 incarnation inherits nothing: no manager, no assignment, no launcher.
+So that a record opened before the roster row (an annotate or assignment on a
+name whose last life is closed) still passes that check, the serve life mirror
+stamps the roster row's `session` onto `mirror.ready`, resolving the name and
+the session from ONE fresh roster read per ready event (a failed read writes
+the event unstamped); `mirror.created` never stamps. The fold binds that
+session ONLY to a record with no session history at all (the same open session
+is a no-op); a record with any other session is left untouched, because a
+roster-derived mirror cannot prove continuity across a crash or a missed
+wrapper close, so a reused name over an unclosed life still inherits nothing.
+`resume` accepts an optional `session`: the same id as the open session is a
+no-op on sessions, otherwise `from-session` (or the current one) ends
+"resumed" and the new one opens. ProjectionVersion 7 (mirror/resume sessions
+in the fold): older snapshots rebuild on load.
 
 `mirror.batch_launched` fans out to its `instances` (name optional).
 `session.observed` without a name is a pane-only session kept under

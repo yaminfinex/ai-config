@@ -117,7 +117,7 @@ var CommonFlags = []string{"name", "by", "by-kind", "at", "id", "request"}
 // BoolFlags identifies event flags that do not take a value.
 var BoolFlags = map[string]bool{"clear-group": true}
 
-var mirrorFlags = []string{"hcom-event", "reason", "batch", "instances", "parent-name", "is-hcom-launched"}
+var mirrorFlags = []string{"hcom-event", "reason", "batch", "instances", "parent-name", "is-hcom-launched", "session"}
 var sessionFlags = []string{"tool", "path", "reason"}
 
 var specs = map[string]Spec{
@@ -126,7 +126,7 @@ var specs = map[string]Spec{
 	KindLaunchFailed:     {Required: []string{"reason"}, Optional: []string{"batch", "pane"}},
 	KindCullRequested:    {Required: []string{"name"}, Optional: []string{"pane"}},
 	KindCulled:           {Required: []string{"name", "pane", "close"}},
-	KindResume:           {Required: []string{"name"}, Optional: []string{"pane", "from-session"}},
+	KindResume:           {Required: []string{"name"}, Optional: []string{"pane", "from-session", "session"}},
 	KindFork:             {Required: []string{"name", "from"}, Optional: []string{"pane"}},
 	KindCompactRequested: {Required: []string{"name"}, Optional: []string{"steer-chars"}},
 	KindAssign:           {Required: []string{"name"}, Optional: []string{"manager", "group", "clear-group"}},

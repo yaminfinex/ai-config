@@ -515,6 +515,23 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 					Batch: life.Batch, Instances: instances, ParentName: life.ParentName,
 					IsHcomLaunched: life.IsHcomLaunched, HcomEvent: strconv.FormatInt(life.ID, 10),
 				}
+				if kind == agentstore.KindMirrorReady {
+					// A cold-start seed above IS this event's one roster call.
+					// The session comes ONLY from the fresh result; a failed
+					// refresh writes the event unstamped whatever the cache holds.
+					fresh, err := roster, error(nil)
+					if rosterReady {
+						fresh, err = deps.roster()
+						if err == nil {
+							deps.rosterCache.set(fresh)
+						}
+					}
+					name = resolve(life.Instance)
+					event.Name = name
+					if err == nil {
+						event.Session = rosterSessionFor(fresh, name)
+					}
+				}
 				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
 					deps.audit("hcom life mirror: skip %d: %v", life.ID, err)
 					return nil
@@ -539,6 +556,22 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 			}
 		}
 	}()
+}
+
+// rosterSessionFor returns the session rows hold for name. mirror.ready always resolves BOTH the name and the session from ONE fresh
+// deps.roster() per event (the cold-start seed counts as that call; a warm
+// cache still refreshes exactly once, never a loop) so a stale cache holding
+// the previous life's session is never stamped: the session comes ONLY from
+// the fresh result. A failed refresh leaves the cache as it was and the event
+// is written unstamped (whatever the cache holds) without an error.
+// mirror.created never stamps a session.
+func rosterSessionFor(rows []hcomidentity.Row, name string) string {
+	for _, row := range rows {
+		if row.Name == name {
+			return row.SessionID
+		}
+	}
+	return ""
 }
 
 type rootFlags []string
