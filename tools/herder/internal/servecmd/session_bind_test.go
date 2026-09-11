@@ -52,56 +52,52 @@ func lastEvent(t *testing.T, proj *agentstore.Projection, name string) agentstor
 	return view.Events[len(view.Events)-1]
 }
 
-func TestLifeMirrorStampsRosterSessionOnReadyAndCreated(t *testing.T) {
+func TestLifeMirrorReadyResolvesNameAndSessionFromOneFreshRoster(t *testing.T) {
+	// vipe D2: a stale cache holds the previous life's session; the fresh
+	// roster says NEW. ready carries NEW after exactly one roster call and
+	// created never stamps.
 	deps := fixtureDeps()
 	deps.store = agentstore.Open(t.TempDir(), nil)
 	deps.rosterCache = &rosterCache{}
-	deps.rosterCache.set([]hcomidentity.Row{{Name: "query-topo-guna", BaseName: "guna", SessionID: "S-guna"}, {Name: "impl-nife", BaseName: "nife"}})
+	deps.rosterCache.set([]hcomidentity.Row{{Name: "query-topo-guna", BaseName: "guna", SessionID: "S-stale"}})
 	rosterCalls := 0
 	deps.roster = func() ([]hcomidentity.Row, error) {
 		rosterCalls++
-		return nil, nil
+		return []hcomidentity.Row{{Name: "query-topo-guna", BaseName: "guna", SessionID: "S-new"}}, nil
 	}
 	proj := runLifeMirror(t, deps,
 		hcomevents.Life{ID: 1, TS: "2026-09-11T02:30:33Z", Instance: "guna", Action: "created", By: "user"},
 		hcomevents.Life{ID: 2, TS: "2026-09-11T02:30:38Z", Instance: "guna", Action: "ready", By: "riko"},
-		hcomevents.Life{ID: 3, TS: "2026-09-11T02:30:39Z", Instance: "nife", Action: "created", By: "user"},
 		hcomevents.Life{ID: 4, TS: "2026-09-11T02:30:40Z", Instance: "guna", Action: "stopped", By: "session", Reason: "exit:other"},
 	)
 	guna := proj.Latest("query-topo-guna")
-	if guna == nil || len(guna.Events) != 3 || guna.Events[0].Session != "S-guna" || guna.Events[1].Session != "S-guna" || guna.Events[2].Session != "" {
-		t.Fatalf("guna events = %+v", guna)
+	if guna == nil || len(guna.Events) != 3 || guna.Events[0].Session != "" || guna.Events[1].Session != "S-new" || guna.Events[2].Session != "" {
+		t.Fatalf("guna events = %+v", guna.Events)
 	}
-	if guna.Sessions[0].SessionID != "S-guna" || guna.Sessions[0].Ended == nil || guna.Sessions[0].EndReason != "exit:other" {
-		t.Fatalf("guna sessions = %+v", guna.Sessions)
+	if rosterCalls != 1 || guna.Sessions[0].Ended == nil || guna.Sessions[0].SessionID != "S-new" || guna.Sessions[0].EndReason != "exit:other" {
+		t.Fatalf("rosterCalls=%d sessions=%+v", rosterCalls, guna.Sessions)
 	}
-	// created stamps only what the cache already holds: no refetch for a row
-	// without a session.
-	if e := lastEvent(t, proj, "impl-nife"); e.Session != "" || rosterCalls != 0 {
-		t.Fatalf("created refetched or stamped: event=%+v rosterCalls=%d", e, rosterCalls)
+	if rows, _ := deps.rosterCache.get(); rows[0].SessionID != "S-new" {
+		t.Fatalf("cache not refreshed: %+v", rows)
 	}
 }
 
-func TestLifeMirrorReadyRefetchesRosterOnceWhenCacheHasNoSession(t *testing.T) {
+func TestLifeMirrorReadyOnColdStartSeedIsTheOneRosterCall(t *testing.T) {
 	deps := fixtureDeps()
 	deps.store = agentstore.Open(t.TempDir(), nil)
 	deps.rosterCache = &rosterCache{}
-	deps.rosterCache.set([]hcomidentity.Row{{Name: "query-topo-guna", BaseName: "guna"}})
 	rosterCalls := 0
 	deps.roster = func() ([]hcomidentity.Row, error) {
 		rosterCalls++
-		return []hcomidentity.Row{{Name: "query-topo-guna", BaseName: "guna", SessionID: "S-late"}}, nil
+		return []hcomidentity.Row{{Name: "query-topo-guna", BaseName: "guna", SessionID: "S-seed"}}, nil
 	}
 	proj := runLifeMirror(t, deps, hcomevents.Life{ID: 11, TS: "2026-09-11T02:30:38Z", Instance: "guna", Action: "ready", By: "riko"})
-	if e := lastEvent(t, proj, "query-topo-guna"); e.Kind != agentstore.KindMirrorReady || e.Session != "S-late" || rosterCalls != 1 {
-		t.Fatalf("refetch: event=%+v rosterCalls=%d", e, rosterCalls)
-	}
-	if rows, _ := deps.rosterCache.get(); len(rows) != 1 || rows[0].SessionID != "S-late" {
-		t.Fatalf("refetch did not refresh the cache: %+v", rows)
+	if e := lastEvent(t, proj, "query-topo-guna"); e.Kind != agentstore.KindMirrorReady || e.Session != "S-seed" || rosterCalls != 1 {
+		t.Fatalf("cold seed: event=%+v rosterCalls=%d", e, rosterCalls)
 	}
 }
 
-func TestLifeMirrorReadyWithoutSessionAfterRefetchWritesUnstamped(t *testing.T) {
+func TestLifeMirrorReadyWithFailedRefreshWritesUnstamped(t *testing.T) {
 	deps := fixtureDeps()
 	deps.store = agentstore.Open(t.TempDir(), nil)
 	deps.rosterCache = &rosterCache{}
@@ -124,8 +120,8 @@ func TestLifeMirrorReadyWithoutSessionAfterRefetchWritesUnstamped(t *testing.T) 
 	if view == nil || len(view.Events) != 2 || view.Events[0].Session != "" || view.Events[1].Session != "" || len(view.Sessions) != 0 {
 		t.Fatalf("unstamped ready: %+v", view)
 	}
-	// one refetch per ready event (never a loop), a failing refetch is not an
-	// error, and nothing is audited.
+	// exactly one refresh per ready event, a failing one is not an error and
+	// nothing is audited.
 	if rosterCalls != 2 || audits != 0 {
 		t.Fatalf("rosterCalls=%d audits=%d", rosterCalls, audits)
 	}

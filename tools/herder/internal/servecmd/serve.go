@@ -515,9 +515,15 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 					Batch: life.Batch, Instances: instances, ParentName: life.ParentName,
 					IsHcomLaunched: life.IsHcomLaunched, HcomEvent: strconv.FormatInt(life.ID, 10),
 				}
-				if kind == agentstore.KindMirrorCreated || kind == agentstore.KindMirrorReady {
+				if kind == agentstore.KindMirrorReady {
 					// A cold-start seed above IS this event's one roster call.
-					event.Session = mirrorSession(deps, name, kind == agentstore.KindMirrorReady && rosterReady)
+					if rosterReady {
+						if fresh, err := deps.roster(); err == nil {
+							deps.rosterCache.set(fresh)
+						}
+					}
+					name = resolve(life.Instance)
+					event.Name, event.Session = name, rosterSessionFor(deps.rosterCache, name)
 				}
 				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
 					deps.audit("hcom life mirror: skip %d: %v", life.ID, err)
@@ -545,24 +551,13 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 	}()
 }
 
-// mirrorSession returns the roster session to stamp onto a mirror.created or
-// mirror.ready event for name. rosterCache is fed by fleet reads, so at ready
-// time it may predate the tool's SessionStart hook; a ready event with no
-// cached session refetches the roster at most ONCE (never a loop) and, when
-// the row still carries no session, the event is written without one and the
-// mirror does not error. created stamps only what the cache already holds.
-func mirrorSession(deps dependencies, name string, refetch bool) string {
-	if session := rosterSessionFor(deps.rosterCache, name); session != "" || !refetch {
-		return session
-	}
-	roster, err := deps.roster()
-	if err != nil {
-		return ""
-	}
-	deps.rosterCache.set(roster)
-	return rosterSessionFor(deps.rosterCache, name)
-}
-
+// rosterSessionFor returns the session the cached roster holds for name.
+// mirror.ready always resolves BOTH the name and the session from ONE fresh
+// deps.roster() per event (the cold-start seed counts as that call; a warm
+// cache still refreshes exactly once, never a loop) so a stale cache holding
+// the previous life's session is never stamped. A failed refresh leaves the
+// cache as it was and the event is written unstamped without an error.
+// mirror.created never stamps a session.
 func rosterSessionFor(cache *rosterCache, name string) string {
 	rows, _ := cache.get()
 	for _, row := range rows {

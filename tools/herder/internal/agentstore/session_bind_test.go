@@ -2,6 +2,8 @@ package agentstore
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"testing"
 
 	"ai-config/tools/herder/internal/hcomidentity"
@@ -107,5 +109,93 @@ func TestSnapshotPlusTailEqualsFullReplayForTheRuzuJournal(t *testing.T) {
 	}
 	if v := tail.Incarnation("query-topo-guna", at(11), "new-S2"); v == nil || v.Manager != "ziru" {
 		t.Fatalf("tail view = %+v", v)
+	}
+}
+
+// vipe D1: a reused name over an UNCLOSED life. The old record has session
+// history (OLD, never ended); the roster row for the new life carries NEW
+// and its mirror.ready is stamped NEW. The mirror must not bind NEW onto the
+// old record, so the new roster still folds as unregistered and the old
+// manager/group never appear.
+func TestMirrorReadyDoesNotBindOverAnUnclosedLifeWithSessionHistory(t *testing.T) {
+	_, s := scratch(t)
+	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "OLD" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Group = "old-manager", "old-group" }))
+	mustAppend(t, s, ev(KindMirrorReady, "impl-gime", 12, func(e *Event) { e.ByKind = "mirror"; e.Session = "NEW" }))
+	proj, err := s.Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := proj.Latest("impl-gime")
+	if len(proj.Agents["impl-gime"]) != 1 || currentSession(old) != "OLD" || len(old.Sessions) != 1 {
+		t.Fatalf("mirror touched a record with session history: %+v", old.Sessions)
+	}
+	row := &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(11), SessionID: "NEW"}
+	if v := proj.Incarnation("impl-gime", at(11), "NEW"); v != nil {
+		t.Fatalf("NEW bound over an unclosed life: manager %q", v.Manager)
+	}
+	if v := proj.View("impl-gime", row); v != nil {
+		t.Fatalf("old-manager/old-group leaked into the new roster row: %+v", v)
+	}
+	// the same open session mirrored again is a no-op
+	mustAppend(t, s, ev(KindMirrorReady, "impl-gime", 13, func(e *Event) { e.ByKind = "mirror"; e.Session = "OLD" }))
+	proj, _ = s.Replay()
+	if v := proj.Latest("impl-gime"); len(v.Sessions) != 1 || v.Sessions[0].Ended != nil {
+		t.Fatalf("same-session mirror changed history: %+v", v.Sessions)
+	}
+}
+
+// vipe D3: claude keeps its session id across --resume, so a resume naming the
+// open session is a no-op on Sessions; a resume to a different id ends the old
+// one "resumed" and opens the new one.
+func TestResumeWithTheSameSessionKeepsItOpen(t *testing.T) {
+	_, s := scratch(t)
+	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "S"; e.Tool = "claude" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager = "ziru" }))
+	mustAppend(t, s, ev(KindResume, "impl-gime", 4, func(e *Event) { e.FromSession, e.Session, e.Pane = "S", "S", "w80:p2" }))
+	proj, err := s.Replay()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := proj.Latest("impl-gime")
+	if len(v.Sessions) != 1 || v.Sessions[0].Ended != nil || currentSession(v) != "S" || v.Provenance.Pane != "w80:p2" {
+		t.Fatalf("same-id resume changed sessions: %+v", v)
+	}
+	if b := proj.Incarnation("impl-gime", at(3), "S"); b == nil || b.Manager != "ziru" {
+		t.Fatalf("binding lost after same-id resume: %+v", b)
+	}
+	mustAppend(t, s, ev(KindResume, "impl-gime", 5, func(e *Event) { e.FromSession, e.Session = "S", "T" }))
+	proj, _ = s.Replay()
+	v = proj.Latest("impl-gime")
+	if len(v.Sessions) != 2 || currentSession(v) != "T" || v.Sessions[1].SessionID != "S" || v.Sessions[1].Ended == nil || v.Sessions[1].EndReason != "resumed" {
+		t.Fatalf("S->T resume: %+v", v.Sessions)
+	}
+}
+
+// vipe D4: a LITERAL version-6 snapshot (the fold that ignored mirror
+// sessions) at the journal's current offset. Load must reject it by version,
+// replay, and the record must carry the mirror.ready session. Reverting
+// ProjectionVersion to 6 reds this test.
+func TestLiteralVersion6SnapshotIsReplacedAndMirrorSessionReplayed(t *testing.T) {
+	_, s := scratch(t)
+	mustAppend(t, s, ev(KindMirrorReady, "query-topo-guna", 12, func(e *Event) { e.ByKind = "mirror"; e.Session = "new-S" }))
+	stat, err := os.Stat(s.EventsPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v6 := fmt.Sprintf(`{"version":6,"events_offset":%d,"agents":{"query-topo-guna":[{"name":"query-topo-guna","incarnation":"2026-09-09T05:00:12Z","first_seen":"2026-09-09T05:00:12Z","last_seen":"2026-09-09T05:00:12Z","provenance":{"kind":"mirrored","state":"ready"},"events":[]}]},"requests":{},"unnamed_sessions":{}}`, stat.Size())
+	if err := os.WriteFile(s.SnapshotPath(), []byte(v6), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	proj, err := s.Load()
+	if err != nil || proj.SnapshotErr != nil {
+		t.Fatalf("load: %v snapshotErr %v", err, proj.SnapshotErr)
+	}
+	v := proj.Latest("query-topo-guna")
+	if proj.Version != 7 || v == nil || currentSession(v) != "new-S" {
+		t.Fatalf("v6 snapshot trusted: version=%d view=%+v", proj.Version, v)
+	}
+	if b := proj.Incarnation("query-topo-guna", at(11), "new-S"); b == nil {
+		t.Fatal("replayed record does not bind the roster session")
 	}
 }

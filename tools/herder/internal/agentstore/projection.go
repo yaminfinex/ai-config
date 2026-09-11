@@ -305,12 +305,19 @@ func (p *Projection) Apply(e Event, _ int64) {
 		v.endSession(at, "culled")
 	case KindResume:
 		registered()
-		from := firstNonEmpty(e.FromSession, currentSession(v))
-		if from != "" {
-			v.endSession(at, "resumed")
-		}
-		if e.Session != "" {
-			v.openSession(e.Session, firstNonEmpty(e.Tool, v.Tool), "", at, "resume")
+		// A resume that names the session already open (claude keeps its id
+		// across --resume) is a no-op on Sessions; otherwise the old one ends
+		// "resumed" and the new one, when given, opens.
+		if e.Session != "" && e.Session == currentSession(v) {
+			// pane/metadata handling below still applies
+		} else {
+			from := firstNonEmpty(e.FromSession, currentSession(v))
+			if from != "" {
+				v.endSession(at, "resumed")
+			}
+			if e.Session != "" {
+				v.openSession(e.Session, firstNonEmpty(e.Tool, v.Tool), "", at, "resume")
+			}
 		}
 		if e.Pane != "" {
 			v.Provenance.Pane = e.Pane
@@ -357,10 +364,14 @@ func (p *Projection) Apply(e Event, _ int64) {
 		if v.Provenance.State == "" && e.Kind == KindMirrorReady {
 			v.Provenance.State = "ready"
 		}
-		// The serve life mirror stamps the roster row's session onto created/ready
+		// The serve life mirror stamps the roster row's session onto mirror.ready
 		// so a record opened before the roster row (annotate on a closed life)
-		// carries session evidence and passes the Incarnation guard.
-		if e.Session != "" {
+		// carries session evidence and passes the Incarnation guard. It binds
+		// ONLY a record with no session history at all: a roster-derived mirror
+		// cannot establish continuity across a crash or a missed wrapper close,
+		// so a record with any other session is left untouched (same open
+		// session: no-op).
+		if e.Session != "" && (len(v.Sessions) == 0 || e.Session == currentSession(v)) {
 			v.openSession(e.Session, firstNonEmpty(e.Tool, v.Tool), "", at, "mirror")
 		}
 	case KindMirrorStopped:
