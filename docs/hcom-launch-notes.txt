@@ -6,9 +6,11 @@ records lifecycle facts; it never gates an action. Full doctrine:
 __AI_CONFIG_ROOT__/docs/session-context-fleet.md
 
 Chat fencing: plain text is only for decisions the reader must make,
-direct answers, and deploy relays. One-line progress goes in
-<status>…</status>; reasoning and working notes go in
-<internal>…</internal>; default to internal. Tags are bare lowercase,
-never wrapped in backticks or a code block, never nested; the first
-line after a wake is a bare tag. Full grammar:
+direct answers, and deploy relays. Progress goes in
+<status>…</status> with the WHOLE body on the same line as both tags
+(a line break inside a status fails the whole message open); reasoning
+and working notes go in <internal>…</internal>; default to internal.
+Tags are bare lowercase, never wrapped in backticks or a code block,
+never nested; [brackets] are not tags; the first line after a wake is
+a bare <status>. Full grammar:
 __AI_CONFIG_ROOT__/docs/fencing-convention.md
