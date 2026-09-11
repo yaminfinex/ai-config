@@ -242,13 +242,16 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
 // orchestrator with reports in two groups appears under both headers and a
 // leaf appears exactly once. Under a header the tree is the manager tree
 // restricted to members; node ids are `<header>/agent:<name>` so the same
-// agent can sit under two headers with distinct, frame-stable ids. Headers
+// agent can sit under two headers with distinct, frame-stable ids. The label
+// component of a header id is URI-encoded, so a label containing "/" or
+// ":" can never collide with another header's row ids; the raw label stays
+// on the node for display and for the assignment a drop writes. Headers
 // exist only while they have members; terminals are not shown. The
 // supervision view never draws these nodes.
 export const ungroupedID = 'group:'
 
 export function groupHeaderID(label: string) {
-  return `group:${label}`
+  return `group:${encodeURIComponent(label)}`
 }
 
 export function groupOf(row: Pick<Row, 'group'>) {
@@ -275,36 +278,37 @@ export function buildGroupNodes(board: Board | undefined): Map<string, SidebarNo
     return byCreation([...reports, ...subagents])
   }
 
-  // labelsBelow(name) is the set of labels anywhere in name's subtree
-  // (itself included); the visited set makes a reparent cycle finite.
-  const labelsBelow = new Map<string, Set<string>>()
-  const visiting = new Set<string>()
-  const labels = (name: string): Set<string> => {
-    const known = labelsBelow.get(name)
-    if (known) return known
-    const set = new Set<string>()
-    if (visiting.has(name)) return set
-    visiting.add(name)
-    const own = groupOf(rows.get(name)!.row)
-    if (own) set.add(own)
-    for (const child of childrenOf(name)) for (const label of labels(child.row.agent)) set.add(label)
-    visiting.delete(name)
-    labelsBelow.set(name, set)
-    return set
-  }
-  for (const name of rows.keys()) labels(name)
-
-  const distinct = new Set<string>()
-  for (const set of labelsBelow.values()) for (const label of set) distinct.add(label)
-
-  // A row is a root under header X when it is a member and no manager/parent
-  // above it is also a member (otherwise it hangs under that one).
   const parentOf = (flat: FlatRow): string | undefined => {
     const { row } = flat
     if (row.parent_agent && rows.has(row.parent_agent)) return row.parent_agent
     const manager = row.manager ?? ''
     return manager && manager !== row.agent && rows.has(manager) ? manager : undefined
   }
+
+  // labelsBelow(name) is the set of labels anywhere in name's subtree
+  // (itself included), built by walking each labelled row UP its ancestor
+  // chain. Every row is visited once per label it carries, whatever order the
+  // roster arrives in, and the per-walk seen set makes a reparent cycle
+  // finite (both members of an a↔b cycle receive both labels).
+  const labelsBelow = new Map([...rows.keys()].map((name) => [name, new Set<string>()]))
+  for (const flat of rows.values()) {
+    const label = groupOf(flat.row)
+    if (!label) continue
+    let ancestor: FlatRow | undefined = flat
+    const seen = new Set<string>()
+    while (ancestor && !seen.has(ancestor.row.agent)) {
+      seen.add(ancestor.row.agent)
+      labelsBelow.get(ancestor.row.agent)!.add(label)
+      const parent = parentOf(ancestor)
+      ancestor = parent ? rows.get(parent) : undefined
+    }
+  }
+
+  const distinct = new Set<string>()
+  for (const set of labelsBelow.values()) for (const label of set) distinct.add(label)
+
+  // A row is a root under header X when it is a member and no manager/parent
+  // above it is also a member (otherwise it hangs under that one).
   const addHeader = (id: string, kind: 'group' | 'ungrouped', name: string, group: string, member: (agent: string) => boolean) => {
     const placed = new Set<string>()
     const addAgent = (flat: FlatRow): string => {

@@ -109,6 +109,40 @@ test('header ids are stable across frames so expansion persists, and a new heade
   assert.equal(transition?.expandedItems?.includes('group:fleet-refit'), false)
 })
 
+test('membership is order-independent: an a↔b cycle carrying labels A and B puts both agents under both headers in either roster order', () => {
+  const a = () => agent('a', { manager: 'b', manager_state: 'live', group: 'A', created_at: '2026-09-01T00:00:00Z' })
+  const b = () => agent('b', { manager: 'a', manager_state: 'live', group: 'B', created_at: '2026-09-02T00:00:00Z' })
+  for (const unplaced of [[a(), b()], [b(), a()]]) {
+    const nodes = buildGroupNodes({ workspaces: [], unplaced })
+    assert.deepEqual(nodes.get('tree-root')?.children, ['group:A', 'group:B'])
+    assert.deepEqual(groupMembers(nodes, 'group:A').sort(), ['a', 'b'])
+    assert.deepEqual(groupMembers(nodes, 'group:B').sort(), ['a', 'b'])
+  }
+  // Order independence without a cycle too: the labelled leaf may arrive before or after its manager.
+  const m = () => agent('m', { manager_state: 'unknown', created_at: '2026-09-01T00:00:00Z' })
+  const leaf = () => agent('leaf', { manager: 'm', manager_state: 'live', group: 'G', created_at: '2026-09-02T00:00:00Z' })
+  for (const unplaced of [[m(), leaf()], [leaf(), m()]]) {
+    assert.deepEqual(buildGroupNodes({ workspaces: [], unplaced }).get('group:G')?.children, ['group:G/agent:m'])
+  }
+})
+
+test('header ids are label-safe: a label containing "/agent:", ":" or "/" never collides with another header\'s row ids', () => {
+  const nodes = buildGroupNodes({ workspaces: [], unplaced: [
+    agent('ziru', { manager_state: 'unknown', group: 'A', created_at: '2026-09-01T00:00:00Z' }),
+    agent('evil', { manager_state: 'unknown', group: 'A/agent:ziru', created_at: '2026-09-02T00:00:00Z' }),
+    agent('colon', { manager_state: 'unknown', group: 'x:y/z', created_at: '2026-09-03T00:00:00Z' }),
+  ] })
+  const headers = nodes.get('tree-root')!.children
+  assert.deepEqual(headers, ['group:A', 'group:A%2Fagent%3Aziru', 'group:x%3Ay%2Fz'])
+  assert.equal(nodes.get('group:A/agent:ziru')?.kind, 'agent', "group A's ziru row keeps its id")
+  assert.equal(nodes.get('group:A%2Fagent%3Aziru')?.kind, 'group', 'the hostile label is a distinct header')
+  assert.equal(nodes.get('group:A%2Fagent%3Aziru')?.group, 'A/agent:ziru', 'the raw label stays for display and assignment')
+  assert.equal(nodes.get('group:A%2Fagent%3Aziru')?.name, 'A/agent:ziru')
+  assert.deepEqual(groupMembers(nodes, 'group:A%2Fagent%3Aziru'), ['evil'])
+  assert.deepEqual(groupMembers(nodes, 'group:A'), ['ziru'])
+  assert.equal(new Set(nodes.keys()).size, nodes.size)
+})
+
 test('a reparent cycle among members is finite and every member is still homed', () => {
   const cyclic: Board = { workspaces: [], unplaced: [
     agent('a', { manager: 'b', manager_state: 'live', group: 'g', created_at: '2026-09-01T00:00:00Z' }),

@@ -51,8 +51,8 @@ test('Adopt is limited to live unknown-manager rows in supervision view', () => 
 
 test('starting a rename retires a stale assignment refusal', () => {
   const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
-  assert.match(sidebar, /const startRename = \(name: string, title\?: string\) => \{\s*setAssignmentProblem\(null\)/)
-  assert.equal(sidebar.match(/startRename\(pane\.agent, pane\.title\)/g)?.length, 2)
+  assert.match(sidebar, /const startRename = \(name: string, nodeID: string, title\?: string\) => \{\s*setAssignmentProblem\(null\)/)
+  assert.equal(sidebar.match(/startRename\(pane\.agent, node\.id, pane\.title\)/g)?.length, 2)
 })
 
 test('row click guard contains every trailing interactive control', () => {

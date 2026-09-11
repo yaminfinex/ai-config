@@ -4,7 +4,7 @@ export const agentKinds = new Set<SidebarNode['kind']>(['pane', 'subagent', 'age
 const groupKinds = new Set<SidebarNode['kind']>(['workspace', 'unplaced', 'tombstone', 'terminals', 'terminals-workspace', 'group', 'ungrouped'])
 
 // defaultExpanded opens every group and every agent that has children; the
-// first paint of either view starts fully open.
+// first paint of every view starts fully open.
 export function defaultExpanded(nodes: Map<string, SidebarNode>) {
   return [...nodes.values()].filter((node) => groupKinds.has(node.kind) || (agentKinds.has(node.kind) && node.children.length > 0)).map((node) => node.id)
 }
@@ -26,7 +26,7 @@ export type ExpansionState = {
 
 // reconcileExpansion is the only transition the sidebar applies to its tree
 // state, and it runs on the board, never on the view: the first board opens
-// both trees fully; a browser that already had placement state opens the
+// all three trees fully; a browser that already had placement state opens the
 // supervision groups once; afterwards only never-seen workspaces and manager
 // subtrees are added. Switching views is not an input, so it can never
 // reset or shrink expandedItems. Null means nothing to apply. Group

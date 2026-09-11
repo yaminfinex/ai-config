@@ -23,7 +23,7 @@ export function groupHeaderTooltip(node: SidebarNode, members: number) {
 }
 
 export function openGroupTooltip(name: string, members: number) {
-  return `Open group ${name} as a space (open ${members} ${members === 1 ? 'transcript' : 'transcripts'})`
+  return `Open or refresh space ${name} with ${members} pinned ${members === 1 ? 'transcript' : 'transcripts'}; matched by name, with no saved link.`
 }
 
 // Open-as-space: the ruling is "creates or refreshes" — an existing space
@@ -37,9 +37,23 @@ export function planOpenGroupAsSpace(name: string, spaces: { id: string, name: s
   return existing ? { action: 'switch', id: existing.id } : { action: 'create', name }
 }
 
-export function membersToOpen(members: string[], alreadyOpen: Iterable<string>) {
-  const open = new Set(alreadyOpen)
-  return members.filter((member) => !open.has(member))
+// runOpenGroupAsSpace executes the plan: switch only when the matched space
+// is not already active (switching to the active space is a no-op the
+// store reports as false, and must not abort the refresh), else create; then
+// ALWAYS open every member pinned so a refresh on the active space reopens
+// missing transcripts and pins previews. Returns false only when the space
+// could not be reached.
+export function runOpenGroupAsSpace(plan: OpenGroupPlan, members: string[], dependencies: {
+  activeID: string | null
+  switchTo: (id: string) => boolean
+  createNamed: (name: string) => boolean
+  open: (member: string) => void
+}) {
+  if (plan.action === 'switch') {
+    if (dependencies.activeID !== plan.id && !dependencies.switchTo(plan.id)) return false
+  } else if (!dependencies.createNamed(plan.name)) return false
+  members.forEach(dependencies.open)
+  return true
 }
 
 // planSidebarDrop is the ONE drop seam the sidebar calls: node ids in, one

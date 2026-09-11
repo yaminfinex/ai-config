@@ -13,7 +13,7 @@ import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
 import { apiProblem, assignAgent, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
-import { beginRename, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
+import { beginRename, editingAt, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
 import { groupHeaderTooltip, openGroupTooltip, planSidebarDrop } from './groupDropModel'
 
 const emptyExpandedItems: string[] = []
@@ -65,14 +65,14 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
     }
   }
 
-  const startRename = (name: string, title?: string) => {
+  const startRename = (name: string, nodeID: string, title?: string) => {
     setAssignmentProblem(null)
     cancelOnBlur.current = false
-    setRenaming(beginRename(name, title))
+    setRenaming(beginRename(name, nodeID, title))
   }
 
   // Select when the edited agent changes.
-  useEffect(() => { if (renaming) renameInput.current?.select() }, [renaming?.name])
+  useEffect(() => { if (renaming) renameInput.current?.select() }, [renaming?.nodeID])
 
   const finishRename = async () => {
     if (!renaming) return
@@ -110,9 +110,15 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
       setSelectedItems([])
       return
     }
-    const match = activeAgent && view === 'supervision' ? nodes.get(agentNodeID(activeAgent))
-      : [...nodes.values()].find((node) => agentKinds.has(node.kind) && (activeAgent ? node.pane?.agent === activeAgent : node.pane?.pane_id === activePane))
-    setSelectedItems(match ? [match.id] : [])
+    const matches = (node: SidebarNode | undefined) => !!node && agentKinds.has(node.kind) && (activeAgent ? node.pane?.agent === activeAgent : node.pane?.pane_id === activePane)
+    const first = activeAgent && view === 'supervision' ? nodes.get(agentNodeID(activeAgent)) : [...nodes.values()].find(matches)
+    // An agent can appear under several group headers: keep the occurrence
+    // the operator clicked while it still matches; fall back to the first
+    // match only when that node is gone from this frame.
+    setSelectedItems((current) => {
+      const kept = current.find((id) => matches(nodes.get(id)))
+      return kept ? [kept] : first ? [first.id] : []
+    })
   }, [activeAgent, activePane, nodes, view])
 
   const tree = useTree<SidebarNode>({
@@ -162,14 +168,14 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
       {tree.getItems().map((item) => {
         const node = item.getItemData()
         const pane = node.pane
-        const editing = pane && renaming?.name === pane.agent ? renaming : null
+        const editing = pane ? editingAt(renaming, node.id) : null
         const signal = node.statusText ?? ''
         const folder = item.isFolder()
         const treeItemProps = item.getProps()
         const agentRow = agentKinds.has(node.kind)
         const groupHeader = node.kind === 'group' || node.kind === 'ungrouped'
         const draggableAgent = view !== 'placement' && (node.kind === 'agent' || node.kind === 'subagent') && !!pane?.agent && pane.agent !== '-' && pane.bus_status !== '-' && !editing
-        const memberCount = groupHeader ? groupMembers(nodes, node.id).length : 0
+        const memberCount = groupHeader ? node.summary?.total ?? 0 : 0
         const folded = folder && !item.isExpanded() && node.summary !== undefined
         const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
           : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
@@ -221,7 +227,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
               if (event.key === 'F2' && pane?.agent && pane.agent !== '-') {
                 event.preventDefault()
                 event.stopPropagation()
-                startRename(pane.agent, pane.title)
+                startRename(pane.agent, node.id, pane.title)
                 return
               }
               treeItemProps.onKeyDown?.(event)
@@ -250,7 +256,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
               onClick={(event) => { event.stopPropagation(); onOpenGroupAsSpace(node.name, groupMembers(nodes, node.id)) }}>space</button>}
             {pane?.agent && pane.agent !== '-' && <ContextUsed value={node.contextUsed} />}
             {pane?.agent && pane.agent !== '-' && !renaming && <button type="button" className="rename-agent-button" aria-label={`Rename ${pane.agent}`} title={`Rename ${pane.agent}`}
-              onClick={(event) => { event.stopPropagation(); startRename(pane.agent, pane.title) }}>✎</button>}
+              onClick={(event) => { event.stopPropagation(); startRename(pane.agent, node.id, pane.title) }}>✎</button>}
             {view === 'supervision' && pane?.agent && pane.agent !== '-' && pane.bus_status !== '-' && pane.manager_state === 'unknown' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
               onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
             {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}

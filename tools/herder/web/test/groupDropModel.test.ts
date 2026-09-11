@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
-import { groupHeaderTooltip, membersToOpen, openGroupTooltip, planGroupDrop, planOpenGroupAsSpace, planSidebarDrop } from '../src/features/sidebar/groupDropModel.ts'
+import { groupHeaderTooltip, openGroupTooltip, planGroupDrop, planOpenGroupAsSpace, planSidebarDrop, runOpenGroupAsSpace } from '../src/features/sidebar/groupDropModel.ts'
 import { assignAgent } from '../src/api/client.ts'
 import { createAndSwitchSpace } from '../src/features/spaces/spacesControllerModel.ts'
 import type { SidebarNode } from '../src/features/sidebar/sidebarNodes.ts'
@@ -42,9 +42,8 @@ test('open as space: an exact-name space is switched to, otherwise one is create
   const spaces = [{ id: 's1', name: 'fleet-refit' }, { id: 's2', name: 'Fleet-Refit' }]
   assert.deepEqual(planOpenGroupAsSpace('fleet-refit', spaces), { action: 'switch', id: 's1' })
   assert.deepEqual(planOpenGroupAsSpace('audit', spaces), { action: 'create', name: 'audit' })
-  assert.deepEqual(membersToOpen(['ziru', 'impl-hine', 'impl-geni'], ['impl-hine']), ['ziru', 'impl-geni'])
-  assert.equal(openGroupTooltip('fleet-refit', 3), 'Open group fleet-refit as a space (open 3 transcripts)')
-  assert.equal(openGroupTooltip('solo', 1), 'Open group solo as a space (open 1 transcript)')
+  assert.equal(openGroupTooltip('fleet-refit', 3), 'Open or refresh space fleet-refit with 3 pinned transcripts; matched by name, with no saved link.')
+  assert.equal(openGroupTooltip('solo', 1), 'Open or refresh space solo with 1 pinned transcript; matched by name, with no saved link.')
   assert.equal(groupHeaderTooltip(header, 3), 'group fleet-refit · 3 agents · drop an agent here to set its group')
   assert.equal(groupHeaderTooltip(ungrouped, 1), 'Ungrouped · 1 agent · drop an agent here to clear its group')
 })
@@ -66,9 +65,11 @@ test('creating the group space writes only the space itself: create, rename, swi
 test('the controller opens members pinned and stores no group/space link', () => {
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   const body = controller.slice(controller.indexOf('const openGroupAsSpace'), controller.indexOf('const renameSpace'))
-  assert.match(body, /planOpenGroupAsSpace\(group, store\.list\(\)\)/)
-  assert.match(body, /members\.forEach\(\(member\) => openAgent\(member, false\)\)/)
-  assert.doesNotMatch(body, /localStorage|upsertState|closePanel|store\.write|store\.upsert/)
+  assert.match(body, /runOpenGroupAsSpace\(planOpenGroupAsSpace\(group, store\.list\(\)\), members, \{/)
+  assert.match(body, /activeID: activeSpaceIDRef\.current/)
+  assert.match(body, /createNamed: createNamedSpace/)
+  assert.match(body, /open: \(member\) => openAgent\(member, false\)/)
+  assert.doesNotMatch(body, /localStorage|upsertState|closePanel|store\.write|store\.upsert|createAndSwitchSpace/)
 })
 
 test('planSidebarDrop is the one seam: groups → header plan by node id, supervision → reparent plan, placement → refused', () => {
@@ -97,4 +98,23 @@ test('planSidebarDrop is the one seam: groups → header plan by node id, superv
   assert.equal((sidebar.match(/planSidebarDrop\(/g) ?? []).length, 4)
   assert.doesNotMatch(sidebar, /reparentDrop|planGroupDrop/)
   assert.equal((sidebar.match(/role="alert"/g) ?? []).length, 1)
+})
+
+test('open-as-space EXECUTED: the active space is refreshed without a switch, another space is switched to, a missing one is created; members always open pinned', () => {
+  const run = (plan: Parameters<typeof runOpenGroupAsSpace>[0], activeID: string | null, switchOK = true, createOK = true) => {
+    const log: string[] = []
+    const ok = runOpenGroupAsSpace(plan, ['ziru', 'impl-hine'], {
+      activeID,
+      switchTo: (id) => { log.push(`switch ${id}`); return switchOK },
+      createNamed: (name) => { log.push(`create ${name}`); return createOK },
+      open: (member) => log.push(`open ${member}`),
+    })
+    return { ok, log }
+  }
+  // The group's space is already active: switchSpace would return false (no-op) — the refresh must still open the members.
+  assert.deepEqual(run({ action: 'switch', id: 's1' }, 's1', false), { ok: true, log: ['open ziru', 'open impl-hine'] })
+  assert.deepEqual(run({ action: 'switch', id: 's1' }, 's2'), { ok: true, log: ['switch s1', 'open ziru', 'open impl-hine'] })
+  assert.deepEqual(run({ action: 'switch', id: 's1' }, 's2', false), { ok: false, log: ['switch s1'] })
+  assert.deepEqual(run({ action: 'create', name: 'audit' }, 's2'), { ok: true, log: ['create audit', 'open ziru', 'open impl-hine'] })
+  assert.deepEqual(run({ action: 'create', name: 'audit' }, null, true, false), { ok: false, log: ['create audit'] })
 })
