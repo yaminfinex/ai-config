@@ -24,9 +24,12 @@ export type SidebarNode = {
   workspaceLabel?: string
   summary?: SupervisionSummary
   marker?: 'unknown-manager'
-  // group is set on group-view headers only: the label a drop on this header
-  // writes ('' on Ungrouped, which clears).
+  // group is set on every groups-view node, header or row: the label a drop
+  // on it writes ('' under Ungrouped, which clears). Undefined elsewhere.
   group?: string
+  // placeholder marks a header the operator created locally (pending group):
+  // zero members, no space, real once a drop assigns the label.
+  placeholder?: boolean
 }
 
 export function buildSidebarNodes(board: Board | undefined): Map<string, SidebarNode> {
@@ -246,8 +249,11 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
 // component of a header id is URI-encoded, so a label containing "/" or
 // ":" can never collide with another header's row ids; the raw label stays
 // on the node for display and for the assignment a drop writes. Headers
-// exist only while they have members; terminals are not shown. The
-// supervision view never draws these nodes.
+// exist only while they have members, except pending groups (created on the
+// web, kept in shell preferences) which are drawn as empty placeholder
+// headers after the real ones and before Ungrouped until a frame shows the
+// label with members; terminals are not shown. The supervision view never
+// draws these nodes.
 export const ungroupedID = 'group:'
 
 export function groupHeaderID(label: string) {
@@ -258,7 +264,7 @@ export function groupOf(row: Pick<Row, 'group'>) {
   return row.group?.trim() ?? ''
 }
 
-export function buildGroupNodes(board: Board | undefined): Map<string, SidebarNode> {
+export function buildGroupNodes(board: Board | undefined, pendingGroups: readonly string[] = []): Map<string, SidebarNode> {
   const result = new Map<string, SidebarNode>()
   const root: SidebarNode = { id: 'tree-root', kind: 'root', name: 'Fleet', children: [] }
   result.set(root.id, root)
@@ -323,7 +329,7 @@ export function buildGroupNodes(board: Board | undefined): Map<string, SidebarNo
       result.set(nodeID, {
         id: nodeID, kind: row.parent_agent ? 'subagent' : 'agent', ...agentLabel(row), children, pane: row,
         workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel, summary: summarise(result, children),
-        contextUsed: row.context_used,
+        contextUsed: row.context_used, group,
       })
       return nodeID
     }
@@ -350,6 +356,12 @@ export function buildGroupNodes(board: Board | undefined): Map<string, SidebarNo
   }
   for (const label of [...distinct].sort((left, right) => left.localeCompare(right))) {
     addHeader(groupHeaderID(label), 'group', label, label, (agent) => labelsBelow.get(agent)?.has(label) ?? false)
+  }
+  for (const label of new Set(pendingGroups)) {
+    if (!label || distinct.has(label)) continue
+    const id = groupHeaderID(label)
+    result.set(id, { id, kind: 'group', name: label, children: [], group: label, placeholder: true, summary: { total: 0, active: 0 }, count: 0 })
+    root.children.push(id)
   }
   addHeader(ungroupedID, 'ungrouped', 'Ungrouped', '', (agent) => (labelsBelow.get(agent)?.size ?? 0) === 0)
   return result

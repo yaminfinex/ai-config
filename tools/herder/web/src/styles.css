@@ -185,7 +185,8 @@ h2, h3, p { margin-top: 0; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
 .unplaced-row { color: var(--dim); }
 .subagent-row .tree-label::before { content: 'task '; color: var(--dimmer); font: 9px var(--mono); }
-.tree-secondary, .unknown-manager-marker { color: var(--dimmer); font: 10px var(--mono); }
+.tree-secondary, .unknown-manager-marker, .group-chip { color: var(--dimmer); font: 10px var(--mono); }
+.group-chip { flex: 0 1 auto; max-width: min(48px, 20%); overflow: hidden; text-overflow: ellipsis; padding: 0 4px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); white-space: nowrap; } /* cap measured on real rows: ~7 chars at a 250px rail, 20% of the row at 200px; names stay readable, the full label is in the title */
 .tombstone-row { color: var(--dimmer); }
 .tombstone-row .tree-label { text-decoration: line-through; text-decoration-color: var(--border2); }
 .tombstone-row .tree-secondary { text-decoration: none; }
@@ -195,7 +196,11 @@ h2, h3, p { margin-top: 0; }
 .panel-tree-row:hover .group-space-button, .panel-tree-row:focus-within .group-space-button, .group-space-button:focus-visible { visibility: visible; }
 .fleet-tree-groups .agent-row { cursor: grab; }
 .fleet-tree-groups .agent-row.dragging { opacity: .65; }
-.fleet-tree-groups .group-row.drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
+.fleet-tree-groups .drop-target { box-shadow: inset 0 0 0 2px var(--accent); }
+.group-create-row { display: flex; align-items: center; gap: 4px; min-height: 22px; padding: 0 4px 0 20px; }
+.group-create-row .group-create-button { visibility: hidden; }
+.group-create-row:hover .group-create-button, .fleet-tree:focus-within .group-create-button, .group-create-button:focus-visible { visibility: visible; }
+.group-create-problem { white-space: normal; }
 .rename-agent-input { width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--accent); }
 .sidebar-problem { padding: 4px 7px; color: var(--error-text); background: var(--error-bg); border: 1px solid var(--error-border); font-size: 10px; white-space: normal; }
 .fleet-tree.drop-target, .panel-tree-row.drop-target { outline: 1px solid var(--accent); outline-offset: -1px; }

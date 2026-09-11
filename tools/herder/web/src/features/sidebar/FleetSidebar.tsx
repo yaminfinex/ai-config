@@ -15,11 +15,12 @@ import { LaunchAgent } from '../launch/LaunchAgent'
 import { apiProblem, assignAgent, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
 import { beginRename, editingAt, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
 import { groupHeaderTooltip, openGroupTooltip } from './groupDropModel'
+import { addPendingGroup, realGroupLabels, remainingPendingGroups, removePendingGroup, validateGroupName } from './pendingGroupsModel'
 import { dropAssignment, planSidebarDrop } from './reparentModel'
 
 const emptyExpandedItems: string[] = []
 
-export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, onOpenGroupAsSpace, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
+export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, onOpenGroupAsSpace, pendingGroups, onPendingGroups, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
   board: Board | undefined
   view: FleetView
   activeAgent?: string
@@ -28,8 +29,11 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
   onPinAgent: (name: string, placement?: OpenPlacement) => void
   onPreviewPane: (pane: Pane, placement?: OpenPlacement) => void
   onPinPane: (pane: Pane, placement?: OpenPlacement) => void
-  // Groups view only: create or refresh the space named after a group.
+  // Groups view only: jump to the space named after a group, creating it once.
   onOpenGroupAsSpace: (group: string, members: string[]) => void
+  // Groups created on the web that no frame has shown yet (shell preferences).
+  pendingGroups: string[]
+  onPendingGroups: (groups: string[]) => void
   expandedItems: string[] | null
   onExpandedItems: (items: string[]) => void
   knownWorkspaceItems: string[] | null
@@ -42,11 +46,14 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
   const [assignmentProblem, setAssignmentProblem] = useState<LifecycleProblem | null>(null)
   const [dragSource, setDragSource] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  // newGroup is the inline "+ group" input: null when closed, else its text
+  // and the last refusal shown under it.
+  const [newGroup, setNewGroup] = useState<{ value: string, problem: string | null } | null>(null)
   const renameInput = useRef<HTMLInputElement | null>(null)
   const cancelOnBlur = useRef(false)
   const placementNodes = useMemo(() => buildSidebarNodes(board), [board])
   const supervisionNodes = useMemo(() => buildSupervisionNodes(board), [board])
-  const groupNodes = useMemo(() => buildGroupNodes(board), [board])
+  const groupNodes = useMemo(() => buildGroupNodes(board, pendingGroups), [board, pendingGroups])
   const nodes = view === 'placement' ? placementNodes : view === 'groups' ? groupNodes : supervisionNodes
   const sideHint = openInSideLabel(navigator.userAgent)
 
@@ -106,6 +113,23 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
     if (next.knownManagerItems) onKnownManagerItems(next.knownManagerItems)
   }, [board, expandedItems, groupNodes, knownManagerItems, knownWorkspaceItems, onExpandedItems, onKnownManagerItems, onKnownWorkspaceItems, placementNodes, supervisionNodes])
 
+  // A placeholder leaves preferences on the first frame that shows its label
+  // with members: the drop into it wrote the real assign event. The model
+  // computes the list that remains; the effect only stores it when it shrank.
+  useEffect(() => {
+    if (!board) return
+    const remaining = remainingPendingGroups(pendingGroups, groupNodes)
+    if (remaining.length !== pendingGroups.length) onPendingGroups(remaining)
+  }, [board, groupNodes, onPendingGroups, pendingGroups])
+
+  const commitNewGroup = () => {
+    if (!newGroup) return
+    const check = validateGroupName(newGroup.value, [...realGroupLabels(groupNodes), ...pendingGroups])
+    if (!check.ok) { setNewGroup({ ...newGroup, problem: check.reason }); return }
+    onPendingGroups(addPendingGroup(pendingGroups, check.name))
+    setNewGroup(null)
+  }
+
   useEffect(() => {
     if (!activeAgent && !activePane) {
       setSelectedItems([])
@@ -164,6 +188,21 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
         setDropTarget(null)
         if (dropAssignment(view, dragSource, null, nodes, submitAssignment)) event.preventDefault()
       }}>
+      {view === 'groups' && <div className="group-create-row" role="none">
+        {newGroup
+          ? <><input className="rename-agent-input group-create-input" aria-label="New group name" placeholder="group name" value={newGroup.value} autoFocus
+            onChange={(event) => setNewGroup({ value: event.target.value, problem: null })}
+            onBlur={() => setNewGroup(null)}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+              if (event.key === 'Enter') commitNewGroup()
+              if (event.key === 'Escape') setNewGroup(null)
+            }} />
+            {newGroup.problem && <span className="sidebar-problem group-create-problem" role="alert">{newGroup.problem}</span>}</>
+          : <button type="button" className="group-space-button group-create-button" aria-label="New group" title="New group: a local placeholder header until the first agent is dropped into it"
+            onClick={(event) => { event.stopPropagation(); setNewGroup({ value: '', problem: null }) }}>+ group</button>}
+      </div>}
       {tree.getItems().map((item) => {
         const node = item.getItemData()
         const pane = node.pane
@@ -175,6 +214,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
         const groupHeader = node.kind === 'group' || node.kind === 'ungrouped'
         const draggableAgent = view !== 'placement' && (node.kind === 'agent' || node.kind === 'subagent') && !!pane?.agent && pane.agent !== '-' && pane.bus_status !== '-' && !editing
         const memberCount = groupHeader ? node.summary?.total ?? 0 : 0
+        const groupChip = view !== 'groups' && pane?.group ? <span className="group-chip" title={`group: ${pane.group}`}>{pane.group}</span> : null
         const folded = folder && !item.isExpanded() && node.summary !== undefined
         const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
           : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
@@ -246,20 +286,22 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
                 if (event.key === 'Enter') event.currentTarget.blur()
                 if (event.key === 'Escape') { cancelOnBlur.current = true; event.currentTarget.blur() }
               }} /></span>
-            : <span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total}{agentRow ? '' : ` · ${node.summary.active} active`})</span>}</span>}
+            : <>{groupChip}<span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total}{agentRow ? '' : ` · ${node.summary.active} active`})</span>}</span></>}
           trailing={<>{node.marker === 'unknown-manager' && <span className="unknown-manager-marker" title="manager unknown · adopt to take it on">?</span>}
             {node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
-            {groupHeader && <button type="button" className="group-space-button" aria-label={openGroupTooltip(node.name, memberCount)} title={openGroupTooltip(node.name, memberCount)}
+            {groupHeader && !node.placeholder && <button type="button" className="group-space-button" aria-label={openGroupTooltip(node.name, memberCount)} title={openGroupTooltip(node.name, memberCount)}
               onClick={(event) => { event.stopPropagation(); onOpenGroupAsSpace(node.name, groupMembers(nodes, node.id)) }}>space</button>}
+            {node.placeholder && <button type="button" className="group-space-button group-remove-button" aria-label={`Remove placeholder group ${node.name}`} title={`Remove placeholder group ${node.name} (nothing was written)`}
+              onClick={(event) => { event.stopPropagation(); onPendingGroups(removePendingGroup(pendingGroups, node.name)) }}>×</button>}
             {pane?.agent && pane.agent !== '-' && <ContextUsed value={node.contextUsed} />}
             {pane?.agent && pane.agent !== '-' && !renaming && <button type="button" className="rename-agent-button" aria-label={`Rename ${pane.agent}`} title={`Rename ${pane.agent}`}
               onClick={(event) => { event.stopPropagation(); startRename(pane.agent, node.id, pane.title) }}>✎</button>}
             {view === 'supervision' && node.marker === 'unknown-manager' && pane?.agent && pane.agent !== '-' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
               onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
-            {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
+            {(folder || node.placeholder) && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
-          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${pane.group ? ` · group ${pane.group}` : ''} · ${sideHint}` : groupHeader ? groupHeaderTooltip(node, memberCount) : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
+          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${pane.group ? ` · group ${pane.group}` : ''} · ${sideHint}` : node.placeholder ? `group ${node.name} · placeholder · drop an agent here to create it` : groupHeader ? groupHeaderTooltip(node, memberCount) : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
           onToggle={() => { if (item.isExpanded()) item.collapse(); else item.expand() }}
         />
       })}

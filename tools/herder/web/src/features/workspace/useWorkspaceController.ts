@@ -406,11 +406,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setSpaceProblem(result.ok ? store.status().problem : result.reason)
     return result.ok
   }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
-  // openGroupAsSpace: switch to the space named exactly after the group (or
-  // stay, when it is already active), else create one with that name; then
-  // open every member's transcript pinned (an already-open transcript is only
-  // activated / pinned). Nothing is closed and no group/space link is
-  // persisted — the space itself is the only write.
+  // openGroupAsSpace: jump to the space named exactly after the group (or
+  // stay, when it is already active) and touch nothing in it; else create one
+  // with that name and open every member's transcript pinned once. Nothing is
+  // closed and no group/space link is persisted — the space itself is the
+  // only write.
   const openGroupAsSpace = useCallback((group: string, members: string[]) => {
     const store = spacesRuntime.store
     if (!store) { setSpaceProblem(spacesRuntime.problem); return false }
@@ -568,6 +568,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     knownWorkspaceItems: layout.knownWorkspaceItems, setKnownWorkspaceItems: layout.setKnownWorkspaceItems,
     knownManagerItems: layout.knownManagerItems, setKnownManagerItems: layout.setKnownManagerItems,
     fleetView: layout.fleetView, setFleetView: layout.setFleetView,
+    pendingGroups: layout.pendingGroups, setPendingGroups: layout.setPendingGroups,
     board: boardQuery.data,
     activeAgent: activeParams?.kind === 'agent' ? activeParams.name : undefined,
     activePane: activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined,

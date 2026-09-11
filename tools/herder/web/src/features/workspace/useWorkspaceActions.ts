@@ -95,8 +95,11 @@ export function useWorkspaceActions({
       const current = panelParams(target.panel.params)
       const merged = current ? mergePanelParams(current, params) : params
       target.panel.api.updateParameters(merged)
+      // Never setActive on the already-active panel: dockview 8.2 answers it by
+      // re-rendering (renderPanel detaches and re-appends the content element),
+      // which resets the transcript scroll to the top (owner bug #244405).
       if (api.activePanel?.id === id) onActivePanelParamsChanged(merged)
-      target.panel.api.setActive()
+      else target.panel.api.setActive()
       invalidatePanel(queryClient, params)
       syncDock()
       if (focus) focusComposer()
