@@ -139,7 +139,7 @@ test('popstate restores the recorded space before its panel without growing hist
 
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   const popstate = controller.match(/useDOMEvent\(window, 'popstate',[\s\S]*?\n {2}\}\)/)?.[0] ?? ''
-  assert.match(popstate, /replayHistoryRoute/)
+  assert.match(popstate, /historySuppressor\.run\(\(\) => replayHistoryRoute\(/)
   assert.doesNotMatch(popstate, /pushState/)
 })
 
@@ -187,6 +187,7 @@ test('a space switch followed by its arrival activation and stamp adds exactly o
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   assert.match(controller, /const activeSpaceIDRef = useRef\(activeSpaceID\)/)
   assert.match(controller, /beginHistory: \(\) => updateHistory\(undefined, 'space-switch', spaceID, historyWasSuppressed\)/)
+  assert.match(controller, /replaceStamp: \(\) => updateHistory\(panelParams\(api\.activePanel\?\.params\) \?\? undefined, 'stamp', spaceID\)/)
   assert.match(controller, /suspend: \(\) => \{\s+activeSpaceIDRef\.current = spaceID/)
   assert.match(controller, /finish: \(\{ restoreFailed, activeSaved \}\) => \{\s+setActiveSpaceID\(spaceID\)/)
   assert.match(controller, /spaceID = activeSpaceIDRef\.current/)
@@ -199,6 +200,12 @@ test('a space switch followed by its arrival activation and stamp adds exactly o
   assert.equal(arrival.method, 'replace')
   assert.equal(arrival.entry.path, '/agents/nilo?space=review')
   assert.equal(decideHistoryUpdate(arrival.entry.state, agent('nilo'), 'stamp', true, 'review').method, 'replace')
+})
+
+test('non-user recovery space switches stay history-suppressed', () => {
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  assert.match(controller, /activeSpaceID === pendingLookupSwitchID \|\| historySuppressor\.run\(\(\) => switchSpace\(pendingLookupSwitchID\)\)/)
+  assert.match(controller, /if \(fallback\) historySuppressor\.run\(\(\) => switchSpace\(fallback\.id\)\)/)
 })
 
 test('switching to an empty space pushes one shell entry and Back restores the previous panel', () => {

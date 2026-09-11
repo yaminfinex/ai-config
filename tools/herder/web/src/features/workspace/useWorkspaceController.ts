@@ -288,14 +288,14 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   useEffect(() => {
     if (!pendingLookupSwitchID || !apiRef.current || !spaces.some((space) => space.id === pendingLookupSwitchID)) return
-    if (activeSpaceID === pendingLookupSwitchID || switchSpace(pendingLookupSwitchID)) setPendingLookupSwitchID(undefined)
-  }, [activeSpaceID, pendingLookupSwitchID, revision, spaces, switchSpace])
+    if (activeSpaceID === pendingLookupSwitchID || historySuppressor.run(() => switchSpace(pendingLookupSwitchID))) setPendingLookupSwitchID(undefined)
+  }, [activeSpaceID, historySuppressor, pendingLookupSwitchID, revision, spaces, switchSpace])
 
   useEffect(() => {
     if (!spacesRuntime.store || !activeSpaceID || spaces.some((space) => space.id === activeSpaceID)) return
     const fallback = spaces[0]
-    if (fallback) switchSpace(fallback.id)
-  }, [activeSpaceID, spaces, spacesRuntime.store, switchSpace])
+    if (fallback) historySuppressor.run(() => switchSpace(fallback.id))
+  }, [activeSpaceID, historySuppressor, spaces, spacesRuntime.store, switchSpace])
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     disposeDock.current()
