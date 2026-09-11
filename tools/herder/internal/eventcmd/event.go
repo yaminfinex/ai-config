@@ -78,8 +78,8 @@ func Parse(kind string, args []string) (agentstore.Event, bool, error) {
 		Group: get("group"), Title: get("title"), Note: get("note"),
 		Manager: get("manager"), HcomEvent: get("hcom-event"), ParentName: get("parent-name"), Path: get("path"),
 	}
-	for _, value := range boolValues {
-		e.ClearGroup = e.ClearGroup || *value
+	if clear := boolValues["clear-group"]; clear != nil {
+		e.ClearGroup = *clear
 	}
 	if workspace, pane, split := get("workspace"), get("pane"), get("split-from"); kind == agentstore.KindLaunchRequested {
 		e.Pane = ""
