@@ -185,12 +185,10 @@ h2, h3, p { margin-top: 0; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
 .unplaced-row { color: var(--dim); }
 .subagent-row .tree-label::before { content: 'task '; color: var(--dimmer); font: 9px var(--mono); }
-.tree-secondary { color: var(--dimmer); font: 10px var(--mono); }
+.tree-secondary, .unknown-manager-marker { color: var(--dimmer); font: 10px var(--mono); }
 .tombstone-row { color: var(--dimmer); }
 .tombstone-row .tree-label { text-decoration: line-through; text-decoration-color: var(--border2); }
-.tombstone-row .tree-secondary, .unknown-manager-row .tree-secondary { text-decoration: none; }
-.unknown-manager-row { color: var(--dim); }
-.operator-row .tree-label { color: var(--text); }
+.tombstone-row .tree-secondary { text-decoration: none; }
 .rename-agent-button { visibility: hidden; min-width: 20px; height: 20px; flex: 0 0 auto; padding: 0 4px; border-color: var(--border2); background: var(--chip); color: var(--dim); font: 12px var(--mono); }
 .panel-tree-row:hover .rename-agent-button, .panel-tree-row:focus-within .rename-agent-button, .rename-agent-button:focus-visible { visibility: visible; }
 .rename-agent-input { width: 100%; min-width: 0; font: inherit; color: var(--text); background: var(--bg2); border: 1px solid var(--accent); }
