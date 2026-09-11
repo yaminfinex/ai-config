@@ -33,6 +33,7 @@ export function restoreSpaceDock<Target extends DockTarget, Dock>(
 
 type SwitchDependencies<Target extends DockTarget, Dock> = {
   flush: () => boolean
+  beginHistory: () => void
   suspend: () => void
   read: (id: string) => SpaceDockSource<Dock>
   withHistorySuppressed: <T>(operation: () => T) => T
@@ -47,6 +48,7 @@ type SwitchDependencies<Target extends DockTarget, Dock> = {
 
 export function performSpaceSwitch<Target extends DockTarget, Dock>(spaceID: string, dependencies: SwitchDependencies<Target, Dock>) {
   if (!dependencies.flush()) return false
+  dependencies.beginHistory()
   dependencies.suspend()
   const source = dependencies.read(spaceID)
   const result = dependencies.withHistorySuppressed(() => restoreSpaceDock(

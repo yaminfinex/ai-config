@@ -170,8 +170,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     return () => unsubscribe()
   }, [spacesRuntime.store])
 
-  const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause, spaceID = activeSpaceIDRef.current) => {
-    const update = decideHistoryUpdate(window.history.state, params, cause, historySuppressor.active(), spaceID)
+  const updateHistory = useCallback((params: DockPanelParams | undefined, cause: HistoryCause, spaceID = activeSpaceIDRef.current, suppressed = historySuppressor.active()) => {
+    const update = decideHistoryUpdate(window.history.state, params, cause, suppressed, spaceID)
     window.history[update.method === 'push' ? 'pushState' : 'replaceState'](update.entry.state, '', update.entry.path)
   }, [historySuppressor])
 
@@ -218,13 +218,18 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     if (!store || !store.list().some((space) => space.id === spaceID) || activeSpaceIDRef.current === spaceID) return false
     const api = apiRef.current
     if (!api) return false
+    const historyWasSuppressed = historySuppressor.active()
     return performSpaceSwitch(spaceID, {
       flush: () => {
         const flushed = layout.flushBeforeSwitch()
         if (!flushed) setSpaceProblem('This space could not switch because its latest layout was not saved. Nothing was discarded.')
         return flushed
       },
-      suspend: layout.beginRestore,
+      beginHistory: () => updateHistory(undefined, 'space-switch', spaceID, historyWasSuppressed),
+      suspend: () => {
+        activeSpaceIDRef.current = spaceID
+        layout.beginRestore()
+      },
       read: layout.readSpace,
       withHistorySuppressed: historySuppressor.run,
       dock: api,
@@ -234,7 +239,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       persistActive: (id) => writeActiveSpace(id, sessionStorage, localStorage),
       replaceStamp: () => updateHistory(panelParams(api.activePanel?.params) ?? undefined, 'stamp', spaceID),
       finish: ({ restoreFailed, activeSaved }) => {
-        activeSpaceIDRef.current = spaceID
         setActiveSpaceID(spaceID)
         setActivePanelID(api.activePanel?.id ?? '')
         setSpaceProblem(restoreFailed
@@ -284,14 +288,14 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   useEffect(() => {
     if (!pendingLookupSwitchID || !apiRef.current || !spaces.some((space) => space.id === pendingLookupSwitchID)) return
-    if (activeSpaceID === pendingLookupSwitchID || switchSpace(pendingLookupSwitchID)) setPendingLookupSwitchID(undefined)
-  }, [activeSpaceID, pendingLookupSwitchID, revision, spaces, switchSpace])
+    if (activeSpaceID === pendingLookupSwitchID || historySuppressor.run(() => switchSpace(pendingLookupSwitchID))) setPendingLookupSwitchID(undefined)
+  }, [activeSpaceID, historySuppressor, pendingLookupSwitchID, revision, spaces, switchSpace])
 
   useEffect(() => {
     if (!spacesRuntime.store || !activeSpaceID || spaces.some((space) => space.id === activeSpaceID)) return
     const fallback = spaces[0]
-    if (fallback) switchSpace(fallback.id)
-  }, [activeSpaceID, spaces, spacesRuntime.store, switchSpace])
+    if (fallback) historySuppressor.run(() => switchSpace(fallback.id))
+  }, [activeSpaceID, historySuppressor, spaces, spacesRuntime.store, switchSpace])
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     disposeDock.current()
@@ -344,13 +348,13 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
     const route = routeFromHistory(window.location.pathname, window.location.search, window.history.state)
-    replayHistoryRoute(
+    historySuppressor.run(() => replayHistoryRoute(
       route,
       activeSpaceIDRef.current,
       (spaceID) => Boolean(spacesRuntime.store?.list().some((space) => space.id === spaceID)),
       (params) => Boolean(apiRef.current?.getPanel(panelID(params))),
       { switchSpace, applyRoute },
-    )
+    ))
   })
 
   const restoredPanels = layout.initial.stored?.dock ? Object.values(layout.initial.stored.dock.panels).flatMap((panel) => {

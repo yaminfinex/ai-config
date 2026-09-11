@@ -9,7 +9,7 @@ import {
 
 export type Route = { page: 'shell' } | { page: 'panel', params: DockPanelParams } | { page: 'missing' }
 export type HistoryRoute = Route & { spaceID: string | null }
-export type HistoryCause = 'activation' | 'merge' | 'stamp' | 'replay'
+export type HistoryCause = 'activation' | 'merge' | 'stamp' | 'space-switch' | 'replay'
 export const layoutRouteState = { herderLayoutRoute: true } as const
 export const spaceQueryParam = 'space'
 
@@ -82,11 +82,16 @@ export function shouldReplayInitialRoute(route: Exclude<Route, { page: 'missing'
 
 export function decideHistoryUpdate(currentState: unknown, next: DockPanelParams | undefined, cause: HistoryCause, suppressed: boolean, spaceID: string | null = null) {
   const entry = historyEntryForPanel(next, spaceID)
-  const current = isLayoutRouteState(currentState) && 'subject' in currentState
+  const hasCurrentEntry = isLayoutRouteState(currentState)
+  const current = hasCurrentEntry && 'subject' in currentState
     ? panelParamsFromHistorySubject(currentState.subject)
     : null
   const distinctSubject = next ? !current || panelID(current) !== panelID(next) : Boolean(current)
-  const method = cause === 'activation' && !suppressed && distinctSubject ? 'push' : 'replace'
+  const shouldPush = !suppressed && (
+    (cause === 'activation' && distinctSubject) ||
+    (cause === 'space-switch' && hasCurrentEntry)
+  )
+  const method = shouldPush ? 'push' : 'replace'
   return { method, entry } as const
 }
 

@@ -25,6 +25,7 @@ test('space switch flushes, suspends, restores through backup, completes, then s
   const calls: string[] = []
   const result = performSpaceSwitch('review', {
     flush: () => { calls.push('flush'); return true },
+    beginHistory: () => { calls.push('history:begin') },
     suspend: () => { calls.push('suspend') },
     read: (id) => { calls.push(`read:${id}`); return source({ name: 'primary' }, { name: 'backup' }) },
     withHistorySuppressed: (operation) => { calls.push('history:suppress'); return operation() },
@@ -39,7 +40,7 @@ test('space switch flushes, suspends, restores through backup, completes, then s
 
   assert.equal(result, true)
   assert.deepEqual(calls, [
-    'flush', 'suspend', 'read:review', 'history:suppress',
+    'flush', 'history:begin', 'suspend', 'read:review', 'history:suppress',
     'dock:clear', 'restore:primary', 'dock:clear', 'restore:backup', 'recovered:review',
     'complete:review', 'active:review', 'history:replace', 'finish:true',
   ])
@@ -136,6 +137,7 @@ test('failed primary and backup restore clears to empty before the visible failu
   const calls: string[] = []
   performSpaceSwitch('review', {
     flush: () => true,
+    beginHistory: () => { calls.push('history:begin') },
     suspend: () => { calls.push('suspend') },
     read: () => source({ name: 'primary' }, { name: 'backup' }),
     withHistorySuppressed: (operation) => operation(),
@@ -148,7 +150,7 @@ test('failed primary and backup restore clears to empty before the visible failu
     finish: ({ restoreFailed }) => { calls.push(restoreFailed ? 'banner' : 'quiet') },
   })
   assert.deepEqual(calls, [
-    'suspend', 'dock:clear', 'restore:primary', 'dock:clear', 'restore:backup',
+    'history:begin', 'suspend', 'dock:clear', 'restore:primary', 'dock:clear', 'restore:backup',
     'dock:clear', 'complete', 'history:replace', 'banner',
   ])
 })
