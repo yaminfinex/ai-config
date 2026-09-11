@@ -9,7 +9,6 @@ import { dockOpenTarget, type OpenPlacement } from '../layout/openPlacement'
 import { screenPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import type { PanelRecordUpdate } from './usePanelRecords'
 import { folderTabID } from '../folders/folderModel'
-import { raiseExistingPanel } from './openExistingModel'
 import {
   invalidatePanel,
   mergePanelParams,
@@ -93,13 +92,16 @@ export function useWorkspaceActions({
     const id = panelID(params)
     const target = dockOpenTarget(api.getPanel(id), placement, dockGroupFacts(api))
     if (target.kind === 'existing') {
-      raiseExistingPanel(target.panel, id, api.activePanel?.id, params, {
-        current: panelParams,
-        merge: mergePanelParams,
-        onActiveParamsChanged: onActivePanelParamsChanged,
-        invalidate: (next) => invalidatePanel(queryClient, next),
-        syncDock,
-      })
+      const current = panelParams(target.panel.params)
+      const merged = current ? mergePanelParams(current, params) : params
+      target.panel.api.updateParameters(merged)
+      // Never setActive on the already-active panel: dockview 8.2 answers it by
+      // re-rendering (renderPanel detaches and re-appends the content element),
+      // which resets the transcript scroll to the top (owner bug #244405).
+      if (api.activePanel?.id === id) onActivePanelParamsChanged(merged)
+      else target.panel.api.setActive()
+      invalidatePanel(queryClient, params)
+      syncDock()
       if (focus) focusComposer()
       return 'existing' as const
     }

@@ -50,7 +50,7 @@ test('one drop issues exactly one POST to the assignment endpoint with only the 
   assert.equal(calls[2].body, '{"group":"audit"}')
 })
 
-test('open as space: an exact-name space is switched to, otherwise one is created; members not yet open are opened; the count is in the tooltip', () => {
+test('open as space: an exact-name space is switched to, otherwise one is created; only a create opens members; the count is in the tooltip', () => {
   const spaces = [{ id: 's1', name: 'fleet-refit' }, { id: 's2', name: 'Fleet-Refit' }]
   assert.deepEqual(planOpenGroupAsSpace('fleet-refit', spaces), { action: 'switch', id: 's1' })
   assert.deepEqual(planOpenGroupAsSpace('audit', spaces), { action: 'create', name: 'audit' })
@@ -143,4 +143,12 @@ test('open-as-space EXECUTED: an existing space is jumped to (or kept) and NOTHI
   assert.deepEqual(run({ action: 'switch', id: 's1' }, 's2', false), { ok: false, log: ['switch s1'] })
   assert.deepEqual(run({ action: 'create', name: 'audit' }, 's2'), { ok: true, log: ['create audit', 'open ziru', 'open impl-hine'] })
   assert.deepEqual(run({ action: 'create', name: 'audit' }, null, true, false), { ok: false, log: ['create audit'] })
+})
+
+test('openPanel never calls setActive on the already-active panel (dockview re-renders it and resets the transcript scroll); an inactive open panel is activated', () => {
+  const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
+  const branch = actions.slice(actions.indexOf("if (target.kind === 'existing') {"), actions.indexOf("return 'existing' as const"))
+  assert.match(branch, /if \(api\.activePanel\?\.id === id\) onActivePanelParamsChanged\(merged\)\n\s*else target\.panel\.api\.setActive\(\)/)
+  assert.equal((branch.match(/setActive\(\)/g) ?? []).length, 1)
+  assert.match(branch, /renderPanel detaches and re-appends/)
 })

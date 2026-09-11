@@ -34,9 +34,11 @@ export function realGroupLabels(nodes: Map<string, SidebarNode>) {
   return [...nodes.values()].filter((node) => node.kind === 'group' && !node.placeholder).map((node) => node.name)
 }
 
-// settledPendingGroups lists the pending labels this frame shows as real
-// headers: the placeholder did its job and leaves preferences.
-export function settledPendingGroups(pending: readonly string[], nodes: Map<string, SidebarNode>) {
+// remainingPendingGroups is the pending list after this frame: a label the
+// frame shows as a real header (members present) did its job and leaves; a
+// label the frame does not show stays. A real group that later empties is
+// never re-added — placeholders come only from the operator.
+export function remainingPendingGroups(pending: readonly string[], nodes: Map<string, SidebarNode>) {
   const real = new Set(realGroupLabels(nodes))
-  return pending.filter((label) => real.has(label))
+  return pending.filter((label) => !real.has(label))
 }

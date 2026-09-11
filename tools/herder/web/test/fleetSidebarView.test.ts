@@ -97,7 +97,8 @@ test('the toggle order is tree, groups, placement and the chip sits left of the 
   assert.match(sidebar, /const groupChip = view !== 'groups' && pane\?\.group \? <span className="group-chip" title=\{`group: \$\{pane\.group\}`\}>\{pane\.group\}<\/span> : null/)
   assert.match(sidebar, /<>\{groupChip\}<span className="tree-label"/, 'chip precedes the label span, so the ellipsis stays on the name')
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
-  assert.match(css, /\.tree-secondary, \.unknown-manager-marker \{ color: var\(--dimmer\); font: 10px var\(--mono\); \}\n\.group-chip \{ flex: 0 0 auto;/, 'chip shares the marker tokens and never shrinks')
+  assert.match(css, /\.tree-secondary, \.unknown-manager-marker, \.group-chip \{ color: var\(--dimmer\); font: 10px var\(--mono\); \}/, 'chip is in the marker token rule itself')
+  assert.match(css, /\.group-chip \{ flex: 0 1 auto; max-width: min\(48px, 20%\); overflow: hidden; text-overflow: ellipsis;/, 'chip is capped and ellipsizes under the measured cap so the name keeps its width')
 })
 
 test('the parser rejects an unknown fleet view and keeps it optional', () => {

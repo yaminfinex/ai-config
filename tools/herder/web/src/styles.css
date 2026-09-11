@@ -185,8 +185,8 @@ h2, h3, p { margin-top: 0; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
 .unplaced-row { color: var(--dim); }
 .subagent-row .tree-label::before { content: 'task '; color: var(--dimmer); font: 9px var(--mono); }
-.tree-secondary, .unknown-manager-marker { color: var(--dimmer); font: 10px var(--mono); }
-.group-chip { flex: 0 0 auto; padding: 0 4px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); white-space: nowrap; }
+.tree-secondary, .unknown-manager-marker, .group-chip { color: var(--dimmer); font: 10px var(--mono); }
+.group-chip { flex: 0 1 auto; max-width: min(48px, 20%); overflow: hidden; text-overflow: ellipsis; padding: 0 4px; border: 1px solid var(--border2); border-radius: 4px; background: var(--chip); white-space: nowrap; } /* cap measured on real rows: ~7 chars at a 250px rail, 20% of the row at 200px; names stay readable, the full label is in the title */
 .tombstone-row { color: var(--dimmer); }
 .tombstone-row .tree-label { text-decoration: line-through; text-decoration-color: var(--border2); }
 .tombstone-row .tree-secondary { text-decoration: none; }

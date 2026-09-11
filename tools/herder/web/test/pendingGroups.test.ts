@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
-import { addPendingGroup, maxGroupNameLength, realGroupLabels, removePendingGroup, settledPendingGroups, validateGroupName } from '../src/features/sidebar/pendingGroupsModel.ts'
+import { addPendingGroup, maxGroupNameLength, realGroupLabels, remainingPendingGroups, removePendingGroup, validateGroupName } from '../src/features/sidebar/pendingGroupsModel.ts'
 import { buildGroupNodes, ungroupedID } from '../src/features/sidebar/sidebarNodes.ts'
 import type { Board, Row } from '../src/types.ts'
 
@@ -20,6 +20,9 @@ test('a group name follows the server rules: trimmed, non-empty, at most 80 rune
   assert.deepEqual(validateGroupName('bad\tname', []), { ok: false, reason: 'group name must not contain control characters' })
   assert.equal(validateGroupName('é'.repeat(maxGroupNameLength), []).ok, true, '80 runes, not bytes')
   assert.deepEqual(validateGroupName('x'.repeat(maxGroupNameLength + 1), []), { ok: false, reason: 'group name must not exceed 80 characters' })
+  // Four-byte emoji are two UTF-16 units each: 80 of them (160 units) pass, 81 are refused — runes, never units.
+  assert.deepEqual(validateGroupName('🚀'.repeat(80), []), { ok: true, name: '🚀'.repeat(80) })
+  assert.deepEqual(validateGroupName('🚀'.repeat(81), []), { ok: false, reason: 'group name must not exceed 80 characters' })
   assert.deepEqual(validateGroupName('audit', ['fleet-refit', 'audit']), { ok: false, reason: 'group audit already exists' })
   assert.equal(validateGroupName('Audit', ['audit']).ok, true, 'labels are case-sensitive, like the server')
 })
@@ -47,13 +50,16 @@ test('a placeholder header is drawn empty after the real headers and before Ungr
   assert.equal(buildGroupNodes(board({ ziru: 'audit' })).get('group:audit/agent:ziru')?.group, 'audit', 'default argument: no pending groups')
 })
 
-test('a placeholder settles only once a frame shows its label with members', () => {
-  const before = buildGroupNodes(board({ ziru: 'audit' }), ['unit-x'])
-  assert.deepEqual(settledPendingGroups(['unit-x'], before), [])
-  const after = buildGroupNodes(board({ ziru: 'unit-x' }), ['unit-x'])
-  assert.deepEqual(settledPendingGroups(['unit-x'], after), ['unit-x'])
+test('the remaining pending list drops a label only once a frame shows it with members, keeps the rest, and never resurrects an emptied real group', () => {
+  const before = buildGroupNodes(board({ ziru: 'audit' }), ['unit-x', 'unit-y'])
+  assert.deepEqual(remainingPendingGroups(['unit-x', 'unit-y'], before), ['unit-x', 'unit-y'])
+  const after = buildGroupNodes(board({ ziru: 'unit-x' }), ['unit-x', 'unit-y'])
+  assert.deepEqual(remainingPendingGroups(['unit-x', 'unit-y'], after), ['unit-y'], 'exactly the filtered list, never the unfiltered input')
   assert.equal(after.get('group:unit-x')?.placeholder, undefined, 'the real header replaces the placeholder in the same frame')
-  assert.deepEqual(settledPendingGroups(['unit-y'], after), [])
+  // unit-x empties again on a later frame: it is gone from preferences already, so no placeholder returns.
+  const emptied = buildGroupNodes(board({ ziru: 'audit' }), ['unit-y'])
+  assert.equal(emptied.get('group:unit-x'), undefined)
+  assert.deepEqual(remainingPendingGroups(['unit-y'], emptied), ['unit-y'])
 })
 
 test('the sidebar owns the new-group row: hover-reveal button, inline input, Enter commits through the validator, Escape and blur cancel, placeholders get × and no space button', () => {
@@ -65,6 +71,12 @@ test('the sidebar owns the new-group row: hover-reveal button, inline input, Ent
   assert.match(sidebar, /validateGroupName\(newGroup\.value, \[\.\.\.realGroupLabels\(groupNodes\), \.\.\.pendingGroups\]\)/, 'refused against real and pending labels')
   assert.match(sidebar, /groupHeader && !node\.placeholder && <button type="button" className="group-space-button"/)
   assert.match(sidebar, /node\.placeholder && <button type="button" className="group-space-button group-remove-button"/)
-  assert.match(sidebar, /settledPendingGroups\(pendingGroups, groupNodes\)/)
+  // The settlement effect stores exactly the model's remaining list (a mutation passing the unfiltered list must fail here).
+  assert.match(sidebar, /const remaining = remainingPendingGroups\(pendingGroups, groupNodes\)\n\s*if \(remaining\.length !== pendingGroups\.length\) onPendingGroups\(remaining\)/)
+  assert.doesNotMatch(sidebar, /onPendingGroups\(pendingGroups\)/)
   assert.match(sidebar, /buildGroupNodes\(board, pendingGroups\)/)
+  // The input carries no maxLength: 81 characters reach the validator and are refused, never silently truncated (maxLength counts UTF-16 units).
+  assert.doesNotMatch(sidebar.slice(sidebar.indexOf('group-create-input'), sidebar.indexOf('group-create-input') + 400), /maxLength/)
+  // A placeholder shows its zero count explicitly.
+  assert.match(sidebar, /\(folder \|\| node\.placeholder\) && !folded && <span className="count-badge">/)
 })

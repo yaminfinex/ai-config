@@ -15,7 +15,7 @@ import { LaunchAgent } from '../launch/LaunchAgent'
 import { apiProblem, assignAgent, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
 import { beginRename, editingAt, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
 import { groupHeaderTooltip, openGroupTooltip } from './groupDropModel'
-import { addPendingGroup, realGroupLabels, removePendingGroup, settledPendingGroups, validateGroupName } from './pendingGroupsModel'
+import { addPendingGroup, realGroupLabels, remainingPendingGroups, removePendingGroup, validateGroupName } from './pendingGroupsModel'
 import { dropAssignment, planSidebarDrop } from './reparentModel'
 
 const emptyExpandedItems: string[] = []
@@ -114,11 +114,12 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
   }, [board, expandedItems, groupNodes, knownManagerItems, knownWorkspaceItems, onExpandedItems, onKnownManagerItems, onKnownWorkspaceItems, placementNodes, supervisionNodes])
 
   // A placeholder leaves preferences on the first frame that shows its label
-  // with members: the drop into it wrote the real assign event.
+  // with members: the drop into it wrote the real assign event. The model
+  // computes the list that remains; the effect only stores it when it shrank.
   useEffect(() => {
     if (!board) return
-    const settled = settledPendingGroups(pendingGroups, groupNodes)
-    if (settled.length > 0) onPendingGroups(pendingGroups.filter((label) => !settled.includes(label)))
+    const remaining = remainingPendingGroups(pendingGroups, groupNodes)
+    if (remaining.length !== pendingGroups.length) onPendingGroups(remaining)
   }, [board, groupNodes, onPendingGroups, pendingGroups])
 
   const commitNewGroup = () => {
@@ -189,7 +190,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
       }}>
       {view === 'groups' && <div className="group-create-row" role="none">
         {newGroup
-          ? <><input className="rename-agent-input group-create-input" aria-label="New group name" placeholder="group name" value={newGroup.value} maxLength={80} autoFocus
+          ? <><input className="rename-agent-input group-create-input" aria-label="New group name" placeholder="group name" value={newGroup.value} autoFocus
             onChange={(event) => setNewGroup({ value: event.target.value, problem: null })}
             onBlur={() => setNewGroup(null)}
             onClick={(event) => event.stopPropagation()}
@@ -297,7 +298,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
               onClick={(event) => { event.stopPropagation(); startRename(pane.agent, node.id, pane.title) }}>✎</button>}
             {view === 'supervision' && node.marker === 'unknown-manager' && pane?.agent && pane.agent !== '-' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
               onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
-            {folder && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
+            {(folder || node.placeholder) && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
           title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${pane.group ? ` · group ${pane.group}` : ''} · ${sideHint}` : node.placeholder ? `group ${node.name} · placeholder · drop an agent here to create it` : groupHeader ? groupHeaderTooltip(node, memberCount) : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
