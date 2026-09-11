@@ -118,8 +118,8 @@ func kindUsage(kind string, sp agentstore.Spec) string {
 	opts := append([]string(nil), sp.Optional...)
 	sort.Strings(opts)
 	for _, name := range opts {
-		if name == "clear-group" {
-			parts = append(parts, "[--clear-group]")
+		if agentstore.BoolFlags[name] {
+			parts = append(parts, "[--"+name+"]")
 		} else {
 			parts = append(parts, "[--"+name+" V]")
 		}

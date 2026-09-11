@@ -402,16 +402,16 @@ func TestAssignmentGroupUsesEventTimeOrder(t *testing.T) {
 	projection.Apply(ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "new" }), 0)
 	projection.Apply(ev(KindAssign, "impl-gime", 1, func(e *Event) { e.ClearGroup = true }), 0)
 	view := projection.Latest("impl-gime")
-	if view == nil || view.Assignment == nil || view.Assignment.Group != "new" || view.AssignmentAt == nil || !view.AssignmentAt.Equal(at(2)) {
+	if view == nil || view.Assignment == nil || view.Assignment.Group != "new" || !view.Assignment.At.Equal(at(2)) {
 		t.Fatalf("backdated clear changed assignment: %+v", view)
 	}
 	projection.Apply(ev(KindAssign, "impl-gime", 3, func(e *Event) { e.ClearGroup = true }), 0)
 	view = projection.Latest("impl-gime")
-	if view.Assignment != nil || view.AssignmentAt == nil || !view.AssignmentAt.Equal(at(3)) {
+	if view.Assignment == nil || view.Assignment.Group != "" || view.Assignment.By == "" || !view.Assignment.At.Equal(at(3)) {
 		t.Fatalf("later clear did not win: %+v", view)
 	}
 	projection.Apply(ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "stale" }), 0)
-	if view = projection.Latest("impl-gime"); view.Assignment != nil {
+	if view = projection.Latest("impl-gime"); view.Assignment == nil || view.Assignment.Group != "" || !view.Assignment.At.Equal(at(3)) {
 		t.Fatalf("backdated group revived cleared assignment: %+v", view)
 	}
 }

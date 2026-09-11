@@ -226,9 +226,6 @@ func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
 	if v.Assignment != nil {
 		a := v.Assignment
 		field("group", a.Group)
-		field("brief", a.Brief)
-		field("thread", a.Thread)
-		field("task", a.Task)
 		field("assigned", stamp(&a.At)+" by "+a.By)
 	} else {
 		field("group", "")

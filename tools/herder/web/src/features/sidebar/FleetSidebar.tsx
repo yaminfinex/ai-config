@@ -14,7 +14,7 @@ import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
 import { apiProblem, assignAgent, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
 import { beginRename, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
-import { reparentDrop } from './reparentModel'
+import { dropAssignment, reparentDrop } from './reparentModel'
 
 const emptyExpandedItems: string[] = []
 
@@ -144,17 +144,15 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
       className={`fleet-tree panel-tree fleet-tree-${view}${dropTarget === 'tree-root' ? ' drop-target' : ''}`}
       onDragOver={(event) => {
         if (view !== 'supervision' || event.target !== event.currentTarget) return
-        const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), null, nodes)
+        const result = reparentDrop(view, dragSource, null, nodes)
         if ('refusal' in result) return
         event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget('tree-root')
       }}
       onDragLeave={(event) => { if (event.target === event.currentTarget) setDropTarget(null) }}
       onDrop={(event) => {
         if (event.target !== event.currentTarget) return
-        const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), null, nodes)
         setDropTarget(null)
-        if ('refusal' in result) return
-        event.preventDefault(); void submitAssignment(result.name, result.assignment)
+        if (dropAssignment(view, dragSource, null, nodes, submitAssignment)) event.preventDefault()
       }}>
       {tree.getItems().map((item) => {
         const node = item.getItemData()
@@ -181,17 +179,15 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
             },
             onDragEnd: () => { setDragSource(null); setDropTarget(null) },
             onDragOver: (event) => {
-              const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), item.getId(), nodes)
+              const result = reparentDrop(view, dragSource, item.getId(), nodes)
               if ('refusal' in result) return
               event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move'; setDropTarget(item.getId())
             },
             onDragLeave: () => { if (dropTarget === item.getId()) setDropTarget(null) },
             onDrop: (event) => {
               event.stopPropagation()
-              const result = reparentDrop(view, dragSource ?? event.dataTransfer.getData('text/plain'), item.getId(), nodes)
               setDropTarget(null)
-              if ('refusal' in result) return
-              event.preventDefault(); void submitAssignment(result.name, result.assignment)
+              if (dropAssignment(view, dragSource, item.getId(), nodes, submitAssignment)) event.preventDefault()
             },
             onFocus: () => item.setFocused(),
             onClick: () => { item.setFocused(); setSelectedItems([item.getId()]); item.primaryAction() },

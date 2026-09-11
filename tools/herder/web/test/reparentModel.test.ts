@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { reparentDrop } from '../src/features/sidebar/reparentModel.ts'
+import { dropAssignment, reparentDrop } from '../src/features/sidebar/reparentModel.ts'
 import type { SidebarNode } from '../src/features/sidebar/sidebarNodes.ts'
 import type { Row } from '../src/types.ts'
 
@@ -18,6 +18,13 @@ const nodes = new Map<string, SidebarNode>([
 test('supervision drops produce one assignment intent', () => {
   assert.deepEqual(reparentDrop('supervision', 'agent:a', 'agent:d', nodes), { name: 'a', assignment: { manager: 'd' } })
   assert.deepEqual(reparentDrop('supervision', 'agent:a', null, nodes), { name: 'a', assignment: { manager: 'human' } })
+})
+
+test('one drop submits exactly one assignment', () => {
+  const submitted: unknown[] = []
+  const accepted = dropAssignment('supervision', 'agent:a', 'agent:d', nodes, (name, assignment) => { submitted.push({ name, assignment }) })
+  assert.equal(accepted, true)
+  assert.deepEqual(submitted, [{ name: 'a', assignment: { manager: 'd' } }])
 })
 
 test('drop refusal table protects supervision topology', () => {
