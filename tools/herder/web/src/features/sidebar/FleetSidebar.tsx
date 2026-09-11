@@ -14,7 +14,6 @@ import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
 import { apiProblem, lifecycleProblem, renameAgent, viewerReadOnlyMessage } from '../../api/client'
 import { beginRename, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
-import { primaryTreeRowClick, toggleTreeRow } from './sidebarInteractions'
 
 const emptyExpandedItems: string[] = []
 
@@ -137,7 +136,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
           itemProps={{
             ...treeItemProps,
             onFocus: () => item.setFocused(),
-            onClick: () => primaryTreeRowClick(item, setSelectedItems),
+            onClick: () => { item.setFocused(); setSelectedItems([item.getId()]); item.primaryAction() },
             onClickCapture: (event) => {
               if (!event.altKey || (event.target as Element).closest(treeClickGuardSelector)) return
               event.preventDefault()
@@ -179,8 +178,9 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
                 if (event.key === 'Enter') event.currentTarget.blur()
                 if (event.key === 'Escape') { cancelOnBlur.current = true; event.currentTarget.blur() }
               }} /></span>
-            : <span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{node.marker === 'unknown-manager' && <span className="unknown-manager-marker" title="manager unknown · adopt to take it on"> ?</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total}{agentRow ? '' : ` · ${node.summary.active} active`})</span>}</span>}
-          trailing={<>{node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
+            : <span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total}{agentRow ? '' : ` · ${node.summary.active} active`})</span>}</span>}
+          trailing={<>{node.marker === 'unknown-manager' && <span className="unknown-manager-marker" title="manager unknown · adopt to take it on">?</span>}
+            {node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
             {pane?.agent && pane.agent !== '-' && <ContextUsed value={node.contextUsed} />}
             {pane?.agent && pane.agent !== '-' && !renaming && <button type="button" className="rename-agent-button" aria-label={`Rename ${pane.agent}`} title={`Rename ${pane.agent}`}
               onClick={(event) => { event.stopPropagation(); cancelOnBlur.current = false; setRenaming(beginRename(pane.agent, pane.title)) }}>✎</button>}
@@ -188,7 +188,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
           title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)} · ${sideHint}` : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
-          onToggle={() => toggleTreeRow(item)}
+          onToggle={() => { if (item.isExpanded()) item.collapse(); else item.expand() }}
         />
       })}
     </div>}

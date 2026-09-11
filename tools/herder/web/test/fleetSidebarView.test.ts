@@ -100,4 +100,9 @@ test('expandedItems survive a view switch: the transition never runs on the view
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)
   assert.match(sidebar, /<ContextUsed value=\{node\.contextUsed\} \/>/)
   assert.match(sidebar, /\$\{contextUsedTooltip\(node\.contextUsed\)\}/)
+  assert.match(sidebar, /\.\.\.treeItemProps,[\s\S]*?onClick: \(\) => \{ item\.setFocused\(\); setSelectedItems\(\[item\.getId\(\)\]\); item\.primaryAction\(\) \}/)
+  assert.equal((sidebar.match(/item\.(?:expand|collapse)\(\)/g) ?? []).length, 2, 'expand and collapse belong only to the chevron toggle')
+  assert.match(sidebar, /onToggle=\{\(\) => \{ if \(item\.isExpanded\(\)\) item\.collapse\(\); else item\.expand\(\) \}\}/)
+  const hotkeys = sidebar.match(/hotkeys: \{([\s\S]*?)\n {4}\},\n {4}features:/)?.[1] ?? ''
+  assert.deepEqual([...hotkeys.matchAll(/^ {6}(\w+):/gm)].map((match) => match[1]), ['customPrimaryActionEnter', 'customPrimaryActionSpace'])
 })

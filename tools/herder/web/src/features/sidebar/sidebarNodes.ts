@@ -179,28 +179,27 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
     return id
   }
 
-  type RootEntry = { id: string, createdAt: string, name: string }
-  const rootEntries: RootEntry[] = []
+  const rootEntries: { id: string, createdAt: string, name: string }[] = []
+  const rootRow = (flat: FlatRow) => rootEntries.push({ id: addAgent(flat), createdAt: flat.row.created_at ?? '', name: flat.row.agent })
   for (const flat of byCreation(topLevel)) {
     if (placed.has(flat.row.agent)) continue
-    rootEntries.push({ id: addAgent(flat), createdAt: flat.row.created_at ?? '', name: flat.row.agent })
+    rootRow(flat)
   }
   for (const [manager, reports] of tombstones) {
     const id = `tombstone:${manager}`
     const orderedReports = byCreation(reports)
     const children = orderedReports.filter((flat) => !placed.has(flat.row.agent)).map((flat) => addAgent(flat))
-    if (children.length === 0) continue
     result.set(id, { id, kind: 'tombstone', name: manager, children, secondary: 'ended', summary: summarise(result, children) })
-    rootEntries.push({ id, createdAt: orderedReports[0]?.row.created_at ?? '', name: manager })
+    rootEntries.push({ id, createdAt: orderedReports[0].row.created_at ?? '', name: manager })
   }
   // A live report whose manager subtree was never reached (its manager sits
   // under a cycle or was itself skipped) still needs a home.
   for (const flat of byCreation([...rows.values()])) {
     if (placed.has(flat.row.agent) || (flat.row.parent_agent && rows.has(flat.row.parent_agent) && placed.has(flat.row.parent_agent))) continue
-    rootEntries.push({ id: addAgent(flat), createdAt: flat.row.created_at ?? '', name: flat.row.agent })
+    rootRow(flat)
   }
   root.children.push(...rootEntries
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.name.localeCompare(right.name))
+    .sort(creationOrder)
     .map((entry) => entry.id))
 
   const terminalsNode: SidebarNode = { id: terminalsID, kind: 'terminals', name: 'Terminals', children: [], count: 0 }
@@ -245,7 +244,14 @@ function push<T>(map: Map<string, T[]>, key: string, value: T) {
 }
 
 function byCreation(flats: FlatRow[]) {
-  return [...flats].sort((left, right) => (left.row.created_at ?? '').localeCompare(right.row.created_at ?? '') || left.row.agent.localeCompare(right.row.agent))
+  return [...flats].sort((left, right) => creationOrder(
+    { createdAt: left.row.created_at ?? '', name: left.row.agent },
+    { createdAt: right.row.created_at ?? '', name: right.row.agent },
+  ))
+}
+
+function creationOrder(left: { createdAt: string, name: string }, right: { createdAt: string, name: string }) {
+  return left.createdAt.localeCompare(right.createdAt) || left.name.localeCompare(right.name)
 }
 
 function summarise(result: Map<string, SidebarNode>, children: string[]): SupervisionSummary {

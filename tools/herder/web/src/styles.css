@@ -185,8 +185,7 @@ h2, h3, p { margin-top: 0; }
 .unplaced-tree { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--border); }
 .unplaced-row { color: var(--dim); }
 .subagent-row .tree-label::before { content: 'task '; color: var(--dimmer); font: 9px var(--mono); }
-.tree-secondary { color: var(--dimmer); font: 10px var(--mono); }
-.unknown-manager-marker { color: var(--dimmer); font: 10px var(--mono); }
+.tree-secondary, .unknown-manager-marker { color: var(--dimmer); font: 10px var(--mono); }
 .tombstone-row { color: var(--dimmer); }
 .tombstone-row .tree-label { text-decoration: line-through; text-decoration-color: var(--border2); }
 .tombstone-row .tree-secondary { text-decoration: none; }
