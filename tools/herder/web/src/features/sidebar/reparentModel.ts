@@ -23,8 +23,8 @@ export function reparentDrop(view: 'placement' | 'supervision', sourceID: string
 }
 
 // planSidebarDrop is the ONE drop seam the sidebar calls: node ids in, one
-// assignment out. The plan is chosen by view — groups → a header sets or
-// clears the group (planGroupDrop), supervision → a row or the empty top
+// assignment out. The plan is chosen by view — groups → a header or any row
+// under it sets or clears the group (planGroupDrop), supervision → a row or the empty top
 // level sets the manager (reparentDrop) — so every row carries one set of
 // drag handlers whatever view is showing. Null means the drop is refused.
 export type SidebarDrop = { name: string, assignment: AssignmentPatch }

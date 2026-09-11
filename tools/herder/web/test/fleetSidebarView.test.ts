@@ -64,17 +64,40 @@ test('row click guard contains every trailing interactive control', () => {
 
 test('the fleet view persists through the real shell serializer and parser (default supervision)', () => {
   assert.equal(defaultFleetView, 'supervision')
-  const written = shellPreferencesValue({ ...rails, expandedItems: ['agent:ziru'], knownWorkspaceItems: null, knownManagerItems: ['agent:ziru'], fleetView: 'placement' })
+  const written = shellPreferencesValue({ ...rails, expandedItems: ['agent:ziru'], knownWorkspaceItems: null, knownManagerItems: ['agent:ziru'], fleetView: 'placement', pendingGroups: [] })
   const read = parseShellPreferences(JSON.stringify(written))
   assert.equal(read?.fleetView, 'placement')
   assert.deepEqual(read?.expandedItems, ['agent:ziru'])
   assert.deepEqual(read?.knownManagerItems, ['agent:ziru'])
   assert.equal(read?.knownWorkspaceItems, undefined)
-  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision' })))?.fleetView, 'supervision')
-  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'groups' })))?.fleetView, 'groups')
+  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision', pendingGroups: [] })))?.fleetView, 'supervision')
+  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'groups', pendingGroups: [] })))?.fleetView, 'groups')
   // The hook writes through the serializer, so the field cannot be dropped on one path only.
   const hook = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
-  assert.match(hook, /shellPreferencesValue\(\{ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView \}\)/)
+  assert.match(hook, /shellPreferencesValue\(\{ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, pendingGroups \}\)/)
+  assert.equal((hook.match(/pendingGroups/g) ?? []).length >= 10, true, 'pendingGroups rides every preference path (initial, snapshot, flush, dirty, return)')
+})
+
+test('pending groups persist through the shell serializer and parser: written only while non-empty, rejected unless string[]', () => {
+  const base = { ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'groups' as const }
+  assert.equal('pendingGroups' in shellPreferencesValue({ ...base, pendingGroups: [] }), false)
+  const written = shellPreferencesValue({ ...base, pendingGroups: ['unit-x', 'unit y'] })
+  assert.deepEqual(written.pendingGroups, ['unit-x', 'unit y'])
+  assert.deepEqual(parseShellPreferences(JSON.stringify(written))?.pendingGroups, ['unit-x', 'unit y'])
+  assert.equal(parseShellPreferences(JSON.stringify({ ...written, pendingGroups: undefined }))?.pendingGroups, undefined)
+  assert.equal(parseShellPreferences(JSON.stringify({ ...written, pendingGroups: 'unit-x' })), null)
+  assert.equal(parseShellPreferences(JSON.stringify({ ...written, pendingGroups: [1] })), null)
+})
+
+test('the toggle order is tree, groups, placement and the chip sits left of the name outside the groups view', () => {
+  const toggle = readFileSync(new URL('../src/features/sidebar/FleetViewToggle.tsx', import.meta.url), 'utf8')
+  const order = [...toggle.matchAll(/\{ view: '(\w+)'/g)].map((match) => match[1])
+  assert.deepEqual(order, ['supervision', 'groups', 'placement'])
+  const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
+  assert.match(sidebar, /const groupChip = view !== 'groups' && pane\?\.group \? <span className="group-chip" title=\{`group: \$\{pane\.group\}`\}>\{pane\.group\}<\/span> : null/)
+  assert.match(sidebar, /<>\{groupChip\}<span className="tree-label"/, 'chip precedes the label span, so the ellipsis stays on the name')
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(css, /\.tree-secondary, \.unknown-manager-marker \{ color: var\(--dimmer\); font: 10px var\(--mono\); \}\n\.group-chip \{ flex: 0 0 auto;/, 'chip shares the marker tokens and never shrinks')
 })
 
 test('the parser rejects an unknown fleet view and keeps it optional', () => {

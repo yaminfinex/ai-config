@@ -1,16 +1,18 @@
 import type { FleetView } from '../layout/shellPreferences.ts'
 import type { SidebarNode } from './sidebarNodes.ts'
 
-// Groups view drag: an agent row dropped on a group header sets that agent's
-// group to the header's label; the Ungrouped header (label '') clears it. The
-// plan is null in every other case, so nothing else on the tree is a drop
-// target: the supervision and placement views, agent rows, workspaces.
+// Groups view drag: an agent row dropped on a group header OR on any row under
+// it sets that agent's group to the header's label; the Ungrouped header and
+// its rows (label '') clear it. Every groups-view node carries `group` (the
+// label a drop on it writes), so no node id is parsed here. An agent dropped
+// on its own row is refused, as is anything without a group field: the
+// supervision and placement views, workspaces.
 export type GroupDrop = { name: string, group: string }
 
 export function planGroupDrop(view: FleetView, source: string | null | undefined, target: SidebarNode | undefined): GroupDrop | null {
-  if (view !== 'groups' || !source || source === '-' || !target) return null
-  if (target.kind !== 'group' && target.kind !== 'ungrouped') return null
-  return { name: source, group: target.group ?? '' }
+  if (view !== 'groups' || !source || source === '-' || !target || target.group === undefined) return null
+  if (target.pane?.agent === source) return null
+  return { name: source, group: target.group }
 }
 
 export function groupHeaderTooltip(node: SidebarNode, members: number) {
@@ -21,13 +23,13 @@ export function groupHeaderTooltip(node: SidebarNode, members: number) {
 }
 
 export function openGroupTooltip(name: string, members: number) {
-  return `Open or refresh space ${name} with ${members} pinned ${members === 1 ? 'transcript' : 'transcripts'}; matched by name, with no saved link.`
+  return `Open space ${name} (creates it with ${members} pinned ${members === 1 ? 'transcript' : 'transcripts'} the first time; matched by name, no saved link)`
 }
 
-// Open-as-space: the ruling is "creates or refreshes" — an existing space
-// named exactly after the group is switched to, else one is created with
-// that name; then every member not yet open there is opened pinned. Nothing
-// is closed and no link between group and space is stored.
+// Open-as-space: the ruling is "creates once, then jumps" — an existing space
+// named exactly after the group is switched to and left exactly as the
+// operator configured it; only a space created here opens every member
+// pinned. Nothing is closed and no link between group and space is stored.
 export type OpenGroupPlan = { action: 'switch', id: string } | { action: 'create', name: string }
 
 export function planOpenGroupAsSpace(name: string, spaces: { id: string, name: string }[]): OpenGroupPlan {
@@ -35,21 +37,18 @@ export function planOpenGroupAsSpace(name: string, spaces: { id: string, name: s
   return existing ? { action: 'switch', id: existing.id } : { action: 'create', name }
 }
 
-// runOpenGroupAsSpace executes the plan: switch only when the matched space
-// is not already active (switching to the active space is a no-op the
-// store reports as false, and must not abort the refresh), else create; then
-// ALWAYS open every member pinned so a refresh on the active space reopens
-// missing transcripts and pins previews. Returns false only when the space
-// could not be reached.
+// runOpenGroupAsSpace executes the plan: 'switch' jumps to the matched space
+// (a no-op when it is already active) and opens NOTHING, so a member the
+// operator closed stays closed; 'create' makes the space and opens every
+// member pinned once. Returns false only when the space could not be reached.
 export function runOpenGroupAsSpace(plan: OpenGroupPlan, members: string[], dependencies: {
   activeID: string | null
   switchTo: (id: string) => boolean
   createNamed: (name: string) => boolean
   open: (member: string) => void
 }) {
-  if (plan.action === 'switch') {
-    if (dependencies.activeID !== plan.id && !dependencies.switchTo(plan.id)) return false
-  } else if (!dependencies.createNamed(plan.name)) return false
+  if (plan.action === 'switch') return dependencies.activeID === plan.id || dependencies.switchTo(plan.id)
+  if (!dependencies.createNamed(plan.name)) return false
   members.forEach(dependencies.open)
   return true
 }
