@@ -14,3 +14,7 @@ Tags are bare lowercase, never wrapped in backticks or a code block,
 never nested; [brackets] are not tags; the first line after a wake is
 a bare <status>. Full grammar:
 __AI_CONFIG_ROOT__/docs/fencing-convention.md
+
+Herder titles (spawn.sh --title, herder register annotate --title):
+short kebab-case, and never repeat the seat's name in it; the name is
+already shown beside the title.
