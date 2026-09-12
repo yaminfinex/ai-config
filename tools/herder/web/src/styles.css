@@ -138,7 +138,7 @@ h2, h3, p { margin-top: 0; }
 .notes-send-all { display: flex; justify-content: flex-end; padding: var(--space-1) var(--space-2) 0; }
 .notes-send-all-button { width: auto; padding: 0 var(--space-2); font-size: 10px; }
 .note-quick-add-popover { position: absolute; z-index: 32; top: calc(100% + var(--space-1)); right: 0; width: 232px; padding: var(--space-1); border: 1px solid var(--border2); border-radius: var(--space-1); background: var(--note-selector-bg); box-shadow: 0 8px 24px var(--floating-shadow); }
-.note-quick-add-popover input { width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; background: var(--bg); color: var(--text); }
+.note-quick-add-popover textarea { width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; resize: vertical; background: var(--bg); color: var(--text); }
 .note-quick-add-popover .notes-problem { display: block; }
 .note-capture-popover { position: fixed; z-index: 24; width: min(332px, calc(100vw - 16px)); padding: var(--space-2); border: 1px solid var(--border2); border-radius: var(--space-2); background: var(--note-selector-bg); color: var(--text); box-shadow: 0 8px 24px var(--floating-shadow); }
 .note-capture-minimal { width: auto; padding: 0; }
