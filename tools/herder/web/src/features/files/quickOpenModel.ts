@@ -10,6 +10,9 @@ export type QuickOpenActionRow =
 
 export type QuickOpenEnterTarget = { kind: 'action', index: number } | { kind: 'file', index?: number }
 export type QuickOpenKeyboardRow = { kind: 'action', index: number } | { kind: 'file', index: number }
+// The file lookup for the current query: still running (or not yet settled), finished with nothing
+// usable, or finished with a candidate Enter may open.
+export type QuickOpenLookup = 'pending' | 'none' | 'available'
 
 const OPENABLE_KINDS: QuickOpenActionRow['kind'][] = ['space', 'agent']
 
@@ -67,10 +70,44 @@ export function quickOpenKeyboardRows(rows: QuickOpenActionRow[], fileCount: num
   return [...leading, ...files, ...note]
 }
 
+// A selection is remembered by identity, not position, so rows arriving or leaving (a file lookup
+// landing under a selected note row) never move it onto a different row.
+export function quickOpenRowKey(row: QuickOpenActionRow): string {
+  switch (row.kind) {
+    case 'space': return `action:space:${row.id}`
+    case 'agent': return `action:agent:${row.name}`
+    case 'create': return `action:create:${row.name}`
+    case 'send-space': return `action:send-space:${row.id}`
+    case 'send-new': return 'action:send-new'
+    case 'note': return 'action:note'
+  }
+}
+
+export function quickOpenSelectionKeys(rows: QuickOpenActionRow[], fileKeys: string[]): string[] {
+  return quickOpenKeyboardRows(rows, fileKeys.length).map((entry) => entry.kind === 'action' ? quickOpenRowKey(rows[entry.index]) : `file:${fileKeys[entry.index]}`)
+}
+
+export function quickOpenSelectedIndex(rows: QuickOpenActionRow[], fileKeys: string[], key: string | null) {
+  return key === null ? -1 : quickOpenSelectionKeys(rows, fileKeys).indexOf(key)
+}
+
+export function quickOpenMoveSelection(rows: QuickOpenActionRow[], fileKeys: string[], key: string | null, direction: 'up' | 'down'): string | null {
+  const keys = quickOpenSelectionKeys(rows, fileKeys)
+  if (keys.length === 0) return null
+  const current = key === null ? -1 : keys.indexOf(key)
+  if (current < 0) return direction === 'down' ? keys[0] : keys[keys.length - 1]
+  return keys[(current + (direction === 'down' ? 1 : -1) + keys.length) % keys.length]
+}
+
 // A fresh palette (empty query) starts on the first openable row; a typed query leaves Enter to its implicit order.
 export function quickOpenInitialIndex(rows: QuickOpenActionRow[], rawQuery: string) {
   if (rawQuery.trim()) return -1
   return quickOpenKeyboardRows(rows, 0).findIndex((entry) => entry.kind === 'action' && OPENABLE_KINDS.includes(rows[entry.index].kind))
+}
+
+export function quickOpenInitialSelection(rows: QuickOpenActionRow[], rawQuery: string): string | null {
+  const index = quickOpenInitialIndex(rows, rawQuery)
+  return index < 0 ? null : quickOpenSelectionKeys(rows, [])[index]
 }
 
 export function quickOpenDefaultActionIndex(rows: QuickOpenActionRow[], rawQuery: string) {
@@ -87,13 +124,15 @@ export function quickOpenEnterTarget(
   rows: QuickOpenActionRow[],
   rawQuery: string,
   activeIndex: number,
-  fileAvailable: boolean,
-  fileCount = fileAvailable ? 1 : 0,
+  lookup: QuickOpenLookup,
+  fileCount = lookup === 'available' ? 1 : 0,
 ): QuickOpenEnterTarget | null {
   if (activeIndex >= 0) return quickOpenKeyboardRows(rows, fileCount)[activeIndex] ?? null
   const exact = quickOpenDefaultActionIndex(rows, rawQuery)
   if (exact >= 0) return { kind: 'action', index: exact }
-  if (fileAvailable) return { kind: 'file' }
+  if (lookup === 'available') return { kind: 'file' }
+  // A lookup still running is not "no match": Enter does nothing until it settles.
+  if (lookup === 'pending') return null
   const note = rows.findIndex((row) => row.kind === 'note')
   return note >= 0 ? { kind: 'action', index: note } : null
 }

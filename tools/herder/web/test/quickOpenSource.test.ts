@@ -5,12 +5,14 @@ import test from 'node:test'
 const source = readFileSync(new URL('../src/features/files/QuickOpen.tsx', import.meta.url), 'utf8')
 
 test('QuickOpen clears the query and starts on the first openable row on open changes', () => {
-  assert.match(source, /useEffect\(\(\) => \{\s*setQuery\(''\)\s*setActiveIndex\(open \? quickOpenInitialIndex\([\s\S]*?, ''\) : -1\)\s*if \(!open\) return[\s\S]*?\}, \[open\]\)/)
+  assert.match(source, /useEffect\(\(\) => \{\s*setQuery\(''\)\s*setSelection\(open \? quickOpenInitialSelection\([\s\S]*?, ''\) : null\)\s*if \(!open\) return[\s\S]*?\}, \[open\]\)/)
 })
 
 test('QuickOpen resets the selection only on a real query edit, never when the debounce settles', () => {
   assert.doesNotMatch(source, /setActiveIndex\(-1\), \[debounced/)
-  assert.match(source, /onChange=\{\(event\) => \{\s*setQuery\(event\.target\.value\)\s*setActiveIndex\(quickOpenInitialIndex\(/)
+  assert.match(source, /onChange=\{\(event\) => \{\s*setQuery\(event\.target\.value\)\s*setSelection\(quickOpenInitialSelection\(/)
+  assert.match(source, /setSelection\(quickOpenMoveSelection\(actions, fileKeys, selection, event\.key === 'ArrowDown' \? 'down' : 'up'\)\)/)
+  assert.doesNotMatch(source, /useState\(-1\)/)
   assert.match(source, /scrollIntoView\(\{ block: 'nearest' \}\)/)
 })
 

@@ -6,7 +6,7 @@ import { keyboardCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
-import { quickOpenActionRows, quickOpenEnterTarget, quickOpenInitialIndex, quickOpenKeyboardRows, type QuickOpenActionRow } from './quickOpenModel.ts'
+import { quickOpenActionRows, quickOpenEnterTarget, quickOpenInitialSelection, quickOpenMoveSelection, quickOpenSelectedIndex, type QuickOpenActionRow, type QuickOpenLookup } from './quickOpenModel.ts'
 import { useNotes } from '../notes/NotesProvider.tsx'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 import { useWorkspaceActionsContext, useWorkspaceData } from '../workspace/workspaceContext.tsx'
@@ -41,7 +41,8 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
   const workspaceData = useWorkspaceData()
   const notes = useNotes()
   const [query, setQuery] = useState('')
-  const [activeIndex, setActiveIndex] = useState(-1)
+  // The selection is a row identity (see quickOpenSelectionKeys); its index is derived per render.
+  const [selection, setSelection] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
@@ -55,9 +56,14 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
   })
 
   const actions = quickOpenActionRows(query, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID)
+  const settled = query.trim() === debounced
+  const settledResolution = settled ? resolution.data : undefined
+  const candidates = settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? []
+  const fileKeys = candidates.map((candidate) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`)
+  const activeIndex = quickOpenSelectedIndex(actions, fileKeys, selection)
   useEffect(() => {
     setQuery('')
-    setActiveIndex(open ? quickOpenInitialIndex(quickOpenActionRows('', spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID), '') : -1)
+    setSelection(open ? quickOpenInitialSelection(quickOpenActionRows('', spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID), '') : null)
     if (!open) return
     restoreFocus.current = document.activeElement as HTMLElement | null
     const frame = requestAnimationFrame(() => inputRef.current?.focus())
@@ -79,14 +85,9 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
     else onOpenFile({ root: candidate.root, path: candidate.path, line: mentionLine(query).line }, placement)
     onClose()
   }
-  const settled = query.trim() === debounced
-  const settledResolution = settled ? resolution.data : undefined
-  const candidates = settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? []
-  const keyboardRows = quickOpenKeyboardRows(actions, candidates.length)
-  const totalRows = keyboardRows.length
   const leadingCount = actions.filter((row) => row.kind !== 'note').length
   const noteRow = actions.map((row, index) => ({ row, index })).find(({ row }) => row.kind === 'note')
-  const keyboardIndexOf = (actionIndex: number) => keyboardRows.findIndex((entry) => entry.kind === 'action' && entry.index === actionIndex)
+  const noteIndex = noteRow ? leadingCount + candidates.length : -1
   const chooseAction = (row: QuickOpenActionRow) => {
     let chosen = true
     if (row.kind === 'space') chosen = row.id === activeSpaceID || onSwitchSpace(row.id)
@@ -109,19 +110,18 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
       <input ref={inputRef} value={query} aria-label="Find a space, agent, file, or folder" placeholder="Type a space, agent, file, or folder…" autoComplete="off" spellCheck={false}
         onChange={(event) => {
           setQuery(event.target.value)
-          setActiveIndex(quickOpenInitialIndex(quickOpenActionRows(event.target.value, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID), event.target.value))
+          setSelection(quickOpenInitialSelection(quickOpenActionRows(event.target.value, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID), event.target.value))
         }} onKeyDown={(event) => {
           if (event.key === 'Escape') onClose()
           else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-            if (totalRows > 0) setActiveIndex((index) => {
-              if (index < 0) return event.key === 'ArrowDown' ? 0 : totalRows - 1
-              return (index + (event.key === 'ArrowDown' ? 1 : -1) + totalRows) % totalRows
-            })
+            setSelection(quickOpenMoveSelection(actions, fileKeys, selection, event.key === 'ArrowDown' ? 'down' : 'up'))
           } else if (event.key === 'Enter') {
             const candidate = settledResolution
               ? keyboardCandidate(settledResolution, candidates, activeIndex - leadingCount)
               : null
-            const target = quickOpenEnterTarget(actions, query, activeIndex, Boolean(candidate), candidates.length)
+            // The lookup is pending until the query settles and the resolve for it has answered; a settled error counts as no match.
+            const lookup: QuickOpenLookup = !query.trim() || (settled && (settledResolution || resolution.error)) ? (candidate ? 'available' : 'none') : 'pending'
+            const target = quickOpenEnterTarget(actions, query, activeIndex, lookup, candidates.length)
             if (target?.kind === 'action') chooseAction(actions[target.index])
             else if (target?.kind === 'file' && candidate) choose(candidate, placementFromModifiers(event, groupID))
           } else return
@@ -149,8 +149,8 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
         {settledResolution && <div className="quick-open-section-label">Files and folders</div>}
         <FileResults resolution={settledResolution} activeIndex={activeIndex - leadingCount} onSelect={(candidate, event) => choose(candidate, placementFromModifiers(event, groupID))} limit={QUICK_OPEN_RESULT_LIMIT} />
         {noteRow && <section className="quick-open-section" aria-label="Notes"><strong>Notes</strong>
-          <button type="button" role="option" aria-selected={activeIndex === keyboardIndexOf(noteRow.index)}
-            className={activeIndex === keyboardIndexOf(noteRow.index) ? 'active' : ''}
+          <button type="button" role="option" aria-selected={activeIndex === noteIndex}
+            className={activeIndex === noteIndex ? 'active' : ''}
             onMouseDown={(event) => event.preventDefault()} onClick={() => chooseAction(noteRow.row)}>{noteRow.row.label}</button>
         </section>}
       </div>
