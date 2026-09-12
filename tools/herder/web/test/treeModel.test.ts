@@ -7,8 +7,8 @@ import { treeChildIndex, treeIndent, treeKeyIntent, treeParentIndex } from '../s
 test('shared tree indentation uses the fleet density contract', () => {
   assert.equal(treeIndent(-1), 5)
   assert.equal(treeIndent(0), 5)
-  assert.equal(treeIndent(1), 21)
-  assert.equal(treeIndent(3), 53)
+  assert.equal(treeIndent(1), 17)
+  assert.equal(treeIndent(3), 41)
 })
 
 test('shared tree keys distinguish navigation, expansion, and primary action', () => {

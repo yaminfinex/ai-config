@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getBacklog, getFileTree, queryKeys } from '../../api/client'
 import type { BacklogRead, FileTarget, FileTreeEntry, FolderTarget } from '../../types'
@@ -7,6 +7,17 @@ import { FilePanel } from '../files/FilePanel'
 import { initialFileViewMode, type FileViewMode } from '../files/fileTabs'
 import { rootLabel } from '../files/fileResolution'
 import { boardColumns, folderSelectionTarget, parentFolderPath, rootJoinedAbsolutePath, taskFileTarget } from './folderModel'
+import {
+  folderTreeMaxWidth,
+  folderTreeMinWidth,
+  folderTreePreferencesValue,
+  folderTreeWidthFromKey,
+  readFolderTreePreferences,
+  resizedFolderTreeWidth,
+  clampFolderTreeWidth,
+  writeFolderTreePreferences,
+} from './folderTreeModel'
+import { subscribeDOMEvent } from '../../shared/lifecycle'
 import { initialGitFileState } from '../git/gitViewModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useFileWatch } from '../../stream/fileWatchRegistry'
@@ -14,6 +25,10 @@ import { failureBanner, PanelState } from '../../shared/PanelState'
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { treeChildIndex, treeKeyIntent, treeParentIndex } from '../../shared/treeModel'
 import { PathCopyButton } from '../../shared/PathCopyButton'
+
+function localStorageOrNull() {
+  try { return window.localStorage } catch { return null }
+}
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -151,7 +166,35 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
   onOpenFolder: (target: FolderTarget, placement?: OpenPlacement, selectionHint?: FileTarget) => void
 }) {
-  const [treeHidden, setTreeHidden] = useState(false)
+  const [treePreferences, setTreePreferences] = useState(() => readFolderTreePreferences(localStorageOrNull()))
+  const treeHidden = treePreferences.hidden
+  const workspaceRef = useRef<HTMLDivElement>(null)
+  const [panelWidth, setPanelWidth] = useState(0)
+  const treeWidth = clampFolderTreeWidth(treePreferences.width, panelWidth)
+  const updateTree = (next: { width?: number, hidden?: boolean }) => setTreePreferences((current) => {
+    const value = folderTreePreferencesValue(next.width ?? current.width, next.hidden ?? current.hidden)
+    writeFolderTreePreferences(localStorageOrNull(), value)
+    return value
+  })
+  const currentPanelWidth = () => workspaceRef.current?.clientWidth ?? panelWidth
+  const startTreeResize = (event: ReactPointerEvent) => {
+    const startX = event.clientX
+    const startWidth = treeWidth
+    const move = (moveEvent: PointerEvent) => updateTree({ width: resizedFolderTreeWidth(startWidth, moveEvent.clientX - startX, currentPanelWidth()) })
+    let disposeUp: () => void = () => undefined
+    const disposeMove = subscribeDOMEvent<PointerEvent>(window, 'pointermove', move)
+    const stop = () => { disposeMove(); disposeUp() }
+    disposeUp = subscribeDOMEvent(window, 'pointerup', stop)
+    event.preventDefault()
+  }
+  useEffect(() => {
+    const element = workspaceRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => setPanelWidth(element.clientWidth))
+    observer.observe(element)
+    setPanelWidth(element.clientWidth)
+    return () => observer.disconnect()
+  }, [])
   const [currentDir, setCurrentDir] = useState(target.path)
   const [selected, setSelected] = useState<FileTarget | null>(null)
   const [viewMode, setViewMode] = useState<FileViewMode>('source')
@@ -220,15 +263,29 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
         href={`/folder?${new URLSearchParams({ root: target.root, path: parentFolder })}`} title={`Open ${rootJoinedAbsolutePath(target.root, parentFolder)} · ${openInSideLabel(navigator.userAgent)}`}
         onClick={(event) => { event.preventDefault(); onOpenFolder({ root: target.root, path: parentFolder }, placementFromModifiers(event)) }}>{parentFolder || '.'}</a>}
         <span className="root-path" title={target.root}>{target.root}</span></div>
-      <button type="button" onClick={() => setTreeHidden((value) => !value)}>{treeHidden ? 'Show tree' : 'Hide tree'}</button>
       {available && <div className="detail-toggle folder-view-toggle" aria-label="Folder view">
         <button type="button" className={!showBoard ? 'active' : ''} aria-pressed={!showBoard} onClick={() => setBoardView(false)}>Files</button>
         <button type="button" className={showBoard ? 'active' : ''} aria-pressed={showBoard} onClick={() => setBoardView(true)}>Board</button>
       </div>}
     </header>
     {backlogFailure && <Banner source={backlogFailure.source} detail={backlogFailure.detail} />}
-    <div className={`folder-workspace${treeHidden ? ' tree-hidden' : ''}`}>
-      {!treeHidden && <aside className="folder-tree panel-tree" role="tree" aria-label="Folder tree" onKeyDown={handleTreeKeyDown}><DirectoryTree root={target.root} path={target.path} depth={0} currentDir={currentDir} selectedFile={selected} onDirectory={chooseDirectory} onSelect={chooseFile} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} /></aside>}
+    <div className={`folder-workspace${treeHidden ? ' tree-hidden' : ''}`} ref={workspaceRef} style={{ '--folder-tree-width': `${treeWidth}px` } as CSSProperties}>
+      {treeHidden ? <div className="folder-tree-strip">
+        <button type="button" className="folder-tree-toggle" aria-label="Show tree" title="Show tree" onClick={() => updateTree({ hidden: false })}><span aria-hidden="true">›</span></button>
+      </div> : <>
+        <aside className="folder-tree-column">
+          <div className="folder-tree-toolbar"><strong>Tree</strong><button type="button" className="folder-tree-toggle" aria-label="Hide tree" title="Hide tree" onClick={() => updateTree({ hidden: true })}><span aria-hidden="true">‹</span></button></div>
+          <div className="folder-tree panel-tree" role="tree" aria-label="Folder tree" onKeyDown={handleTreeKeyDown}><DirectoryTree root={target.root} path={target.path} depth={0} currentDir={currentDir} selectedFile={selected} onDirectory={chooseDirectory} onSelect={chooseFile} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} /></div>
+        </aside>
+        <div className="folder-tree-resizer" role="separator" aria-label="Resize folder tree" aria-orientation="vertical" tabIndex={0}
+          aria-valuemin={folderTreeMinWidth} aria-valuemax={Number.isFinite(folderTreeMaxWidth(panelWidth)) ? folderTreeMaxWidth(panelWidth) : undefined} aria-valuenow={treeWidth}
+          onPointerDown={startTreeResize} onKeyDown={(event) => {
+            const next = folderTreeWidthFromKey(treeWidth, event.key, currentPanelWidth())
+            if (next === null) return
+            updateTree({ width: next })
+            event.preventDefault()
+          }} />
+      </>}
       <section className="folder-detail">
         {showBoard && backlog.data && boardAvailable(backlog.data) ? <>
           <div className="backlog-facts"><span>Fetched {new Date(backlog.data.fetched_at).toLocaleString()}</span><span>{backlog.data.tasks.length} parsed tasks</span></div>
