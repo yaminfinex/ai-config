@@ -58,6 +58,14 @@ test('quick add is a three-line textarea wired to the shared note submit rule', 
   assert.doesNotMatch(quickAdd, /<input/)
 })
 
+test('rail quick add spans its heading without changing the generic agent popover', () => {
+  const styles = read('../src/styles.css')
+  assert.match(styles, /\.rail-heading \{[^}]*position: relative;/)
+  assert.match(styles, /\.rail-heading > \.note-quick-add \{[^}]*position: static;/)
+  assert.match(styles, /\.rail-heading \.note-quick-add-popover \{[^}]*right: var\(--space-1\);[^}]*left: var\(--space-1\);[^}]*width: auto;/)
+  assert.match(styles, /\.note-quick-add-popover \{[^}]*top: calc\(100% \+ var\(--space-1\)\);[^}]*right: 0;[^}]*width: 232px;/)
+})
+
 test('capture comment only claims its explicit escape and submit gestures', () => {
   const chip = read('../src/features/notes/NoteCaptureChip.tsx')
   const start = chip.indexOf('<textarea ref={commentRef}')

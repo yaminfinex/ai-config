@@ -88,7 +88,7 @@ h2, h3, p { margin-top: 0; }
 .utility-rail-left { border-right: 1px solid var(--border); }
 .utility-rail-right { border-left: 1px solid var(--border); }
 .utility-rail:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
-.rail-heading { display: flex; flex: 0 0 30px; align-items: center; gap: 7px; padding: 0 5px 0 10px; border-bottom: 1px solid var(--border); color: var(--dim); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+.rail-heading { position: relative; display: flex; flex: 0 0 30px; align-items: center; gap: 7px; padding: 0 5px 0 10px; border-bottom: 1px solid var(--border); color: var(--dim); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
 .rail-heading strong { color: var(--text); font-size: 10px; }
 .rail-heading > span:not(.status-dot) { margin-left: auto; color: var(--dimmer); font-size: 9px; letter-spacing: 0; text-transform: none; }
 .rail-toggle { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; margin-left: auto; padding: 0; border-color: transparent; background: transparent; color: var(--dim); font-size: 16px; }
@@ -132,12 +132,13 @@ h2, h3, p { margin-top: 0; }
 .agent-notes-strip .notes-group-heading { display: none; }
 .agent-notes-strip .notes-list { max-height: 184px; overflow-y: auto; }
 .note-quick-add { position: relative; display: inline-flex; align-items: center; }
-.rail-heading > .note-quick-add { margin-left: auto; }
+.rail-heading > .note-quick-add { position: static; margin-left: auto; }
 .rail-heading > .note-quick-add + .rail-toggle { margin-left: 0; }
 .note-add-button { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border-color: var(--border); background: transparent; color: var(--dim); line-height: 1; }
 .notes-send-all { display: flex; justify-content: flex-end; padding: var(--space-1) var(--space-2) 0; }
 .notes-send-all-button { width: auto; padding: 0 var(--space-2); font-size: 10px; }
 .note-quick-add-popover { position: absolute; z-index: 32; top: calc(100% + var(--space-1)); right: 0; width: 232px; padding: var(--space-1); border: 1px solid var(--border2); border-radius: var(--space-1); background: var(--note-selector-bg); box-shadow: 0 8px 24px var(--floating-shadow); }
+.rail-heading .note-quick-add-popover { right: var(--space-1); left: var(--space-1); width: auto; }
 .note-quick-add-popover textarea { width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; resize: vertical; background: var(--bg); color: var(--text); }
 .note-quick-add-popover .notes-problem { display: block; }
 .note-capture-popover { position: fixed; z-index: 24; width: min(332px, calc(100vw - 16px)); padding: var(--space-2); border: 1px solid var(--border2); border-radius: var(--space-2); background: var(--note-selector-bg); color: var(--text); box-shadow: 0 8px 24px var(--floating-shadow); }
