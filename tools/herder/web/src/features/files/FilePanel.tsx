@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { useInfiniteQuery, useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { getFile, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
+import { getFile, getFileRaw, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
 import type { FileTarget, FolderTarget, GitDiffRead, GitLogEntry, GitLogRead } from '../../types'
 import { Banner } from '../../shared/presentation'
 import { fileMarkdownComponents, Markdown } from '../../shared/Markdown'
@@ -18,6 +18,7 @@ import { PathCopyButton } from '../../shared/PathCopyButton'
 import { useTranscriptFileResolver } from './TranscriptFileResolver'
 import { useNoteCapture } from '../notes/useNoteCapture'
 import type { NoteSource } from '../notes/notesStore'
+import { htmlPreviewModel } from './htmlPreviewModel'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -108,7 +109,16 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
   const html = isHtmlPath(viewedPath)
   const renderable = markdown || html
   const truncated = Boolean(data && !data.binary && data.truncated)
-  const effectiveViewMode = html && truncated ? 'source' : viewMode
+  const rawQueryEnabled = gitState.mode === 'current' && !gitState.revision && html && truncated && viewMode === 'rendered'
+  const rawQuery = useQuery({
+    queryKey: queryKeys.fileRaw(target.root, target.path),
+    queryFn: ({ signal }) => getFileRaw(target.root, target.path, fetch, signal),
+    enabled: rawQueryEnabled,
+    retry: false,
+  })
+  const rawState = rawQuery.isPending ? 'loading' : rawQuery.error ? 'error' : rawQuery.data !== undefined ? 'success' : 'idle'
+  const preview = htmlPreviewModel(html, truncated, rawState, data ? formattedBytes(data.size) : '')
+  const rawFailure = rawQuery.error ? failureBanner('raw file', rawQuery.error) : null
   const missionMarkdown = Boolean(data && !data.binary && /(?:^|\/)mission\.md$/iu.test(viewedPath))
   const facts = data && !data.binary && missionMarkdown ? missionFacts(data.content) : null
   const hasFacts = facts && Object.keys(facts).length > 0
@@ -140,9 +150,9 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
           onClick={() => onGitState(selectGitFileMode(gitState, mode))}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}
       </div>
       {gitState.mode === 'current' && renderable && <div className="detail-toggle file-view-toggle" aria-label={`${html ? 'HTML' : 'Markdown'} view`}>
-        <button type="button" className={effectiveViewMode === 'rendered' ? 'active' : ''} aria-pressed={effectiveViewMode === 'rendered'} disabled={html && truncated}
-          title={html ? truncated ? 'Rendered view is unavailable because this file is truncated.' : 'Render HTML. Scripts do not run.' : undefined} onClick={() => onViewMode('rendered')}>Rendered</button>
-        <button type="button" className={effectiveViewMode === 'source' ? 'active' : ''} aria-pressed={effectiveViewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
+        <button type="button" className={viewMode === 'rendered' ? 'active' : ''} aria-pressed={viewMode === 'rendered'} disabled={!preview.renderedEnabled}
+          title={html ? 'Render HTML. Scripts do not run.' : undefined} onClick={() => onViewMode('rendered')}>Rendered</button>
+        <button type="button" className={viewMode === 'source' ? 'active' : ''} aria-pressed={viewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
       </div>}
     </header>
     {gitState.mode === 'current' && (gitState.revision ? revisionQuery.isPending : fileQuery.isPending) && <PanelState as="div" className="file-state">Reading {gitState.revision ? 'historical revision' : 'current file'}…</PanelState>}
@@ -166,9 +176,11 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
       </section>}
       {data.binary ? <PanelState className="file-state binary" title="Binary file" detail={<>No text content is available for this {formattedBytes(data.size)} file.</>} />
         : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`} onDoubleClick={fileResolver.onDoubleClick}>
-          {data.truncated && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
-          {html && effectiveViewMode === 'rendered' ? <iframe className="file-html-preview" title="Rendered HTML preview. Scripts do not run." sandbox="" srcDoc={data.content} />
-            : markdown && effectiveViewMode === 'rendered' ? <div className="markdown file-markdown" data-note-capture-content><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
+          {data.truncated && !(html && viewMode === 'rendered') && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
+          {html && viewMode === 'rendered' && rawQueryEnabled && rawQuery.isPending ? <PanelState as="div" className="file-state">Reading full HTML preview…</PanelState>
+            : html && viewMode === 'rendered' && rawFailure ? <Banner source={rawFailure.source} detail={rawFailure.detail} />
+            : html && viewMode === 'rendered' ? <>{preview.banner && <div className="truncation-banner">{preview.banner}</div>}<iframe className="file-html-preview" title="Rendered HTML preview. Scripts do not run." sandbox="" srcDoc={preview.srcdocSource === 'raw' ? rawQuery.data : data.content} /></>
+            : markdown && viewMode === 'rendered' ? <div className="markdown file-markdown" data-note-capture-content><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
             : <div className="file-source" data-note-capture-content><PierreFile path={gitState.revision?.path ?? data.path} content={data.content} selectedLines={gitState.revision ? null : selectedCurrentLines(target.line)} /></div>
           }
         </div>}

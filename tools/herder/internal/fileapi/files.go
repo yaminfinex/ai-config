@@ -50,32 +50,11 @@ type Entry struct {
 }
 
 func Read(root, path string, now func() time.Time) (File, error) {
-	relative, err := validateRelative(path, false)
+	file, info, relative, resolved, err := openReadableFile(root, path)
 	if err != nil {
 		return File{}, err
-	}
-	resolved, err := resolve(root, relative)
-	if err != nil {
-		return File{}, err
-	}
-	if isGitInternal(root, resolved) {
-		return File{}, fmt.Errorf("%w: .git internals are not served: %q resolves to %q", ErrRefused, filepath.Join(root, relative), resolved)
-	}
-	file, err := os.Open(resolved)
-	if err != nil {
-		return File{}, classifyPathError(root, path, err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return File{}, fmt.Errorf("stat file %q: %w", resolved, err)
-	}
-	if !info.Mode().IsRegular() {
-		return File{}, fmt.Errorf("%w: path %q resolves to non-file %q", ErrRefused, filepath.Join(root, relative), resolved)
-	}
-	if info.Size() > HardCap {
-		return File{}, fmt.Errorf("%w: file %q is %d bytes; files above 4 MiB are not served", ErrRefused, resolved, info.Size())
-	}
 	content, err := io.ReadAll(io.LimitReader(file, SoftCap+1))
 	if err != nil {
 		return File{}, fmt.Errorf("read file %q: %w", resolved, err)
@@ -96,6 +75,53 @@ func Read(root, path string, now func() time.Time) (File, error) {
 	result.Content = &text
 	result.Truncated = &truncated
 	return result, nil
+}
+
+// ReadRaw returns the complete bytes for a regular, root-contained file. It
+// retains Read's hard cap while bypassing only its soft cap.
+func ReadRaw(root, path string) ([]byte, os.FileInfo, error) {
+	file, info, _, resolved, err := openReadableFile(root, path)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer file.Close()
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read file %q: %w", resolved, err)
+	}
+	return content, info, nil
+}
+
+func openReadableFile(root, path string) (*os.File, os.FileInfo, string, string, error) {
+	relative, err := validateRelative(path, false)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	resolved, err := resolve(root, relative)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
+	if isGitInternal(root, resolved) {
+		return nil, nil, "", "", fmt.Errorf("%w: .git internals are not served: %q resolves to %q", ErrRefused, filepath.Join(root, relative), resolved)
+	}
+	file, err := os.Open(resolved)
+	if err != nil {
+		return nil, nil, "", "", classifyPathError(root, path, err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, "", "", fmt.Errorf("stat file %q: %w", resolved, err)
+	}
+	if !info.Mode().IsRegular() {
+		file.Close()
+		return nil, nil, "", "", fmt.Errorf("%w: path %q resolves to non-file %q", ErrRefused, filepath.Join(root, relative), resolved)
+	}
+	if info.Size() > HardCap {
+		file.Close()
+		return nil, nil, "", "", fmt.Errorf("%w: file %q is %d bytes; files above 4 MiB are not served", ErrRefused, resolved, info.Size())
+	}
+	return file, info, relative, resolved, nil
 }
 
 func Tree(root, path string) (TreeResult, error) {

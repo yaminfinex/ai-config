@@ -1,6 +1,7 @@
 package fileapi
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,62 @@ import (
 	"time"
 	"unicode/utf8"
 )
+
+func TestReadRawReturnsWholeFileThroughHardCap(t *testing.T) {
+	root := t.TempDir()
+	html := append([]byte("<!doctype html><main>"), bytes.Repeat([]byte("x"), 600*1024)...)
+	html = append(html, []byte("<span id=tail></span></main>")...)
+	if err := os.WriteFile(filepath.Join(root, "large.html"), html, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exact := bytes.Repeat([]byte("z"), int(HardCap))
+	if err := os.WriteFile(filepath.Join(root, "exact.html"), exact, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		path string
+		want []byte
+	}{{"large.html", html}, {"exact.html", exact}} {
+		got, info, err := ReadRaw(root, test.path)
+		if err != nil {
+			t.Fatalf("ReadRaw(%q): %v", test.path, err)
+		}
+		if !bytes.Equal(got, test.want) || info.Size() != int64(len(test.want)) {
+			t.Fatalf("ReadRaw(%q) = %d bytes, info size %d; want %d byte-identical bytes", test.path, len(got), info.Size(), len(test.want))
+		}
+	}
+}
+
+func TestReadRawMirrorsReadRefusals(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, outside, "outside.html", "outside")
+	if err := os.Symlink(filepath.Join(outside, "outside.html"), filepath.Join(root, "escape.html")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, ".git/config", "private")
+	if err := os.Symlink(".git/config", filepath.Join(root, "git-alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "directory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tooLarge, err := os.Create(filepath.Join(root, "too-large.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tooLarge.Truncate(HardCap + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := tooLarge.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"../escape.html", "escape.html", ".git/config", "git-alias", "directory", "too-large.html"} {
+		if _, _, err := ReadRaw(root, path); !errors.Is(err, ErrRefused) {
+			t.Errorf("ReadRaw(%q) error = %v, want ErrRefused", path, err)
+		}
+	}
+}
 
 func TestReadTextReportsAsNowShapeAndSoftTruncation(t *testing.T) {
 	root := t.TempDir()

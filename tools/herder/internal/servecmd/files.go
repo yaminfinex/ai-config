@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"ai-config/tools/herder/internal/backlogapi"
@@ -142,6 +143,33 @@ func serveFile(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func serveFileRaw(w http.ResponseWriter, r *http.Request, deps dependencies) {
+	root, path, ok := fileQueries(w, r, false)
+	if !ok {
+		return
+	}
+	set, _, err := liveRootSet(r.Context(), deps)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	if !set.Contains(root) {
+		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+		return
+	}
+	content, info, err := fileapi.ReadRaw(root, path)
+	if err != nil {
+		serveFileError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
 }
 
 func serveTree(w http.ResponseWriter, r *http.Request, deps dependencies) {
