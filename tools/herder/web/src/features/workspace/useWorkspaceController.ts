@@ -534,7 +534,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     const opening = layout.notesRail.collapsed
     if (opening) notesFocusReturn.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     layout.setNotesRail((rail) => ({ ...rail, collapsed: !rail.collapsed }))
-    if (opening) window.requestAnimationFrame(() => document.querySelector<HTMLInputElement>('[data-notes-quick-input="general"]')?.focus())
+    if (opening) window.requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('[data-notes-quick-input="general"]')?.focus())
     else {
       const target = notesFocusReturn.current
       notesFocusReturn.current = null

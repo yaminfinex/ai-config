@@ -82,7 +82,8 @@ button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { cursor: not-allowed; opacity: .5; }
 h2, h3, p { margin-top: 0; }
 
-.app-shell { position: relative; display: flex; height: 100%; min-width: 640px; background: var(--bg); }
+.app-shell { position: relative; display: grid; height: 100%; min-width: 640px; grid-template-rows: minmax(0, 1fr) 24px; background: var(--bg); }
+.shell-body { display: flex; min-width: 0; min-height: 0; }
 .utility-rail { display: flex; min-width: 200px; max-width: 440px; flex: 0 1 auto; flex-direction: column; overflow: hidden; background: var(--sidebar); outline: none; }
 .utility-rail-left { border-right: 1px solid var(--border); }
 .utility-rail-right { border-left: 1px solid var(--border); }
@@ -137,7 +138,7 @@ h2, h3, p { margin-top: 0; }
 .notes-send-all { display: flex; justify-content: flex-end; padding: var(--space-1) var(--space-2) 0; }
 .notes-send-all-button { width: auto; padding: 0 var(--space-2); font-size: 10px; }
 .note-quick-add-popover { position: absolute; z-index: 32; top: calc(100% + var(--space-1)); right: 0; width: 232px; padding: var(--space-1); border: 1px solid var(--border2); border-radius: var(--space-1); background: var(--note-selector-bg); box-shadow: 0 8px 24px var(--floating-shadow); }
-.note-quick-add-popover input { width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; background: var(--bg); color: var(--text); }
+.note-quick-add-popover textarea { width: 100%; padding: var(--space-1) var(--space-2); border: 1px solid var(--accent); border-radius: var(--space-1); outline: none; resize: vertical; background: var(--bg); color: var(--text); }
 .note-quick-add-popover .notes-problem { display: block; }
 .note-capture-popover { position: fixed; z-index: 24; width: min(332px, calc(100vw - 16px)); padding: var(--space-2); border: 1px solid var(--border2); border-radius: var(--space-2); background: var(--note-selector-bg); color: var(--text); box-shadow: 0 8px 24px var(--floating-shadow); }
 .note-capture-minimal { width: auto; padding: 0; }
@@ -217,6 +218,10 @@ h2, h3, p { margin-top: 0; }
 .tree-state p { margin: 2px 0 0; }
 .tree-state[role='alert'] { border: 1px solid var(--error-border); border-radius: 4px; background: var(--error-bg); color: var(--error-text); }
 .shell-main { display: flex; flex: 1; min-width: 200px; flex-direction: column; }
+.error-boundary { display: grid; height: 100%; place-content: center; justify-items: center; padding: 24px; background: var(--error-bg); color: var(--error-text); text-align: center; }
+.error-boundary p { max-width: 560px; margin: 0 0 14px; overflow-wrap: anywhere; }
+.error-boundary strong { margin-bottom: 7px; font: 600 14px var(--mono); }
+.error-boundary button { padding: 4px 10px; border-color: var(--error-border); background: var(--bg2); color: var(--error-text); }
 .dock-host { flex: 1; min-height: 0; min-width: 0; }
 .dockview-theme-herder {
   --dv-paneview-active-outline-color: var(--accent); --dv-tabs-and-actions-container-font-size: 12px; --dv-tabs-and-actions-container-height: 32px;
