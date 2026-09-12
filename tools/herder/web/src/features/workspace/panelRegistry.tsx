@@ -18,6 +18,7 @@ import { useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext
 import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace, type PanelKind } from './panelRegistryModel'
 import { liveRosterNames } from '../notes/notesPresentation'
 import { useDockTabMenu } from './DockTabMenu'
+import { ErrorBoundary } from '../../shared/ErrorBoundary'
 
 function usePanelVisibility(api: IDockviewPanelProps['api']) {
   const [visible, setVisible] = useState(api.isVisible)
@@ -124,8 +125,15 @@ export const panelRegistry: Record<PanelKind, PanelDescriptor> = {
   },
 }
 
+function panelKindLabel(kind: PanelKind) {
+  return `${kind[0].toUpperCase()}${kind.slice(1)} panel`
+}
+
 export const dockComponents: Record<string, FunctionComponent<IDockviewPanelProps>> = Object.fromEntries(
-  Object.entries(panelRegistry).map(([kind, descriptor]) => [kind, descriptor.component]),
+  Object.entries(panelRegistry).map(([kind, descriptor]) => {
+    const Panel = descriptor.component
+    return [kind, (props: IDockviewPanelProps) => <ErrorBoundary context={panelKindLabel(kind as PanelKind)}><Panel {...props} /></ErrorBoundary>]
+  }),
 )
 
 export function invalidatePanel(queryClient: QueryClient, params: DockPanelParams) {

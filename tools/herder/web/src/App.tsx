@@ -22,6 +22,7 @@ import { shortcutLabels } from './features/layout/shellShortcuts'
 import { browserOnlySpacesMessage, defaultMaxSpaces, serverSpaceLookupMessage, SpaceStrip } from './features/spaces/index.ts'
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
 import { preserveDockTabBrowserHistory } from './features/workspace/dockTabHistoryModel.ts'
+import { ErrorBoundary } from './shared/ErrorBoundary'
 
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
@@ -92,7 +93,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
     knownManagerItems, setKnownManagerItems, fleetView, setFleetView, pendingGroups, setPendingGroups,
   } = workspace
-  return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell">
+  return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell"><div className="shell-body">
     <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup}
       spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)} atSpaceCap={workspace.spaces.items.length >= defaultMaxSpaces}
       onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder}
@@ -115,21 +116,22 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
           pinnedTabs={{ enabled: false }} layoutHistory={{ enabled: false }} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
       </div>
-      <StreamStatusBar fleetProblem={workspace.fleetProblem} viewer={workspace.viewer} viewerPending={workspace.viewerPending}
-        fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
-        onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
-        onShortcuts={() => workspace.setShortcutReference(true)}
-        spaceStrip={<SpaceStrip {...workspace.spaces} />} />
     </section>
     <UtilityRail side="right" label="Notes" headingAction={<NoteQuickAdd group="general" label="unassigned" />} width={notesRail.width} collapsed={notesRail.collapsed}
       onWidth={(width) => setNotesRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleNotesRail}>
       <NotesRail board={workspace.board} onOpenAgent={(name, placement) => openAgent(name, true, placement, true)} />
     </UtilityRail>
+  </div>
+    <StreamStatusBar fleetProblem={workspace.fleetProblem} viewer={workspace.viewer} viewerPending={workspace.viewerPending}
+      fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
+      onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
+      onShortcuts={() => workspace.setShortcutReference(true)}
+      spaceStrip={<SpaceStrip {...workspace.spaces} />} />
   </div></FileWatchContext.Provider></WorkspaceProviders>
 }
 
 export default function App() {
   const route = currentRoute()
-  if (route.page !== 'missing') return <NotesProvider><Shell initialRoute={route} /></NotesProvider>
+  if (route.page !== 'missing') return <NotesProvider><ErrorBoundary><Shell initialRoute={route} /></ErrorBoundary></NotesProvider>
   return <main className="agent-page"><AppLink to="/" className="back-link">← Workspace</AppLink><section className="not-found"><strong>404 · Page not found</strong></section></main>
 }

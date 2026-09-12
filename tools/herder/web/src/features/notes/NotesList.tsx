@@ -22,6 +22,7 @@ import { selectorRows } from './notesSelectorModel.ts'
 import { useScheduledFrame } from '../../shared/lifecycle.ts'
 import { composerFieldId } from '../../composerState.ts'
 import { beginNoteEdit, noteEditDisplay, updateNoteEdit, type NoteEditDraft } from './noteEditModel.ts'
+import { noteTextSubmitAction } from './noteCaptureModel.ts'
 
 export type NotesListGroup = { group: string, label: string, orphaned?: boolean }
 export type NotesHandOff = (target: string, notes: Note[]) => { ok: true } | { ok: false, reason: string }
@@ -193,7 +194,8 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange, focusReq
               {note.source && <small>{noteSourceLabel(note.source)}</small>}
               {note.quote && <p className="note-card-quote">{note.quote}</p>}
               {isEditing && editing ? <textarea autoFocus value={editing.text} aria-label="Edit note comment" onChange={(event) => {
-                setEditing((current) => current ? updateNoteEdit(current, event.currentTarget.value) : current)
+                const value = event.currentTarget.value
+                setEditing((current) => current ? updateNoteEdit(current, value) : current)
               }} onBlur={(event) => {
                 if (event.currentTarget.dataset.cancelled === 'true') return
                 const result = store.edit(note.id, { text: editing.text }, editing.original)
@@ -202,6 +204,7 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange, focusReq
               }} onKeyDown={(event) => {
                 event.stopPropagation()
                 if (event.key === 'Escape') { event.currentTarget.dataset.cancelled = 'true'; setEditing(undefined); event.preventDefault(); return }
+                if (noteTextSubmitAction({ ...event, isComposing: event.nativeEvent.isComposing })) { event.currentTarget.blur(); event.preventDefault() }
               }} /> : <p>{note.text}</p>}
             </div>
           </article>
