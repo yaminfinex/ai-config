@@ -566,6 +566,14 @@ GET `/api/files?root={root-id}&path={root-relative-file}`
   `content` and `truncated` are absent rather than fabricated. Files above the
   4 MiB hard cap are never served.
 
+GET `/api/files/raw?root={root-id}&path={root-relative-file}`
+  Reads the complete bytes of one regular file for the sandboxed HTML preview,
+  bypassing only the 256 KiB soft cap. The 4 MiB hard cap and every containment,
+  root, `.git`, file-kind, and refusal rule are identical to `/api/files`.
+  Success is always `text/plain; charset=utf-8` with
+  `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, and an exact
+  `Content-Length`; checked-out HTML is never served as an executable page.
+
 GET `/api/files/tree?root={root-id}&path={optional-root-relative-directory}`
   Lists exactly one directory level; an absent or empty path means the root.
   Success is
@@ -575,7 +583,7 @@ GET `/api/files/tree?root={root-id}&path={optional-root-relative-directory}`
   them merely to construct a listing. A requested directory symlink is resolved
   and containment-checked before it is read.
 
-Both file endpoints require one exact current root ID and root-relative paths.
+All file endpoints require one exact current root ID and root-relative paths.
 They resolve the root and requested target through the shared containment
 primitive before reading. A symlink escape is 409 `refused by substrate` and
 its detail quotes the requested and resolved paths. Traversal, explicit or

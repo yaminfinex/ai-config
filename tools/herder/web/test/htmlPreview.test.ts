@@ -3,18 +3,26 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const panel = readFileSync(new URL('../src/features/files/FilePanel.tsx', import.meta.url), 'utf8')
+const stream = readFileSync(new URL('../src/stream/useFleetStream.ts', import.meta.url), 'utf8')
 
-test('HTML files share the rendered/source control with a plain script warning', () => {
-  assert.match(panel, /isHtmlPath/)
-  assert.match(panel, /Scripts do not run/)
-  assert.match(panel, /srcDoc=\{data\.content\}/)
+test('raw HTML query is enabled only for current truncated rendered HTML', () => {
+  assert.match(panel, /rawQueryEnabled = gitState\.mode === 'current' && !gitState\.revision && html && truncated && viewMode === 'rendered'/)
+  assert.match(panel, /enabled: rawQueryEnabled/)
 })
 
-test('HTML preview uses the strict empty iframe sandbox and truncated files stay source', () => {
+test('small rendered HTML stays content-sourced and never enables raw fetching', () => {
+  assert.match(panel, /htmlPreviewModel\(html, truncated, rawState,/)
+  assert.match(panel, /rawState = gitState\.revision \? 'unavailable' : rawQuery\.isPending \? 'loading' : rawQuery\.error \? 'error' : 'success'/)
+  assert.match(panel, /effectiveViewMode = preview\.renderedEnabled \? viewMode : 'source'/)
+  assert.match(panel, /preview\.srcdocSource === 'raw' \? rawQuery\.data : data\.content/)
+})
+
+test('raw previews refetch on watch, refresh, and activation', () => {
+  assert.match(stream, /invalidateQueries\(\{ queryKey: queryKeys\.fileRaw\(fact\.root, fact\.path\), exact: true \}\)/)
+  assert.equal(panel.match(/if \(rawQueryEnabled\) void rawQuery\.refetch\(\)/g)?.length, 2)
+})
+
+test('HTML preview remains maximally sandboxed', () => {
   assert.match(panel, /<iframe[^>]+sandbox=""/s)
   assert.doesNotMatch(panel, /allow-scripts|allow-same-origin/)
-  assert.match(panel, /truncated = Boolean\(data && !data\.binary && data\.truncated\)/)
-  assert.match(panel, /effectiveViewMode = html && truncated \? 'source' : viewMode/)
-  assert.match(panel, /disabled=\{html && truncated\}/)
-  assert.match(panel, /Rendered view is unavailable because this file is truncated\./)
 })

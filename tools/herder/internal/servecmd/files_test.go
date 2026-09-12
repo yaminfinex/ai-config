@@ -2,6 +2,7 @@ package servecmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -207,6 +208,81 @@ func TestFileAndTreeEndpointsServeRealRootWithPinnedShapes(t *testing.T) {
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/files/tree?root="+url.QueryEscape(root), nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"name":".hidden"`) || !strings.Contains(response.Body.String(), `"name":"docs"`) {
 		t.Fatalf("tree = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRawFileEndpointServesHTMLAsByteIdenticalPlainText(t *testing.T) {
+	root := newFileAPIGitRepo(t)
+	html := append([]byte("<!doctype html><main>"), bytes.Repeat([]byte("x"), 600*1024)...)
+	html = append(html, []byte("<span id=tail></span></main>")...)
+	if err := os.WriteFile(filepath.Join(root, "large.html"), html, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	deps := fileAPIDeps(t, []string{root}, nil)
+	requestURL := "/api/files/raw?root=" + url.QueryEscape(root) + "&path=large.html"
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, requestURL, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("raw file = %d %s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/plain; charset=utf-8" {
+		t.Errorf("Content-Type = %q", got)
+	}
+	if got := response.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q", got)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+	if got := response.Header().Get("Content-Length"); got != fmt.Sprint(response.Body.Len()) {
+		t.Errorf("Content-Length = %q, body length = %d", got, response.Body.Len())
+	}
+	if !bytes.Equal(response.Body.Bytes(), html) {
+		t.Fatal("raw HTML body was sniffed or rewritten")
+	}
+}
+
+func TestRawFileEndpointPinsFileRefusals(t *testing.T) {
+	root := newFileAPIGitRepo(t)
+	outside := t.TempDir()
+	writeFileAPIFixture(t, outside, "outside.html", "outside")
+	if err := os.Symlink(filepath.Join(outside, "outside.html"), filepath.Join(root, "escape.html")); err != nil {
+		t.Fatal(err)
+	}
+	large, err := os.Create(filepath.Join(root, "large.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := large.Truncate(fileapi.HardCap + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := large.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deps := fileAPIDeps(t, []string{root}, nil)
+	rootQuery := url.QueryEscape(root)
+	for _, test := range []struct {
+		path   string
+		status int
+		shape  string
+	}{
+		{"/api/files/raw?root=" + rootQuery + "&path=missing.html", http.StatusNotFound, `"error":"not found"`},
+		{"/api/files/raw?root=" + rootQuery + "&path=.git%2Fconfig", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/raw?root=" + rootQuery + "&path=large.html", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/raw?root=" + rootQuery + "&path=escape.html", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/raw?root=" + url.QueryEscape(t.TempDir()) + "&path=x", http.StatusNotFound, `"error":"unknown root"`},
+		{"/api/files/raw?root=" + rootQuery, http.StatusBadRequest, `"error":"bad request"`},
+	} {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != test.status || !strings.Contains(response.Body.String(), test.shape) {
+			t.Errorf("%s = %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/files/raw", nil))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), `"error":"bad request"`) {
+		t.Errorf("POST raw = %d %s", response.Code, response.Body.String())
 	}
 }
 

@@ -20,6 +20,7 @@ export const queryKeys = {
     ? ['resolve', query, 'file', context.root, context.path] as const
     : ['resolve', query, context ?? ''] as const,
   file: (root: string, path: string) => ['file', root, path] as const,
+  fileRaw: (root: string, path: string) => ['file-raw', root, path] as const,
   fileTree: (root: string, path: string) => ['file-tree', root, path] as const,
   backlog: (root: string, path: string) => ['backlog', root, path] as const,
   gitStatus: (root: string, base?: GitBase) => ['git-status', root, ...(base ? [base] : [])] as const,
@@ -122,6 +123,16 @@ export function resolveFiles(queryText: string, context?: ResolveContext, fetche
 export function getFile(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
   const query = new URLSearchParams({ root, path })
   return requestJSON<FileRead>(`/api/files?${query}`, { signal }, fetcher)
+}
+
+export async function getFileRaw(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root, path })
+  const response = await fetcher(`/api/files/raw?${query}`, { signal })
+  if (!response.ok) {
+    const problem = await refusal(response)
+    throw Object.assign(new Error(problem.detail), { response, problem })
+  }
+  return response.text()
 }
 
 export function getFileTree(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
