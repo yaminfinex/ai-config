@@ -6,14 +6,15 @@ type ErrorBoundaryProps = {
 }
 
 type ErrorBoundaryState = {
-  error: Error | null
+  failed: boolean
+  error: unknown
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null }
+  state: ErrorBoundaryState = { failed: false, error: null }
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error }
+  static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
+    return { failed: true, error }
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
@@ -21,10 +22,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   render() {
-    if (!this.state.error) return this.props.children
-    return <section className={`error-boundary${this.props.context ? ' panel-error-boundary' : ''}`} role="alert">
-      {this.props.context && <strong>{this.props.context} failed</strong>}
-      <p>{this.state.error.message}</p>
+    if (!this.state.failed) return this.props.children
+    return <section className="error-boundary" role="alert">
+      <strong>{this.props.context ?? 'Herder interface'} failed</strong>
+      {this.state.error instanceof Error && this.state.error.message && <p>{this.state.error.message}</p>}
       <button type="button" onClick={() => window.location.reload()}>Reload</button>
     </section>
   }
