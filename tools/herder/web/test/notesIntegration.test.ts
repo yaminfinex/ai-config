@@ -31,7 +31,26 @@ test('note editing leaves copy, delete, enter, and A as native textarea input', 
   const editor = list.slice(start, end)
   assert.ok(start >= 0 && end > start)
   assert.match(editor, /event\.key === 'Escape'/)
-  assert.doesNotMatch(editor, /event\.key === 'Enter'|metaKey|ctrlKey|event\.key === 'Delete'|event\.key === 'Backspace'|toLowerCase\(\).*'a'/)
+  assert.match(editor, /noteTextSubmitAction/)
+  assert.doesNotMatch(editor, /metaKey|ctrlKey|event\.key === 'Delete'|event\.key === 'Backspace'|toLowerCase\(\).*'a'/)
+})
+
+test('note editing reads the synthetic event value before entering the state updater', () => {
+  const list = read('../src/features/notes/NotesList.tsx')
+  const start = list.indexOf('onChange={(event) => {', list.indexOf('<textarea autoFocus'))
+  const end = list.indexOf('}} onBlur=', start)
+  const handler = list.slice(start, end)
+  const updater = handler.slice(handler.indexOf('setEditing'))
+  assert.ok(start >= 0 && end > start)
+  assert.match(handler, /const value = event\.currentTarget\.value/)
+  assert.doesNotMatch(updater, /\bevent\b/)
+})
+
+test('quick add is a three-line textarea wired to the shared note submit rule', () => {
+  const quickAdd = read('../src/features/notes/NoteQuickAdd.tsx')
+  assert.match(quickAdd, /<textarea[^>]*rows=\{3\}/)
+  assert.match(quickAdd, /noteTextSubmitAction/)
+  assert.doesNotMatch(quickAdd, /<input/)
 })
 
 test('capture comment only claims its explicit escape and submit gestures', () => {
