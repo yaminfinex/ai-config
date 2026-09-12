@@ -1,5 +1,5 @@
 export const treeIndentInset = 5
-export const treeIndentStep = 16
+export const treeIndentStep = 12
 
 export function treeIndent(depth: number) {
   return treeIndentInset + Math.max(0, depth) * treeIndentStep

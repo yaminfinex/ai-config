@@ -493,15 +493,28 @@ h2, h3, p { margin-top: 0; }
 .folder-title span { min-width: 0; overflow: hidden; color: var(--dim); font: 10px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .folder-title .root-path { grid-column: 1 / -1; color: var(--dimmer); }
 .folder-header > button { white-space: nowrap; }
-.folder-workspace { display: grid; flex: 1; min-height: 0; grid-template-columns: minmax(190px, 28%) minmax(0, 1fr); }
-.folder-workspace.tree-hidden { grid-template-columns: minmax(0, 1fr); }
-.folder-tree { min-width: 0; overflow: auto; padding: 5px; border-right: 1px solid var(--border); background: var(--sidebar); }
+.folder-workspace { --folder-tree-width: 220px; display: grid; flex: 1; min-height: 0; grid-template-columns: var(--folder-tree-width) 5px minmax(0, 1fr); }
+.folder-workspace.tree-hidden { grid-template-columns: 22px minmax(0, 1fr); }
+.folder-tree-column { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; background: var(--sidebar); }
+.folder-tree-toolbar { display: flex; height: 24px; flex: 0 0 auto; align-items: center; gap: 6px; padding: 0 3px 0 10px; border-bottom: 1px solid var(--border); color: var(--dim); }
+.folder-tree-toolbar strong { min-width: 0; flex: 1; overflow: hidden; font: 600 9px var(--mono); letter-spacing: .06em; text-overflow: ellipsis; text-transform: uppercase; }
+.folder-tree-toggle { display: grid; width: 18px; height: 18px; flex: 0 0 18px; place-items: center; padding: 0; border: 0; border-radius: 3px; background: transparent; color: var(--dim); font-size: 15px; line-height: 1; }
+.folder-tree-toggle:hover:not(:disabled), .folder-tree-toggle:focus-visible { background: var(--bg3); color: var(--text); }
+.folder-tree-strip { display: flex; flex-direction: column; align-items: center; padding-top: 3px; border-right: 1px solid var(--border); background: var(--sidebar); }
+.folder-tree-resizer { width: 5px; margin-left: -1px; border-left: 1px solid var(--border); cursor: col-resize; outline: none; }
+.folder-tree-resizer:hover, .folder-tree-resizer:focus-visible { background: var(--accent); }
+.folder-tree { min-width: 0; min-height: 0; flex: 1; overflow: auto; padding: 5px; }
 .tree-primary { display: flex; min-width: 0; flex: 1; align-items: center; overflow: hidden; padding: 2px 4px; border: 0; background: transparent; color: inherit; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .folder-entry-name { font: 11px var(--mono); }
 .folder-entry-static { min-width: 0; overflow: hidden; color: var(--dimmer); font: 11px var(--mono); text-overflow: ellipsis; }
 .panel-tree-row.symlink { color: var(--dimmer); }
-.folder-row-action { flex: 0 0 auto; margin-right: 3px; padding: 1px 5px; border-color: transparent; background: transparent; color: var(--accent-text); font-size: 9px; opacity: 0; }
-.panel-tree-row:hover .folder-row-action, .panel-tree-row:focus-within .folder-row-action, .folder-row-action:focus-visible { opacity: 1; }
+.folder-tree .panel-tree-row { position: relative; }
+/* The row action floats over the row end and takes no flex width, so the
+   name keeps the full column until hover or keyboard focus reveals it. The
+   button stays in the DOM (opacity, not display) so Tab still reaches it. */
+.folder-row-action { position: absolute; top: 1px; right: 3px; bottom: 1px; flex: 0 0 auto; padding: 1px 5px 1px 14px; border-color: transparent; background: linear-gradient(to right, transparent, var(--bg2) 12px); color: var(--accent-text); font-size: 9px; opacity: 0; pointer-events: none; }
+.panel-tree-row.selected .folder-row-action, .panel-tree-row[aria-selected='true'] .folder-row-action { background: linear-gradient(to right, transparent, var(--accent-dim) 12px); }
+.panel-tree-row:hover .folder-row-action, .panel-tree-row:focus-within .folder-row-action, .folder-row-action:focus-visible { opacity: 1; pointer-events: auto; }
 .folder-detail { min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
 .folder-empty { display: grid; height: 100%; place-content: center; padding: 24px; color: var(--dim); text-align: center; }
 .folder-empty strong { color: var(--text); font: 600 13px var(--mono); }
@@ -737,7 +750,6 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 }
 @media (max-width: 700px) {
   .agent-status, .tool-chip { display: none; }
-  .folder-workspace { grid-template-columns: 170px minmax(0, 1fr); }
   .file-header, .folder-header { align-items: stretch; flex-wrap: wrap; }
   .file-header > .file-title, .folder-title { flex-basis: 100%; }
 }
