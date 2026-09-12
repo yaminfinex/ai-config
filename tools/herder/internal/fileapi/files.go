@@ -85,9 +85,12 @@ func ReadRaw(root, path string) ([]byte, os.FileInfo, error) {
 		return nil, nil, err
 	}
 	defer file.Close()
-	content, err := io.ReadAll(file)
+	content, err := io.ReadAll(io.LimitReader(file, HardCap+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read file %q: %w", resolved, err)
+	}
+	if int64(len(content)) > HardCap {
+		return nil, nil, fmt.Errorf("%w: file %q is %d bytes; files above 4 MiB are not served", ErrRefused, resolved, len(content))
 	}
 	return content, info, nil
 }

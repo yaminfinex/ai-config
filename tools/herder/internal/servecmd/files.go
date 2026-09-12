@@ -159,7 +159,7 @@ func serveFileRaw(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
 		return
 	}
-	content, info, err := fileapi.ReadRaw(root, path)
+	content, _, err := fileapi.ReadRaw(root, path)
 	if err != nil {
 		serveFileError(w, err)
 		return
@@ -167,7 +167,7 @@ func serveFileRaw(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
 }

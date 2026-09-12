@@ -95,6 +95,7 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
   })
   useActivationRefetch(active, () => {
       if (gitState.mode === 'current' && !gitState.revision) void fileQuery.refetch()
+      if (rawQueryEnabled) void rawQuery.refetch()
       void statusQuery.refetch()
       if (gitState.mode === 'diff' && gitAvailable) void diffQuery.refetch()
       if (gitState.mode === 'history' && gitAvailable) void historyQuery.refetch()
@@ -116,8 +117,9 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
     enabled: rawQueryEnabled,
     retry: false,
   })
-  const rawState = rawQuery.isPending ? 'loading' : rawQuery.error ? 'error' : rawQuery.data !== undefined ? 'success' : 'idle'
+  const rawState = gitState.revision ? 'unavailable' : rawQuery.isPending ? 'loading' : rawQuery.error ? 'error' : 'success'
   const preview = htmlPreviewModel(html, truncated, rawState, data ? formattedBytes(data.size) : '')
+  const effectiveViewMode = preview.renderedEnabled ? viewMode : 'source'
   const rawFailure = rawQuery.error ? failureBanner('raw file', rawQuery.error) : null
   const missionMarkdown = Boolean(data && !data.binary && /(?:^|\/)mission\.md$/iu.test(viewedPath))
   const facts = data && !data.binary && missionMarkdown ? missionFacts(data.content) : null
@@ -127,11 +129,12 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
       : statusQuery.data && 'git' in statusQuery.data ? statusQuery.data.git.reason : ''
   const refresh = () => {
     void statusQuery.refetch()
+    if (rawQueryEnabled) void rawQuery.refetch()
     if (gitState.mode === 'current' && !gitState.revision) void fileQuery.refetch()
     else if (gitState.mode === 'diff' && gitAvailable) void diffQuery.refetch()
     else if (gitState.mode === 'history' && gitAvailable) void historyQuery.refetch()
   }
-  const refreshing = statusQuery.isFetching || gitState.mode === 'current' && !gitState.revision && fileQuery.isFetching || gitState.mode === 'diff' && diffQuery.isFetching || gitState.mode === 'history' && historyQuery.isFetching
+  const refreshing = statusQuery.isFetching || gitState.mode === 'current' && !gitState.revision && fileQuery.isFetching || rawQueryEnabled && rawQuery.isFetching || gitState.mode === 'diff' && diffQuery.isFetching || gitState.mode === 'history' && historyQuery.isFetching
   const containingFolder = parentFolderPath(target.path) ?? ''
   const absolutePath = rootJoinedAbsolutePath(target.root, target.path)
   return <main className="file-panel" ref={noteCapture.containerRef} onDoubleClickCapture={noteCapture.onDoubleClick}>
@@ -150,9 +153,9 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
           onClick={() => onGitState(selectGitFileMode(gitState, mode))}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}
       </div>
       {gitState.mode === 'current' && renderable && <div className="detail-toggle file-view-toggle" aria-label={`${html ? 'HTML' : 'Markdown'} view`}>
-        <button type="button" className={viewMode === 'rendered' ? 'active' : ''} aria-pressed={viewMode === 'rendered'} disabled={!preview.renderedEnabled}
-          title={html ? 'Render HTML. Scripts do not run.' : undefined} onClick={() => onViewMode('rendered')}>Rendered</button>
-        <button type="button" className={viewMode === 'source' ? 'active' : ''} aria-pressed={viewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
+        <button type="button" className={effectiveViewMode === 'rendered' ? 'active' : ''} aria-pressed={effectiveViewMode === 'rendered'} disabled={!preview.renderedEnabled}
+          title={html ? preview.renderedEnabled ? 'Render HTML. Scripts do not run.' : 'Rendered view is unavailable because this file is truncated.' : undefined} onClick={() => onViewMode('rendered')}>Rendered</button>
+        <button type="button" className={effectiveViewMode === 'source' ? 'active' : ''} aria-pressed={effectiveViewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
       </div>}
     </header>
     {gitState.mode === 'current' && (gitState.revision ? revisionQuery.isPending : fileQuery.isPending) && <PanelState as="div" className="file-state">Reading {gitState.revision ? 'historical revision' : 'current file'}…</PanelState>}
@@ -176,11 +179,11 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
       </section>}
       {data.binary ? <PanelState className="file-state binary" title="Binary file" detail={<>No text content is available for this {formattedBytes(data.size)} file.</>} />
         : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`} onDoubleClick={fileResolver.onDoubleClick}>
-          {data.truncated && !(html && viewMode === 'rendered') && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
-          {html && viewMode === 'rendered' && rawQueryEnabled && rawQuery.isPending ? <PanelState as="div" className="file-state">Reading full HTML preview…</PanelState>
-            : html && viewMode === 'rendered' && rawFailure ? <Banner source={rawFailure.source} detail={rawFailure.detail} />
-            : html && viewMode === 'rendered' ? <>{preview.banner && <div className="truncation-banner">{preview.banner}</div>}<iframe className="file-html-preview" title="Rendered HTML preview. Scripts do not run." sandbox="" srcDoc={preview.srcdocSource === 'raw' ? rawQuery.data : data.content} /></>
-            : markdown && viewMode === 'rendered' ? <div className="markdown file-markdown" data-note-capture-content><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
+          {data.truncated && !(html && effectiveViewMode === 'rendered') && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
+          {html && effectiveViewMode === 'rendered' && rawQueryEnabled && rawQuery.isPending ? <PanelState as="div" className="file-state">Reading full HTML preview…</PanelState>
+            : html && effectiveViewMode === 'rendered' && rawFailure ? <Banner source={rawFailure.source} detail={rawFailure.detail} />
+            : html && effectiveViewMode === 'rendered' ? <>{preview.banner && <div className="truncation-banner">{preview.banner}</div>}<iframe className="file-html-preview" title="Rendered HTML preview. Scripts do not run." sandbox="" srcDoc={preview.srcdocSource === 'raw' ? rawQuery.data : data.content} /></>
+            : markdown && effectiveViewMode === 'rendered' ? <div className="markdown file-markdown" data-note-capture-content><Markdown components={fileMarkdownComponents}>{missionMarkdown ? missionMarkdownBody(data.content) : data.content}</Markdown></div>
             : <div className="file-source" data-note-capture-content><PierreFile path={gitState.revision?.path ?? data.path} content={data.content} selectedLines={gitState.revision ? null : selectedCurrentLines(target.line)} /></div>
           }
         </div>}

@@ -234,8 +234,8 @@ func TestRawFileEndpointServesHTMLAsByteIdenticalPlainText(t *testing.T) {
 	if got := response.Header().Get("Cache-Control"); got != "no-store" {
 		t.Errorf("Cache-Control = %q", got)
 	}
-	if got := response.Header().Get("Content-Length"); got != fmt.Sprint(len(html)) {
-		t.Errorf("Content-Length = %q", got)
+	if got := response.Header().Get("Content-Length"); got != fmt.Sprint(response.Body.Len()) {
+		t.Errorf("Content-Length = %q, body length = %d", got, response.Body.Len())
 	}
 	if !bytes.Equal(response.Body.Bytes(), html) {
 		t.Fatal("raw HTML body was sniffed or rewritten")

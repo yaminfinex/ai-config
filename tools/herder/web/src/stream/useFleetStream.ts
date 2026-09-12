@@ -97,6 +97,7 @@ export function subscribeToFleet(
   const invalidateFileWatch = (fact: FileWatchTarget) => {
     if (fact.kind === 'file') {
       void queryClient.invalidateQueries({ queryKey: queryKeys.file(fact.root, fact.path), exact: true })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.fileRaw(fact.root, fact.path), exact: true })
       return
     }
     void queryClient.invalidateQueries({ queryKey: queryKeys.fileTree(fact.root, fact.path), exact: true })
