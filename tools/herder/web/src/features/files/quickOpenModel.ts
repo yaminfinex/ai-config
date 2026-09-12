@@ -6,8 +6,12 @@ export type QuickOpenActionRow =
   | { kind: 'create', name: string, label: string }
   | { kind: 'send-space', id: string, label: string }
   | { kind: 'send-new', label: string }
+  | { kind: 'note', text: string, label: string }
 
-export type QuickOpenEnterTarget = { kind: 'action', index: number } | { kind: 'file' }
+export type QuickOpenEnterTarget = { kind: 'action', index: number } | { kind: 'file', index?: number }
+export type QuickOpenKeyboardRow = { kind: 'action', index: number } | { kind: 'file', index: number }
+
+const OPENABLE_KINDS: QuickOpenActionRow['kind'][] = ['space', 'agent']
 
 function matchRank(label: string, query: string) {
   const normalized = label.toLocaleLowerCase()
@@ -51,13 +55,28 @@ export function quickOpenActionRows(
       : [],
     ...sendRows,
     ...agentRows,
+    ...name ? [{ kind: 'note' as const, text: name, label: `New note: ${name}` }] : [],
   ]
+}
+
+// Keyboard order: every action except the note row, then the files, then the note row last.
+export function quickOpenKeyboardRows(rows: QuickOpenActionRow[], fileCount: number): QuickOpenKeyboardRow[] {
+  const leading = rows.flatMap((row, index): QuickOpenKeyboardRow[] => row.kind === 'note' ? [] : [{ kind: 'action', index }])
+  const files = Array.from({ length: Math.max(0, fileCount) }, (_, index): QuickOpenKeyboardRow => ({ kind: 'file', index }))
+  const note = rows.flatMap((row, index): QuickOpenKeyboardRow[] => row.kind === 'note' ? [{ kind: 'action', index }] : [])
+  return [...leading, ...files, ...note]
+}
+
+// A fresh palette (empty query) starts on the first openable row; a typed query leaves Enter to its implicit order.
+export function quickOpenInitialIndex(rows: QuickOpenActionRow[], rawQuery: string) {
+  if (rawQuery.trim()) return -1
+  return quickOpenKeyboardRows(rows, 0).findIndex((entry) => entry.kind === 'action' && OPENABLE_KINDS.includes(rows[entry.index].kind))
 }
 
 export function quickOpenDefaultActionIndex(rows: QuickOpenActionRow[], rawQuery: string) {
   const query = rawQuery.trim().toLocaleLowerCase()
   if (!query) return -1
-  const exact = rows.findIndex((row) => row.kind !== 'create' && row.label.toLocaleLowerCase() === query)
+  const exact = rows.findIndex((row) => row.kind !== 'create' && row.kind !== 'note' && row.label.toLocaleLowerCase() === query)
   if (exact >= 0) return exact
   const agent = rows.findIndex((row) => row.kind === 'agent' && row.name.toLocaleLowerCase().includes(query))
   if (agent >= 0) return agent
@@ -69,11 +88,12 @@ export function quickOpenEnterTarget(
   rawQuery: string,
   activeIndex: number,
   fileAvailable: boolean,
+  fileCount = fileAvailable ? 1 : 0,
 ): QuickOpenEnterTarget | null {
-  if (activeIndex >= 0) return activeIndex < rows.length
-    ? { kind: 'action', index: activeIndex }
-    : fileAvailable ? { kind: 'file' } : null
+  if (activeIndex >= 0) return quickOpenKeyboardRows(rows, fileCount)[activeIndex] ?? null
   const exact = quickOpenDefaultActionIndex(rows, rawQuery)
   if (exact >= 0) return { kind: 'action', index: exact }
-  return fileAvailable ? { kind: 'file' } : null
+  if (fileAvailable) return { kind: 'file' }
+  const note = rows.findIndex((row) => row.kind === 'note')
+  return note >= 0 ? { kind: 'action', index: note } : null
 }

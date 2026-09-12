@@ -369,12 +369,14 @@ h2, h3, p { margin-top: 0; }
 .quick-open-section { display: grid; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .quick-open-section > strong, .quick-open-section-label { padding: 4px 11px; color: var(--dimmer); font: 600 9px var(--mono); letter-spacing: .5px; text-transform: uppercase; }
 .quick-open-section > button { padding: 7px 11px; border: 0; border-radius: 0; background: transparent; color: var(--text); font: 11px var(--mono); text-align: left; }
-.quick-open-section > button:hover, .quick-open-section > button.active { background: var(--accent-dim); }
+.quick-open-results:not(:has(.active)) .quick-open-section > button:hover { background: var(--accent-dim); }
+.quick-open-section > button.active { background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }
 .quick-open > footer { display: flex; gap: 14px; padding: 6px 10px; color: var(--dimmer); font: 9px var(--mono); }
 .quick-open > footer span:last-child { margin-left: auto; }
 .file-results { display: flex; flex-direction: column; padding: 4px; }
 .file-results > button { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; width: 100%; min-height: 31px; padding: 4px 8px; border-color: transparent; background: transparent; text-align: left; }
-.file-results > button:hover, .file-results > button.active { border-color: var(--accent); background: var(--accent-dim); }
+.quick-open-results:not(:has(.active)) .file-results > button:hover { border-color: var(--accent); background: var(--accent-dim); }
+.file-results > button.active { border-color: var(--accent); background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }
 .file-result-path { display: flex; min-width: 0; align-items: center; gap: 7px; overflow: hidden; font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .file-result-path.dir { color: var(--accent-text); font-weight: 600; }
 .root-tag, .tier-tag { padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--dim); font: 9px var(--mono); }

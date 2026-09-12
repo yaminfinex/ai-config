@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { DockPanelParams } from '../layout/dockLayout.ts'
-import { dockTabMenuItems, dockTabMenuNavigationIndex, isDockTabMenuKey } from './dockTabMenuModel.ts'
+import { dockTabMenuFocusAction, dockTabMenuItems, dockTabMenuKeyAction, isDockTabMenuKey } from './dockTabMenuModel.ts'
 import { useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext.tsx'
 
 type MenuPosition = { x: number, y: number }
@@ -46,19 +46,32 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
       close(event.type !== 'pointerdown')
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { event.preventDefault(); close(); return }
       const items = [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
-      const next = dockTabMenuNavigationIndex(event.key, items.indexOf(document.activeElement as HTMLElement), items.length)
-      if (next === null) return
+      const action = dockTabMenuKeyAction({
+        key: event.key,
+        insideMenu: Boolean(menuRef.current?.contains(event.target as Node)),
+        current: items.indexOf(document.activeElement as HTMLElement),
+        count: items.length,
+      })
+      if (!action) return
+      if (action.kind === 'dismiss') { close(false); return }
       event.preventDefault()
+      if (action.kind === 'close') { close(); return }
       event.stopPropagation()
-      items[next]?.focus()
+      items[action.index]?.focus()
     }
+    // Focus landing anywhere outside the menu (the quick-open palette taking its input, for one)
+    // closes it without restoring focus, so the new owner keeps it.
+    const onFocusIn = (event: FocusEvent) => {
+      if (dockTabMenuFocusAction(Boolean(menuRef.current?.contains(event.target as Node))) === 'dismiss') close(false)
+    }
+    document.addEventListener('focusin', onFocusIn, true)
     document.addEventListener('pointerdown', dismiss, true)
     document.addEventListener('dragstart', dismiss, true)
     document.addEventListener('scroll', dismiss, true)
     document.addEventListener('keydown', onKeyDown, true)
     return () => {
+      document.removeEventListener('focusin', onFocusIn, true)
       document.removeEventListener('pointerdown', dismiss, true)
       document.removeEventListener('dragstart', dismiss, true)
       document.removeEventListener('scroll', dismiss, true)

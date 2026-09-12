@@ -27,3 +27,21 @@ export function dockTabMenuNavigationIndex(key: string, current: number, count: 
   if (key === 'End') return count - 1
   return null
 }
+
+export type DockTabMenuKeyAction = { kind: 'dismiss' } | { kind: 'close' } | { kind: 'focus', index: number }
+
+// A key whose target lives outside the menu belongs to whoever has focus (e.g. the quick-open
+// palette): the menu dismisses itself and never touches the event.
+export function dockTabMenuKeyAction({ key, insideMenu, current, count }: { key: string, insideMenu: boolean, current: number, count: number }): DockTabMenuKeyAction | null {
+  if (!insideMenu) return { kind: 'dismiss' }
+  if (key === 'Escape') return { kind: 'close' }
+  const next = dockTabMenuNavigationIndex(key, current, count)
+  return next === null ? null : { kind: 'focus', index: next }
+}
+
+// Focus is only a dismissal when it lands outside the menu; focus arriving on a menu item (the menu
+// focusing its first item on open, or the user tabbing between items) keeps it open. A freshly opened
+// menu whose tab keeps focus raises no focusin at all, so it stays open by construction.
+export function dockTabMenuFocusAction(insideMenu: boolean): 'keep' | 'dismiss' {
+  return insideMenu ? 'keep' : 'dismiss'
+}

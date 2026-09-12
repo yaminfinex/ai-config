@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { quickOpenActionRows, quickOpenEnterTarget } from '../src/features/files/quickOpenModel.ts'
+import { quickOpenActionRows, quickOpenEnterTarget, quickOpenInitialIndex, quickOpenKeyboardRows } from '../src/features/files/quickOpenModel.ts'
 
 const spaces = [
   { id: 'main', name: 'main', order: 0, created: 0, updated: 0 },
@@ -17,7 +17,38 @@ test('quick open ranks exact, prefix, then substring within spaces before agents
     { kind: 'agent', name: 'review', label: 'review' },
     { kind: 'agent', name: 'reviewer', label: 'reviewer' },
     { kind: 'agent', name: 'my-review-agent', label: 'my-review-agent' },
+    { kind: 'note', text: 'review', label: 'New note: review' },
   ])
+})
+
+test('the note row is always last, carries the trimmed text, and is absent for an empty query', () => {
+  const rows = quickOpenActionRows('  todo: call back  ', spaces, ['podi'], true, true, 'main')
+  assert.deepEqual(rows.at(-1), { kind: 'note', text: 'todo: call back', label: 'New note: todo: call back' })
+  assert.equal(rows.filter((row) => row.kind === 'note').length, 1)
+  assert.equal(quickOpenActionRows('', spaces, ['podi'], false).some((row) => row.kind === 'note'), false)
+  assert.equal(quickOpenActionRows('   ', spaces, ['podi'], false).some((row) => row.kind === 'note'), false)
+})
+
+test('keyboard order is actions, then files, then the note row', () => {
+  const rows = quickOpenActionRows('review', spaces, ['reviewer'], false)
+  const noteIndex = rows.findIndex((row) => row.kind === 'note')
+  assert.deepEqual(quickOpenKeyboardRows(rows, 2), [
+    { kind: 'action', index: 0 }, { kind: 'action', index: 1 }, { kind: 'action', index: 2 }, { kind: 'action', index: 3 },
+    { kind: 'file', index: 0 }, { kind: 'file', index: 1 },
+    { kind: 'action', index: noteIndex },
+  ])
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', 4, true, 2), { kind: 'file', index: 0 })
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', 6, true, 2), { kind: 'action', index: noteIndex })
+  assert.equal(quickOpenEnterTarget(rows, 'review', 7, true, 2), null)
+})
+
+test('a fresh palette starts on the first openable row and a typed query starts unselected', () => {
+  assert.equal(quickOpenInitialIndex(quickOpenActionRows('', spaces, ['podi'], false, true, 'main'), ''), 0)
+  const agentsOnly = quickOpenActionRows('', [], ['podi'], false, true, null)
+  assert.equal(agentsOnly[quickOpenInitialIndex(agentsOnly, '')].kind, 'agent')
+  assert.equal(quickOpenInitialIndex(quickOpenActionRows('', [], [], false), ''), -1)
+  assert.equal(quickOpenInitialIndex(quickOpenActionRows('review', spaces, ['podi'], false), 'review'), -1)
+  assert.equal(quickOpenInitialIndex(quickOpenActionRows('new place', [], [], false), 'new place'), -1)
 })
 
 test('an exact space suppresses create and the cap suppresses it deterministically', () => {
@@ -67,22 +98,31 @@ test('Enter falls through to a file when no action matches', () => {
   assert.deepEqual(quickOpenEnterTarget(rows, 'missing', -1, true), { kind: 'file' })
 })
 
-test('Enter returns null when no action or file matches', () => {
+test('Enter falls through to New note when no action or file matches', () => {
   const rows = quickOpenActionRows('missing', spaces, ['test-liha'], false)
-  assert.equal(quickOpenEnterTarget(rows, 'missing', -1, false), null)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'missing', -1, false), { kind: 'action', index: rows.findIndex((row) => row.kind === 'note') })
+})
+
+test('Enter keeps the implicit order when the note row is present: an agent match beats the note', () => {
+  const rows = quickOpenActionRows('podi', spaces, ['podi-helper'], false)
+  assert.equal(rows.some((row) => row.kind === 'note'), true)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'podi', -1, false), { kind: 'action', index: rows.findIndex((row) => row.kind === 'agent') })
+  assert.deepEqual(quickOpenEnterTarget(rows, 'podi', -1, true), { kind: 'action', index: rows.findIndex((row) => row.kind === 'agent') })
 })
 
 test('Enter preserves the highlighted action and file targets', () => {
   const rows = quickOpenActionRows('review', spaces, ['my-review-agent'], false)
+  const leading = rows.length - 1
   assert.deepEqual(quickOpenEnterTarget(rows, 'review', 1, true), { kind: 'action', index: 1 })
-  assert.deepEqual(quickOpenEnterTarget(rows, 'review', rows.length, true), { kind: 'file' })
-  assert.equal(quickOpenEnterTarget(rows, 'review', rows.length, false), null)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', leading, true), { kind: 'file', index: 0 })
+  assert.deepEqual(quickOpenEnterTarget(rows, 'review', leading, false), { kind: 'action', index: leading })
+  assert.equal(quickOpenEnterTarget(rows, 'review', leading + 1, false), null)
 })
 
-test('create is arrow-select only and an empty reflexive Enter does nothing', () => {
+test('create is arrow-select only (reflexive Enter goes to the note, never create) and an empty reflexive Enter does nothing', () => {
   const rows = quickOpenActionRows('new place', spaces, [], false)
   const createIndex = rows.findIndex((row) => row.kind === 'create')
-  assert.equal(quickOpenEnterTarget(rows, 'new place', -1, false), null)
+  assert.deepEqual(quickOpenEnterTarget(rows, 'new place', -1, false), { kind: 'action', index: rows.findIndex((row) => row.kind === 'note') })
   assert.deepEqual(quickOpenEnterTarget(rows, 'new place', createIndex, false), { kind: 'action', index: createIndex })
   assert.equal(quickOpenEnterTarget(quickOpenActionRows('', spaces, [], false), '', -1, false), null)
 })
