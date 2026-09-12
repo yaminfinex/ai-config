@@ -29,9 +29,10 @@ test('note editing leaves copy, delete, enter, and A as native textarea input', 
   const start = list.indexOf('<textarea autoFocus')
   const end = list.indexOf('/> : <p>', start)
   const editor = list.slice(start, end)
+  const keydown = editor.slice(editor.indexOf('onKeyDown={(event) => {'))
   assert.ok(start >= 0 && end > start)
   assert.match(editor, /event\.key === 'Escape'/)
-  assert.match(editor, /noteTextSubmitAction/)
+  assert.match(keydown, /noteTextSubmitAction\(\{ \.\.\.event, isComposing: event\.nativeEvent\.isComposing \}\)/)
   assert.doesNotMatch(editor, /metaKey|ctrlKey|event\.key === 'Delete'|event\.key === 'Backspace'|toLowerCase\(\).*'a'/)
 })
 
@@ -48,8 +49,12 @@ test('note editing reads the synthetic event value before entering the state upd
 
 test('quick add is a three-line textarea wired to the shared note submit rule', () => {
   const quickAdd = read('../src/features/notes/NoteQuickAdd.tsx')
+  const start = quickAdd.indexOf('onKeyDown={(event) => {', quickAdd.indexOf('<textarea'))
+  const end = quickAdd.indexOf('}} />', start)
+  const keydown = quickAdd.slice(start, end)
   assert.match(quickAdd, /<textarea[^>]*rows=\{3\}/)
-  assert.match(quickAdd, /noteTextSubmitAction/)
+  assert.ok(start >= 0 && end > start)
+  assert.match(keydown, /noteTextSubmitAction\(\{ \.\.\.event, isComposing: event\.nativeEvent\.isComposing \}\)/)
   assert.doesNotMatch(quickAdd, /<input/)
 })
 
