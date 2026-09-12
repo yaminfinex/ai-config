@@ -58,15 +58,45 @@ export function readFolderTreePreferences(storage: Pick<Storage, 'getItem'> | nu
 }
 
 export function writeFolderTreePreferences(storage: Pick<Storage, 'setItem'> | null, value: FolderTreePreferences) {
-  try { storage?.setItem(folderTreeStorageKey, JSON.stringify(value)) } catch { /* storage full or blocked: width stays session-only */ }
+  try { storage?.setItem(folderTreeStorageKey, JSON.stringify(value)) } catch { /* storage full or blocked: the store keeps the value session-only */ }
 }
 
-// updateFolderTreePreferences merges a patch against the STORED value, not a
-// caller's local copy, so two mounted panels never overwrite each other's
-// last write with a stale field.
-export function updateFolderTreePreferences(storage: (Pick<Storage, 'getItem' | 'setItem'>) | null, next: { width?: number, hidden?: boolean }) {
-  const base = readFolderTreePreferences(storage)
-  const value = folderTreePreferencesValue(next.width ?? base.width, next.hidden ?? base.hidden)
-  writeFolderTreePreferences(storage, value)
-  return value
+export type FolderTreePreferencesPatch = { width?: number, hidden?: boolean }
+
+export type FolderTreePreferencesStore = {
+  get: () => FolderTreePreferences
+  set: (patch: FolderTreePreferencesPatch) => FolderTreePreferences
+  subscribe: (listener: () => void) => () => void
 }
+
+// createFolderTreePreferencesStore is one in-memory value per document: it
+// is the truth for every mounted folder panel, storage is only a best-effort
+// mirror read once (lazily) and written on every set. A blocked write or a
+// stale stored value therefore never changes what the session shows, and
+// two panels see each other's changes at once.
+export function createFolderTreePreferencesStore(storage: () => (Pick<Storage, 'getItem' | 'setItem'> | null)): FolderTreePreferencesStore {
+  let current: FolderTreePreferences | null = null
+  const listeners = new Set<() => void>()
+  const get = () => (current ??= readFolderTreePreferences(safeStorage(storage)))
+  return {
+    get,
+    set: (patch) => {
+      const base = get()
+      const value = folderTreePreferencesValue(patch.width ?? base.width, patch.hidden ?? base.hidden)
+      current = value
+      writeFolderTreePreferences(safeStorage(storage), value)
+      listeners.forEach((listener) => listener())
+      return value
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+  }
+}
+
+function safeStorage(storage: () => (Pick<Storage, 'getItem' | 'setItem'> | null)) {
+  try { return storage() } catch { return null }
+}
+
+export const folderTreePreferences = createFolderTreePreferencesStore(() => (typeof window === 'undefined' ? null : window.localStorage))

@@ -10,7 +10,7 @@ import {
   parseFolderTreePreferences,
   readFolderTreePreferences,
   resizedFolderTreeWidth,
-  updateFolderTreePreferences,
+  createFolderTreePreferencesStore,
   writeFolderTreePreferences,
 } from '../src/features/folders/folderTreeModel.ts'
 
@@ -62,15 +62,78 @@ test('storage helpers fall back to defaults and swallow storage failures', () =>
   assert.doesNotThrow(() => writeFolderTreePreferences(throwing, folderTreePreferencesValue(260, false)))
 })
 
-test('preference patches merge against the stored value so two panels never clobber each other', () => {
+function fakeStorage() {
   const store = new Map<string, string>()
-  const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, raw: string) => { store.set(key, raw) } }
-  // panel A presses Home (width 150); panel B, still holding its mount-time width, hides the tree
-  assert.deepEqual(updateFolderTreePreferences(storage, { width: 150 }), { version: 1, width: 150, hidden: false })
-  assert.deepEqual(updateFolderTreePreferences(storage, { hidden: true }), { version: 1, width: 150, hidden: true })
-  assert.deepEqual(updateFolderTreePreferences(storage, { hidden: false }), { version: 1, width: 150, hidden: false })
-  assert.equal(store.get(folderTreeStorageKey), '{"version":1,"width":150,"hidden":false}')
-  assert.deepEqual(updateFolderTreePreferences(null, { width: 300 }), { version: 1, width: 300, hidden: false })
+  return { store, getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, raw: string) => { store.set(key, raw) } }
+}
+
+test('the store is the truth for the document: a throwing write keeps the session value', () => {
+  const throwing = { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('blocked') } }
+  const store = createFolderTreePreferencesStore(() => throwing)
+  assert.deepEqual(store.get(), { version: 1, width: 220, hidden: false })
+  assert.deepEqual(store.set({ width: 150 }), { version: 1, width: 150, hidden: false })
+  assert.deepEqual(store.set({ hidden: true }), { version: 1, width: 150, hidden: true })
+  assert.deepEqual(store.set({ hidden: false }), { version: 1, width: 150, hidden: false })
+  const accessorThrows = createFolderTreePreferencesStore(() => { throw new Error('no storage') })
+  assert.deepEqual(accessorThrows.set({ width: 150 }), { version: 1, width: 150, hidden: false })
+  assert.deepEqual(accessorThrows.set({ hidden: true }), { version: 1, width: 150, hidden: true })
+})
+
+test('a valid but stale stored value after a failed write never resets the session width', () => {
+  const storage = fakeStorage()
+  storage.store.set(folderTreeStorageKey, '{"version":1,"width":260,"hidden":false}')
+  let writable = true
+  const flaky = { getItem: storage.getItem, setItem: (key: string, raw: string) => { if (!writable) throw new Error('quota'); storage.setItem(key, raw) } }
+  const store = createFolderTreePreferencesStore(() => flaky)
+  assert.equal(store.get().width, 260, 'initial value comes from storage')
+  writable = false
+  assert.equal(store.set({ width: 150 }).width, 150)
+  assert.equal(storage.store.get(folderTreeStorageKey), '{"version":1,"width":260,"hidden":false}', 'storage is stale')
+  assert.deepEqual(store.set({ hidden: true }), { version: 1, width: 150, hidden: true })
+  assert.deepEqual(store.set({ hidden: false }), { version: 1, width: 150, hidden: false })
+  writable = true
+  store.set({ hidden: true })
+  assert.equal(storage.store.get(folderTreeStorageKey), '{"version":1,"width":150,"hidden":true}', 'the next good write mirrors the session value')
+})
+
+test('two subscribers share one value, and unsubscribing stops notifications', () => {
+  const storage = fakeStorage()
+  const store = createFolderTreePreferencesStore(() => storage)
+  const seenA: number[] = []
+  const seenB: number[] = []
+  const stopA = store.subscribe(() => seenA.push(store.get().width))
+  const stopB = store.subscribe(() => seenB.push(store.get().width))
+  store.set({ width: 150 })
+  assert.deepEqual(seenA, [150])
+  assert.deepEqual(seenB, [150])
+  assert.deepEqual(store.get(), { version: 1, width: 150, hidden: false })
+  stopA()
+  store.set({ hidden: true })
+  assert.deepEqual(seenA, [150], 'A no longer hears')
+  assert.deepEqual(seenB, [150, 150])
+  assert.deepEqual(store.get(), { version: 1, width: 150, hidden: true })
+  stopB()
+  store.set({ hidden: false })
+  assert.deepEqual(seenB, [150, 150])
+  assert.equal(storage.store.get(folderTreeStorageKey), '{"version":1,"width":150,"hidden":false}')
+})
+
+test('the store reads storage lazily once: valid stored value wins, otherwise defaults', () => {
+  const valid = fakeStorage()
+  valid.store.set(folderTreeStorageKey, '{"version":1,"width":300,"hidden":true}')
+  assert.deepEqual(createFolderTreePreferencesStore(() => valid).get(), { version: 1, width: 300, hidden: true })
+  const wrongVersion = fakeStorage()
+  wrongVersion.store.set(folderTreeStorageKey, '{"version":2,"width":300}')
+  assert.deepEqual(createFolderTreePreferencesStore(() => wrongVersion).get(), { version: 1, width: 220, hidden: false })
+  const garbage = fakeStorage()
+  garbage.store.set(folderTreeStorageKey, 'nope')
+  assert.deepEqual(createFolderTreePreferencesStore(() => garbage).get(), { version: 1, width: 220, hidden: false })
+  assert.deepEqual(createFolderTreePreferencesStore(() => null).get(), { version: 1, width: 220, hidden: false })
+  let reads = 0
+  const counting = { getItem: () => { reads++; return null }, setItem: () => undefined }
+  const store = createFolderTreePreferencesStore(() => counting)
+  store.get(); store.get(); store.set({ width: 200 }); store.get()
+  assert.equal(reads, 1, 'storage is read once, never re-read after a set')
 })
 
 test('folder workspace grid is declared once and the row action stays keyboard-reachable (CSS source guards)', () => {

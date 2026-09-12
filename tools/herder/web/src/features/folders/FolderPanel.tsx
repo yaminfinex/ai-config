@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getBacklog, getFileTree, queryKeys } from '../../api/client'
 import type { BacklogRead, FileTarget, FileTreeEntry, FolderTarget } from '../../types'
@@ -11,8 +11,8 @@ import {
   folderTreeMaxWidth,
   folderTreeMinWidth,
   folderTreeWidthFromKey,
-  readFolderTreePreferences,
-  updateFolderTreePreferences,
+  folderTreePreferences,
+  type FolderTreePreferencesPatch,
   resizedFolderTreeWidth,
   clampFolderTreeWidth,
 } from './folderTreeModel'
@@ -24,10 +24,6 @@ import { failureBanner, PanelState } from '../../shared/PanelState'
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { treeChildIndex, treeKeyIntent, treeParentIndex } from '../../shared/treeModel'
 import { PathCopyButton } from '../../shared/PathCopyButton'
-
-function localStorageOrNull() {
-  try { return window.localStorage } catch { return null }
-}
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -165,12 +161,12 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
   onOpenFolder: (target: FolderTarget, placement?: OpenPlacement, selectionHint?: FileTarget) => void
 }) {
-  const [treePreferences, setTreePreferences] = useState(() => readFolderTreePreferences(localStorageOrNull()))
+  const treePreferences = useSyncExternalStore(folderTreePreferences.subscribe, folderTreePreferences.get, folderTreePreferences.get)
   const treeHidden = treePreferences.hidden
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [panelWidth, setPanelWidth] = useState(0)
   const treeWidth = clampFolderTreeWidth(treePreferences.width, panelWidth)
-  const updateTree = (next: { width?: number, hidden?: boolean }) => setTreePreferences(updateFolderTreePreferences(localStorageOrNull(), next))
+  const updateTree = (next: FolderTreePreferencesPatch) => { folderTreePreferences.set(next) }
   const currentPanelWidth = () => workspaceRef.current?.clientWidth ?? panelWidth
   const disposeDrag = useRef<(() => void) | null>(null)
   useEffect(() => () => disposeDrag.current?.(), [])
