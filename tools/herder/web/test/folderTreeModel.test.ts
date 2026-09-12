@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   clampFolderTreeWidth,
@@ -9,6 +10,7 @@ import {
   parseFolderTreePreferences,
   readFolderTreePreferences,
   resizedFolderTreeWidth,
+  updateFolderTreePreferences,
   writeFolderTreePreferences,
 } from '../src/features/folders/folderTreeModel.ts'
 
@@ -58,4 +60,32 @@ test('storage helpers fall back to defaults and swallow storage failures', () =>
   const throwing = { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('blocked') } }
   assert.deepEqual(readFolderTreePreferences(throwing), { version: 1, width: 220, hidden: false })
   assert.doesNotThrow(() => writeFolderTreePreferences(throwing, folderTreePreferencesValue(260, false)))
+})
+
+test('preference patches merge against the stored value so two panels never clobber each other', () => {
+  const store = new Map<string, string>()
+  const storage = { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, raw: string) => { store.set(key, raw) } }
+  // panel A presses Home (width 150); panel B, still holding its mount-time width, hides the tree
+  assert.deepEqual(updateFolderTreePreferences(storage, { width: 150 }), { version: 1, width: 150, hidden: false })
+  assert.deepEqual(updateFolderTreePreferences(storage, { hidden: true }), { version: 1, width: 150, hidden: true })
+  assert.deepEqual(updateFolderTreePreferences(storage, { hidden: false }), { version: 1, width: 150, hidden: false })
+  assert.equal(store.get(folderTreeStorageKey), '{"version":1,"width":150,"hidden":false}')
+  assert.deepEqual(updateFolderTreePreferences(null, { width: 300 }), { version: 1, width: 300, hidden: false })
+})
+
+test('folder workspace grid is declared once and the row action stays keyboard-reachable (CSS source guards)', () => {
+  const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const rules = [...styles.matchAll(/^\s*([^{}\n]+)\{([^}]*)\}/gmu)].map((m) => ({ selector: m[1]!.trim(), body: m[2]!, indented: /^\s/u.test(m[0]) }))
+  const workspace = rules.filter((rule) => /\.folder-workspace(?![\w-])/u.test(rule.selector) && /grid-template-columns/u.test(rule.body))
+  assert.deepEqual(workspace.map((rule) => rule.selector), ['.folder-workspace', '.folder-workspace.tree-hidden'])
+  assert.equal(workspace.filter((rule) => !rule.selector.includes('.tree-hidden')).length, 1, 'exactly one grid declaration outside .tree-hidden')
+  for (const block of styles.matchAll(/@media[^{]*\{([\s\S]*?)\n\}/gu)) assert.doesNotMatch(block[1]!, /\.folder-workspace/u, 'no folder-workspace override inside @media')
+  assert.match(styles, /^\.folder-workspace \{[^}]*grid-template-columns: var\(--folder-tree-width\)/mu)
+  const action = rules.find((rule) => rule.selector === '.folder-row-action')
+  assert.ok(action, '.folder-row-action rule present')
+  assert.match(action.body, /opacity: 0/u)
+  assert.doesNotMatch(action.body, /display: none/u)
+  assert.doesNotMatch(styles, /\.folder-row-action[^{]*\{[^}]*display: none/u)
+  assert.doesNotMatch(styles, /\.folder-row-action[^{]*\{[^}]*visibility: hidden/u)
+  assert.match(styles, /\.panel-tree-row:focus-within \.folder-row-action[^{]*\{[^}]*opacity: 1/u)
 })

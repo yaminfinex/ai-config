@@ -10,14 +10,13 @@ import { boardColumns, folderSelectionTarget, parentFolderPath, rootJoinedAbsolu
 import {
   folderTreeMaxWidth,
   folderTreeMinWidth,
-  folderTreePreferencesValue,
   folderTreeWidthFromKey,
   readFolderTreePreferences,
+  updateFolderTreePreferences,
   resizedFolderTreeWidth,
   clampFolderTreeWidth,
-  writeFolderTreePreferences,
 } from './folderTreeModel'
-import { subscribeDOMEvent } from '../../shared/lifecycle'
+import { startPointerDrag } from '../../shared/lifecycle'
 import { initialGitFileState } from '../git/gitViewModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useFileWatch } from '../../stream/fileWatchRegistry'
@@ -171,20 +170,15 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
   const workspaceRef = useRef<HTMLDivElement>(null)
   const [panelWidth, setPanelWidth] = useState(0)
   const treeWidth = clampFolderTreeWidth(treePreferences.width, panelWidth)
-  const updateTree = (next: { width?: number, hidden?: boolean }) => setTreePreferences((current) => {
-    const value = folderTreePreferencesValue(next.width ?? current.width, next.hidden ?? current.hidden)
-    writeFolderTreePreferences(localStorageOrNull(), value)
-    return value
-  })
+  const updateTree = (next: { width?: number, hidden?: boolean }) => setTreePreferences(updateFolderTreePreferences(localStorageOrNull(), next))
   const currentPanelWidth = () => workspaceRef.current?.clientWidth ?? panelWidth
+  const disposeDrag = useRef<(() => void) | null>(null)
+  useEffect(() => () => disposeDrag.current?.(), [])
   const startTreeResize = (event: ReactPointerEvent) => {
     const startX = event.clientX
     const startWidth = treeWidth
-    const move = (moveEvent: PointerEvent) => updateTree({ width: resizedFolderTreeWidth(startWidth, moveEvent.clientX - startX, currentPanelWidth()) })
-    let disposeUp: () => void = () => undefined
-    const disposeMove = subscribeDOMEvent<PointerEvent>(window, 'pointermove', move)
-    const stop = () => { disposeMove(); disposeUp() }
-    disposeUp = subscribeDOMEvent(window, 'pointerup', stop)
+    disposeDrag.current?.()
+    disposeDrag.current = startPointerDrag(event, (moveEvent) => updateTree({ width: resizedFolderTreeWidth(startWidth, moveEvent.clientX - startX, currentPanelWidth()) }))
     event.preventDefault()
   }
   useEffect(() => {

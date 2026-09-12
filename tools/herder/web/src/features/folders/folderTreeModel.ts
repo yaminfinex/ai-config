@@ -60,3 +60,13 @@ export function readFolderTreePreferences(storage: Pick<Storage, 'getItem'> | nu
 export function writeFolderTreePreferences(storage: Pick<Storage, 'setItem'> | null, value: FolderTreePreferences) {
   try { storage?.setItem(folderTreeStorageKey, JSON.stringify(value)) } catch { /* storage full or blocked: width stays session-only */ }
 }
+
+// updateFolderTreePreferences merges a patch against the STORED value, not a
+// caller's local copy, so two mounted panels never overwrite each other's
+// last write with a stale field.
+export function updateFolderTreePreferences(storage: (Pick<Storage, 'getItem' | 'setItem'>) | null, next: { width?: number, hidden?: boolean }) {
+  const base = readFolderTreePreferences(storage)
+  const value = folderTreePreferencesValue(next.width ?? base.width, next.hidden ?? base.hidden)
+  writeFolderTreePreferences(storage, value)
+  return value
+}

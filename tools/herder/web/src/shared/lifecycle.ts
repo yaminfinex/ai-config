@@ -71,3 +71,28 @@ export function useSizeObserver<T extends Element>(
     return () => observer.disconnect()
   }, [enabled, ref, version])
 }
+
+// startPointerDrag runs one pointer's drag from a pointerdown: the target
+// captures the pointer, moves from any other pointer are ignored, and
+// pointerup or pointercancel ends the drag. The disposer removes all three
+// listeners and releases capture, so a mid-drag unmount leaves nothing behind.
+export function startPointerDrag(event: { pointerId: number, currentTarget: EventTarget | null }, onMove: (event: PointerEvent) => void) {
+  const { pointerId } = event
+  const target = event.currentTarget as (EventTarget & { setPointerCapture?: (id: number) => void, releasePointerCapture?: (id: number) => void }) | null
+  try { target?.setPointerCapture?.(pointerId) } catch { /* capture is best effort: a detached target still gets window moves */ }
+  let disposed = false
+  const dispose = () => {
+    if (disposed) return
+    disposed = true
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', end)
+    window.removeEventListener('pointercancel', end)
+    try { target?.releasePointerCapture?.(pointerId) } catch { /* already released */ }
+  }
+  const move = (moveEvent: PointerEvent) => { if (moveEvent.pointerId === pointerId) onMove(moveEvent) }
+  const end = (endEvent: PointerEvent) => { if (endEvent.pointerId === pointerId) dispose() }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', end)
+  window.addEventListener('pointercancel', end)
+  return dispose
+}

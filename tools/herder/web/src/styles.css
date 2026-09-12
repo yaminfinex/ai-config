@@ -745,7 +745,6 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 }
 @media (max-width: 700px) {
   .agent-status, .tool-chip { display: none; }
-  .folder-workspace { grid-template-columns: 170px minmax(0, 1fr); }
   .file-header, .folder-header { align-items: stretch; flex-wrap: wrap; }
   .file-header > .file-title, .folder-title { flex-basis: 100%; }
 }

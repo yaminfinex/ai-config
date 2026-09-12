@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { subscribeDOMEvent } from '../../shared/lifecycle'
+import { useEffect, useRef, type ReactNode } from 'react'
+import { startPointerDrag } from '../../shared/lifecycle'
 import {
   maximumRailWidth,
   minimumRailWidth,
@@ -22,13 +22,12 @@ export function UtilityRail({ side, label, headingStart, headingAction, subheadi
   onToggle: () => void
   children: ReactNode
 }) {
+  const disposeDrag = useRef<(() => void) | null>(null)
+  useEffect(() => () => disposeDrag.current?.(), [])
   const startResize = (event: React.PointerEvent) => {
     const startX = event.clientX
-    const move = (moveEvent: PointerEvent) => onWidth(resizedRailWidth(width, side, moveEvent.clientX - startX))
-    let disposeUp: () => void = () => undefined
-    const disposeMove = subscribeDOMEvent<PointerEvent>(window, 'pointermove', move)
-    const stop = () => { disposeMove(); disposeUp() }
-    disposeUp = subscribeDOMEvent(window, 'pointerup', stop)
+    disposeDrag.current?.()
+    disposeDrag.current = startPointerDrag(event, (moveEvent) => onWidth(resizedRailWidth(width, side, moveEvent.clientX - startX)))
   }
   const rail = <aside className={`utility-rail utility-rail-${side}`} aria-label={`${label} rail`} style={{ width }} tabIndex={-1} hidden={collapsed}>
     <header className="rail-heading">{headingStart}<strong>{label}</strong>{headingAction}<button type="button"
