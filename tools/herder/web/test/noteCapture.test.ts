@@ -7,6 +7,7 @@ import {
   captureSourceWithRange,
   isRangeSelection,
   isReservedFileResolutionSelection,
+  noteTextSubmitAction,
   placeCaretAtEnd,
   proposedCaptureGroup,
   reserveSelectionForFileResolution,
@@ -115,6 +116,14 @@ test('capture submit: plain Enter queues, cmd/ctrl+Enter sends to a live agent',
   assert.equal(captureSubmitAction(key({ ctrlKey: true }), live), 'send')
   assert.equal(captureSubmitAction(key({ shiftKey: true, metaKey: true }), live), null)
   assert.equal(captureSubmitAction(key({ key: 'a', metaKey: true }), live), null)
+})
+
+test('note text submit leaves Shift+Enter and IME composition to the textarea', () => {
+  const key = (over: Partial<Parameters<typeof noteTextSubmitAction>[0]>) => ({ key: 'Enter', shiftKey: false, ...over })
+  assert.equal(noteTextSubmitAction(key({})), 'submit')
+  assert.equal(noteTextSubmitAction(key({ shiftKey: true })), null)
+  assert.equal(noteTextSubmitAction(key({ isComposing: true })), null)
+  assert.equal(noteTextSubmitAction(key({ key: 'a' })), null)
 })
 
 test('capture submit falls back to append when read-only or not live, and queues for unassigned', () => {
