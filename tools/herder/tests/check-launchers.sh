@@ -47,6 +47,8 @@ for tool in claude codex grok; do
   printf 'env_herdr_workspace=%s\n' "${HERDR_WORKSPACE_ID-UNSET}"
   printf 'env_herdr_future=%s\n' "${HERDR_FUTURE_BINDING-UNSET}"
   printf 'env_herdr_agent=%s\n' "${HERDR_AGENT-UNSET}"
+  printf 'env_git_author=%s <%s>\n' "${GIT_AUTHOR_NAME-UNSET}" "${GIT_AUTHOR_EMAIL-UNSET}"
+  printf 'env_git_committer=%s <%s>\n' "${GIT_COMMITTER_NAME-UNSET}" "${GIT_COMMITTER_EMAIL-UNSET}"
 } >"$LAUNCHER_TEST_LOG"
 exit 23
 EOF
@@ -66,6 +68,8 @@ cat >"$TEST_ROOT/hcom-bin/hcom" <<'EOF'
   printf 'env_herdr_workspace=%s\n' "${HERDR_WORKSPACE_ID-UNSET}"
   printf 'env_herdr_future=%s\n' "${HERDR_FUTURE_BINDING-UNSET}"
   printf 'env_herdr_agent=%s\n' "${HERDR_AGENT-UNSET}"
+  printf 'env_git_author=%s <%s>\n' "${GIT_AUTHOR_NAME-UNSET}" "${GIT_AUTHOR_EMAIL-UNSET}"
+  printf 'env_git_committer=%s <%s>\n' "${GIT_COMMITTER_NAME-UNSET}" "${GIT_COMMITTER_EMAIL-UNSET}"
   printf 'env_hcom_dir=%s\n' "${HCOM_DIR-UNSET}"
   printf 'env_inflight=%s\n' "${HCOM_LAUNCH_INFLIGHT-UNSET}"
 } >"$LAUNCHER_TEST_LOG"
@@ -94,6 +98,15 @@ export HERDR_WORKSPACE_ID="current-workspace"
 export HERDR_FUTURE_BINDING="future value=preserved"
 export HCOM_DIR="$TEST_ROOT/busdir"
 unset HERDR_AGENT
+# Git identity is pinned from `git config` at the launch cwd. Keep the test
+# off the host's real config: a private global config, no system config, and
+# the launch cwd outside any checkout unless a test says otherwise. A stale
+# GIT_AUTHOR_EMAIL in the caller's environment must never win over config.
+printf '[user]\n\tname = Global Owner\n\temail = owner@global.test\n' >"$TEST_ROOT/gitconfig"
+export GIT_CONFIG_GLOBAL="$TEST_ROOT/gitconfig" GIT_CONFIG_SYSTEM=/dev/null
+export GIT_AUTHOR_EMAIL="stale@env.test"
+mkdir -p "$TEST_ROOT/launch-cwd"
+cd "$TEST_ROOT/launch-cwd"
 # shellcheck source=../../../lib/launchers.sh
 source "$ROOT/lib/launchers.sh"
 
@@ -141,6 +154,43 @@ log_has 'env_inflight=1' || fail "HCOM_LAUNCH_INFLIGHT guard not set"
 [[ "${HCOM_PROCESS_ID-}" == "stale-caller-row" ]] \
   || fail "scrub mutated the interactive shell's own environment"
 pass "ambient bus identity is scrubbed; HCOM_DIR and HERDR_* placement survive"
+
+log_has 'env_git_author=Global Owner <owner@global.test>' \
+  || fail "on-bus launch did not pin GIT_AUTHOR_* from the global git config"
+log_has 'env_git_committer=Global Owner <owner@global.test>' \
+  || fail "on-bus launch did not pin GIT_COMMITTER_* from the global git config"
+[[ "${GIT_AUTHOR_EMAIL-}" == "stale@env.test" ]] \
+  || fail "git identity pin mutated the interactive shell's own environment"
+pass "on-bus launch pins the git identity from git config, not from the caller's environment"
+
+identity_repo="$TEST_ROOT/identity repo"
+mkdir -p "$identity_repo"
+git -C "$identity_repo" init -q
+git -C "$identity_repo" config user.name 'Repo Owner'
+git -C "$identity_repo" config user.email 'owner@repo.test'
+cd "$identity_repo"
+set +e
+claude -p 'one shot'
+rc=$?
+set -e
+cd "$TEST_ROOT/launch-cwd"
+[[ $rc -eq 23 ]] || fail "print one-shot inside a checkout did not return the vendor status (rc=$rc)"
+log_has 'env_git_author=Repo Owner <owner@repo.test>' \
+  || fail "print bypass did not pin the checkout's own identity ahead of the global config"
+log_has 'env_git_committer=Repo Owner <owner@repo.test>' \
+  || fail "print bypass did not pin the committer to the checkout's identity"
+pass "the checkout's git identity outranks the global config on the direct path too"
+
+set +e
+GIT_CONFIG_GLOBAL=/dev/null claude --model test-model 2>"$TEST_ROOT/no-identity.err"
+rc=$?
+set -e
+[[ $rc -eq 55 ]] || fail "launch without a resolvable git identity did not continue on-bus (rc=$rc)"
+grep -F "no git identity resolves at $TEST_ROOT/launch-cwd" "$TEST_ROOT/no-identity.err" >/dev/null \
+  || fail "launch without a resolvable git identity did not warn"
+log_has 'env_git_committer=UNSET <UNSET>' \
+  || fail "launch without a resolvable git identity invented a committer"
+pass "no resolvable git identity warns and launches unpinned"
 
 set +e
 claude -p 'one shot'

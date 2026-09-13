@@ -85,6 +85,16 @@ terminal preset); the launcher functions are the current-pane equivalent.
    (task-258, task-029 — upstream defect, no launch-phase timeout). Managed spawns
    hit this fleet-wide once via mise trust errors. For hand-typed launches the pane
    is visible and interruptible; know the signature: silent pane, no bus row bind.
+8. **Agents will pick their own git address** (2026-09-13). Claude seats ran
+   `git -c user.email=<account address> commit`, taking the address from the
+   account-context line Claude Code injects, and GitHub showed the commits Unverified
+   because the SSH signing key is paired with the checkout's address. Config cannot
+   defend against `-c` (command-line config outranks every file); only
+   `GIT_AUTHOR_*`/`GIT_COMMITTER_*` do, and `--author` cannot move the committer that
+   GitHub checks. The launcher pins the four from what `git config` resolves at the
+   launch cwd (checkout first, then global) inside the launch subshell on every path;
+   `tools/fleet/spawn-pane.sh` does the same for spawned seats. Nothing is hardcoded;
+   with no resolvable identity the launcher warns and git refuses to commit anyway.
 
 ## What stays and why
 

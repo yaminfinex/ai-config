@@ -32,6 +32,14 @@
 #     preserved — it locates the bus, it is not an identity. For on-bus
 #     in-place launches only, the caller's HERDR_* pane tuple is snapshotted
 #     before the scrub and restored for hcom to place the fresh row.
+#   - Git identity is pinned on every path from what `git config` resolves at
+#     the launch cwd (checkout first, then global): GIT_AUTHOR_* and
+#     GIT_COMMITTER_* outrank any `git -c user.email=…` an agent passes on
+#     its own, and `--author` cannot move the committer, so a session cannot
+#     commit under an address the checkout does not own (2026-09: Claude
+#     seats took an address from their account context and GitHub showed the
+#     commits Unverified). Nothing is hardcoded; the fleet open helper
+#     (tools/fleet/spawn-pane.sh) applies the same pin to spawned seats.
 #
 # Scope: interactive shells only. Escape hatch that bypasses hcom, the
 # resolver, and default args:  command claude ...
@@ -112,6 +120,23 @@ AIC_EOF
   fi
 }
 
+# Pin the launched session's git identity to what `git config` resolves at
+# the launch cwd (see header). Runs only inside the launch subshell so the
+# user's interactive shell is never mutated. With no resolvable identity it
+# warns and launches unpinned: git itself then refuses to commit until one is
+# configured, so no wrong address can land either way.
+_aic_pin_git_identity() {
+  local _aic_git_name _aic_git_email
+  _aic_git_name=$(command git config --get user.name 2>/dev/null) || _aic_git_name=""
+  _aic_git_email=$(command git config --get user.email 2>/dev/null) || _aic_git_email=""
+  if [ -z "$_aic_git_name" ] || [ -z "$_aic_git_email" ]; then
+    printf 'ai-config launcher: no git identity resolves at %s; launching without the GIT_AUTHOR_*/GIT_COMMITTER_* pin (set user.name and user.email in the checkout or globally)\n' "$PWD" >&2
+    return 0
+  fi
+  export GIT_AUTHOR_NAME="$_aic_git_name" GIT_AUTHOR_EMAIL="$_aic_git_email" \
+    GIT_COMMITTER_NAME="$_aic_git_name" GIT_COMMITTER_EMAIL="$_aic_git_email"
+}
+
 # Materialize a single-symlink bin dir for the resolved vendor so hcom's own
 # bare-name lookup has exactly one deterministic answer on the child PATH.
 # Location is ai-config-owned (~/.cache/ai-config/vendorbin), NOT the retired
@@ -162,6 +187,7 @@ _aic_launch() {
     # shellcheck disable=SC2086
     (
       _aic_scrub_identity
+      _aic_pin_git_identity
       export HCOM_LAUNCH_INFLIGHT=1
       exec "$vendor" $args "$@"
     )
@@ -194,6 +220,7 @@ _aic_launch() {
   # shellcheck disable=SC2086
   (
     _aic_scrub_identity
+    _aic_pin_git_identity
     for _aic_env_entry in "${_aic_herdr_env[@]}"; do
       export "$_aic_env_entry"
     done
