@@ -16,7 +16,13 @@ setting both `HCOM_TERMINAL=fleet` and `FLEET_PANE=<pane-id>`. The open helper
 prints that pane id before any other stdout, stamps the label, and runs hcom's
 generated script with `HERDR_AGENT=<claude|codex>` so herdr detects the wrapped
 tool; the preset retains the id so `hcom kill` can run `herdr pane close
-{pane_id}`.
+{pane_id}`. The same command pins the seat's git identity: the helper resolves
+`user.name` and `user.email` at the pane cwd the way `git config` does (the
+checkout first, then the global config) and sets `GIT_AUTHOR_*` and
+`GIT_COMMITTER_*` from them. Those outrank `git -c user.email=…`, so a seat
+that supplies its own address still commits as the checkout's owner, and every
+commit keeps its signing key and verified-email pairing. Nothing is hardcoded;
+a pane cwd with no resolvable identity is refused before the pane is touched.
 
 ## Lifecycle
 

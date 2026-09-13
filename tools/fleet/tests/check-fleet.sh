@@ -93,7 +93,7 @@ case "$1 $2" in
     if [[ ${FLEET_TEST_UNKNOWN_SPLIT:-} == 1 && ${3:-} == p-source ]]; then
       exit 1
     fi
-    printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-p-test}"'","cwd":"/tmp"}}}'
+    printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-p-test}"'","cwd":"'"${FLEET_TEST_PANE_CWD:-/tmp}"'"}}}'
     ;;
   'pane split')
     printf '%s\n' '{"result":{"pane":{"pane_id":"p-split","cwd":"/tmp"}}}'
@@ -591,21 +591,56 @@ launch_dir=$TEST_ROOT/'path with spaces'
 mkdir -p -- "$launch_dir"
 launch_script=$launch_dir/launch.sh
 printf '#!/usr/bin/env bash\n' >"$launch_script"
-: >"$FLEET_TEST_CALLS"
-first_line=$(PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test FLEET_TOOL=codex "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]')
-[[ $first_line == p-test ]] || fail "open helper did not print pane id first"
-printf -v launch_q '%q' "$launch_script"
-printf -v run_q '%q' "HERDR_AGENT=codex bash $launch_q"
-grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null || fail "open helper omitted the Codex marker"
-pass "open helper marks Codex and preserves first-line id and script quoting"
+# The open helper pins the seat's git identity from the pane cwd; the tests
+# never read the host's real config: a private global config stands in.
+global_gitconfig=$TEST_ROOT/gitconfig
+printf '[user]\n\tname = Global Owner\n\temail = owner@global.test\n' >"$global_gitconfig"
+global_identity='GIT_AUTHOR_NAME=Global\ Owner GIT_AUTHOR_EMAIL=owner@global.test GIT_COMMITTER_NAME=Global\ Owner GIT_COMMITTER_EMAIL=owner@global.test'
 
 : >"$FLEET_TEST_CALLS"
-PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test FLEET_TOOL=claude \
+first_line=$(GIT_CONFIG_GLOBAL="$global_gitconfig" GIT_CONFIG_SYSTEM=/dev/null PATH="$TEST_ROOT/bin:$PATH" \
+  FLEET_PANE=p-test FLEET_TOOL=codex "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]')
+[[ $first_line == p-test ]] || fail "open helper did not print pane id first"
+printf -v launch_q '%q' "$launch_script"
+printf -v run_q '%q' "$global_identity HERDR_AGENT=codex bash $launch_q"
+grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null || fail "open helper omitted the Codex marker or the identity pin"
+pass "open helper marks Codex, pins the global identity, preserves first-line id and script quoting"
+
+: >"$FLEET_TEST_CALLS"
+GIT_CONFIG_GLOBAL="$global_gitconfig" GIT_CONFIG_SYSTEM=/dev/null PATH="$TEST_ROOT/bin:$PATH" \
+  FLEET_PANE=p-test FLEET_TOOL=claude \
   "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [claude]' >/dev/null
-printf -v run_q '%q' "HERDR_AGENT=claude bash $launch_q"
+printf -v run_q '%q' "$global_identity HERDR_AGENT=claude bash $launch_q"
 grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null \
   || fail "open helper used the wrong Claude marker"
 pass "open helper marks Claude with the canonical tool"
+
+identity_repo=$TEST_ROOT/'identity repo'
+mkdir -p -- "$identity_repo"
+git -C "$identity_repo" init -q
+git -C "$identity_repo" config user.name 'Repo Owner'
+git -C "$identity_repo" config user.email 'owner@repo.test'
+: >"$FLEET_TEST_CALLS"
+GIT_CONFIG_GLOBAL="$global_gitconfig" GIT_CONFIG_SYSTEM=/dev/null FLEET_TEST_PANE_CWD="$identity_repo" \
+  GIT_AUTHOR_EMAIL=stale@env.test PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test FLEET_TOOL=codex \
+  "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]' >/dev/null
+printf -v run_q '%q' 'GIT_AUTHOR_NAME=Repo\ Owner GIT_AUTHOR_EMAIL=owner@repo.test GIT_COMMITTER_NAME=Repo\ Owner GIT_COMMITTER_EMAIL=owner@repo.test'" HERDR_AGENT=codex bash $launch_q"
+grep -F "herdr pane run p-test $run_q" "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "open helper did not pin the checkout's own identity over the global one"
+pass "open helper pins the pane checkout's git identity ahead of the global config"
+
+: >"$FLEET_TEST_CALLS"
+if GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null PATH="$TEST_ROOT/bin:$PATH" \
+  FLEET_PANE=p-test FLEET_TOOL=codex \
+  "$FLEET/spawn-pane.sh" "$launch_script" '◉ gate-vava [codex]' >"$TEST_ROOT/no-identity.out" 2>"$TEST_ROOT/no-identity.err"; then
+  fail "open helper launched a seat with no resolvable git identity"
+fi
+[[ ! -s $TEST_ROOT/no-identity.out ]] || fail "open helper printed a pane id before refusing on identity"
+grep -F 'no git identity resolves at /tmp' "$TEST_ROOT/no-identity.err" >/dev/null || fail "open helper did not explain the identity refusal"
+if grep -E 'herdr pane (rename|run) ' "$FLEET_TEST_CALLS" >/dev/null; then
+  fail "open helper touched the pane after refusing on identity"
+fi
+pass "open helper refuses to launch when no git identity resolves at the pane cwd"
 
 : >"$FLEET_TEST_CALLS"
 if PATH="$TEST_ROOT/bin:$PATH" FLEET_PANE=p-test \
