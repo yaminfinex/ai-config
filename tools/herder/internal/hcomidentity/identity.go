@@ -120,6 +120,33 @@ func ListContext(ctx context.Context) ([]Row, error) {
 	return Decode(out)
 }
 
+// Self reads the caller's live hcom identity using its inherited environment.
+func Self(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "hcom", "list", "self", "--json")
+	cmd.WaitDelay = 100 * time.Millisecond
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("hcom list self --json timed out: %w", ctx.Err())
+		}
+		return "", fmt.Errorf("hcom list self --json failed: %w", err)
+	}
+	return decodeSelf(out)
+}
+
+func decodeSelf(raw []byte) (string, error) {
+	var self struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &self); err != nil {
+		return "", fmt.Errorf("could not decode hcom self: %w", err)
+	}
+	if self.Name = strings.TrimSpace(self.Name); self.Name == "" {
+		return "", fmt.Errorf("could not decode hcom self: name is empty")
+	}
+	return self.Name, nil
+}
+
 // Stopped reads the newest retained lifecycle record that hcom can
 // authoritatively resolve for name. The requested name remains the public
 // identity: hcom's record prints the base name even when an exact tagged name

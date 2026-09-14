@@ -21,6 +21,7 @@ func run(t *testing.T, args ...string) (int, string, string) {
 func TestRegisterAppendsWithDefaultsAndEchoesJSON(t *testing.T) {
 	state := t.TempDir()
 	t.Setenv("HERDER_STATE_DIR", state)
+	t.Setenv("HCOM_PROCESS_ID", "")
 	t.Setenv("HCOM_NAME", "impl-lima")
 	code, stdout, stderr := run(t, "launch-requested", "--tool", "codex", "--tag", "impl", "--workspace", "w80", "--model", "gpt-6", "--json")
 	if code != 0 || stderr != "" {

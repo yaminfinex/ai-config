@@ -87,6 +87,8 @@ removes it. The low-level equivalent is herder register assign --name AGENT ….
 Later assignment events win by event time. Exit 0 appended or replayed, 2 usage,
 3 store unavailable.
 
+--by defaults to the seat's live hcom name (` + "`hcom list self`" + `) when HCOM_PROCESS_ID is set, else $HCOM_NAME, else ${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME, else $USER.
+
 Examples:
   herder assign impl-geni --manager ziru
   herder assign impl-geni --manager human
