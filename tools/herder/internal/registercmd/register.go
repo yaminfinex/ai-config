@@ -1,6 +1,7 @@
 // Package registercmd is `herder register <kind> …`: one append to the agent
 // store. The per-kind flag contract is agentstore.SpecFor; this package only
-// parses flags into an Event and lets Append validate. It never talks to hcom or herdr and never blocks on anything but the
+// parses flags into an Event and lets Append validate. It asks hcom only for
+// its own name and never blocks on anything but that bounded lookup and the
 // store's bounded lock. Exit 0 append (or identical replay), 2 usage, 3 store
 // unavailable.
 package registercmd
@@ -91,9 +92,8 @@ func usage() string {
 	b.WriteString("herder register — record one lifecycle fact in the agent store.\n\n")
 	b.WriteString("Usage:\n  herder register <kind> [--name NAME] [--by WHO] [--at RFC3339] [--id UUID] [--json] …kind flags\n\n")
 	b.WriteString("Appends exactly one line to $HERDER_STATE_DIR/agents/events.jsonl under a bounded\n")
-	b.WriteString("file lock. Never talks to hcom or herdr; nothing consults the store before acting.\n")
-	b.WriteString("--by defaults best-effort to $HCOM_NAME, else ${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME, else $USER.\n")
-	b.WriteString("Fleet wrappers pass --by from hcom self; the env fallback can be stale on a renamed or resumed seat.\n")
+	b.WriteString("file lock. It asks hcom only for its own name, never for a gate; nothing consults the store before acting.\n")
+	b.WriteString("--by defaults to the seat's live hcom name (`hcom list self`) when HCOM_PROCESS_ID is set, else $HCOM_NAME, else ${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME, else $USER.\n")
 	b.WriteString("--id makes a retry idempotent (same receipt,\n")
 	b.WriteString("no second line). Exit 0 appended or replayed, 2 usage, 3 store unavailable.\n\nKinds:\n")
 	for _, kind := range agentstore.Kinds {

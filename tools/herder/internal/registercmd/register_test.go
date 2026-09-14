@@ -13,6 +13,7 @@ import (
 
 func run(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
+	t.Setenv("HCOM_PROCESS_ID", "")
 	var out, errBuf bytes.Buffer
 	code := Run(args, &out, &errBuf)
 	return code, out.String(), errBuf.String()

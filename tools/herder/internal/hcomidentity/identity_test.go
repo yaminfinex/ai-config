@@ -162,6 +162,16 @@ func TestListContextBoundsHungHcom(t *testing.T) {
 	}
 }
 
+func TestDecodeSelf(t *testing.T) {
+	name, err := decodeSelf([]byte(`{"name":"ziru","status":"active"}`))
+	if err != nil || name != "ziru" {
+		t.Fatalf("decodeSelf() = %q, %v", name, err)
+	}
+	if _, err := decodeSelf([]byte(`{}`)); err == nil {
+		t.Fatal("decodeSelf accepted an empty object")
+	}
+}
+
 func TestDecodeCreatedAtNumericCreatedAliasAndNeither(t *testing.T) {
 	cases := map[string]time.Time{
 		"roster-created_at.json": time.Unix(1788933496, 0).UTC(),

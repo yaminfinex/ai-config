@@ -67,12 +67,12 @@ pass `--by` and `--by-kind=agent` from `hcom list self --json` when the process
 is an hcom seat. Requested placement also accepts `worktree_branch` with its
 required `repo`.
 
-Register's best-effort `by` fallback precedence is `$HCOM_NAME`, then the seat
-environment as
+Register's best-effort `by` precedence is the live hcom name when
+`HCOM_PROCESS_ID` is set, then `$HCOM_NAME`, then
 `${HCOM_TAG:+$HCOM_TAG-}$HCOM_INSTANCE_NAME`, then `$USER`, then `unknown`.
-The fleet wrappers prefer hcom self because the environment fallback can be
-stale on a renamed or resumed seat. The hcom choices are agents; `$USER` is a
-user. Empty values are skipped.
+For a tagged seat, the hcom path records the base name (for example, `napa`),
+which is what the fleet wrappers already write. The hcom choices are agents;
+`$USER` is a user. Empty values are skipped.
 
 The serve mirrors hcom life events (`created`, `ready`, `stopped`, and
 `batch_launched`) through the same append API with `by_kind=mirror`. It catches

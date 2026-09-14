@@ -2,6 +2,7 @@
 package eventcmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
+	"ai-config/tools/herder/internal/hcomidentity"
 )
 
 // Parse builds one validated event from a kind's agent-store flags. Commands
@@ -116,6 +118,13 @@ func Parse(kind string, args []string) (agentstore.Event, bool, error) {
 
 // DefaultBy returns the best available actor for event-producing commands.
 func DefaultBy() (string, string) {
+	if strings.TrimSpace(os.Getenv("HCOM_PROCESS_ID")) != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if name, err := hcomidentity.Self(ctx); err == nil {
+			return name, "agent"
+		}
+	}
 	if name := strings.TrimSpace(os.Getenv("HCOM_NAME")); name != "" {
 		return name, "agent"
 	}
