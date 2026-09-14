@@ -25,7 +25,7 @@ func TestParseSharedEventFlags(t *testing.T) {
 
 func TestDefaultBy(t *testing.T) {
 	t.Run("live self name", func(t *testing.T) {
-		calls := installFakeHcom(t, "printf '{\"name\":\"ziru\"}\\n'")
+		calls := installFakeHcom(t, "[ -n \"$HCOM_PROCESS_ID\" ] || exit 1; printf '{\"name\":\"ziru\"}\\n'")
 		t.Setenv("HCOM_NAME", "")
 		t.Setenv("HCOM_TAG", "")
 		t.Setenv("HCOM_PROCESS_ID", "process")
