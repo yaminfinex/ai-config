@@ -658,6 +658,7 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .markdown pre { margin: 7px 0; }
 .markdown pre code { padding: 0; border: 0; background: transparent; }
 .markdown table { display: block; max-width: 100%; overflow-x: auto; }
+.transcript .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 900px; }
 .transcript :is(.entry-card, .entry-detail, details) { min-width: 0; max-width: 100%; overflow: hidden; }
 .transcript :is(.entry-card, .assistant-entry) header { min-width: 0; overflow: hidden; }
 .transcript :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, code), .transcript .system-chip > div { overflow-wrap: anywhere; }

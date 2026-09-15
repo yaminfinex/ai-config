@@ -27,15 +27,13 @@ test('transcript wide content scrolls without wrapping or widening the pane', ()
   assert.match(ruleFor('.turn p'), /white-space:\s*pre-wrap\s*;/)
 })
 
-test('transcript content is not capped while the human entry keeps its deliberate width', () => {
-  const cappedTranscriptRules = [...styles.matchAll(/(?:^|\n)([^{}\n]+)\s*\{([^{}]*)\}/g)]
-    .filter(([, selectors, declarations]) =>
-      selectors.split(',').some(selector => {
-        const trimmed = selector.trim()
-        return trimmed.startsWith('.transcript') || trimmed.startsWith('.assistant-')
-      }) && /900px/.test(declarations))
-    .map(([, selectors]) => selectors.trim())
+test('transcript prose keeps its measure while containers and wide content stay uncapped', () => {
+  const prose = ruleFor(
+    '.transcript .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6)',
+  )
+  assert.match(prose, /max-width:\s*900px\s*;/)
 
-  assert.deepEqual(cappedTranscriptRules, [])
+  assert.doesNotMatch(ruleFor('.transcript > *'), /max-width:/)
+  assert.doesNotMatch(ruleFor('.assistant-fenced-content'), /max-width:/)
   assert.match(ruleFor('.human-entry'), /max-width:\s*790px\s*;/)
 })
