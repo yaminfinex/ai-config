@@ -12,11 +12,13 @@ import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
-import { apiProblem, assignAgent, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
+import { apiProblem, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
 import { beginRename, editingAt, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
 import { groupHeaderTooltip, openGroupTooltip } from './groupDropModel'
 import { addPendingGroup, realGroupLabels, remainingPendingGroups, removePendingGroup, validateGroupName } from './pendingGroupsModel'
 import { dropAssignment, planSidebarDrop } from './reparentModel'
+import { useWorkspaceActionsContext } from '../workspace/workspaceContext.tsx'
+import { useAgentRowMenu } from '../workspace/DockTabMenu.tsx'
 
 const emptyExpandedItems: string[] = []
 
@@ -41,6 +43,8 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
   knownManagerItems: string[] | null
   onKnownManagerItems: (items: string[]) => void
 }) {
+  const workspaceActions = useWorkspaceActionsContext()
+  const agentRowMenu = useAgentRowMenu()
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const [renaming, setRenaming] = useState<RenameState | null>(null)
   const [assignmentProblem, setAssignmentProblem] = useState<LifecycleProblem | null>(null)
@@ -66,11 +70,8 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
 
   const submitAssignment = async (name: string, assignment: AssignmentPatch) => {
     setAssignmentProblem(null)
-    try {
-      await assignAgent(name, assignment)
-    } catch (error) {
-      setAssignmentProblem(mutationProblem(error))
-    }
+    const result = await workspaceActions.assignFleetAgent(name, assignment)
+    if (!result.ok) setAssignmentProblem(result.problem)
   }
 
   const startRename = (name: string, nodeID: string, title?: string) => {
@@ -173,6 +174,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
 
   const sidebarProblem = assignmentProblem ?? renaming?.problem
   return <div className="fleet-sidebar-view">
+    {agentRowMenu.menu}
     {sidebarProblem && <div className="sidebar-problem" role="alert">{sidebarProblem.readOnly ?? sidebarProblem.banner ?? sidebarProblem.inline}</div>}
     {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps(view === 'placement' ? 'Workspaces and agents' : view === 'groups' ? 'Groups' : 'Supervision tree')}
       className={`fleet-tree panel-tree fleet-tree-${view}${dropTarget === 'tree-root' ? ' drop-target' : ''}`}
@@ -245,6 +247,9 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
               if (dropAssignment(view, dragSource, item.getId(), nodes, submitAssignment)) event.preventDefault()
             },
             onFocus: () => item.setFocused(),
+            onContextMenu: pane?.agent && pane.agent !== '-' && pane.bus_status !== '-'
+              ? (event) => agentRowMenu.open(event, pane.agent)
+              : undefined,
             onClick: () => { item.setFocused(); setSelectedItems([item.getId()]); item.primaryAction() },
             onClickCapture: (event) => {
               if (!event.altKey || (event.target as Element).closest(treeClickGuardSelector)) return

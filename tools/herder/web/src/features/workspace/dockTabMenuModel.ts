@@ -3,8 +3,9 @@ import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 export type DockTabMenuItem =
   | { id: string, label: string, kind: 'space' }
   | { id: 'new', label: 'Send to new space', kind: 'new' }
+  | { id: 'reassign', label: 'Reassign…', kind: 'reassign', subject: string }
 
-export function dockTabMenuItems(spaces: SpaceDefinition[], activeSpaceID: string | null): DockTabMenuItem[] {
+export function dockTabMenuItems(spaces: SpaceDefinition[], activeSpaceID: string | null, subject?: string): DockTabMenuItem[] {
   return [
     ...spaces.flatMap((space): DockTabMenuItem[] => space.id === activeSpaceID ? [] : [{
       id: space.id,
@@ -12,6 +13,7 @@ export function dockTabMenuItems(spaces: SpaceDefinition[], activeSpaceID: strin
       kind: 'space',
     }]),
     { id: 'new', label: 'Send to new space', kind: 'new' },
+    ...subject ? [{ id: 'reassign' as const, label: 'Reassign…' as const, kind: 'reassign' as const, subject }] : [],
   ]
 }
 

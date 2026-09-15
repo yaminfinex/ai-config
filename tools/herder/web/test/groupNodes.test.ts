@@ -152,6 +152,25 @@ test('a reparent cycle among members is finite and every member is still homed',
   assert.deepEqual(groupMembers(nodes, 'group:g').sort(), ['a', 'b'])
 })
 
+test('Task subagents inherit their owning top-level agent group and appear once beneath the owner', () => {
+  const groupedOwner = agent('owner', { manager_state: 'operator', group: 'build', subagents: [
+    agent('owner_task_1', { parent_agent: 'owner', created_at: '2026-09-02T00:00:00Z' }),
+  ] })
+  const grouped = buildGroupNodes({ workspaces: [], unplaced: [groupedOwner] })
+  assert.deepEqual(grouped.get('group:build')?.children, ['group:build/agent:owner'])
+  assert.deepEqual(grouped.get('group:build/agent:owner')?.children, ['group:build/agent:owner_task_1'])
+  assert.equal(grouped.has('group:/agent:owner_task_1'), false)
+  assert.equal([...grouped.values()].filter((node) => node.pane?.agent === 'owner_task_1').length, 1)
+
+  const ungroupedOwner = agent('solo', { manager_state: 'operator', subagents: [
+    agent('solo_task_1', { parent_agent: 'solo', created_at: '2026-09-02T00:00:00Z' }),
+  ] })
+  const ungrouped = buildGroupNodes({ workspaces: [], unplaced: [ungroupedOwner] })
+  assert.deepEqual(ungrouped.get(ungroupedID)?.children, ['group:/agent:solo'])
+  assert.deepEqual(ungrouped.get('group:/agent:solo')?.children, ['group:/agent:solo_task_1'])
+  assert.equal([...ungrouped.values()].filter((node) => node.pane?.agent === 'solo_task_1').length, 1)
+})
+
 test('the toggle offers the groups view and the sidebar renders the header action and drop class', () => {
   const toggle = readFileSync(new URL('../src/features/sidebar/FleetViewToggle.tsx', import.meta.url), 'utf8')
   assert.match(toggle, /view: 'groups', label: 'groups', title: 'Groups: who works on what'/)
@@ -162,5 +181,5 @@ test('the toggle offers the groups view and the sidebar renders the header actio
   // One drag source and one drop handler per row; the drop plan is the model's.
   assert.equal((sidebar.match(/onDragStart:/g) ?? []).length, 1)
   assert.equal((sidebar.match(/onDrop:/g) ?? []).length, 1)
-  assert.equal((sidebar.match(/assignAgent\(/g) ?? []).length, 1)
+  assert.equal((sidebar.match(/assignFleetAgent\(/g) ?? []).length, 1)
 })

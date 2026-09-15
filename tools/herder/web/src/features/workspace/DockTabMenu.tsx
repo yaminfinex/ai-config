@@ -12,11 +12,14 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
   const [position, setPosition] = useState<MenuPosition | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const focusReturn = useRef<HTMLElement | null>(null)
+  const sourceGuard = useRef(0)
   const close = useCallback((restore = true) => {
+    sourceGuard.current += 1
     setPosition(null)
     if (restore) window.requestAnimationFrame(() => focusReturn.current?.isConnected && focusReturn.current.focus())
   }, [])
   const open = useCallback((next: MenuPosition, returnTo: HTMLElement | null) => {
+    sourceGuard.current += 1
     focusReturn.current = returnTo
     setPosition({
       x: Math.max(4, Math.min(next.x, window.innerWidth - 224)),
@@ -40,12 +43,15 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
 
   useEffect(() => {
     if (!position) return
+    const source = sourceGuard.current
     menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
     const dismiss = (event: Event) => {
+      if (source !== sourceGuard.current) return
       if (event.type === 'pointerdown' && menuRef.current?.contains(event.target as Node)) return
       close(event.type !== 'pointerdown')
     }
     const onKeyDown = (event: KeyboardEvent) => {
+      if (source !== sourceGuard.current) return
       const items = [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
       const action = dockTabMenuKeyAction({
         key: event.key,
@@ -63,6 +69,7 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
     // Focus landing anywhere outside the menu (the quick-open palette taking its input, for one)
     // closes it without restoring focus, so the new owner keeps it.
     const onFocusIn = (event: FocusEvent) => {
+      if (source !== sourceGuard.current) return
       if (dockTabMenuFocusAction(Boolean(menuRef.current?.contains(event.target as Node))) === 'dismiss') close(false)
     }
     document.addEventListener('focusin', onFocusIn, true)
@@ -76,6 +83,7 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
       document.removeEventListener('dragstart', dismiss, true)
       document.removeEventListener('scroll', dismiss, true)
       document.removeEventListener('keydown', onKeyDown, true)
+      if (source === sourceGuard.current) sourceGuard.current += 1
     }
   }, [close, position])
   useLayoutEffect(() => {
@@ -96,14 +104,103 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
 
   const menu = position ? createPortal(<div ref={menuRef} className="dock-tab-menu" role="menu"
     aria-label="Send pane to space" style={{ left: position.x, top: position.y }}>
-    {dockTabMenuItems(data.spaces, data.activeSpaceID).map((item) => <button type="button" role="menuitem" key={`${item.kind}:${item.id}`}
+    {dockTabMenuItems(data.spaces, data.activeSpaceID, params.kind === 'agent' ? params.name : undefined).map((item) => <button type="button" role="menuitem" key={`${item.kind}:${item.id}`}
       onClick={() => {
-        const sent = item.kind === 'space'
-          ? actions.sendPanelToSpace(sourceID, params, item.id)
-          : actions.sendPanelToNewSpace(sourceID, params)
+        if (item.kind === 'reassign') {
+          close(false)
+          actions.showQuickOpen(undefined, { kind: 'reassign', subject: item.subject })
+          return
+        }
+        const sent = item.kind === 'space' ? actions.sendPanelToSpace(sourceID, params, item.id) : actions.sendPanelToNewSpace(sourceID, params)
         close(!sent)
       }}>{item.label}</button>)}
   </div>, document.body) : null
 
   return { onContextMenu, menu }
+}
+
+export function useAgentRowMenu() {
+  const actions = useWorkspaceActionsContext()
+  const [request, setRequest] = useState<{ position: MenuPosition, subject: string, returnTo: HTMLElement | null } | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const sourceGuard = useRef(0)
+  const close = useCallback((restore = true) => {
+    sourceGuard.current += 1
+    setRequest((current) => {
+      if (restore && current?.returnTo) window.requestAnimationFrame(() => current.returnTo?.isConnected && current.returnTo.focus())
+      return null
+    })
+  }, [])
+  const open = useCallback((event: MouseEvent<HTMLElement>, subject: string) => {
+    event.preventDefault()
+    event.stopPropagation()
+    sourceGuard.current += 1
+    setRequest({
+      subject,
+      returnTo: event.currentTarget,
+      position: {
+        x: Math.max(4, Math.min(event.clientX, window.innerWidth - 224)),
+        y: Math.max(4, Math.min(event.clientY, window.innerHeight - 48)),
+      },
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!request) return
+    const source = sourceGuard.current
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
+    const guarded = () => source === sourceGuard.current
+    const dismiss = (event: Event) => {
+      if (!guarded()) return
+      if (event.type === 'pointerdown' && menuRef.current?.contains(event.target as Node)) return
+      close(event.type !== 'pointerdown')
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!guarded()) return
+      const items = [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
+      const action = dockTabMenuKeyAction({ key: event.key, insideMenu: Boolean(menuRef.current?.contains(event.target as Node)), current: items.indexOf(document.activeElement as HTMLElement), count: items.length })
+      if (!action) return
+      if (action.kind === 'dismiss') { close(false); return }
+      event.preventDefault()
+      if (action.kind === 'close') { close(); return }
+      event.stopPropagation()
+      items[action.index]?.focus()
+    }
+    const onFocusIn = (event: FocusEvent) => {
+      if (!guarded()) return
+      if (dockTabMenuFocusAction(Boolean(menuRef.current?.contains(event.target as Node))) === 'dismiss') close(false)
+    }
+    document.addEventListener('focusin', onFocusIn, true)
+    document.addEventListener('pointerdown', dismiss, true)
+    document.addEventListener('dragstart', dismiss, true)
+    document.addEventListener('scroll', dismiss, true)
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      document.removeEventListener('focusin', onFocusIn, true)
+      document.removeEventListener('pointerdown', dismiss, true)
+      document.removeEventListener('dragstart', dismiss, true)
+      document.removeEventListener('scroll', dismiss, true)
+      document.removeEventListener('keydown', onKeyDown, true)
+      if (source === sourceGuard.current) sourceGuard.current += 1
+    }
+  }, [close, request])
+  useLayoutEffect(() => {
+    if (!request || !menuRef.current) return
+    const rect = menuRef.current.getBoundingClientRect()
+    const position = {
+      x: Math.max(4, Math.min(request.position.x, window.innerWidth - rect.width - 4)),
+      y: Math.max(4, Math.min(request.position.y, window.innerHeight - rect.height - 4)),
+    }
+    if (position.x !== request.position.x || position.y !== request.position.y) setRequest({ ...request, position })
+  }, [request])
+
+  const menu = request ? createPortal(<div ref={menuRef} className="dock-tab-menu" role="menu" aria-label={`Actions for ${request.subject}`}
+    style={{ left: request.position.x, top: request.position.y }}>
+    <button type="button" role="menuitem" onClick={() => {
+      const subject = request.subject
+      close(false)
+      actions.showQuickOpen(undefined, { kind: 'reassign', subject })
+    }}>Reassign…</button>
+  </div>, document.body) : null
+  return { open, menu }
 }

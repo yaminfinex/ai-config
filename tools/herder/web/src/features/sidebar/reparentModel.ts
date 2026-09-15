@@ -1,24 +1,42 @@
 import type { SidebarNode } from './sidebarNodes.ts'
 import type { FleetView } from '../layout/shellPreferences.ts'
 import type { AssignmentPatch } from '../../api/client.ts'
+import type { Row } from '../../types.ts'
 import { planGroupDrop } from './groupDropModel.ts'
 
 export type ReparentDrop = { name: string, assignment: { manager: string } }
 export type DropRefusal = 'placement view' | 'source is not a live agent' | 'self' | 'descendant' | 'tombstone' | 'terminal' | 'target is not a live agent'
 
+export type ReparentFacts = Pick<Row, 'agent' | 'bus_status' | 'manager_state'> & { kind: SidebarNode['kind'] }
+
+export function reparentRefusal(source: ReparentFacts | undefined, target: ReparentFacts | null | undefined, isDescendant: boolean): DropRefusal | null {
+  if (!source || source.agent === '-' || source.bus_status === '-') return 'source is not a live agent'
+  if (target === null) return null
+  if (!target) return 'target is not a live agent'
+  if (target.agent === source.agent) return 'self'
+  if (target.kind === 'tombstone') return 'tombstone'
+  if (target.kind === 'pane' && target.agent === '-') return 'terminal'
+  if (target.agent === '-' || target.bus_status === '-' || target.manager_state === 'ended') return 'target is not a live agent'
+  if (isDescendant) return 'descendant'
+  return null
+}
+
 export function reparentDrop(view: 'placement' | 'supervision', sourceID: string | null, targetID: string | null, nodes: Map<string, SidebarNode>): ReparentDrop | { refusal: DropRefusal } {
   if (view !== 'supervision') return { refusal: 'placement view' }
   if (sourceID === null) return { refusal: 'source is not a live agent' }
   const source = nodes.get(sourceID)
-  if (!source?.pane || source.pane.agent === '-' || source.pane.bus_status === '-') return { refusal: 'source is not a live agent' }
+  const sourceFacts = source?.pane ? { kind: source.kind, agent: source.pane.agent, bus_status: source.pane.bus_status, manager_state: source.pane.manager_state } : undefined
+  const sourceRefusal = reparentRefusal(sourceFacts, null, false)
+  if (sourceRefusal) return { refusal: sourceRefusal }
+  if (!source?.pane) return { refusal: 'source is not a live agent' }
   if (targetID === null || targetID === 'tree-root') return { name: source.pane.agent, assignment: { manager: 'human' } }
-  if (targetID === sourceID) return { refusal: 'self' }
   const target = nodes.get(targetID)
-  if (!target) return { refusal: 'target is not a live agent' }
-  if (target.kind === 'tombstone') return { refusal: 'tombstone' }
-  if (target.kind === 'pane' && target.pane?.agent === '-') return { refusal: 'terminal' }
-  if (!target.pane || target.pane.agent === '-' || target.pane.bus_status === '-' || target.pane.manager_state === 'ended') return { refusal: 'target is not a live agent' }
-  if (descendants(sourceID, nodes).has(targetID)) return { refusal: 'descendant' }
+  const targetFacts = target?.pane
+    ? { kind: target.kind, agent: target.pane.agent, bus_status: target.pane.bus_status, manager_state: target.pane.manager_state }
+    : target ? { kind: target.kind, agent: target.name, bus_status: '-', manager_state: target.kind === 'tombstone' ? 'ended' as const : undefined } : undefined
+  const refusal = reparentRefusal(sourceFacts, targetFacts, descendants(sourceID, nodes).has(targetID))
+  if (refusal) return { refusal }
+  if (!target?.pane) return { refusal: 'target is not a live agent' }
   return { name: source.pane.agent, assignment: { manager: target.pane.agent } }
 }
 

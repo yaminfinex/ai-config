@@ -1,15 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { queryKeys, resolveFiles } from '../../api/client'
-import type { FileCandidate, FileTarget, FolderTarget } from '../../types'
+import type { Board, FileCandidate, FileTarget, FolderTarget } from '../../types'
 import { keyboardCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
-import { quickOpenActionRows, quickOpenEnterTarget, quickOpenInitialSelection, quickOpenMoveSelection, quickOpenSelectedIndex, type QuickOpenActionRow, type QuickOpenLookup } from './quickOpenModel.ts'
+import { quickOpenActionRows, quickOpenEnterTarget, quickOpenInitialSelection, quickOpenMoveSelection, quickOpenRowKey, quickOpenSelectedIndex, type QuickOpenActionRow, type QuickOpenLookup, type QuickOpenMode } from './quickOpenModel.ts'
 import { useNotes } from '../notes/NotesProvider.tsx'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 import { useWorkspaceActionsContext, useWorkspaceData } from '../workspace/workspaceContext.tsx'
+import { flattenedBoardRows, reassignCandidates, reassignDescendants } from '../sidebar/reassignModel.ts'
 
 const QUICK_OPEN_RESULT_LIMIT = 100
 
@@ -22,15 +23,18 @@ function useDebounced(value: string, delay = 120) {
   return debounced
 }
 
-export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents, atSpaceCap, onClose, onOpenFile, onOpenFolder, onOpenAgent, onSwitchSpace, onCreateSpace }: {
+export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpaceID, agents, atSpaceCap, onClose, onMode, onOpenFile, onOpenFolder, onOpenAgent, onSwitchSpace, onCreateSpace }: {
   open: boolean
+  mode: QuickOpenMode
   agent?: string
   groupID?: string
+  board?: Board
   spaces: SpaceDefinition[]
   activeSpaceID: string | null
   agents: string[]
   atSpaceCap: boolean
   onClose: () => void
+  onMode: (mode: QuickOpenMode) => void
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
   onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void
   onOpenAgent: (name: string) => void
@@ -43,27 +47,38 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
   const [query, setQuery] = useState('')
   // The selection is a row identity (see quickOpenSelectionKeys); its index is derived per render.
   const [selection, setSelection] = useState<string | null>(null)
+  const [assignmentProblem, setAssignmentProblem] = useState('')
+  const assignmentSource = useRef(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
-  const debounced = useDebounced(open ? query.trim() : '')
+  const normalMode = mode.kind === 'normal'
+  const debounced = useDebounced(open && normalMode ? query.trim() : '')
   const resolution = useQuery({
     queryKey: queryKeys.resolve(debounced, agent),
     queryFn: ({ signal }) => resolveFiles(debounced, agent, fetch, signal),
-    enabled: open && Boolean(query.trim()) && query.trim() === debounced,
+    enabled: open && normalMode && Boolean(query.trim()) && query.trim() === debounced,
     retry: false,
     gcTime: 30_000,
   })
 
-  const actions = quickOpenActionRows(query, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID)
+  const rows = useMemo(() => flattenedBoardRows(board), [board])
+  const actions: QuickOpenActionRow[] = normalMode
+    ? quickOpenActionRows(query, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID, agent)
+    : reassignCandidates(mode.subject, rows, (subject) => reassignDescendants(subject, rows), query)
   const settled = query.trim() === debounced
   const settledResolution = settled ? resolution.data : undefined
-  const candidates = settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? []
+  const candidates = normalMode ? settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? [] : []
   const fileKeys = candidates.map((candidate) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`)
   const activeIndex = quickOpenSelectedIndex(actions, fileKeys, selection)
   useEffect(() => {
     setQuery('')
-    setSelection(open ? quickOpenInitialSelection(quickOpenActionRows('', spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID), '') : null)
+    setAssignmentProblem('')
+    assignmentSource.current += 1
+    const initialRows: QuickOpenActionRow[] = mode.kind === 'normal'
+      ? quickOpenActionRows('', spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID, agent)
+      : reassignCandidates(mode.subject, rows, (subject) => reassignDescendants(subject, rows), '')
+    setSelection(open ? quickOpenInitialSelection(initialRows, '') : null)
     if (!open) return
     restoreFocus.current = document.activeElement as HTMLElement | null
     const frame = requestAnimationFrame(() => inputRef.current?.focus())
@@ -71,7 +86,7 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
       cancelAnimationFrame(frame)
       restoreFocus.current?.focus()
     }
-  }, [open])
+  }, [open, mode])
 
   // The selection resets only on a real query edit (see onChange); the debounce settling never touches it.
   useEffect(() => {
@@ -88,7 +103,7 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
   const leadingCount = actions.filter((row) => row.kind !== 'note').length
   const noteRow = actions.map((row, index) => ({ row, index })).find(({ row }) => row.kind === 'note')
   const noteIndex = noteRow ? leadingCount + candidates.length : -1
-  const chooseAction = (row: QuickOpenActionRow) => {
+  const chooseAction = async (row: QuickOpenActionRow) => {
     let chosen = true
     if (row.kind === 'space') chosen = row.id === activeSpaceID || onSwitchSpace(row.id)
     else if (row.kind === 'agent') onOpenAgent(row.name)
@@ -98,19 +113,39 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
       notes.announce(result.ok ? 'Saved a note in unassigned.' : result.reason)
       chosen = result.ok
     } else if (row.kind === 'send-space') chosen = Boolean(workspaceData.activePanel && workspaceActions.sendPanelToSpace(workspaceData.activePanel.id, workspaceData.activePanel.params, row.id))
-    else chosen = Boolean(workspaceData.activePanel && workspaceActions.sendPanelToNewSpace(workspaceData.activePanel.id, workspaceData.activePanel.params))
+    else if (row.kind === 'send-new') chosen = Boolean(workspaceData.activePanel && workspaceActions.sendPanelToNewSpace(workspaceData.activePanel.id, workspaceData.activePanel.params))
+    else if (row.kind === 'reassign-action') {
+      onMode({ kind: 'reassign', subject: row.subject })
+      chosen = false
+    } else {
+      setAssignmentProblem('')
+      const source = ++assignmentSource.current
+      const result = await workspaceActions.assignFleetAgent(row.subject, { manager: row.target })
+      if (source !== assignmentSource.current) return
+      if (!result.ok) {
+        setAssignmentProblem(result.problem.readOnly ?? result.problem.banner ?? result.problem.inline ?? 'The agent could not be reassigned.')
+        return
+      }
+      notes.announce(`Reassigned ${row.subject} to ${row.target}`)
+    }
     if (chosen) onClose()
   }
   const spaceActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'space' || row.kind === 'create')
   const sendActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'send-space' || row.kind === 'send-new')
   const agentActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'agent')
+  const paneActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'reassign-action')
+  const reassignActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'reassign')
   return <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="quick-open" role="dialog" aria-modal="true" aria-label="Quick open spaces, agents, files, or folders">
-      <header><strong>Quick open</strong><span>{agent ? `prioritizing ${agent}` : 'all roots'}</span><kbd>Esc</kbd></header>
-      <input ref={inputRef} value={query} aria-label="Find a space, agent, file, or folder" placeholder="Type a space, agent, file, or folder…" autoComplete="off" spellCheck={false}
+    <section className="quick-open" role="dialog" aria-modal="true" aria-label={normalMode ? 'Quick open spaces, agents, files, or folders' : `Reassign ${mode.subject} to…`}>
+      <header><strong>{normalMode ? 'Quick open' : `Reassign ${mode.subject} to…`}</strong><span>{normalMode ? agent ? `prioritizing ${agent}` : 'all roots' : 'name or title'}</span><kbd>Esc</kbd></header>
+      <input ref={inputRef} value={query} aria-label={normalMode ? 'Find a space, agent, file, or folder' : 'Find a new parent by name or title'} placeholder={normalMode ? 'Type a space, agent, file, or folder…' : 'Type a name or title…'} autoComplete="off" spellCheck={false}
         onChange={(event) => {
           setQuery(event.target.value)
-          setSelection(quickOpenInitialSelection(quickOpenActionRows(event.target.value, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID), event.target.value))
+          setAssignmentProblem('')
+          const nextRows: QuickOpenActionRow[] = normalMode
+            ? quickOpenActionRows(event.target.value, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID, agent)
+            : reassignCandidates(mode.subject, rows, (subject) => reassignDescendants(subject, rows), event.target.value)
+          setSelection(normalMode ? quickOpenInitialSelection(nextRows, event.target.value) : nextRows[0] ? quickOpenRowKey(nextRows[0]) : null)
         }} onKeyDown={(event) => {
           if (event.key === 'Escape') onClose()
           else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
@@ -122,12 +157,20 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
             // The lookup is pending until the query settles and the resolve for it has answered; a settled error counts as no match.
             const lookup: QuickOpenLookup = !query.trim() || (settled && (settledResolution || resolution.error)) ? (candidate ? 'available' : 'none') : 'pending'
             const target = quickOpenEnterTarget(actions, query, activeIndex, lookup, candidates.length)
-            if (target?.kind === 'action') chooseAction(actions[target.index])
+            if (target?.kind === 'action') void chooseAction(actions[target.index])
             else if (target?.kind === 'file' && candidate) choose(candidate, placementFromModifiers(event, groupID))
           } else return
           event.preventDefault()
         }} />
       <div className="quick-open-results" ref={resultsRef}>
+        {assignmentProblem && <p className="quick-open-problem" role="alert">{assignmentProblem}</p>}
+        {reassignActions.length > 0 && <section className="quick-open-section" aria-label="New parent" role="listbox">
+          {reassignActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}
+            className={activeIndex === index ? 'active' : ''} key={row.kind === 'reassign' ? row.target : index}
+            onMouseDown={(event) => event.preventDefault()} onClick={() => { void chooseAction(row) }}>
+            <span>{row.label}</span>{row.kind === 'reassign' && row.title && <span className="quick-open-secondary">{row.title}</span>}
+          </button>)}
+        </section>}
         {spaceActions.length > 0 && <section className="quick-open-section" aria-label="Spaces"><strong>Spaces</strong>
           {spaceActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}
             className={activeIndex === index ? 'active' : ''} key={`${row.kind}:${row.kind === 'space' ? row.id : row.kind === 'create' ? row.name : row.label}`}
@@ -138,23 +181,28 @@ export function QuickOpen({ open, agent, groupID, spaces, activeSpaceID, agents,
             className={activeIndex === index ? 'active' : ''} key={`${row.kind}:${row.kind === 'send-space' ? row.id : 'new'}`}
             onMouseDown={(event) => event.preventDefault()} onClick={() => chooseAction(row)}>{row.label}</button>)}
         </section>}
+        {paneActions.length > 0 && <section className="quick-open-section" aria-label="Agent actions"><strong>Agent actions</strong>
+          {paneActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}
+            className={activeIndex === index ? 'active' : ''} key={row.kind === 'reassign-action' ? row.subject : index}
+            onMouseDown={(event) => event.preventDefault()} onClick={() => { void chooseAction(row) }}>{row.label}</button>)}
+        </section>}
         {agentActions.length > 0 && <section className="quick-open-section" aria-label="Live agents"><strong>Live agents</strong>
           {agentActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}
             className={activeIndex === index ? 'active' : ''} key={`agent:${row.kind === 'agent' ? row.name : index}`}
             onMouseDown={(event) => event.preventDefault()} onClick={() => chooseAction(row)}>{row.label}</button>)}
         </section>}
-        {query.trim() && !settled && <p className="file-results-empty">Searching…</p>}
-        {settled && resolution.isPending && debounced && <p className="file-results-empty">Searching current roots…</p>}
-        {settled && resolution.error && <p className="file-results-error" role="alert">{resolution.error.message}</p>}
-        {settledResolution && <div className="quick-open-section-label">Files and folders</div>}
-        <FileResults resolution={settledResolution} activeIndex={activeIndex - leadingCount} onSelect={(candidate, event) => choose(candidate, placementFromModifiers(event, groupID))} limit={QUICK_OPEN_RESULT_LIMIT} />
+        {normalMode && query.trim() && !settled && <p className="file-results-empty">Searching…</p>}
+        {normalMode && settled && resolution.isPending && debounced && <p className="file-results-empty">Searching current roots…</p>}
+        {normalMode && settled && resolution.error && <p className="file-results-error" role="alert">{resolution.error.message}</p>}
+        {normalMode && settledResolution && <div className="quick-open-section-label">Files and folders</div>}
+        {normalMode && <FileResults resolution={settledResolution} activeIndex={activeIndex - leadingCount} onSelect={(candidate, event) => choose(candidate, placementFromModifiers(event, groupID))} limit={QUICK_OPEN_RESULT_LIMIT} />}
         {noteRow && <section className="quick-open-section" aria-label="Notes"><strong>Notes</strong>
           <button type="button" role="option" aria-selected={activeIndex === noteIndex}
             className={activeIndex === noteIndex ? 'active' : ''}
             onMouseDown={(event) => event.preventDefault()} onClick={() => chooseAction(noteRow.row)}>{noteRow.row.label}</button>
         </section>}
       </div>
-      <footer><span>↑↓ choose</span><span>Enter open</span><span>No match · Enter saves a note</span><span>Results are ranked by the server</span></footer>
+      <footer>{normalMode ? <><span>↑↓ choose</span><span>Enter open</span><span>No match · Enter saves a note</span><span>Results are ranked by the server</span></> : <><span>↑↓ choose</span><span>Enter reassign</span><span>Esc cancel</span></>}</footer>
     </section>
   </div>
 }

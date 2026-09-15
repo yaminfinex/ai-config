@@ -94,9 +94,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     knownManagerItems, setKnownManagerItems, fleetView, setFleetView, pendingGroups, setPendingGroups,
   } = workspace
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell"><div className="shell-body">
-    <QuickOpen open={workspace.quickOpen} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup}
+    <QuickOpen open={workspace.quickOpen} mode={workspace.quickOpenMode} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} board={workspace.board}
       spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)} atSpaceCap={workspace.spaces.items.length >= defaultMaxSpaces}
       onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder}
+      onMode={(mode) => workspace.actions.showQuickOpen(workspace.quickOpenGroup, mode)}
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
     <UtilityRail side="left" label="Fleet" headingStart={<span className="status-dot listening" />}

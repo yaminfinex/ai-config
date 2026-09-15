@@ -291,6 +291,21 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     return manager && manager !== row.agent && rows.has(manager) ? manager : undefined
   }
 
+  // Task subagents inherit group membership from their owning top-level
+  // agent. Keep the structural parent_agent edge for rendering, but resolve
+  // labels from the nearest parent_agent ancestor that has no owner itself.
+  const ownerOf = (flat: FlatRow): FlatRow => {
+    let owner = flat
+    const seen = new Set<string>([flat.row.agent])
+    while (owner.row.parent_agent) {
+      const parent = rows.get(owner.row.parent_agent)
+      if (!parent || seen.has(parent.row.agent)) break
+      seen.add(parent.row.agent)
+      owner = parent
+    }
+    return owner
+  }
+
   // labelsBelow(name) is the set of labels anywhere in name's subtree
   // (itself included), built by walking each labelled row UP its ancestor
   // chain. Every row is visited once per label it carries, whatever order the
@@ -312,6 +327,11 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
 
   const distinct = new Set<string>()
   for (const set of labelsBelow.values()) for (const label of set) distinct.add(label)
+
+  const membershipLabels = (agent: string) => {
+    const own = labelsBelow.get(agent)!
+    return own.size > 0 ? own : labelsBelow.get(ownerOf(rows.get(agent)!).row.agent)!
+  }
 
   // A row is a root under header X when it is a member and no manager/parent
   // above it is also a member (otherwise it hangs under that one).
@@ -355,7 +375,7 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     root.children.push(id)
   }
   for (const label of [...distinct].sort((left, right) => left.localeCompare(right))) {
-    addHeader(groupHeaderID(label), 'group', label, label, (agent) => labelsBelow.get(agent)?.has(label) ?? false)
+    addHeader(groupHeaderID(label), 'group', label, label, (agent) => membershipLabels(agent).has(label))
   }
   for (const label of new Set(pendingGroups)) {
     if (!label || distinct.has(label)) continue
@@ -363,7 +383,7 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     result.set(id, { id, kind: 'group', name: label, children: [], group: label, placeholder: true, summary: { total: 0, active: 0 }, count: 0 })
     root.children.push(id)
   }
-  addHeader(ungroupedID, 'ungrouped', 'Ungrouped', '', (agent) => (labelsBelow.get(agent)?.size ?? 0) === 0)
+  addHeader(ungroupedID, 'ungrouped', 'Ungrouped', '', (agent) => membershipLabels(agent).size === 0)
   return result
 }
 
