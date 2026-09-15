@@ -80,6 +80,8 @@ up the latest 500 life events at startup, then subscribes until the serve
 context ends. `hcom_event` preserves the bus id and the event id is derived from
 `hcom-life:<id>`, so replay appends nothing. Other life actions are ignored.
 Refused life events are audited once and skipped; an unavailable store is retried.
+A journaled hcom event is skipped on replay before its roster-derived fields are
+rebuilt; a differing payload under a known id remains a refused correction.
 
 Before append, the mirror resolves `instance`, `by`, and every `instances`
 entry through the last roster already polled by the serve: exactly one matching

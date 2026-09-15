@@ -65,6 +65,47 @@ func Open(stateDir string, stderr io.Writer) *Store {
 	return s
 }
 
+// Has reports whether id is already journaled. It takes the append lock and
+// repairs a torn tail first, so callers make the decision against the same
+// complete-record view as Append.
+func (s *Store) Has(id string) (bool, error) {
+	var found bool
+	err := s.locked(func(_ *os.File) error {
+		_, _, foundID, err := s.findID(id)
+		found = foundID
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+		return nil
+	})
+	return found, err
+}
+
+// locked opens the journal, takes the append lock, and repairs any torn tail
+// before calling use. Store access that must agree with Append uses this path.
+func (s *Store) locked(use func(*os.File) error) error {
+	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	file, err := os.OpenFile(s.EventsPath(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer file.Close()
+	timeout := s.LockTimeout
+	if timeout <= 0 {
+		timeout = DefaultLockTimeout
+	}
+	if err := lockFile(file, timeout); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	defer unlockFile(file)
+	if err := s.repairTornTail(file); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	return use(file)
+}
+
 func (s *Store) warn(format string, args ...any) {
 	if s.Stderr != nil {
 		fmt.Fprintf(s.Stderr, "herder: agent store: "+format+"\n", args...)
@@ -85,54 +126,40 @@ func (s *Store) Append(e Event) (Receipt, error) {
 	if len(line) > MaxLineBytes {
 		return Receipt{}, fmt.Errorf("event line is %d bytes, refusing more than %d", len(line), MaxLineBytes)
 	}
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
-		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	file, err := os.OpenFile(s.EventsPath(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-	if err != nil {
-		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	defer file.Close()
-	timeout := s.LockTimeout
-	if timeout <= 0 {
-		timeout = DefaultLockTimeout
-	}
-	if err := lockFile(file, timeout); err != nil {
-		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	defer unlockFile(file)
-
-	if err := s.repairTornTail(file); err != nil {
-		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	if existing, offset, found, err := s.findID(e.ID); err != nil {
-		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	} else if found {
-		// A retry is the same payload apart from its defaulted `at` (the id
-		// already fixes the time); anything else differing is a new fact that
-		// needs a new id.
-		retry := e
-		retry.At = existing.At
-		retryLine, _ := Encode(retry)
-		stored, _ := Encode(existing)
-		if !bytes.Equal(stored, retryLine) {
-			return Receipt{}, fmt.Errorf("id %s already has a different payload; a corrected event needs a new id", e.ID)
+	var receipt Receipt
+	err = s.locked(func(file *os.File) error {
+		if existing, offset, found, err := s.findID(e.ID); err != nil {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		} else if found {
+			// A retry is the same payload apart from its defaulted `at` (the id
+			// already fixes the time); anything else differing is a new fact that
+			// needs a new id.
+			retry := e
+			retry.At = existing.At
+			retryLine, _ := Encode(retry)
+			stored, _ := Encode(existing)
+			if !bytes.Equal(stored, retryLine) {
+				return fmt.Errorf("id %s already has a different payload; a corrected event needs a new id", e.ID)
+			}
+			// The earlier writer may have died between write and fsync; make the
+			// receipt this caller is about to trust durable.
+			if err := file.Sync(); err != nil {
+				return fmt.Errorf("%w: fsync: %v", ErrUnavailable, err)
+			}
+			receipt = Receipt{Event: existing, Offset: offset, Replayed: true}
+			return nil
 		}
-		// The earlier writer may have died between write and fsync; make the
-		// receipt this caller is about to trust durable.
-		if err := file.Sync(); err != nil {
-			return Receipt{}, fmt.Errorf("%w: fsync: %v", ErrUnavailable, err)
+		end, err := file.Seek(0, io.SeekEnd)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
 		}
-		return Receipt{Event: existing, Offset: offset, Replayed: true}, nil
-	}
-	end, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	if err := writeRecord(int(file.Fd()), line, syscall.Write, file.Sync); err != nil {
-		return Receipt{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
-	}
-	return Receipt{Event: e, Offset: end}, nil
+		if err := writeRecord(int(file.Fd()), line, syscall.Write, file.Sync); err != nil {
+			return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		}
+		receipt = Receipt{Event: e, Offset: end}
+		return nil
+	})
+	return receipt, err
 }
 
 // writeRecord is one write(2) (syscall.Write, not os.File.Write, which loops
