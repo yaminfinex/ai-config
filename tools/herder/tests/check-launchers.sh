@@ -181,8 +181,13 @@ log_has 'env_git_committer=Repo Owner <owner@repo.test>' \
   || fail "print bypass did not pin the committer to the checkout's identity"
 pass "the checkout's git identity outranks the global config on the direct path too"
 
+# A spawned fleet pane pins GIT_AUTHOR_*/GIT_COMMITTER_* into its environment;
+# drop them in a subshell so "no resolvable identity" holds wherever this runs.
 set +e
-GIT_CONFIG_GLOBAL=/dev/null claude --model test-model 2>"$TEST_ROOT/no-identity.err"
+(
+  unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+  GIT_CONFIG_GLOBAL=/dev/null claude --model test-model 2>"$TEST_ROOT/no-identity.err"
+)
 rc=$?
 set -e
 [[ $rc -eq 55 ]] || fail "launch without a resolvable git identity did not continue on-bus (rc=$rc)"
