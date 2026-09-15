@@ -49,10 +49,13 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 - **Message.** Use `hcom send` with an intent and one thread per unit. A `queued` result is
   delivered work: send once. Resolve uncertain names with `hcom list`; inspect a screen with
   `hcom term <name>`.
-- **Compact another worker.** Check `hcom list <name> status` and, when ordering matters,
-  `hcom term <name> --json`. Submit `hcom term inject <name> '/compact <steer>' --enter`, then
-  send the continuation once with `hcom send`; hcom carries the queued message through
-  compaction. A busy composer queues safely, but wait for listening when compact must run now.
+- **Compact another worker.** Run `$AI_CONFIG_ROOT/tools/fleet/compact.sh <name> '<steer>' '<continuation>'`
+  in the foreground. It waits for a listening seat with a ready, empty composer that has been
+  still for a settle window, injects the command word, the steer and the enter as separate
+  bursts, latches busy-then-listening, and sends the continuation once only after the status
+  line's context figure has dropped; exit 1 means nothing was sent. Never hand-type `/compact`
+  into another seat: within seconds of a delivery it lands as a plain prompt and is answered as
+  a steer while the context keeps climbing.
 - **Self-compact.** Wholesale-rewrite the **state file** to current truth first, then run
   `$AI_CONFIG_ROOT/tools/fleet/selfcompact.sh <self-name> '<steer>' '<continuation>'` and end the
   turn. The detached helper owns the busy/listening latch and the two composer injections.

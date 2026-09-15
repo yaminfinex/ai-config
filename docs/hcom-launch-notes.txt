@@ -1,5 +1,7 @@
 Fleet lifecycle: spawn, cull and self-compact agents only through
-__AI_CONFIG_ROOT__/tools/fleet (spawn.sh, cull.sh, selfcompact.sh).
+__AI_CONFIG_ROOT__/tools/fleet (spawn.sh, cull.sh, compact.sh for another
+seat, selfcompact.sh for your own). Never hand-type /compact into another
+seat: compact.sh waits for its idle composer and proves the context drop.
 hcom owns identity, messaging, resume (hcom r) and fork (hcom f). herdr
 owns panes, workspaces and worktrees. herder displays the fleet and
 records lifecycle facts; it never gates an action. Full doctrine:
