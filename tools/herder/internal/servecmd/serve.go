@@ -486,6 +486,11 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 				if kind == "" {
 					return nil
 				}
+				id := agentstore.DerivedID([]byte(fmt.Sprintf("hcom-life:%d", life.ID)))
+				journaled, err := store.Has(id)
+				if err != nil || journaled {
+					return err
+				}
 				at, err := time.Parse(time.RFC3339Nano, life.TS)
 				if err != nil {
 					return fmt.Errorf("hcom life event %d has invalid timestamp: %w", life.ID, err)
@@ -510,7 +515,7 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 					instances[i] = resolve(instances[i])
 				}
 				event := agentstore.Event{
-					ID: agentstore.DerivedID([]byte(fmt.Sprintf("hcom-life:%d", life.ID))), At: at.UTC(), Kind: kind,
+					ID: id, At: at.UTC(), Kind: kind,
 					By: resolve(life.By), ByKind: "mirror", Name: name, Reason: life.Reason,
 					Batch: life.Batch, Instances: instances, ParentName: life.ParentName,
 					IsHcomLaunched: life.IsHcomLaunched, HcomEvent: strconv.FormatInt(life.ID, 10),

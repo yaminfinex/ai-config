@@ -96,9 +96,17 @@ func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
 	done := make(chan struct{})
 	calls := 0
 	audits := 0
+	rosterCalls := 0
 	deps := fixtureDeps()
 	deps.poll = time.Millisecond
 	deps.audit = func(string, ...any) { audits++ }
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rosterCalls++
+		if rosterCalls == 1 {
+			return nil, nil
+		}
+		return []hcomidentity.Row{{Name: "impl-a", BaseName: "a", SessionID: "changed-session"}}, nil
+	}
 	deps.life = func(_ context.Context, _ *hcomevents.Cursor, emit func(hcomevents.Life) error) error {
 		calls++
 		launched := true
@@ -144,8 +152,17 @@ func TestLifeMirrorMapsActionsAndReplaysIdempotently(t *testing.T) {
 	if audits != 1 {
 		t.Fatalf("audits=%d, want one refused-event audit", audits)
 	}
+	if rosterCalls != 1 {
+		t.Fatalf("roster calls=%d, want 1 before replay", rosterCalls)
+	}
 	if got := projection.Latest("a"); got == nil || got.Events[0].HcomEvent != "1" || got.Parent != "root" {
 		t.Fatalf("a=%+v", got)
+	} else {
+		for _, event := range got.Events {
+			if event.HcomEvent == "2" && (event.Name != "a" || event.Session != "") {
+				t.Fatalf("replay changed original ready event: %+v", event)
+			}
+		}
 	}
 }
 

@@ -156,6 +156,32 @@ func TestReplayingAnIDReturnsSameReceiptAndNoSecondLine(t *testing.T) {
 	}
 }
 
+func TestHasReportsAbsentPresentAndUnavailable(t *testing.T) {
+	_, s := scratch(t)
+	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Group = "fleet-refit" })
+	if found, err := s.Has(e.ID); err != nil || found {
+		t.Fatalf("absent: found=%v err=%v", found, err)
+	}
+	mustAppend(t, s, e)
+	if found, err := s.Has(e.ID); err != nil || !found {
+		t.Fatalf("present: found=%v err=%v", found, err)
+	}
+
+	holder, err := os.OpenFile(s.EventsPath(), os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Close()
+	if err := lockFile(holder, time.Second); err != nil {
+		t.Fatal(err)
+	}
+	defer unlockFile(holder)
+	s.LockTimeout = 20 * time.Millisecond
+	if _, err := s.Has(e.ID); err == nil || !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("locked: err=%v", err)
+	}
+}
+
 func TestSnapshotPlusTailEqualsFullReplayByteForByte(t *testing.T) {
 	_, s := scratch(t)
 	req := ev(KindLaunchRequested, "", 1, func(e *Event) {
