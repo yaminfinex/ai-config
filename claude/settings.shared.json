@@ -44,6 +44,17 @@
           }
         ]
       }
+    ],
+    "MessageDisplay": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.claude/hooks/fence-display.sh\" ] && exec \"$HOME/.claude/hooks/fence-display.sh\" || exit 0",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   },
   "permissions": {
