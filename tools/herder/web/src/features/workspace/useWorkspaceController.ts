@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DockviewApi, DockviewReadyEvent } from 'dockview-react'
-import { apiProblem, assignAgent, getFleet, lifecycleProblem, queryKeys, viewerReadOnlyMessage } from '../../api/client'
+import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from '../../api/client'
 import { viewerQueryOptions } from '../../api/queries'
 import type { FileTarget } from '../../types'
 import { agentBusStatus } from '../../shared/agentStatus'
@@ -390,18 +390,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setQuickOpenMode(mode)
     setQuickOpen(true)
   }, [])
-  const assignFleetAgent = useCallback(async (name: string, assignment: Parameters<typeof assignAgent>[1]) => {
-    try {
-      await assignAgent(name, assignment)
-      return { ok: true as const }
-    } catch (error) {
-      const { response, problem } = apiProblem(error)
-      const mapped = response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')
-        ? { readOnly: viewerReadOnlyMessage(problem, response.status) }
-        : lifecycleProblem(error)
-      return { ok: false as const, problem: mapped }
-    }
-  }, [])
   const createSpace = useCallback(() => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
@@ -569,8 +557,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
     setAgentScreenPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
-    resetLayout, showQuickOpen, assignFleetAgent, sendPanelToSpace, sendPanelToNewSpace,
-  }), [assignFleetAgent, closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
+    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace,
+  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
     board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
     spaces, activeSpaceID, activePanel: activeParams ? { id: activePanelID, params: activeParams } : null,

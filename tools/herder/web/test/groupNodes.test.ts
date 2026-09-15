@@ -181,5 +181,5 @@ test('the toggle offers the groups view and the sidebar renders the header actio
   // One drag source and one drop handler per row; the drop plan is the model's.
   assert.equal((sidebar.match(/onDragStart:/g) ?? []).length, 1)
   assert.equal((sidebar.match(/onDrop:/g) ?? []).length, 1)
-  assert.equal((sidebar.match(/assignFleetAgent\(/g) ?? []).length, 1)
+  assert.equal((sidebar.match(/await assignAgent\(/g) ?? []).length, 1)
 })

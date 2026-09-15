@@ -6,9 +6,7 @@ import { useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext
 
 type MenuPosition = { x: number, y: number }
 
-export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceID: string, params: DockPanelParams) {
-  const actions = useWorkspaceActionsContext()
-  const data = useWorkspaceData()
+function usePositionedMenu() {
   const [position, setPosition] = useState<MenuPosition | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const focusReturn = useRef<HTMLElement | null>(null)
@@ -26,20 +24,6 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
       y: Math.max(4, Math.min(next.y, window.innerHeight - 48)),
     })
   }, [])
-
-  useEffect(() => {
-    const tab = tabRef.current?.closest<HTMLElement>('.dv-tab')
-    if (!tab) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!isDockTabMenuKey(event)) return
-      event.preventDefault()
-      event.stopPropagation()
-      const rect = tab.getBoundingClientRect()
-      open({ x: rect.left, y: rect.bottom }, tab)
-    }
-    tab.addEventListener('keydown', onKeyDown)
-    return () => tab.removeEventListener('keydown', onKeyDown)
-  }, [open, tabRef])
 
   useEffect(() => {
     if (!position) return
@@ -96,6 +80,28 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
     if (next.x !== position.x || next.y !== position.y) setPosition(next)
   }, [position])
 
+  return { position, menuRef, open, close }
+}
+
+export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceID: string, params: DockPanelParams) {
+  const actions = useWorkspaceActionsContext()
+  const data = useWorkspaceData()
+  const { position, menuRef, open, close } = usePositionedMenu()
+
+  useEffect(() => {
+    const tab = tabRef.current?.closest<HTMLElement>('.dv-tab')
+    if (!tab) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isDockTabMenuKey(event)) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = tab.getBoundingClientRect()
+      open({ x: rect.left, y: rect.bottom }, tab)
+    }
+    tab.addEventListener('keydown', onKeyDown)
+    return () => tab.removeEventListener('keydown', onKeyDown)
+  }, [open, tabRef])
+
   const onContextMenu = useCallback((event: MouseEvent<HTMLDivElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -121,84 +127,19 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
 
 export function useAgentRowMenu() {
   const actions = useWorkspaceActionsContext()
-  const [request, setRequest] = useState<{ position: MenuPosition, subject: string, returnTo: HTMLElement | null } | null>(null)
-  const menuRef = useRef<HTMLDivElement | null>(null)
-  const sourceGuard = useRef(0)
-  const close = useCallback((restore = true) => {
-    sourceGuard.current += 1
-    setRequest((current) => {
-      if (restore && current?.returnTo) window.requestAnimationFrame(() => current.returnTo?.isConnected && current.returnTo.focus())
-      return null
-    })
-  }, [])
-  const open = useCallback((event: MouseEvent<HTMLElement>, subject: string) => {
+  const [subject, setSubject] = useState('')
+  const positioned = usePositionedMenu()
+  const open = useCallback((event: MouseEvent<HTMLElement>, nextSubject: string) => {
     event.preventDefault()
     event.stopPropagation()
-    sourceGuard.current += 1
-    setRequest({
-      subject,
-      returnTo: event.currentTarget,
-      position: {
-        x: Math.max(4, Math.min(event.clientX, window.innerWidth - 224)),
-        y: Math.max(4, Math.min(event.clientY, window.innerHeight - 48)),
-      },
-    })
-  }, [])
+    setSubject(nextSubject)
+    positioned.open({ x: event.clientX, y: event.clientY }, event.currentTarget)
+  }, [positioned.open])
 
-  useEffect(() => {
-    if (!request) return
-    const source = sourceGuard.current
-    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus()
-    const guarded = () => source === sourceGuard.current
-    const dismiss = (event: Event) => {
-      if (!guarded()) return
-      if (event.type === 'pointerdown' && menuRef.current?.contains(event.target as Node)) return
-      close(event.type !== 'pointerdown')
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!guarded()) return
-      const items = [...(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])]
-      const action = dockTabMenuKeyAction({ key: event.key, insideMenu: Boolean(menuRef.current?.contains(event.target as Node)), current: items.indexOf(document.activeElement as HTMLElement), count: items.length })
-      if (!action) return
-      if (action.kind === 'dismiss') { close(false); return }
-      event.preventDefault()
-      if (action.kind === 'close') { close(); return }
-      event.stopPropagation()
-      items[action.index]?.focus()
-    }
-    const onFocusIn = (event: FocusEvent) => {
-      if (!guarded()) return
-      if (dockTabMenuFocusAction(Boolean(menuRef.current?.contains(event.target as Node))) === 'dismiss') close(false)
-    }
-    document.addEventListener('focusin', onFocusIn, true)
-    document.addEventListener('pointerdown', dismiss, true)
-    document.addEventListener('dragstart', dismiss, true)
-    document.addEventListener('scroll', dismiss, true)
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      document.removeEventListener('focusin', onFocusIn, true)
-      document.removeEventListener('pointerdown', dismiss, true)
-      document.removeEventListener('dragstart', dismiss, true)
-      document.removeEventListener('scroll', dismiss, true)
-      document.removeEventListener('keydown', onKeyDown, true)
-      if (source === sourceGuard.current) sourceGuard.current += 1
-    }
-  }, [close, request])
-  useLayoutEffect(() => {
-    if (!request || !menuRef.current) return
-    const rect = menuRef.current.getBoundingClientRect()
-    const position = {
-      x: Math.max(4, Math.min(request.position.x, window.innerWidth - rect.width - 4)),
-      y: Math.max(4, Math.min(request.position.y, window.innerHeight - rect.height - 4)),
-    }
-    if (position.x !== request.position.x || position.y !== request.position.y) setRequest({ ...request, position })
-  }, [request])
-
-  const menu = request ? createPortal(<div ref={menuRef} className="dock-tab-menu" role="menu" aria-label={`Actions for ${request.subject}`}
-    style={{ left: request.position.x, top: request.position.y }}>
+  const menu = positioned.position ? createPortal(<div ref={positioned.menuRef} className="dock-tab-menu" role="menu" aria-label={`Actions for ${subject}`}
+    style={{ left: positioned.position.x, top: positioned.position.y }}>
     <button type="button" role="menuitem" onClick={() => {
-      const subject = request.subject
-      close(false)
+      positioned.close(false)
       actions.showQuickOpen(undefined, { kind: 'reassign', subject })
     }}>Reassign…</button>
   </div>, document.body) : null

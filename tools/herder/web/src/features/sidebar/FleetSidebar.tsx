@@ -12,12 +12,11 @@ import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
-import { apiProblem, lifecycleProblem, renameAgent, viewerReadOnlyMessage, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
+import { assignAgent, mutationProblem, renameAgent, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
 import { beginRename, editingAt, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
 import { groupHeaderTooltip, openGroupTooltip } from './groupDropModel'
 import { addPendingGroup, realGroupLabels, remainingPendingGroups, removePendingGroup, validateGroupName } from './pendingGroupsModel'
 import { dropAssignment, planSidebarDrop } from './reparentModel'
-import { useWorkspaceActionsContext } from '../workspace/workspaceContext.tsx'
 import { useAgentRowMenu } from '../workspace/DockTabMenu.tsx'
 
 const emptyExpandedItems: string[] = []
@@ -43,7 +42,6 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
   knownManagerItems: string[] | null
   onKnownManagerItems: (items: string[]) => void
 }) {
-  const workspaceActions = useWorkspaceActionsContext()
   const agentRowMenu = useAgentRowMenu()
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const [renaming, setRenaming] = useState<RenameState | null>(null)
@@ -61,17 +59,13 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
   const nodes = view === 'placement' ? placementNodes : view === 'groups' ? groupNodes : supervisionNodes
   const sideHint = openInSideLabel(navigator.userAgent)
 
-  const mutationProblem = (error: unknown) => {
-    const { response, problem } = apiProblem(error)
-    return response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')
-      ? { readOnly: viewerReadOnlyMessage(problem, response.status) }
-      : lifecycleProblem(error)
-  }
-
   const submitAssignment = async (name: string, assignment: AssignmentPatch) => {
     setAssignmentProblem(null)
-    const result = await workspaceActions.assignFleetAgent(name, assignment)
-    if (!result.ok) setAssignmentProblem(result.problem)
+    try {
+      await assignAgent(name, assignment)
+    } catch (error) {
+      setAssignmentProblem(mutationProblem(error))
+    }
   }
 
   const startRename = (name: string, nodeID: string, title?: string) => {

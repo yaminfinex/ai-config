@@ -1,5 +1,6 @@
 import type { Board, Row } from '../../types.ts'
-import { ranked } from '../files/quickOpenModel.ts'
+import type { SpaceDefinition } from '../spaces/spacesModel.ts'
+import { quickOpenActionRows, quickOpenRowKey, ranked, type QuickOpenActionRow, type QuickOpenMode } from '../files/quickOpenModel.ts'
 import { reparentRefusal, type ReparentFacts } from './reparentModel.ts'
 
 export type ReassignCandidate = {
@@ -58,6 +59,31 @@ export function reassignCandidates(
   const matches = ranked(candidates, (row) => `${row.agent} ${row.title ?? ''}`.trim(), query.trim().toLocaleLowerCase())
     .map((row): ReassignCandidate => ({ kind: 'reassign', subject, target: row.agent, label: row.agent, ...(row.title ? { title: row.title } : {}) }))
   return [...matches, { kind: 'reassign', subject, target: 'human', label: 'human (adopt)' }]
+}
+
+export function reassignSelection(candidates: QuickOpenActionRow[], rawQuery: string): string | null {
+  const first = candidates[0]
+  if (!first || first.kind !== 'reassign') return null
+  const query = rawQuery.trim().toLocaleLowerCase()
+  if (!query || first.target !== 'human' || 'human'.startsWith(query)) return quickOpenRowKey(first)
+  return null
+}
+
+export type QuickOpenRowsContext = {
+  spaces: SpaceDefinition[]
+  agents: string[]
+  atSpaceCap: boolean
+  hasActivePanel: boolean
+  activeSpaceID: string | null
+  reassignSubject?: string
+  rows: Row[]
+  descendantsOf: (subject: string) => Set<string>
+}
+
+export function quickOpenRows(mode: QuickOpenMode, query: string, context: QuickOpenRowsContext): QuickOpenActionRow[] {
+  return mode.kind === 'normal'
+    ? quickOpenActionRows(query, context.spaces, context.agents, context.atSpaceCap, context.hasActivePanel, context.activeSpaceID, context.reassignSubject)
+    : reassignCandidates(mode.subject, context.rows, context.descendantsOf, query)
 }
 
 function facts(row: Row): ReparentFacts {

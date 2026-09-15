@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { queryKeys, resolveFiles } from '../../api/client'
+import { assignAgent, mutationProblem, queryKeys, resolveFiles } from '../../api/client'
 import type { Board, FileCandidate, FileTarget, FolderTarget } from '../../types'
 import { keyboardCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
-import { quickOpenActionRows, quickOpenEnterTarget, quickOpenInitialSelection, quickOpenMoveSelection, quickOpenRowKey, quickOpenSelectedIndex, type QuickOpenActionRow, type QuickOpenLookup, type QuickOpenMode } from './quickOpenModel.ts'
+import { quickOpenEnterTarget, quickOpenInitialSelection, quickOpenMoveSelection, quickOpenSelectedIndex, type QuickOpenActionRow, type QuickOpenLookup, type QuickOpenMode } from './quickOpenModel.ts'
 import { useNotes } from '../notes/NotesProvider.tsx'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 import { useWorkspaceActionsContext, useWorkspaceData } from '../workspace/workspaceContext.tsx'
-import { flattenedBoardRows, reassignCandidates, reassignDescendants } from '../sidebar/reassignModel.ts'
+import { flattenedBoardRows, quickOpenRows, reassignDescendants, reassignSelection } from '../sidebar/reassignModel.ts'
 
 const QUICK_OPEN_RESULT_LIMIT = 100
 
@@ -63,9 +63,11 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   })
 
   const rows = useMemo(() => flattenedBoardRows(board), [board])
-  const actions: QuickOpenActionRow[] = normalMode
-    ? quickOpenActionRows(query, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID, agent)
-    : reassignCandidates(mode.subject, rows, (subject) => reassignDescendants(subject, rows), query)
+  const rowContext = {
+    spaces, agents, atSpaceCap, hasActivePanel: Boolean(workspaceData.activePanel), activeSpaceID,
+    reassignSubject: agent, rows, descendantsOf: (subject: string) => reassignDescendants(subject, rows),
+  }
+  const actions = quickOpenRows(mode, query, rowContext)
   const settled = query.trim() === debounced
   const settledResolution = settled ? resolution.data : undefined
   const candidates = normalMode ? settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? [] : []
@@ -75,10 +77,8 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
     setQuery('')
     setAssignmentProblem('')
     assignmentSource.current += 1
-    const initialRows: QuickOpenActionRow[] = mode.kind === 'normal'
-      ? quickOpenActionRows('', spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID, agent)
-      : reassignCandidates(mode.subject, rows, (subject) => reassignDescendants(subject, rows), '')
-    setSelection(open ? quickOpenInitialSelection(initialRows, '') : null)
+    const initialRows = quickOpenRows(mode, '', rowContext)
+    setSelection(open ? mode.kind === 'normal' ? quickOpenInitialSelection(initialRows, '') : reassignSelection(initialRows, '') : null)
     if (!open) return
     restoreFocus.current = document.activeElement as HTMLElement | null
     const frame = requestAnimationFrame(() => inputRef.current?.focus())
@@ -120,12 +120,15 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
     } else {
       setAssignmentProblem('')
       const source = ++assignmentSource.current
-      const result = await workspaceActions.assignFleetAgent(row.subject, { manager: row.target })
-      if (source !== assignmentSource.current) return
-      if (!result.ok) {
-        setAssignmentProblem(result.problem.readOnly ?? result.problem.banner ?? result.problem.inline ?? 'The agent could not be reassigned.')
+      try {
+        await assignAgent(row.subject, { manager: row.target })
+      } catch (error) {
+        if (source !== assignmentSource.current) return
+        const problem = mutationProblem(error)
+        setAssignmentProblem(problem.readOnly ?? problem.banner ?? problem.inline ?? 'The agent could not be reassigned.')
         return
       }
+      if (source !== assignmentSource.current) return
       notes.announce(`Reassigned ${row.subject} to ${row.target}`)
     }
     if (chosen) onClose()
@@ -142,10 +145,8 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
         onChange={(event) => {
           setQuery(event.target.value)
           setAssignmentProblem('')
-          const nextRows: QuickOpenActionRow[] = normalMode
-            ? quickOpenActionRows(event.target.value, spaces, agents, atSpaceCap, Boolean(workspaceData.activePanel), activeSpaceID, agent)
-            : reassignCandidates(mode.subject, rows, (subject) => reassignDescendants(subject, rows), event.target.value)
-          setSelection(normalMode ? quickOpenInitialSelection(nextRows, event.target.value) : nextRows[0] ? quickOpenRowKey(nextRows[0]) : null)
+          const nextRows = quickOpenRows(mode, event.target.value, rowContext)
+          setSelection(normalMode ? quickOpenInitialSelection(nextRows, event.target.value) : reassignSelection(nextRows, event.target.value))
         }} onKeyDown={(event) => {
           if (event.key === 'Escape') onClose()
           else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

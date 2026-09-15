@@ -87,12 +87,15 @@ test('dock tab menu stays open while focus is on or moves within the menu, and c
   assert.match(rest, /querySelector<HTMLElement>\('\[role="menuitem"\]'\)\?\.focus\(\)/)
 })
 
-test('both context menus dispose every document listener and guard stale sources', () => {
-  assert.ok((menuSource.match(/const source = sourceGuard\.current/g) ?? []).length >= 2)
+test('both context menus share one positioned-menu lifecycle with guarded disposal', () => {
+  assert.match(menuSource, /function usePositionedMenu\(\)/)
+  assert.equal((menuSource.match(/usePositionedMenu\(\)/g) ?? []).length, 3)
+  assert.ok((menuSource.match(/const source = sourceGuard\.current/g) ?? []).length >= 1)
   assert.ok((menuSource.match(/source !== sourceGuard\.current/g) ?? []).length >= 3)
   for (const event of ['focusin', 'pointerdown', 'dragstart', 'scroll', 'keydown']) {
     assert.equal((menuSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length,
       (menuSource.match(new RegExp(`document\\.removeEventListener\\('${event}'`, 'g')) ?? []).length, event)
+    assert.equal((menuSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length, 1, `${event} must have one shared owner`)
   }
   assert.match(menuSource, /export function useAgentRowMenu\(\)/)
 })
