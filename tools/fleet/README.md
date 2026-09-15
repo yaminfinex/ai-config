@@ -65,6 +65,21 @@ reroutes to the owner. The helper detaches and prints its log filename:
 tools/fleet/selfcompact.sh review-vava 'retain the review contract' 'Continue the review'
 ```
 
+Compacting another seat goes through `compact.sh`, which runs in the
+foreground and proves the compaction before it sends anything. A `/compact`
+typed within seconds of a bus delivery is submitted as a plain prompt and
+answered as a steer, so the helper first waits until the seat is listening
+with a ready, empty composer whose screen has not changed for a settle window,
+injects the command word, the steer and the enter as separate bursts, latches
+busy-then-listening, and then requires the status line's context figure to
+drop (Claude `NNNk / NNNk`, Codex `Context NN% left`). Only then does it send
+the continuation by bus; without a drop it exits 1, says so, and sends
+nothing. Bounds are the `FLEET_COMPACT_*_SECONDS` variables in the header.
+
+```bash
+tools/fleet/compact.sh impl-vava 'keep the unit brief and the thread name' 'Resume unit X from the brief'
+```
+
 Cull sends one courtesy notice, kills the hcom process, verifies the managed
 pane close, and uses only a unique exact label as its fallback:
 

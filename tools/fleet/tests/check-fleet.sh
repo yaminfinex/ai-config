@@ -153,6 +153,37 @@ if [[ ${1:-} == 1 ]]; then
   esac
   exit 2
 fi
+if [[ -n ${FLEET_TEST_COMPACT_MODE:-} ]]; then
+  # compact.sh fixture: the seat is listening with a quiet composer until the
+  # /compact is submitted, then goes active twice and listens again. The
+  # status line carries the context figure that must drop.
+  injected=0
+  grep -q 'term inject vava --enter' "$FLEET_TEST_CALLS" && injected=1
+  screen() { printf '{"ready":true,"prompt_empty":%s,"input_text":"%s","lines":["› ","","  %s"]}\n' "$1" "$2" "$3"; }
+  case "${1:-} ${2:-} ${3:-}" in
+    'list vava status')
+      if ((injected == 0)); then
+        printf 'listening\n'
+      else
+        n=$(<"$FLEET_TEST_COMPACT_STATE/status"); n=$((n + 1)); printf '%s' "$n" >"$FLEET_TEST_COMPACT_STATE/status"
+        if ((n <= 2)); then printf 'active\n'; else printf 'listening\n'; fi
+      fi
+      ;;
+    'term vava --json')
+      case $FLEET_TEST_COMPACT_MODE in
+        busy) screen false 'half-typed message' '120k / 200k' ;;
+        happy) if ((injected)); then screen true '' '9k / 200k'; else screen true '' '120k / 200k'; fi ;;
+        codex) if ((injected)); then screen true '' 'gpt-5.6-sol low · Context 88% left · unit'; else screen true '' 'gpt-5.6-sol low · Context 31% left · unit'; fi ;;
+        nodrop) screen true '' '120k / 200k' ;;
+        *) exit 64 ;;
+      esac
+      ;;
+    'term inject vava') ;;
+    'send @vava --intent') ;;
+    *) exit 64 ;;
+  esac
+  exit 0
+fi
 if [[ ${1:-} == list && ${3:-} == status ]]; then
   case ${FLEET_TEST_STATUS_MODE:-} in
     transient)
@@ -717,6 +748,58 @@ fi
 grep -F 'term inject vava continue --enter' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "selfcompact did not best-effort inject continuation on timeout"
 pass "selfcompact injects continuation before timeout exit"
+
+# compact.sh (compacting ANOTHER seat) — fast bounds for the tests.
+compact_env=(FLEET_COMPACT_SETTLE_SECONDS=1 FLEET_COMPACT_POLL_SECONDS=1 FLEET_COMPACT_WAIT_SECONDS=4 FLEET_COMPACT_LATCH_SECONDS=20 FLEET_COMPACT_DROP_SECONDS=3)
+compact_state=$TEST_ROOT/compact-state
+mkdir -p -- "$compact_state"
+
+if "$FLEET/compact.sh" '../wrong' steer continue >/dev/null 2>&1; then
+  fail "compact accepted an unsafe hcom name"
+fi
+pass "compact rejects unsafe hcom-name input"
+
+: >"$FLEET_TEST_CALLS"; printf 0 >"$compact_state/status"
+if env "${compact_env[@]}" FLEET_TEST_COMPACT_MODE=busy FLEET_TEST_COMPACT_STATE="$compact_state" PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/compact.sh" vava steer continue >"$TEST_ROOT/compact-busy.out" 2>"$TEST_ROOT/compact-busy.err"; then
+  fail "compact typed into a busy composer"
+fi
+grep -F 'never showed a quiet composer' "$TEST_ROOT/compact-busy.err" >/dev/null || fail "compact did not explain the busy-composer refusal"
+! grep -F 'term inject' "$FLEET_TEST_CALLS" >/dev/null || fail "compact injected into a busy composer"
+! grep -F 'send @vava' "$FLEET_TEST_CALLS" >/dev/null || fail "compact sent a continuation without compacting"
+pass "compact refuses to type while the composer is not empty and idle"
+
+: >"$FLEET_TEST_CALLS"; printf 0 >"$compact_state/status"
+env "${compact_env[@]}" FLEET_TEST_COMPACT_MODE=happy FLEET_TEST_COMPACT_STATE="$compact_state" PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/compact.sh" vava steer continue >"$TEST_ROOT/compact-happy.out" 2>"$TEST_ROOT/compact-happy.err" \
+  || fail "compact failed on the happy path: $(<"$TEST_ROOT/compact-happy.err")"
+first_inject=$(grep -n -F 'term inject vava' "$FLEET_TEST_CALLS" | head -n 1 | cut -d: -f1)
+[[ $(head -n "$((first_inject - 1))" "$FLEET_TEST_CALLS" | grep -c 'term vava --json') -ge 2 ]] \
+  || fail "compact typed before the settle window had two quiet screen reads"
+inject_lines=$(grep 'term inject vava' "$FLEET_TEST_CALLS")
+[[ $(sed -n 1p <<<"$inject_lines") == *'term inject vava /compact\ ' ]] || fail "compact did not inject the /compact prefix on its own first"
+[[ $(sed -n 2p <<<"$inject_lines") == *'term inject vava steer' ]] || fail "compact did not inject the steer as its own burst"
+[[ $(sed -n 3p <<<"$inject_lines") == *'term inject vava --enter' ]] || fail "compact did not submit with a bare enter"
+grep -F 'context dropped: claude 120 -> 9' "$TEST_ROOT/compact-happy.out" >/dev/null || fail "compact did not report the Claude context drop"
+grep -F 'send @vava --intent request -- continue' "$FLEET_TEST_CALLS" >/dev/null || fail "compact did not send the continuation after the verified drop"
+[[ $(grep -c 'send @vava' "$FLEET_TEST_CALLS") -eq 1 ]] || fail "compact sent the continuation more than once"
+pass "compact waits for a quiet composer, splits the inject, verifies the Claude context drop, then sends one continuation"
+
+: >"$FLEET_TEST_CALLS"; printf 0 >"$compact_state/status"
+env "${compact_env[@]}" FLEET_TEST_COMPACT_MODE=codex FLEET_TEST_COMPACT_STATE="$compact_state" PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/compact.sh" vava steer continue >"$TEST_ROOT/compact-codex.out" 2>&1 || fail "compact failed on the codex path"
+grep -F 'context dropped: codex 31 -> 88' "$TEST_ROOT/compact-codex.out" >/dev/null || fail "compact did not read the Codex context figure"
+pass "compact reads the Codex 'Context NN% left' figure"
+
+: >"$FLEET_TEST_CALLS"; printf 0 >"$compact_state/status"
+if env "${compact_env[@]}" FLEET_TEST_COMPACT_MODE=nodrop FLEET_TEST_COMPACT_STATE="$compact_state" PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/compact.sh" vava steer continue >"$TEST_ROOT/compact-nodrop.out" 2>"$TEST_ROOT/compact-nodrop.err"; then
+  fail "compact reported success without a context drop"
+fi
+grep -F 'no context drop on vava (claude 120 before, 120 after' "$TEST_ROOT/compact-nodrop.err" >/dev/null || fail "compact did not name the missing drop"
+grep -F 'continuation NOT sent' "$TEST_ROOT/compact-nodrop.err" >/dev/null || fail "compact did not say the continuation was withheld"
+! grep -F 'send @vava' "$FLEET_TEST_CALLS" >/dev/null || fail "compact sent a continuation into an uncompacted seat"
+pass "compact withholds the continuation and fails loudly when the context does not drop"
 
 cull_state=$TEST_ROOT/cull-state
 mkdir -p "$cull_state"
