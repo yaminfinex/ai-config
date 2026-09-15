@@ -153,4 +153,4 @@ The notes text lives in `docs/hcom-launch-notes.txt`, and `tools/fleet/apply-hco
 
 ## In the Claude Code terminal
 
-A display-only hook (`claude/hooks/fence-display.sh`, registered on `MessageDisplay`) draws the two tiers differently in the Claude Code terminal: a status line becomes a dotted line (`· body`) and an internal block collapses to one note line (`▸ internal note · N lines`). Nothing else changes: the transcript file, what the model sees and herder web keep the original text, and ctrl+o shows the raw text.
+The Claude Code terminal draws status as `· body` and internal blocks as a note line (without a count while a block is still streaming). This display-only hook leaves transcripts and model context unchanged; ctrl+o shows the raw text.

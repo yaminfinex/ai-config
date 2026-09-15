@@ -25,7 +25,7 @@ assert_eq() {
   if [ "$got" = "$want" ]; then ok "$name"; else bad "$name" "got [$got] want [$want]"; fi
 }
 
-for dep in jq mktemp date; do
+for dep in jq mktemp date yes head grep; do
   command -v "$dep" >/dev/null 2>&1 || {
     printf 'FAIL  harness dependency missing: %s\n' "$dep" >&2
     exit 1
@@ -52,7 +52,7 @@ OUT="$(batch a 0 true $'<status>reading the brief</status>\n')"
 assert_eq "a: status draws as dotted line" "$(shown "$OUT")" "· reading the brief"
 assert_eq "a: hook event name echoed" "$(jq -r '.hookSpecificOutput.hookEventName' <<<"$OUT")" "MessageDisplay"
 OUT="$(batch a2 0 true $'  <status>padded</status>  \n')"
-assert_eq "a: surrounding whitespace tolerated" "$(shown "$OUT")" "· padded"
+assert_eq "a: surrounding whitespace is text and is kept" "$(shown "$OUT")" "  · padded  "
 
 # (b) empty status
 OUT="$(batch b 0 true $'<status></status>\n')"
@@ -79,16 +79,38 @@ if [ -d "$STATE_DIR" ]; then
   assert_eq "d: state dir mode 0700" "$(stat -c %a "$STATE_DIR")" "700"
 fi
 
-# (e) backticked tag and tag inside a code fence pass through unchanged
-E_DELTA=$'Write `<status>x</status>` bare.\n```\n<status>inside fence</status>\n```\n<status>real</status>\n'
+# (e) tags anywhere: backticked, fenced and mid-line tags ARE redrawn (web parser
+# parity); an attribute, other casing or other spelling is text.
+E_DELTA=$'Write `<status>x</status>` bare.\n```\n<status>inside fence</status>\n```\nbefore <status>mid</status> after\n'
 OUT="$(batch e 0 true "$E_DELTA")"
-assert_eq "e: backticked and fenced tags literal, bare one drawn" "$(shown "$OUT")" \
-  $'Write `<status>x</status>` bare.\n```\n<status>inside fence</status>\n```\n· real'
-OUT="$(batch e2 0 true $'<Status>caps</Status>\n<status foo="1">attr</status>\n<status>open only\n')"
-assert_eq "e: misspelt, attributed and unclosed status are not redrawn" "$OUT" ""
-OUT="$(batch e3 0 false $'```\n')"
-OUT="$(batch e3 1 true $'<internal>\nnot a note\n</internal>\n')"
-assert_eq "e: code fence state carries across batches" "$OUT" ""
+assert_eq "e: backticked, fenced and mid-line status redrawn in place" "$(shown "$OUT")" \
+  $'Write `· x` bare.\n```\n· inside fence\n```\nbefore · mid after'
+OUT="$(batch e2 0 true $'<Status>caps</Status>\n<status foo="1">attr</status>\n<statu>typo</statu>\n')"
+assert_eq "e: cased, attributed and misspelt tags are text" "$OUT" ""
+OUT="$(batch e3 0 true $'two <status>a</status> and <status></status> here\n')"
+assert_eq "e: two pairs on one line both redrawn" "$(shown "$OUT")" "two · a and · status here"
+OUT="$(batch e4 0 true $'```\n<internal>\nfenced body\n</internal>\n```\n')"
+assert_eq "e: internal block inside a code fence still collapses" "$(shown "$OUT")" $'```\n▸ internal note · 1 lines\n```'
+
+# (r1) bounded loss and line granularity on malformed input
+OUT="$(batch r1a 0 true $'<internal>\nkept\n<status>nested</status>\nrest\n</internal>\nafter\n')"
+assert_eq "r1: nested status ends the note there, rest literal" "$(shown "$OUT")" \
+  $'▸ internal note · 1 lines\n<status>nested</status>\nrest\n</internal>\nafter'
+OUT="$(batch r1b 0 true $'<status>ok</status>\n</internal>\n')"
+assert_eq "r1: valid status then stray closer: status drawn, closer literal" "$(shown "$OUT")" $'· ok\n</internal>'
+OUT="$(batch r1c 0 true $'</internal>\n<status>ok</status>\n')"
+assert_eq "r1: stray closer then valid status: closer literal, status drawn" "$(shown "$OUT")" $'</internal>\n· ok'
+OUT="$(batch r1d 0 true $'<status>x\ry</status>\n')"
+assert_eq "r1: carriage return inside a status body stays literal" "$OUT" ""
+OUT="$(batch r1e 0 true $'<status>open\nclosed</status>\n')"
+assert_eq "r1: status closer on another line stays literal" "$OUT" ""
+OUT="$(batch r1f 0 true $'</status>\n<internal>\n')"
+assert_eq "r1: stray status closer literal, opener still opens" "$(shown "$OUT")" $'</status>\n▸ internal note'
+OUT="$(batch r1g 0 false $'<internal>\n')"
+OUT="$(batch r1g 1 true $'body\n<internal>\nmore\n')"
+assert_eq "r1: nested opener across batches ends the note, rest literal" "$(shown "$OUT")" $'<internal>\nmore'
+OUT="$(batch r1h 0 true $'plain\r\n<status>good</status>\r\nlast')"
+assert_eq "r1: CRLF endings and a final unterminated line preserved" "$(shown "$OUT")" $'plain\r\n· good\r\nlast'
 
 # (f) plain markdown: no displayContent at all
 OUT="$(batch f 0 true $'# Title\n\n- one\n- two\n')"
@@ -131,6 +153,21 @@ for i in $(seq 1 20); do
   [ "$ms" -lt 200 ] || slow=1
 done
 if [ "$slow" = 0 ]; then ok "i: 20 calls each under 200 ms (worst ${worst} ms)"; else bad "i: 20 calls each under 200 ms" "worst ${worst} ms"; fi
+
+# large input: 20 000 plain lines and 20 000 status lines, each under 1 s wall
+BIG="$ROOT/big"
+yes 'plain text line' | head -20000 >"$BIG.plain"
+yes '<status>tick</status>' | head -20000 >"$BIG.status"
+big_batch() {
+  jq -cn --rawfile d "$1" '{hook_event_name:"MessageDisplay",message_id:"big",index:0,final:true,delta:$d}' \
+    | env XDG_RUNTIME_DIR="$RUNTIME" HOME="$ROOT/home" bash "$HOOK"
+}
+t0=$(date +%s%N); OUT="$(big_batch "$BIG.plain")"; t1=$(date +%s%N); plain_ms=$(( (t1 - t0) / 1000000 ))
+assert_eq "big: 20 000 plain lines emit nothing" "$OUT" ""
+if [ "$plain_ms" -lt 1000 ]; then ok "big: 20 000 plain lines under 1 s (${plain_ms} ms)"; else bad "big: 20 000 plain lines under 1 s" "${plain_ms} ms"; fi
+t0=$(date +%s%N); OUT="$(big_batch "$BIG.status")"; t1=$(date +%s%N); status_ms=$(( (t1 - t0) / 1000000 ))
+assert_eq "big: 20 000 status lines all redrawn" "$(shown "$OUT" | grep -c '^· tick$')" "20000"
+if [ "$status_ms" -lt 1000 ]; then ok "big: 20 000 status lines under 1 s (${status_ms} ms)"; else bad "big: 20 000 status lines under 1 s" "${status_ms} ms"; fi
 
 # stale state pruning
 OLD="$STATE_DIR/stale"; printf 'open 1 0\n' >"$OLD"; touch -d '2 days ago' "$OLD"
