@@ -447,23 +447,54 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
 
 ### AMENDMENT (owner-ratified, conductor-acked, 2026-08-28) — opaque-root file reads and resolution
 
-The server's readable file universe consists only of opaque absolute roots.
-It derives live roots from non-empty working directories in the current hcom
-roster and accepts additional operator roots through repeatable
-`herder serve --root PATH` flags. Flag order is configuration order. Relative
-flag values are made absolute from the serve invocation directory; every
-configured value is cleaned, symlink-resolved, and required to name an
-existing directory at startup. Invalid configured roots prevent startup.
-Exact duplicates collapse first-wins, but configured roots remain independently
-addressable when path-nested.
+The server's readable file universe consists only of opaque absolute roots,
+and every root is a Git repository top level. It derives live roots from
+non-empty working directories in the current hcom roster and accepts
+additional operator roots through repeatable `herder serve --root PATH` flags.
+Flag order is configuration order. Relative flag values are made absolute from
+the serve invocation directory; every configured value is cleaned,
+symlink-resolved, and required to name an existing directory that is itself a
+Git top level at startup. Invalid or non-Git configured roots prevent startup.
+Exact duplicates collapse first-wins, but configured roots remain
+independently addressable when path-nested (a repository nested inside another
+repository is its own root).
 
-Agent working directories are cleaned, symlink-resolved, and de-duplicated into
-an enclosing agent root when path-nested. A working directory proven by Git to
-be inside a linked worktree is never folded into another root, even when
-path-nested; exact identical working directories still coalesce. The server has
-no mission-, plan-, or repository-name-specific root knowledge. Root IDs are
-the resulting canonical absolute directory strings; a client-supplied absolute
-path that is not an exact current root ID never authorizes a read.
+#### AMENDMENT (owner ruling #271570/#272141, 2026-09-15) — git roots only, absolute opens directly, most specific root
+
+Each agent working directory is cleaned and symlink-resolved, then mapped to
+the top level of the Git repository containing it (a linked worktree's top
+level is the worktree). Two working directories in one repository therefore
+share one root by construction; there is no shallowest-parent fold. A working
+directory outside any repository, or one whose repository Git cannot prove
+(missing or unhealthy `git`), contributes no root and gives that agent no
+agent root: its preference is just the configured roots. Indexing is
+`git ls-files` only; there is no filesystem walk of any kind, and a non-Git
+root that somehow reaches the index reports `failed` ("not a git repository")
+rather than being walked. The server has no mission-, plan-, or
+repository-name-specific root knowledge. Root IDs are the resulting canonical
+absolute directory strings.
+
+An absolute `q` is handled before any index is consulted. If the cleaned path
+exists and passes the file endpoints' containment law (no `.git` component, no
+symlink escaping its root, a regular file or a directory), the response is
+exactly one `exact` candidate and one `complete` root, computed from the disk
+alone: inside any Git repository, live or not, `root` is the innermost top
+level containing the path and `path` is relative to it (an empty `path` when
+the query is that top level itself); outside any repository `root` is the
+parent directory and `path` is the base name. Directories answer `kind: dir`. If the
+absolute path does not exist (a dangling or refused path counts as absent), the
+query is resolved within the single live root with the longest prefix match on
+the path and no other root is indexed; with no such root the answer is an
+honest 200 with `candidates:[]` and `roots:[]`. Relative mentions and bare
+names are unchanged: all live roots, agent-first preference, current tiers.
+
+`/api/files`, `/api/files/raw`, `/api/files/tree`, and `/api/backlog` accept,
+in addition to the live root set, any `root` that is an absolute, clean,
+existing directory (the shape a direct open emits), so a directly opened file
+under `/tmp` or a home directory reads. A relative, non-existent, or non-directory
+`root` remains 404 `unknown root`. Every other rule of those endpoints (4 MiB
+hard cap, `.git` refusal, escape refusal) is unchanged. The Git read endpoints
+keep the live-set-only refusal.
 
 GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
 or `/api/resolve?q={mention}&root={opaque-root}&path={viewed-file-relative-path}`

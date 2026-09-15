@@ -408,7 +408,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "herder serve: invalid port %d\n", *port)
 		return 2
 	}
-	configuredRoots, err := fileroots.CanonicalConfigured(rootArgs)
+	configuredRoots, err := fileroots.CanonicalConfigured(context.Background(), rootArgs)
 	if err != nil {
 		fmt.Fprintf(stderr, "herder serve: invalid root: %v\n", err)
 		return 2

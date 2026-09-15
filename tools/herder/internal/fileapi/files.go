@@ -95,6 +95,35 @@ func ReadRaw(root, path string) ([]byte, os.FileInfo, error) {
 	return content, info, nil
 }
 
+// Stat reports whether path names an existing, root-contained file or
+// directory under the same relative, symlink, and .git law as Read and Tree.
+// Kind is "file" or "directory". Any refusal or absence is an error.
+func Stat(root, path string) (string, error) {
+	relative, err := validateRelative(path, false)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := resolve(root, relative)
+	if err != nil {
+		return "", err
+	}
+	if isGitInternal(root, resolved) {
+		return "", fmt.Errorf("%w: .git internals are not served: %q resolves to %q", ErrRefused, filepath.Join(root, relative), resolved)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", classifyPathError(root, path, err)
+	}
+	switch {
+	case info.IsDir():
+		return "directory", nil
+	case info.Mode().IsRegular():
+		return "file", nil
+	default:
+		return "", fmt.Errorf("%w: path %q resolves to non-file %q", ErrRefused, filepath.Join(root, relative), resolved)
+	}
+}
+
 func openReadableFile(root, path string) (*os.File, os.FileInfo, string, string, error) {
 	relative, err := validateRelative(path, false)
 	if err != nil {

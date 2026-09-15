@@ -26,6 +26,10 @@ func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
 				t.Fatalf("run dir=%q name=%q args=%q", dir, name, args)
 			}
 			gitCalls++
+			if gitCalls == 1 {
+				// A load longer than the TTL must still produce a fresh entry.
+				now = now.Add(2 * time.Minute)
+			}
 			return CommandOutput{Stdout: []byte([]string{"first\x00", "second\x00", "third\x00"}[gitCalls-1])}, nil
 		},
 	})
@@ -42,8 +46,12 @@ func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
 	if !reflect.DeepEqual(cached, []filecandidate.Candidate{{Path: "first", Kind: filecandidate.KindFile}}) || gitCalls != 1 {
 		t.Fatalf("cached=%q gitCalls=%d", cached, gitCalls)
 	}
+	now = now.Add(30 * time.Second)
+	if stillCached, err := index.Candidates(context.Background(), "/opaque/root", false); err != nil || gitCalls != 1 || stillCached[0].Path != "first" {
+		t.Fatalf("within TTL after slow load: cached=%q gitCalls=%d err=%v", stillCached, gitCalls, err)
+	}
+	now = now.Add(30 * time.Second)
 
-	now = now.Add(time.Minute)
 	refreshed, err := index.Candidates(context.Background(), "/opaque/root", false)
 	if err != nil {
 		t.Fatal(err)
@@ -89,86 +97,29 @@ func TestIndexIncludesTrackedAndUntrackedButNotIgnoredOrGitInternals(t *testing.
 	}
 }
 
-func TestIndexUsesRipgrepForNonGitRoot(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, ".gitignore", "ignored.txt\n")
-	writeFile(t, root, "visible.md", "visible\n")
-	writeFile(t, root, ".hidden.md", "hidden\n")
-	writeFile(t, root, "ignored.txt", "ignored\n")
-
-	candidates, err := New(Options{}).Candidates(context.Background(), root, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{".gitignore", ".hidden.md", "visible.md"} {
-		if !slices.Contains(candidates, filecandidate.Candidate{Path: want, Kind: filecandidate.KindFile}) {
-			t.Errorf("candidates %q do not contain %q", candidates, want)
-		}
-	}
-	if hasPath(candidates, "ignored.txt") {
-		t.Fatalf("ignored file included: %q", candidates)
-	}
-}
-
-func TestIndexTreatsEmptyNonGitRootAsEmptyCandidateSet(t *testing.T) {
-	candidates, err := New(Options{}).Candidates(context.Background(), t.TempDir(), false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(candidates) != 0 {
-		t.Fatalf("candidates = %q", candidates)
-	}
-}
-
-func TestIndexReportsPartialNonGitRootAsDegraded(t *testing.T) {
+func TestIndexRefusesNonGitRootWithoutWalking(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, root, "visible.md", "visible\n")
-	writeFile(t, root, "blocked/secret.md", "secret\n")
-	blocked := filepath.Join(root, "blocked")
-	if err := os.Chmod(blocked, 0); err != nil {
-		t.Fatal(err)
+	writeFile(t, root, "nested/deep.md", "deep\n")
+	var commands []string
+	run := func(ctx context.Context, dir, name string, args ...string) (CommandOutput, error) {
+		commands = append(commands, name)
+		return runCommand(ctx, dir, name, args...)
 	}
-	t.Cleanup(func() { _ = os.Chmod(blocked, 0o755) })
 
-	candidates, err := New(Options{}).Candidates(context.Background(), root, false)
+	candidates, err := New(Options{Run: run}).Candidates(context.Background(), root, false)
+	if err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("error=%v, want not a git repository", err)
+	}
 	var degraded *DegradedError
-	if !errors.As(err, &degraded) {
-		t.Fatalf("error=%v, want DegradedError", err)
+	if errors.As(err, &degraded) {
+		t.Fatalf("non-git root reported as degraded rather than failed: %v", err)
 	}
-	if !slices.Contains(candidates, filecandidate.Candidate{Path: "visible.md", Kind: filecandidate.KindFile}) {
-		t.Fatalf("partial candidates=%q", candidates)
+	if candidates != nil {
+		t.Fatalf("candidates=%q, want none", candidates)
 	}
-	if !strings.Contains(err.Error(), "Permission denied") {
-		t.Fatalf("degraded detail=%q", err)
-	}
-}
-
-func TestIndexExcludesGitInternalsFromNonGitFallback(t *testing.T) {
-	root := t.TempDir()
-	writeFile(t, root, "visible.md", "visible\n")
-	writeFile(t, root, ".git/config", "not a candidate\n")
-
-	candidates, err := New(Options{}).Candidates(context.Background(), root, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, candidate := range candidates {
-		if candidate.Path == ".git" || strings.HasPrefix(candidate.Path, ".git/") {
-			t.Fatalf("git internal included: %q", candidate)
-		}
-	}
-}
-
-func TestIndexReportsMissingRipgrepForNonGitRoot(t *testing.T) {
-	run := func(_ context.Context, _ string, name string, _ ...string) (CommandOutput, error) {
-		if name == "git" {
-			return CommandOutput{Stderr: []byte("fatal: not a git repository")}, errors.New("exit status 128")
-		}
-		return CommandOutput{}, errors.New("executable file not found")
-	}
-	_, err := New(Options{Run: run}).Candidates(context.Background(), "/non-git", false)
-	if err == nil || !strings.Contains(err.Error(), "rg --files") || !strings.Contains(err.Error(), "executable file not found") {
-		t.Fatalf("missing ripgrep error=%v", err)
+	if !reflect.DeepEqual(commands, []string{"git"}) {
+		t.Fatalf("commands=%q, want only git (no walk)", commands)
 	}
 }
 

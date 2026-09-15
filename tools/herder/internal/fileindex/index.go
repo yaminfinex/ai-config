@@ -114,8 +114,9 @@ func (i *Index) Candidates(ctx context.Context, root string, refresh bool) ([]fi
 	if err != nil && !errors.As(err, &degraded) {
 		return nil, err
 	}
+	// Stamp after the load: a load longer than the TTL must not arrive stale.
 	i.mu.Lock()
-	entry := cacheEntry{refreshed: now, candidates: slices.Clone(candidates)}
+	entry := cacheEntry{refreshed: i.now(), candidates: slices.Clone(candidates)}
 	if degraded != nil {
 		entry.degraded = degraded.Error()
 	}
@@ -138,21 +139,10 @@ func (i *Index) load(ctx context.Context, root string) ([]filecandidate.Candidat
 	if !strings.Contains(string(out.Stderr), "not a git repository") {
 		return nil, fmt.Errorf("git ls-files in %q failed: %w: %s", root, err, errorDetail(out))
 	}
+	// A non-git root is never walked: the readable universe is git top
+	// levels only, so reaching here is a loud failure for that root.
 
-	out, err = i.run(commandCtx, root, "rg", "--files", "--hidden", "--no-require-git", "--null", "--glob", "!.git", "--glob", "!.git/**")
-	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 && len(out.Stdout) == 0 {
-			return []filecandidate.Candidate{}, nil
-		}
-		if commandCtx.Err() != nil {
-			return nil, fmt.Errorf("index non-git root %q: %w", root, commandCtx.Err())
-		}
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 2 && len(out.Stdout) > 0 && len(out.Stderr) > 0 {
-			return parseCandidates(out.Stdout), &DegradedError{detail: fmt.Sprintf("rg --files in non-git root %q was partial: %s", root, errorDetail(out))}
-		}
-		return nil, fmt.Errorf("rg --files in non-git root %q failed: %w: %s", root, err, errorDetail(out))
-	}
-	return parseCandidates(out.Stdout), nil
+	return nil, fmt.Errorf("index root %q: not a git repository", root)
 }
 
 func degradedError(detail string) error {
