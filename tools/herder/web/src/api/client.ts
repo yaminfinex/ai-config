@@ -237,3 +237,10 @@ export function viewerReadOnlyMessage(problem: Refusal, status: number | undefin
   }
   return `Viewer identity is unavailable. ${problem.detail}`
 }
+
+export function mutationProblem(error: unknown): LifecycleProblem {
+  const { response, problem } = apiProblem(error)
+  return response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')
+    ? { readOnly: viewerReadOnlyMessage(problem, response.status) }
+    : lifecycleProblem(error)
+}

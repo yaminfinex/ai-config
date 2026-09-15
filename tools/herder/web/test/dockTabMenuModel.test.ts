@@ -9,11 +9,13 @@ const spaces = [
   { id: 'review', name: 'review', order: 1, created: 0, updated: 0 },
 ]
 
-test('dock tab menu contains only other spaces and send-to-new', () => {
-  assert.deepEqual(dockTabMenuItems(spaces, 'main'), [
+test('dock tab menu contains other spaces, send-to-new, and agent-only reassign', () => {
+  assert.deepEqual(dockTabMenuItems(spaces, 'main', 'nota'), [
     { id: 'review', label: 'Send to review', kind: 'space' },
     { id: 'new', label: 'Send to new space', kind: 'new' },
+    { id: 'reassign', label: 'Reassign…', kind: 'reassign', subject: 'nota' },
   ])
+  assert.equal(dockTabMenuItems(spaces, 'main').some((item) => item.kind === 'reassign'), false)
 })
 
 test('dock tab menu recognizes the platform context-menu keys only', () => {
@@ -83,4 +85,17 @@ test('dock tab menu stays open while focus is on or moves within the menu, and c
   const rest = menuEffect.replace(callbackBody('onKeyDown'), '').replace(focusIn, '')
   assert.equal((rest.match(/close\(false\)/g) ?? []).length, 0, `unexpected close(false) in the effect body:\n${rest}`)
   assert.match(rest, /querySelector<HTMLElement>\('\[role="menuitem"\]'\)\?\.focus\(\)/)
+})
+
+test('both context menus share one positioned-menu lifecycle with guarded disposal', () => {
+  assert.match(menuSource, /function usePositionedMenu\(\)/)
+  assert.equal((menuSource.match(/usePositionedMenu\(\)/g) ?? []).length, 3)
+  assert.ok((menuSource.match(/const source = sourceGuard\.current/g) ?? []).length >= 1)
+  assert.ok((menuSource.match(/source !== sourceGuard\.current/g) ?? []).length >= 3)
+  for (const event of ['focusin', 'pointerdown', 'dragstart', 'scroll', 'keydown']) {
+    assert.equal((menuSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length,
+      (menuSource.match(new RegExp(`document\\.removeEventListener\\('${event}'`, 'g')) ?? []).length, event)
+    assert.equal((menuSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length, 1, `${event} must have one shared owner`)
+  }
+  assert.match(menuSource, /export function useAgentRowMenu\(\)/)
 })

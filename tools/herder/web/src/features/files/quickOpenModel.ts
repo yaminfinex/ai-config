@@ -7,6 +7,10 @@ export type QuickOpenActionRow =
   | { kind: 'send-space', id: string, label: string }
   | { kind: 'send-new', label: string }
   | { kind: 'note', text: string, label: string }
+  | { kind: 'reassign-action', subject: string, label: string }
+  | { kind: 'reassign', subject: string, target: string, label: string, title?: string }
+
+export type QuickOpenMode = { kind: 'normal' } | { kind: 'reassign', subject: string }
 
 export type QuickOpenEnterTarget = { kind: 'action', index: number } | { kind: 'file', index?: number }
 export type QuickOpenKeyboardRow = { kind: 'action', index: number } | { kind: 'file', index: number }
@@ -14,7 +18,7 @@ export type QuickOpenKeyboardRow = { kind: 'action', index: number } | { kind: '
 // usable, or finished with a candidate Enter may open.
 export type QuickOpenLookup = 'pending' | 'none' | 'available'
 
-const OPENABLE_KINDS: QuickOpenActionRow['kind'][] = ['space', 'agent']
+const OPENABLE_KINDS: QuickOpenActionRow['kind'][] = ['space', 'agent', 'reassign']
 
 function matchRank(label: string, query: string) {
   const normalized = label.toLocaleLowerCase()
@@ -25,7 +29,7 @@ function matchRank(label: string, query: string) {
   return -1
 }
 
-function ranked<T>(values: T[], label: (value: T) => string, query: string) {
+export function ranked<T>(values: T[], label: (value: T) => string, query: string) {
   return values.map((value, index) => ({ value, index, rank: matchRank(label(value), query) }))
     .filter(({ rank }) => rank >= 0)
     .sort((left, right) => left.rank - right.rank || left.index - right.index)
@@ -39,6 +43,7 @@ export function quickOpenActionRows(
   atSpaceCap: boolean,
   hasActivePanel = false,
   activeSpaceID: string | null = null,
+  reassignSubject?: string,
 ): QuickOpenActionRow[] {
   const name = rawQuery.trim()
   const query = name.toLocaleLowerCase()
@@ -51,12 +56,16 @@ export function quickOpenActionRows(
     ...spaces.filter((space) => space.id !== activeSpaceID).map((space) => ({ kind: 'send-space' as const, id: space.id, label: `Send this pane to ${space.name}` })),
     { kind: 'send-new' as const, label: 'Send this pane to a new space' },
   ], (row) => row.label, query) : []
+  const reassignRows: QuickOpenActionRow[] = reassignSubject ? ranked([
+    { kind: 'reassign-action' as const, subject: reassignSubject, label: `Reassign ${reassignSubject}…` },
+  ], (row) => `${row.label} ${row.subject}`, query) : []
   return [
     ...spaceRows,
     ...name && !atSpaceCap && !exactSpace
       ? [{ kind: 'create' as const, name, label: `Create space “${name}”` }]
       : [],
     ...sendRows,
+    ...reassignRows,
     ...agentRows,
     ...name ? [{ kind: 'note' as const, text: name, label: `New note: ${name}` }] : [],
   ]
@@ -80,6 +89,8 @@ export function quickOpenRowKey(row: QuickOpenActionRow): string {
     case 'send-space': return `action:send-space:${row.id}`
     case 'send-new': return 'action:send-new'
     case 'note': return 'action:note'
+    case 'reassign-action': return `action:reassign:${row.subject}`
+    case 'reassign': return `action:reassign-target:${row.subject}:${row.target}`
   }
 }
 

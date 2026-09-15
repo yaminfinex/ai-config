@@ -6,6 +6,7 @@ import type { GitBase, GitFileState } from '../git/gitViewModel'
 import type { OpenPlacement } from '../layout/openPlacement'
 import type { DockPanelParams } from '../layout/dockLayout'
 import type { SpaceDefinition } from '../spaces/spacesModel'
+import type { QuickOpenMode } from '../files/quickOpenModel.ts'
 
 export type WorkspaceActionsValue = {
   openAgent: (name: string, preview: boolean, placement?: OpenPlacement, focus?: boolean) => void
@@ -23,7 +24,7 @@ export type WorkspaceActionsValue = {
   onViewer: (viewer: string) => void
   onAgentStatus: (name: string, status: string) => void
   resetLayout: () => void
-  showQuickOpen: (groupID?: string) => void
+  showQuickOpen: (groupID?: string, mode?: QuickOpenMode) => void
   sendPanelToSpace: (sourceID: string, params: DockPanelParams, spaceID: string) => boolean
   sendPanelToNewSpace: (sourceID: string, params: DockPanelParams) => boolean
 }

@@ -11,6 +11,7 @@ import { type Route } from '../../shared/navigation'
 import { createFileWatchRegistry, type FileWatchTarget } from '../../stream/fileWatchRegistry'
 import { useFleetStream } from '../../stream/useFleetStream'
 import { quickOpenAgentPreference } from '../files/fileResolution'
+import type { QuickOpenMode } from '../files/quickOpenModel.ts'
 import type { GitFileState } from '../git/gitViewModel'
 import { useLayoutPersistence } from '../layout/useLayoutPersistence'
 import {
@@ -121,6 +122,7 @@ function initializeBrowserSpaces(): SpacesRuntime {
 export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'missing' }>) {
   const { stateChanged: onNotesStateChanged } = useNotes()
   const [quickOpen, setQuickOpen] = useState(false)
+  const [quickOpenMode, setQuickOpenMode] = useState<QuickOpenMode>({ kind: 'normal' })
   const [shortcutReference, setShortcutReference] = useState(false)
   const [quickOpenGroup, setQuickOpenGroup] = useState<string>()
   const { records: agentStatuses, set: setAgentStatusRecord, prune: pruneAgentStatus } = usePanelRecords<string>()
@@ -383,8 +385,9 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     : viewerReadOnlyMessage(viewerFailure?.problem ?? { error: 'request failed', detail: 'unknown failure' }, viewerFailure?.response?.status)
   const fleetProblem = boardQuery.error?.message ?? ''
 
-  const showQuickOpen = useCallback((groupID?: string) => {
+  const showQuickOpen = useCallback((groupID?: string, mode: QuickOpenMode = { kind: 'normal' }) => {
     setQuickOpenGroup(groupID ?? apiRef.current?.activeGroup?.id)
+    setQuickOpenMode(mode)
     setQuickOpen(true)
   }, [])
   const createSpace = useCallback(() => {
@@ -563,8 +566,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   return {
     actions, data, fileWatchRegister: fileWatchRegistry.register,
-    quickOpen, quickOpenAgent, quickOpenGroup,
-    closeQuickOpen: () => { setQuickOpen(false); setQuickOpenGroup(undefined) },
+    quickOpen, quickOpenMode, quickOpenAgent, quickOpenGroup,
+    closeQuickOpen: () => { setQuickOpen(false); setQuickOpenGroup(undefined); setQuickOpenMode({ kind: 'normal' }) },
     shortcutReference, setShortcutReference,
     fleetRail: layout.fleetRail, setFleetRail: layout.setFleetRail, toggleFleetRail,
     notesRail: layout.notesRail, setNotesRail: layout.setNotesRail, toggleNotesRail,

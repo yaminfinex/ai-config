@@ -375,6 +375,9 @@ h2, h3, p { margin-top: 0; }
 .quick-open-section { display: grid; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .quick-open-section > strong, .quick-open-section-label { padding: 4px 11px; color: var(--dimmer); font: 600 9px var(--mono); letter-spacing: .5px; text-transform: uppercase; }
 .quick-open-section > button { padding: 7px 11px; border: 0; border-radius: 0; background: transparent; color: var(--text); font: 11px var(--mono); text-align: left; }
+.quick-open-section > button:has(.quick-open-secondary) { display: flex; align-items: baseline; gap: 10px; }
+.quick-open-secondary { overflow: hidden; color: var(--dim); text-overflow: ellipsis; white-space: nowrap; }
+.quick-open-problem { margin: 6px 10px; color: var(--danger); font: 10px/1.4 var(--mono); }
 .quick-open-results:not(:has(.active)) .quick-open-section > button:hover { background: var(--accent-dim); }
 .quick-open-section > button.active { background: var(--accent-dim); box-shadow: inset 3px 0 0 var(--accent); }
 .quick-open > footer { display: flex; gap: 14px; padding: 6px 10px; color: var(--dimmer); font: 9px var(--mono); }

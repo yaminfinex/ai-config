@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { assignAgent, getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, getState, lifecycleProblem, renameAgent, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
+import { assignAgent, getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, getState, lifecycleProblem, mutationProblem, renameAgent, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
@@ -141,4 +141,14 @@ test('sender collisions explain the collision without connection advice', () => 
   const message = viewerReadOnlyMessage({ error: 'sender refused', detail: 'web-vile already exists' }, 409)
   assert.equal(message, 'Sender collision: this viewer identity maps to a web sender name already reserved or in use. web-vile already exists')
   assert.doesNotMatch(message, /Connect via Tailscale/)
+})
+
+test('mutation problems share attribution and sender-refusal read-only mapping', () => {
+  const error = Object.assign(new Error('collision'), {
+    response: new Response('', { status: 409 }),
+    problem: { error: 'sender refused', detail: 'web-vile already exists' },
+  })
+  assert.deepEqual(mutationProblem(error), {
+    readOnly: 'Sender collision: this viewer identity maps to a web sender name already reserved or in use. web-vile already exists',
+  })
 })

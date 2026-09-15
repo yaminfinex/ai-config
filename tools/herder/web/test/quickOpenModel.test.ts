@@ -182,3 +182,11 @@ test('the initial selection is the first openable row as a key on an empty query
   assert.equal(quickOpenInitialSelection(quickOpenActionRows('', [], [], false), ''), null)
   assert.equal(quickOpenInitialSelection(quickOpenActionRows('review', spaces, ['podi'], false), 'review'), null)
 })
+
+test('an active agent pane contributes a searchable reassign action', () => {
+  const empty = quickOpenActionRows('', spaces, ['nota'], false, true, 'main', 'nota')
+  assert.deepEqual(empty.find((row) => row.kind === 'reassign-action'), { kind: 'reassign-action', subject: 'nota', label: 'Reassign nota…' })
+  assert.equal(quickOpenActionRows('reassign', spaces, ['nota'], false, true, 'main', 'nota').some((row) => row.kind === 'reassign-action'), true)
+  assert.equal(quickOpenActionRows('nota', spaces, ['nota'], false, true, 'main', 'nota').some((row) => row.kind === 'reassign-action'), true)
+  assert.equal(quickOpenActionRows('unrelated', spaces, ['nota'], false, true, 'main', 'nota').some((row) => row.kind === 'reassign-action'), false)
+})

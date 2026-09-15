@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { dropAssignment, reparentDrop } from '../src/features/sidebar/reparentModel.ts'
+import { dropAssignment, reparentDrop, reparentRefusal } from '../src/features/sidebar/reparentModel.ts'
 import type { SidebarNode } from '../src/features/sidebar/sidebarNodes.ts'
 import type { Row } from '../src/types.ts'
 
@@ -36,4 +36,14 @@ test('drop refusal table protects supervision topology', () => {
     ['supervision', 'agent:a', 'terminal:p1', 'terminal'],
     ['supervision', 'agent:a', 'agent:ended', 'target is not a live agent'],
   ] as const) assert.deepEqual(reparentDrop(view, source, target, nodes), { refusal })
+})
+
+test('the pure refusal seam matches live, self, descendant and target-kind rules', () => {
+  const live = { kind: 'agent' as const, ...row('a') }
+  assert.equal(reparentRefusal(live, { kind: 'agent', ...row('d') }, false), null)
+  assert.equal(reparentRefusal(live, live, false), 'self')
+  assert.equal(reparentRefusal(live, { kind: 'agent', ...row('b') }, true), 'descendant')
+  assert.equal(reparentRefusal(live, { kind: 'tombstone', agent: 'x', bus_status: '-', manager_state: 'ended' }, false), 'tombstone')
+  assert.equal(reparentRefusal(live, { kind: 'pane', ...row('-', 'live'), bus_status: '-' }, false), 'terminal')
+  assert.equal(reparentRefusal(live, { kind: 'agent', ...row('ended', 'ended') }, false), 'target is not a live agent')
 })
