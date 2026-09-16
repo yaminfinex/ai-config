@@ -99,18 +99,12 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		}
 	}
-	var anchor *fileresolver.Anchor
-	if rootPresent {
-		if !set.Contains(root) {
-			refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
-			return
-		}
-		anchor = &fileresolver.Anchor{Root: root, Path: cleanPath}
-	}
+	// An absolute query ignores any file context: one that exists opens
+	// directly; one that does not is scoped to the single most specific live
+	// root, never the others. A context root (possibly a direct-open root
+	// outside the live set) therefore need not be live for it.
 	roots, preference := set.Roots, set.Preference(agent)
 	if normalized := fileresolver.NormalizeQuery(query).Path; filepath.IsAbs(normalized) {
-		// An absolute path that exists opens directly; one that does not is
-		// scoped to the single most specific live root, never the others.
 		if response, handled := directOpen(r.Context(), normalized); handled {
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -121,6 +115,14 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		}
 		roots, preference = []string{scoped}, []string{scoped}
+	}
+	var anchor *fileresolver.Anchor
+	if rootPresent {
+		if !set.Contains(root) {
+			refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+			return
+		}
+		anchor = &fileresolver.Anchor{Root: root, Path: cleanPath}
 	}
 	resolution, err := deps.fileResolver.ResolveDetailed(r.Context(), fileresolver.Request{
 		Query: query, Roots: roots, RootPreference: preference, Anchor: anchor,

@@ -13,36 +13,41 @@ import (
 )
 
 // directOpen answers an absolute query that names an existing file or
-// directory without consulting any index. Inside a git repository the root
-// is the innermost top level and the path is relative to it; outside any
-// repository the root is the parent directory and the path is the base name.
-// A path that is itself a repository top level answers root = top, path = "". A path that does not
-// exist, or that fileapi would refuse (escaping symlink, .git internals,
-// non-regular), is reported as not handled.
+// directory without consulting any index. The root is chosen from the
+// LEXICAL path, never from a followed symlink: the nearest lexical ancestor
+// that is not a symlink anchors the lookup. If that anchor sits in a
+// git repository the root is the innermost top level and the path is the
+// remainder (empty when the query is the top level itself); otherwise the
+// root is the anchor and the path is the remainder below it. fileapi.Stat
+// then validates containment through any symlink in the remainder, so an
+// escaping link or an alias into .git is refused and reported as not handled,
+// exactly like a path that does not exist.
 func directOpen(ctx context.Context, query string) (resolveResponse, bool) {
 	path := filepath.Clean(query)
-	if !filepath.IsAbs(path) || path == string(filepath.Separator) {
+	if !filepath.IsAbs(path) || path == string(filepath.Separator) || hasGitComponent(path) {
 		return resolveResponse{}, false
 	}
-	for _, component := range strings.Split(path, string(filepath.Separator)) {
-		if component == ".git" {
-			return resolveResponse{}, false
+	anchor := lexicalAnchor(filepath.Dir(path))
+	if anchor == "" {
+		return resolveResponse{}, false
+	}
+	root := anchor
+	if top, ok := repoctx.TopLevel(ctx, anchor); ok {
+		root = top
+	}
+	// The query itself, when it is a real directory that is a git top level,
+	// is its own root with an empty path.
+	if info, err := os.Lstat(path); err == nil && info.IsDir() {
+		if top, ok := repoctx.TopLevel(ctx, path); ok && top == path {
+			root = path
 		}
 	}
-	if top, ok, err := repoctx.TopLevel(ctx, path); err == nil && ok && top == path {
-		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-			return resolveResponse{
-				Candidates: []fileresolver.Result{{Root: path, Path: "", Kind: filecandidate.KindDir, Tier: fileresolver.TierExact}},
-				Roots:      []fileresolver.RootOutcome{{Root: path, Status: fileresolver.RootComplete}},
-			}, true
-		}
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return resolveResponse{}, false
 	}
-	parent := filepath.Dir(path)
-	root, relative := parent, filepath.Base(path)
-	if top, ok, err := repoctx.TopLevel(ctx, parent); err == nil && ok {
-		if rel, relErr := filepath.Rel(top, path); relErr == nil {
-			root, relative = top, rel
-		}
+	if relative == "." {
+		relative = ""
 	}
 	kind, err := fileapi.Stat(root, relative)
 	if err != nil {
@@ -58,13 +63,46 @@ func directOpen(ctx context.Context, query string) (resolveResponse, bool) {
 	}, true
 }
 
+// lexicalAnchor walks start and its lexical ancestors upward and returns the
+// first that is a real (non-symlink) directory. A missing component is
+// skipped; a regular file in the chain yields "".
+func lexicalAnchor(start string) string {
+	for dir := start; ; dir = filepath.Dir(dir) {
+		info, err := os.Lstat(dir)
+		switch {
+		case err == nil && info.IsDir():
+			return dir
+		case err == nil && info.Mode()&os.ModeSymlink == 0:
+			return ""
+		}
+		if dir == filepath.Dir(dir) {
+			return ""
+		}
+	}
+}
+
 // directOpenRoot reports whether root is acceptable to the file endpoints
-// outside the live set: an absolute, clean, existing directory, which is the
+// outside the live set: an absolute, clean, existing directory that holds no
+// .git component either lexically or at its resolved location. This is the
 // root shape directOpen emits.
 func directOpenRoot(root string) bool {
-	if !filepath.IsAbs(root) || filepath.Clean(root) != root {
+	if !filepath.IsAbs(root) || filepath.Clean(root) != root || hasGitComponent(root) {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil || hasGitComponent(resolved) {
 		return false
 	}
 	info, err := os.Stat(root)
 	return err == nil && info.IsDir()
+}
+
+// hasGitComponent reports whether any path component is .git.
+func hasGitComponent(path string) bool {
+	for _, component := range strings.Split(path, string(filepath.Separator)) {
+		if component == ".git" {
+			return true
+		}
+	}
+	return false
 }

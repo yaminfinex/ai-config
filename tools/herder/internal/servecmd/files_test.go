@@ -507,6 +507,117 @@ func TestResolveEndpointNeverListsNonGitAgentCWD(t *testing.T) {
 	}
 }
 
+func TestDirectOpenChoosesRootFromLexicalPathNotFromFollowedDirectorySymlink(t *testing.T) {
+	repo := newFileAPIGitRepo(t)
+	writeFileAPIFixture(t, repo, "docs/inside.md", "inside\n")
+	outside := t.TempDir()
+	writeFileAPIFixture(t, outside, "hello.md", "outside\n")
+	if err := os.Symlink(outside, filepath.Join(repo, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, ".git"), filepath.Join(repo, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repo, "docs"), filepath.Join(repo, "docs-link")); err != nil {
+		t.Fatal(err)
+	}
+	plain := t.TempDir()
+	writeFileAPIFixture(t, plain, "hello.md", "plain\n")
+	if err := os.Symlink(outside, filepath.Join(plain, "link")); err != nil {
+		t.Fatal(err)
+	}
+	deps := fileAPIDeps(t, []string{newFileAPIGitRepo(t)}, nil)
+
+	refused := []string{
+		filepath.Join(repo, "escape", "hello.md"),         // parent symlink must not rebase the root onto the escape
+		filepath.Join(repo, "escape"),                     // the escaping directory itself
+		filepath.Join(repo, "alias", "config"),            // alias into .git, refused on the resolved location
+		filepath.Join(plain, "link", "hello.md"),          // same law outside any repository
+		filepath.Join(repo, "docs", "inside.md", "child"), // regular file in the chain
+	}
+	for _, query := range refused {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q="+url.QueryEscape(query), nil))
+		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"candidates":[],"roots":[]}` {
+			t.Errorf("%s = %d %s", query, response.Code, response.Body.String())
+		}
+	}
+	// A symlink that stays inside the repository keeps the repository root.
+	for _, test := range []struct{ query, root, path string }{
+		{filepath.Join(repo, "docs-link", "inside.md"), repo, "docs-link/inside.md"},
+		{filepath.Join(plain, "hello.md"), plain, "hello.md"},
+	} {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q="+url.QueryEscape(test.query), nil))
+		var body resolveResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != http.StatusOK || len(body.Candidates) != 1 || body.Candidates[0].Root != test.root || body.Candidates[0].Path != test.path {
+			t.Errorf("%s = %d %s", test.query, response.Code, response.Body.String())
+		}
+	}
+}
+
+func TestFileEndpointsRefuseGitDirectoryAsDirectOpenRoot(t *testing.T) {
+	repo := newFileAPIGitRepo(t)
+	writeFileAPIFixture(t, repo, "README.md", "repo\n")
+	if err := os.Symlink(filepath.Join(repo, ".git"), filepath.Join(repo, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	plain := t.TempDir()
+	writeFileAPIFixture(t, plain, "note.md", "plain\n")
+	deps := fileAPIDeps(t, nil, nil)
+	for _, root := range []string{filepath.Join(repo, ".git"), filepath.Join(repo, "alias"), filepath.Join(repo, ".git", "refs")} {
+		for _, path := range []string{
+			"/api/files?root=" + url.QueryEscape(root) + "&path=config",
+			"/api/files/raw?root=" + url.QueryEscape(root) + "&path=config",
+			"/api/files/tree?root=" + url.QueryEscape(root),
+			"/api/backlog?root=" + url.QueryEscape(root) + "&path=",
+		} {
+			response := httptest.NewRecorder()
+			newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown root"`) {
+				t.Errorf("%s = %d %s", path, response.Code, response.Body.String())
+			}
+		}
+	}
+	// Ordinary directories outside any repository stay readable.
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/files?root="+url.QueryEscape(plain)+"&path=note.md", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"content":"plain\n"`) {
+		t.Fatalf("plain direct-open root = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestResolveEndpointAnswersAbsoluteMentionFromDirectlyOpenedFileOutsideLiveRoots(t *testing.T) {
+	live := newFileAPIGitRepo(t)
+	writeFileAPIFixture(t, live, "docs/target.md", "target\n")
+	fileAPIGit(t, live, "add", ".")
+	fileAPIGit(t, live, "commit", "-m", "fixture")
+	tmp := t.TempDir()
+	target := filepath.Join(live, "docs", "target.md")
+	writeFileAPIFixture(t, tmp, "mentions.md", "see "+target+"\n")
+	deps := fileAPIDeps(t, nil, []hcomidentity.Row{{Name: "dore", Tool: "codex", Status: "active", Directory: live}})
+
+	context := "&root=" + url.QueryEscape(tmp) + "&path=mentions.md"
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q="+url.QueryEscape(target)+context, nil))
+	var body resolveResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(body.Candidates) != 1 || body.Candidates[0].Root != live || body.Candidates[0].Path != "docs/target.md" || body.Candidates[0].Tier != fileresolver.TierExact {
+		t.Fatalf("absolute mention with direct-open context = %d %s", response.Code, response.Body.String())
+	}
+	// A relative mention still needs a live context root.
+	response = httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q=target.md"+context, nil))
+	if response.Code != http.StatusNotFound || !strings.Contains(response.Body.String(), `"error":"unknown root"`) {
+		t.Fatalf("relative mention with non-live context = %d %s", response.Code, response.Body.String())
+	}
+}
+
 type resolverFunc func(context.Context, fileresolver.Request) (fileresolver.Resolution, error)
 
 func (f resolverFunc) Resolve(ctx context.Context, request fileresolver.Request) ([]fileresolver.Result, error) {

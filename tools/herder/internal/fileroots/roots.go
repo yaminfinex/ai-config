@@ -39,11 +39,7 @@ func CanonicalConfigured(ctx context.Context, paths []string) ([]string, error) 
 		if !ok {
 			return nil, fmt.Errorf("configured root %q is not an existing directory", path)
 		}
-		top, isRepo, err := repoctx.TopLevel(ctx, canonical)
-		if err != nil {
-			return nil, fmt.Errorf("configured root %q: %w", path, err)
-		}
-		if !isRepo || top != canonical {
+		if top, isRepo := repoctx.TopLevel(ctx, canonical); !isRepo || top != canonical {
 			return nil, fmt.Errorf("configured root %q is not a git repository top level", path)
 		}
 		if !seen[canonical] {
@@ -74,10 +70,7 @@ func Build(ctx context.Context, configured []string, agents []Agent) (Set, error
 		if err != nil || !ok {
 			continue
 		}
-		top, isRepo, err := repoctx.TopLevel(ctx, path)
-		if err != nil {
-			return Set{}, err
-		}
+		top, isRepo := repoctx.TopLevel(ctx, path)
 		if !isRepo {
 			continue
 		}

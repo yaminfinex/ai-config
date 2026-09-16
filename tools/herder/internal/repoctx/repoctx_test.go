@@ -46,17 +46,17 @@ func TestTopLevelReportsInnermostRepoOrNothing(t *testing.T) {
 	git(t, nested, "init", "-q")
 
 	for _, test := range []struct{ cwd, want string }{{root, root}, {sub, root}, {worktree, worktree}, {nested, nested}} {
-		top, ok, err := TopLevel(context.Background(), test.cwd)
-		if err != nil || !ok || top != test.want {
-			t.Fatalf("TopLevel(%q) = %q %v %v, want %q", test.cwd, top, ok, err, test.want)
+		top, ok := TopLevel(context.Background(), test.cwd)
+		if !ok || top != test.want {
+			t.Fatalf("TopLevel(%q) = %q %v, want %q", test.cwd, top, ok, test.want)
 		}
 	}
-	if top, ok, err := TopLevel(context.Background(), t.TempDir()); err != nil || ok || top != "" {
-		t.Fatalf("plain dir = %q %v %v", top, ok, err)
+	if top, ok := TopLevel(context.Background(), t.TempDir()); ok || top != "" {
+		t.Fatalf("plain dir = %q %v", top, ok)
 	}
 	t.Setenv("PATH", t.TempDir())
-	if top, ok, err := TopLevel(context.Background(), root); err != nil || ok || top != "" {
-		t.Fatalf("missing git = %q %v %v", top, ok, err)
+	if top, ok := TopLevel(context.Background(), root); ok || top != "" {
+		t.Fatalf("missing git = %q %v", top, ok)
 	}
 }
 

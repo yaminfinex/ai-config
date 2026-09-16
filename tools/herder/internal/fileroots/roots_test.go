@@ -40,12 +40,13 @@ func TestBuildNeverFoldsLinkedWorktreeCWD(t *testing.T) {
 	writeFile(t, repo, "tracked.md", "fixture\n")
 	git(t, repo, "add", "tracked.md")
 	git(t, repo, "commit", "-m", "fixture")
-	worktree := filepath.Join(t.TempDir(), "linked")
+	// Path-nested under the other root: only Git's own top level keeps it apart.
+	worktree := filepath.Join(repo, ".worktrees", "linked")
 	git(t, repo, "worktree", "add", "-b", "feature", worktree)
 
 	set, err := Build(context.Background(), nil, []Agent{
 		{Name: "repo", CWD: repo},
-		{Name: "worktree", CWD: filepath.Join(worktree)},
+		{Name: "worktree", CWD: worktree},
 	})
 	if err != nil {
 		t.Fatal(err)

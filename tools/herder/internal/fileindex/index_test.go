@@ -2,7 +2,6 @@ package fileindex
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,8 +110,7 @@ func TestIndexRefusesNonGitRootWithoutWalking(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not a git repository") {
 		t.Fatalf("error=%v, want not a git repository", err)
 	}
-	var degraded *DegradedError
-	if errors.As(err, &degraded) {
+	if partial, ok := err.(interface{ Degraded() bool }); ok && partial.Degraded() {
 		t.Fatalf("non-git root reported as degraded rather than failed: %v", err)
 	}
 	if candidates != nil {

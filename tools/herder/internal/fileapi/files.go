@@ -97,9 +97,10 @@ func ReadRaw(root, path string) ([]byte, os.FileInfo, error) {
 
 // Stat reports whether path names an existing, root-contained file or
 // directory under the same relative, symlink, and .git law as Read and Tree.
-// Kind is "file" or "directory". Any refusal or absence is an error.
+// An empty path is the root directory itself. Kind is "file" or "directory".
+// Any refusal or absence is an error.
 func Stat(root, path string) (string, error) {
-	relative, err := validateRelative(path, false)
+	relative, err := validateRelative(path, true)
 	if err != nil {
 		return "", err
 	}
