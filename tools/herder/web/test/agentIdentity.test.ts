@@ -4,7 +4,7 @@ import { agentBoardTitle, agentHeaderIdentity, bareHcomName } from '../src/share
 import type { Board, Row } from '../src/types.ts'
 
 function row(agent: string, title?: string): Row {
-  return { pane_id: `pane-${agent}`, agent, tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '', ...(title ? { title } : {}) }
+  return { pane_id: `pane-${agent}`, agent, tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '', ...(title === undefined ? {} : { title }) }
 }
 
 const board: Board = {
@@ -17,6 +17,7 @@ test('bareHcomName returns the last tagged segment or the unchanged bare name', 
   assert.equal(bareHcomName('review-zami'), 'zami')
   assert.equal(bareHcomName('riko'), 'riko')
   assert.equal(bareHcomName('a-b-cudo'), 'cudo')
+  assert.equal(bareHcomName('x-'), 'x-')
   assert.equal(bareHcomName(''), '')
 })
 
@@ -25,6 +26,7 @@ test('agent tab title prefers the live board title and falls back to the hcom na
   assert.equal(agentBoardTitle(board, 'review-zami'), 'Review')
   assert.equal(agentBoardTitle(board, 'build-cudo'), 'build-cudo')
   assert.equal(agentBoardTitle(board, 'missing-melu'), 'missing-melu')
+  assert.equal(agentBoardTitle({ ...board, unplaced: [row('blank-bubu', '')] }, 'blank-bubu'), 'blank-bubu')
 })
 
 test('tagged in-pane identity shows the bare name with the full name alongside', () => {

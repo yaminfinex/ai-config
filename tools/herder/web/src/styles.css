@@ -571,7 +571,7 @@ h2, h3, p { margin-top: 0; }
 .history-meta { flex: 0 0 auto; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--dimmer); font: 9px var(--mono); }
 .agent-header { display: flex; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); }
 .agent-identity { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
-.agent-name { overflow: hidden; font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.agent-name { flex: 0 0 auto; overflow: hidden; font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .agent-full-name { overflow: hidden; color: var(--muted); font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .agent-status { color: var(--dim); font-size: 11px; white-space: nowrap; }
 .agent-vitals { display: flex; min-width: 0; gap: 8px; overflow: hidden; color: var(--purple); font: 10px var(--mono); }

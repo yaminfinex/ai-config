@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { agentBusStatus, agentStatusPresentation } from '../src/shared/agentStatus.ts'
+import { agentBoardTool, agentBusStatus, agentStatusPresentation } from '../src/shared/agentStatus.ts'
 import type { Board } from '../src/types.ts'
 
 test('fleet bus statuses map to honest operator-facing lifecycle semantics', () => {
@@ -42,6 +42,10 @@ test('open-tab status follows placed and unplaced rows from a fleet snapshot', (
   assert.equal(agentBusStatus(board, 'vile-task'), 'listening')
   assert.equal(agentBusStatus(board, 'dore'), 'blocked')
   assert.equal(agentBusStatus(board, 'missing'), '-')
+  assert.equal(agentBoardTool(board, 'vile'), 'codex')
+  assert.equal(agentBoardTool(board, 'vile-task'), 'claude')
+  assert.equal(agentBoardTool(board, 'dore'), 'claude')
+  assert.equal(agentBoardTool(board, 'missing'), '')
 })
 
 test('tool badges are terse, honest, and omitted when unknown', async () => {
