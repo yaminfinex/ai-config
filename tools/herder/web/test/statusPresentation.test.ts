@@ -61,7 +61,7 @@ test('agent tabs and the agent header carry the badge; the tab narrates no statu
   assert.match(tab, /<ToolBadge tool=\{agentBoardTool\(data\.board, params\.name\)\} \/>/)
   assert.doesNotMatch(tab, /status !== '-' \? status : presentation\.meta/)
   const header = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
-  assert.match(header, /className="agent-name">\{name\}<\/strong>\n\s*<ToolBadge tool=\{agent\?\.tool\} \/>/)
+  assert.match(header, /<AgentHeaderIdentity name=\{name\} \/>\n\s*<ToolBadge tool=\{agent\?\.tool\} \/>/)
 })
 
 test('the badge renders brand glyphs for claude and codex and text fallback otherwise', async () => {
