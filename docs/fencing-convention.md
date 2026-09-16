@@ -150,3 +150,7 @@ Good.
 ## Session snippet
 
 The notes text lives in `docs/hcom-launch-notes.txt`, and `tools/fleet/apply-hcom-notes.sh` writes it.
+
+## In the Claude Code terminal
+
+The Claude Code terminal draws status as `· body` and internal blocks as a note line (without a count while a block is still streaming). This display-only hook leaves transcripts and model context unchanged; ctrl+o shows the raw text.
