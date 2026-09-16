@@ -14,8 +14,8 @@ import (
 
 // directOpen answers an absolute query that names an existing file or
 // directory without consulting any index. The root is chosen from the
-// LEXICAL path, never from a followed symlink: the nearest lexical ancestor
-// that is not a symlink anchors the lookup. If that anchor sits in a
+// LEXICAL path, never from a followed symlink: the longest lexical prefix
+// below the first symlink component anchors the lookup. If that anchor sits in a
 // git repository the root is the innermost top level and the path is the
 // remainder (empty when the query is the top level itself); otherwise the
 // root is the anchor and the path is the remainder below it. fileapi.Stat
@@ -63,22 +63,30 @@ func directOpen(ctx context.Context, query string) (resolveResponse, bool) {
 	}, true
 }
 
-// lexicalAnchor walks start and its lexical ancestors upward and returns the
-// first that is a real (non-symlink) directory. A missing component is
-// skipped; a regular file in the chain yields "".
-func lexicalAnchor(start string) string {
-	for dir := start; ; dir = filepath.Dir(dir) {
-		info, err := os.Lstat(dir)
+// lexicalAnchor walks the lexical prefixes of dir from the filesystem root
+// DOWN and returns the last prefix before the first symlink component, so
+// every ancestor of the anchor is a real directory. A missing prefix stops the
+// walk at its parent; a prefix that is a regular file yields "".
+func lexicalAnchor(dir string) string {
+	anchor := string(filepath.Separator)
+	prefix := anchor
+	for _, component := range strings.Split(strings.TrimPrefix(dir, string(filepath.Separator)), string(filepath.Separator)) {
+		if component == "" {
+			continue
+		}
+		prefix = filepath.Join(prefix, component)
+		info, err := os.Lstat(prefix)
 		switch {
-		case err == nil && info.IsDir():
-			return dir
-		case err == nil && info.Mode()&os.ModeSymlink == 0:
+		case err != nil:
+			return anchor
+		case info.Mode()&os.ModeSymlink != 0:
+			return anchor
+		case !info.IsDir():
 			return ""
 		}
-		if dir == filepath.Dir(dir) {
-			return ""
-		}
+		anchor = prefix
 	}
+	return anchor
 }
 
 // directOpenRoot reports whether root is acceptable to the file endpoints

@@ -103,7 +103,6 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	// directly; one that does not is scoped to the single most specific live
 	// root, never the others. A context root (possibly a direct-open root
 	// outside the live set) therefore need not be live for it.
-	roots, preference := set.Roots, set.Preference(agent)
 	if normalized := fileresolver.NormalizeQuery(query).Path; filepath.IsAbs(normalized) {
 		if response, handled := directOpen(r.Context(), normalized); handled {
 			writeJSON(w, http.StatusOK, response)
@@ -114,7 +113,8 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			writeJSON(w, http.StatusOK, resolveResponse{Candidates: []fileresolver.Result{}, Roots: []fileresolver.RootOutcome{}})
 			return
 		}
-		roots, preference = []string{scoped}, []string{scoped}
+		writeResolution(w, deps, r, query, []string{scoped}, []string{scoped}, nil)
+		return
 	}
 	var anchor *fileresolver.Anchor
 	if rootPresent {
@@ -124,6 +124,10 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		anchor = &fileresolver.Anchor{Root: root, Path: cleanPath}
 	}
+	writeResolution(w, deps, r, query, set.Roots, set.Preference(agent), anchor)
+}
+
+func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, query string, roots, preference []string, anchor *fileresolver.Anchor) {
 	resolution, err := deps.fileResolver.ResolveDetailed(r.Context(), fileresolver.Request{
 		Query: query, Roots: roots, RootPreference: preference, Anchor: anchor,
 	})

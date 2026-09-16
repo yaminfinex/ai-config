@@ -521,6 +521,11 @@ func TestDirectOpenChoosesRootFromLexicalPathNotFromFollowedDirectorySymlink(t *
 	if err := os.Symlink(filepath.Join(repo, "docs"), filepath.Join(repo, "docs-link")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink(filepath.Join(repo, "escape"), filepath.Join(repo, "chain")); err != nil {
+		t.Fatal(err)
+	}
+	writeFileAPIFixture(t, outside, "sub/hello.md", "outside sub\n")
+	writeFileAPIFixture(t, repo, "docs/sub/deep.md", "deep\n")
 	plain := t.TempDir()
 	writeFileAPIFixture(t, plain, "hello.md", "plain\n")
 	if err := os.Symlink(outside, filepath.Join(plain, "link")); err != nil {
@@ -531,7 +536,10 @@ func TestDirectOpenChoosesRootFromLexicalPathNotFromFollowedDirectorySymlink(t *
 	refused := []string{
 		filepath.Join(repo, "escape", "hello.md"),         // parent symlink must not rebase the root onto the escape
 		filepath.Join(repo, "escape"),                     // the escaping directory itself
+		filepath.Join(repo, "escape", "sub", "hello.md"),  // a real directory BELOW the symlink must not become the anchor
+		filepath.Join(repo, "chain", "sub", "hello.md"),   // symlink chain to the escape
 		filepath.Join(repo, "alias", "config"),            // alias into .git, refused on the resolved location
+		filepath.Join(repo, "alias", "refs", "probe"),     // never advertise a root inside .git through an alias
 		filepath.Join(plain, "link", "hello.md"),          // same law outside any repository
 		filepath.Join(repo, "docs", "inside.md", "child"), // regular file in the chain
 	}
@@ -545,6 +553,7 @@ func TestDirectOpenChoosesRootFromLexicalPathNotFromFollowedDirectorySymlink(t *
 	// A symlink that stays inside the repository keeps the repository root.
 	for _, test := range []struct{ query, root, path string }{
 		{filepath.Join(repo, "docs-link", "inside.md"), repo, "docs-link/inside.md"},
+		{filepath.Join(repo, "docs-link", "sub", "deep.md"), repo, "docs-link/sub/deep.md"},
 		{filepath.Join(plain, "hello.md"), plain, "hello.md"},
 	} {
 		response := httptest.NewRecorder()
@@ -609,6 +618,17 @@ func TestResolveEndpointAnswersAbsoluteMentionFromDirectlyOpenedFileOutsideLiveR
 	}
 	if response.Code != http.StatusOK || len(body.Candidates) != 1 || body.Candidates[0].Root != live || body.Candidates[0].Path != "docs/target.md" || body.Candidates[0].Tier != fileresolver.TierExact {
 		t.Fatalf("absolute mention with direct-open context = %d %s", response.Code, response.Body.String())
+	}
+	// A missing absolute path under a live repo with that non-live context
+	// still scopes to the repo's fuzzy candidates and its single root.
+	response = httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q="+url.QueryEscape(filepath.Join(live, "docs", "targt.md"))+context, nil))
+	body = resolveResponse{}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || len(body.Candidates) != 1 || body.Candidates[0].Root != live || body.Candidates[0].Path != "docs/target.md" || len(body.Roots) != 1 || body.Roots[0].Root != live {
+		t.Fatalf("missing absolute with direct-open context = %d %s", response.Code, response.Body.String())
 	}
 	// A relative mention still needs a live context root.
 	response = httptest.NewRecorder()
