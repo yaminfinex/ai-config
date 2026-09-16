@@ -28,6 +28,38 @@ func TestReadReportsBranchRemoteAndLinkedWorktreeParent(t *testing.T) {
 	}
 }
 
+func TestTopLevelReportsInnermostRepoOrNothing(t *testing.T) {
+	root := newGitRepo(t)
+	sub := filepath.Join(root, "sub", "deeper")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, root, "README.md", "fixture\n")
+	git(t, root, "add", "README.md")
+	git(t, root, "commit", "-m", "fixture")
+	worktree := filepath.Join(t.TempDir(), "linked")
+	git(t, root, "worktree", "add", "-b", "feature/top", worktree)
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, nested, "init", "-q")
+
+	for _, test := range []struct{ cwd, want string }{{root, root}, {sub, root}, {worktree, worktree}, {nested, nested}} {
+		top, ok := TopLevel(context.Background(), test.cwd)
+		if !ok || top != test.want {
+			t.Fatalf("TopLevel(%q) = %q %v, want %q", test.cwd, top, ok, test.want)
+		}
+	}
+	if top, ok := TopLevel(context.Background(), t.TempDir()); ok || top != "" {
+		t.Fatalf("plain dir = %q %v", top, ok)
+	}
+	t.Setenv("PATH", t.TempDir())
+	if top, ok := TopLevel(context.Background(), root); ok || top != "" {
+		t.Fatalf("missing git = %q %v", top, ok)
+	}
+}
+
 func TestReadOmitsUnavailableGitFactsWithoutGuessing(t *testing.T) {
 	root := t.TempDir()
 	got, err := Read(context.Background(), root)

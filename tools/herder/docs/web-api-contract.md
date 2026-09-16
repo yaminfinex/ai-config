@@ -448,22 +448,63 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
 ### AMENDMENT (owner-ratified, conductor-acked, 2026-08-28) — opaque-root file reads and resolution
 
 The server's readable file universe consists only of opaque absolute roots.
-It derives live roots from non-empty working directories in the current hcom
-roster and accepts additional operator roots through repeatable
-`herder serve --root PATH` flags. Flag order is configuration order. Relative
-flag values are made absolute from the serve invocation directory; every
-configured value is cleaned, symlink-resolved, and required to name an
-existing directory at startup. Invalid configured roots prevent startup.
-Exact duplicates collapse first-wins, but configured roots remain independently
-addressable when path-nested.
+Every INDEXED root is a Git repository top level; READABLE roots are those
+plus the direct-open roots described in the 2026-09-15 amendment below (an
+absolute, clean, existing directory with no `.git` component, lexically or at
+its resolved location). It derives live roots from
+non-empty working directories in the current hcom roster and accepts
+additional operator roots through repeatable `herder serve --root PATH` flags.
+Flag order is configuration order. Relative flag values are made absolute from
+the serve invocation directory; every configured value is cleaned,
+symlink-resolved, and required to name an existing directory that is itself a
+Git top level at startup. Invalid or non-Git configured roots prevent startup.
+Exact duplicates collapse first-wins, but configured roots remain
+independently addressable when path-nested (a repository nested inside another
+repository is its own root).
 
-Agent working directories are cleaned, symlink-resolved, and de-duplicated into
-an enclosing agent root when path-nested. A working directory proven by Git to
-be inside a linked worktree is never folded into another root, even when
-path-nested; exact identical working directories still coalesce. The server has
-no mission-, plan-, or repository-name-specific root knowledge. Root IDs are
-the resulting canonical absolute directory strings; a client-supplied absolute
-path that is not an exact current root ID never authorizes a read.
+#### AMENDMENT (owner ruling #271570/#272141, 2026-09-15) — git roots only, absolute opens directly, most specific root
+
+Each agent working directory is cleaned and symlink-resolved, then mapped to
+the top level of the Git repository containing it (a linked worktree's top
+level is the worktree). Two working directories in one repository therefore
+share one root by construction; there is no shallowest-parent fold. A working
+directory outside any repository, or one whose repository Git cannot prove
+(missing or unhealthy `git`), contributes no root and gives that agent no
+agent root: its preference is just the configured roots. Indexing is
+`git ls-files` only; there is no filesystem walk of any kind, and a non-Git
+root that somehow reaches the index reports `failed` ("not a git repository")
+rather than being walked. The server has no mission-, plan-, or
+repository-name-specific root knowledge. Root IDs are the resulting canonical
+absolute directory strings.
+
+An absolute `q` is handled before any index is consulted and before any file
+context root is checked against the live set (a relative or bare mention still
+needs a live context root). If the cleaned path exists and passes the file
+endpoints' containment law (no `.git` component, no symlink escaping its root,
+a regular file or a directory), the response is exactly one `exact` candidate
+and one `complete` root, computed from the disk alone. The root is chosen from
+the LEXICAL path, never from a followed symlink: the nearest lexical ancestor
+that is not a symlink anchors the lookup; inside any Git repository, live or
+not, `root` is that anchor's innermost top level and `path` is the remainder
+(an empty `path` when the query is that top level itself); outside any
+repository `root` is the anchor and `path` is the remainder. Containment is
+then validated through any symlink below the root, so `R/escape/x` with
+`escape` pointing outside `R`, or `R/alias/config` with `alias` pointing at
+`R/.git`, is refused and treated as absent. Directories answer `kind: dir`. If the
+absolute path does not exist (a dangling or refused path counts as absent), the
+query is resolved within the single live root with the longest prefix match on
+the path and no other root is indexed; with no such root the answer is an
+honest 200 with `candidates:[]` and `roots:[]`. Relative mentions and bare
+names are unchanged: all live roots, agent-first preference, current tiers.
+
+`/api/files`, `/api/files/raw`, `/api/files/tree`, and `/api/backlog` accept,
+in addition to the live root set, any `root` that is an absolute, clean,
+existing directory with no `.git` component lexically or at its resolved
+location (the shape a direct open emits), so a directly opened file under
+`/tmp` or a home directory reads. A relative, non-existent, non-directory, or
+`.git`-bearing `root` remains 404 `unknown root`. Every other rule of those endpoints (4 MiB
+hard cap, `.git` refusal, escape refusal) is unchanged. The Git read endpoints
+keep the live-set-only refusal.
 
 GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
 or `/api/resolve?q={mention}&root={opaque-root}&path={viewed-file-relative-path}`
@@ -498,22 +539,27 @@ or `/api/resolve?q={mention}&root={opaque-root}&path={viewed-file-relative-path}
   universe is 404 `unknown root`. Each root reports its index outcome:
   `complete` means its candidate set is whole; `degraded` means usable candidates are included but
   an indexing diagnostic occurred; `failed` means that root contributed no
-  candidates. Non-complete outcomes carry an honest diagnostic, bounded at
-  4 KiB with an explicit truncation marker. Healthy roots remain ranked and
-  returned when another root degrades or fails. A whole-response 502
+  candidates. `degraded` is a reserved wire value: the built-in index never
+  produces it (it reads `git ls-files` only and either completes or fails), so
+  only an injected candidate source can emit it. Non-complete outcomes carry
+  an honest diagnostic, bounded at 4 KiB with an explicit truncation marker.
+  Healthy roots remain ranked and returned when another root fails. A whole-response 502
   `substrate unreachable` is reserved for request-level failure such as an
   unreadable live roster or unavailable root-universe construction.
 
-  Directory candidates are the unique non-root ancestors of indexed files,
+  For relative mentions, bare names, and absolute paths that do not exist,
+  directory candidates are the unique non-root ancestors of indexed files,
   derived during the same candidate-index rebuild. There is no second walk or
-  directory source, empty directories are consequently absent, and the root
-  itself is not a candidate. Files and directories use the same tier ladder,
-  root preference, and raw fzf score. Inside one tier and root, ranking applies
-  a one-point directory deduction without changing the raw `score` returned on
-  the wire; existing deterministic candidate order breaks a remaining tie.
-  Absolute queries strip each containing root exactly as file queries already
-  do, then match the relative remainder symmetrically against both kinds. A
-  query equal to the root remains an honest miss.
+  directory source, so in that indexed resolution empty directories are absent
+  and the root itself is not a candidate. Files and directories use the same
+  tier ladder, root preference, and raw fzf score. Inside one tier and root,
+  ranking applies a one-point directory deduction without changing the raw
+  `score` returned on the wire; existing deterministic candidate order breaks
+  a remaining tie. A missing absolute path strips its single most specific
+  live root, then matches the relative remainder symmetrically against both
+  kinds; a missing path equal to that root is an honest miss. An absolute path
+  that EXISTS never reaches this ranking: it is a direct open (above), which
+  does answer an exact root directory (empty `path`) and empty directories.
 
 GET `/api/backlog?root={root-id}&path={root-relative-directory}`
   Reads the board facts for any Backlog.md directory inside the opaque root

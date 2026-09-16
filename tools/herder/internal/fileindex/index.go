@@ -5,7 +5,6 @@ package fileindex
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,16 +34,6 @@ type CommandOutput struct {
 // for deterministic tests; production callers normally leave Options.Run nil.
 type RunFunc func(ctx context.Context, dir, name string, args ...string) (CommandOutput, error)
 
-// DegradedError reports a partial non-git index whose returned candidates are
-// still usable. Callers must surface the diagnostic rather than silently
-// treating the root as complete.
-type DegradedError struct {
-	detail string
-}
-
-func (e *DegradedError) Error() string  { return e.detail }
-func (e *DegradedError) Degraded() bool { return true }
-
 // Options configures an Index. Zero values select production defaults.
 type Options struct {
 	TTL time.Duration
@@ -66,7 +55,6 @@ type Index struct {
 type cacheEntry struct {
 	refreshed  time.Time
 	candidates []filecandidate.Candidate
-	degraded   string
 }
 
 // New returns a per-root candidate index.
@@ -105,23 +93,19 @@ func (i *Index) Candidates(ctx context.Context, root string, refresh bool) ([]fi
 		entry, ok := i.cache[root]
 		i.mu.Unlock()
 		if ok && now.Before(entry.refreshed.Add(i.ttl)) {
-			return slices.Clone(entry.candidates), degradedError(entry.degraded)
+			return slices.Clone(entry.candidates), nil
 		}
 	}
 
 	candidates, err := i.load(ctx, root)
-	var degraded *DegradedError
-	if err != nil && !errors.As(err, &degraded) {
+	if err != nil {
 		return nil, err
 	}
+	// Stamp after the load: a load longer than the TTL must not arrive stale.
 	i.mu.Lock()
-	entry := cacheEntry{refreshed: now, candidates: slices.Clone(candidates)}
-	if degraded != nil {
-		entry.degraded = degraded.Error()
-	}
-	i.cache[root] = entry
+	i.cache[root] = cacheEntry{refreshed: i.now(), candidates: slices.Clone(candidates)}
 	i.mu.Unlock()
-	return slices.Clone(candidates), degradedError(entry.degraded)
+	return slices.Clone(candidates), nil
 }
 
 func (i *Index) load(ctx context.Context, root string) ([]filecandidate.Candidate, error) {
@@ -138,28 +122,10 @@ func (i *Index) load(ctx context.Context, root string) ([]filecandidate.Candidat
 	if !strings.Contains(string(out.Stderr), "not a git repository") {
 		return nil, fmt.Errorf("git ls-files in %q failed: %w: %s", root, err, errorDetail(out))
 	}
+	// A non-git root is never walked: the readable universe is git top
+	// levels only, so reaching here is a loud failure for that root.
 
-	out, err = i.run(commandCtx, root, "rg", "--files", "--hidden", "--no-require-git", "--null", "--glob", "!.git", "--glob", "!.git/**")
-	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 && len(out.Stdout) == 0 {
-			return []filecandidate.Candidate{}, nil
-		}
-		if commandCtx.Err() != nil {
-			return nil, fmt.Errorf("index non-git root %q: %w", root, commandCtx.Err())
-		}
-		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 2 && len(out.Stdout) > 0 && len(out.Stderr) > 0 {
-			return parseCandidates(out.Stdout), &DegradedError{detail: fmt.Sprintf("rg --files in non-git root %q was partial: %s", root, errorDetail(out))}
-		}
-		return nil, fmt.Errorf("rg --files in non-git root %q failed: %w: %s", root, err, errorDetail(out))
-	}
-	return parseCandidates(out.Stdout), nil
-}
-
-func degradedError(detail string) error {
-	if detail == "" {
-		return nil
-	}
-	return &DegradedError{detail: detail}
+	return nil, fmt.Errorf("index root %q: not a git repository", root)
 }
 
 func errorDetail(out CommandOutput) string {

@@ -99,6 +99,23 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			return
 		}
 	}
+	// An absolute query ignores any file context: one that exists opens
+	// directly; one that does not is scoped to the single most specific live
+	// root, never the others. A context root (possibly a direct-open root
+	// outside the live set) therefore need not be live for it.
+	if normalized := fileresolver.NormalizeQuery(query).Path; filepath.IsAbs(normalized) {
+		if response, handled := directOpen(r.Context(), normalized); handled {
+			writeJSON(w, http.StatusOK, response)
+			return
+		}
+		scoped, ok := set.MostSpecific(normalized)
+		if !ok {
+			writeJSON(w, http.StatusOK, resolveResponse{Candidates: []fileresolver.Result{}, Roots: []fileresolver.RootOutcome{}})
+			return
+		}
+		writeResolution(w, deps, r, query, []string{scoped}, []string{scoped}, nil)
+		return
+	}
 	var anchor *fileresolver.Anchor
 	if rootPresent {
 		if !set.Contains(root) {
@@ -107,8 +124,12 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		anchor = &fileresolver.Anchor{Root: root, Path: cleanPath}
 	}
+	writeResolution(w, deps, r, query, set.Roots, set.Preference(agent), anchor)
+}
+
+func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, query string, roots, preference []string, anchor *fileresolver.Anchor) {
 	resolution, err := deps.fileResolver.ResolveDetailed(r.Context(), fileresolver.Request{
-		Query: query, Roots: set.Roots, RootPreference: set.Preference(agent), Anchor: anchor,
+		Query: query, Roots: roots, RootPreference: preference, Anchor: anchor,
 	})
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
@@ -133,8 +154,8 @@ func serveFile(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	if !set.Contains(root) {
-		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+	if !set.Contains(root) && !directOpenRoot(root) {
+		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe nor an existing absolute directory", root))
 		return
 	}
 	result, err := fileapi.Read(root, path, deps.now)
@@ -155,8 +176,8 @@ func serveFileRaw(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	if !set.Contains(root) {
-		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+	if !set.Contains(root) && !directOpenRoot(root) {
+		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe nor an existing absolute directory", root))
 		return
 	}
 	content, _, err := fileapi.ReadRaw(root, path)
@@ -182,8 +203,8 @@ func serveTree(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	if !set.Contains(root) {
-		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+	if !set.Contains(root) && !directOpenRoot(root) {
+		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe nor an existing absolute directory", root))
 		return
 	}
 	result, err := fileapi.Tree(root, path)
@@ -210,8 +231,8 @@ func serveBacklog(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
 	}
-	if !set.Contains(root) {
-		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe", root))
+	if !set.Contains(root) && !directOpenRoot(root) {
+		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe nor an existing absolute directory", root))
 		return
 	}
 	result, err := backlogapi.Read(root, path, deps.now)

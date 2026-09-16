@@ -72,6 +72,19 @@ func LinkedWorktree(ctx context.Context, cwd string) (bool, error) {
 	return filepath.Clean(paths[1]) != filepath.Clean(paths[2]), nil
 }
 
+// TopLevel reports the git top level containing cwd. A linked worktree's top
+// level is the worktree itself. A non-repository, or a missing or unhealthy
+// Git executable, is not an error: ok is false and the caller must not guess.
+func TopLevel(ctx context.Context, cwd string) (string, bool) {
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	defer cancel()
+	paths, err := repositoryPaths(ctx, cwd)
+	if err != nil {
+		return "", false
+	}
+	return filepath.Clean(paths[0]), true
+}
+
 func repositoryPaths(ctx context.Context, cwd string) ([]string, error) {
 	output, err := gitOutput(ctx, cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir")
 	if err != nil {
