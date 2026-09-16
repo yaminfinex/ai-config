@@ -526,6 +526,8 @@ func TestDirectOpenChoosesRootFromLexicalPathNotFromFollowedDirectorySymlink(t *
 	}
 	writeFileAPIFixture(t, outside, "sub/hello.md", "outside sub\n")
 	writeFileAPIFixture(t, repo, "docs/sub/deep.md", "deep\n")
+	// Exists on disk, so its refusal below is the .git law, not a missing file.
+	writeFileAPIFixture(t, repo, ".git/refs/probe", "probe\n")
 	plain := t.TempDir()
 	writeFileAPIFixture(t, plain, "hello.md", "plain\n")
 	if err := os.Symlink(outside, filepath.Join(plain, "link")); err != nil {
