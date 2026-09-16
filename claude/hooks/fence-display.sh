@@ -22,7 +22,9 @@
 #   - Line granularity. A <status> whose closer is on another line, a status
 #     body holding a carriage return, a stray closer with no open block, and a
 #     line mixing a tag with anything unparsable all pass through with their
-#     bytes untouched.
+#     bytes untouched. Internal openers outside line start or closers outside
+#     line end stay literal, including inline and backticked pairs with
+#     surrounding text.
 #   - Bounded loss. Streaming cannot undo already-drawn batches, so the hook
 #     never fails a whole message open. Inside an open internal block, a line
 #     holding any bare tag other than the closer ends the note right there
