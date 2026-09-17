@@ -1,6 +1,6 @@
 # Tracker template
 
-Structure only; statuses and rules live in `SKILL.md` (step 4 and Rulings). Keep the sections and their order, so a cold reader (a reseat, a compaction, a design or build seat) recovers the session from this file alone. Anchors are paths from the repository root with a line number.
+Structure only; statuses and rules live in `SKILL.md` (step 4 and Rulings). Keep the sections and their order, so a cold reader (a reseat, a compaction, a design or build seat) recovers the session from this file alone.
 
 ```markdown
 # Walkthrough: <scope in one line>
@@ -22,7 +22,8 @@ Numbered, in walk order, each with its files and visited / current / pending.
 
 1. [<status>] <unit> · <heading> · `path/from/repo/root/file.ts:123`
    What: <what is there>. Why: <what it costs the reader or the code>. Resolve: <what would resolve it>.
-2. [overruled] <unit> · <heading> · `path/from/repo/root/file.ts:123` · Rule: "<the operator's words verbatim>"
+2. [overruled] <unit> · <heading> · `path/from/repo/root/file.ts:123`
+   What: <what is there>. Why: <what it costs>. Resolve: <what would resolve it>. Rule: "<the operator's words verbatim>"
 
 ## Parked questions
 

@@ -50,7 +50,7 @@ The unit closes with two lines, and what they expose becomes findings under the 
 
 ## Rulings
 
-Operator pushback on a finding is a **ruling**. Rewrite the item to the operator's rule verbatim with status `overruled`, and move on. Agreement sets `agreed`; a change the operator wants made sets `build-seat`; an item the operator drops sets `dismissed`; the operator confirming an item was posted sets `posted`, and a posted item is already delivered, so every later hand-off leaves it out.
+Operator pushback on a finding is a **ruling**. Keep the item's three parts unchanged, append the operator's rule verbatim as a fourth part, `Rule: "…"`, set status `overruled`, and move on. Agreement sets `agreed`; a change the operator wants made sets `build-seat`; an item the operator drops sets `dismissed`; the operator confirming an item was posted sets `posted`, and a posted item is already delivered, so every later hand-off leaves it out.
 
 A doubt about completeness ("are you sure that is all?") triggers a second full sweep of the same unit under the same four headings, before the next unit.
 
@@ -60,7 +60,7 @@ One markdown file, the single source of truth, wholesale-rewritten at 3c of ever
 
 Near its top, one line rewritten every turn: `Session: <in progress | stopped by the operator | done> · next: <the next action> · hand-off: <path or none>`. Below it, what a cold reader needs to resume and nothing more: the scope (refs, shas, files, design of record), the units and which are visited, every finding with its number, unit, heading, anchor, three parts and a status from `open | agreed | overruled | dismissed | build-seat | posted`, and the parked questions.
 
-A finding's number is never reused; its number, unit, and heading stay fixed once written; its text and anchor may be corrected, and a ruling replaces the text with the operator's rule verbatim.
+A finding's number is never reused; its number, unit, and heading stay fixed once written; its text and anchor may be corrected, and a ruling appends the operator's rule verbatim after the three parts.
 
 ## Done
 
