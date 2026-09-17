@@ -3,11 +3,22 @@ import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markd
 import remarkGfm from 'remark-gfm'
 import type { AgentMentionMatcher, AgentMentionOpen } from './agentMentions.ts'
 import { isLocalHref } from './pathHref.ts'
+import { FencedBlock } from './CodeBlock.ts'
 
 const externalHTTP = /^https?:\/\//iu
 const inlineLinkClass = (className?: string) => ['inline-link', className].filter(Boolean).join(' ')
 
+// Fenced blocks and tables share one look in transcripts and FilePanel (brief decisions 1 and 4).
+export const blockComponents = {
+  pre: FencedBlock,
+  table: ({ node, children, ...props }) => {
+    void node
+    return createElement('div', { className: 'table-scroll' }, createElement('table', props, children))
+  },
+} satisfies Components
+
 export const fileMarkdownComponents = {
+  ...blockComponents,
   a: ({ node, href = '', children, className, ...props }) => {
     void node
     return externalHTTP.test(href)
@@ -84,8 +95,9 @@ export function agentMarkdownOptions(matcher: AgentMentionMatcher, onOpen: Agent
 
 export const Markdown = memo(function Markdown({ children, components, agentMentions }: { children: string, components?: Components, agentMentions?: AgentMarkdown }): ReactNode {
   const options = useMemo(() => {
-    if (!agentMentions) return { remarkPlugins: [remarkGfm], components }
+    if (!agentMentions) return { remarkPlugins: [remarkGfm], components: { ...blockComponents, ...components } }
     const mentionComponents: Components = {
+      ...blockComponents,
       ...components,
       a: ({ node, href = '', children: linkChildren, className, ...props }) => {
         void node
