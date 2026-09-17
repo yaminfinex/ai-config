@@ -43,3 +43,38 @@ export function mermaidNotice(error: unknown): string {
   const first = message.split('\n').find((line) => line.trim() !== '')?.trim() ?? 'render failed'
   return `mermaid: ${first}`
 }
+
+/**
+ * A sequenceDiagram line whose text after the first `:` mermaid still tokenises: a message
+ * (any `-`/`--` arrow before the colon) or a Note. Group 1 is the structural head, group 2 the text.
+ */
+const sequenceTextLine = /^(\s*(?:[Nn]ote\s+(?:over|left of|right of)\b[^:]*|[^:]*?-{1,2}(?:>>|>|x|\))[^:]*):)(.*)$/u
+
+export type LenientMermaid = { source: string, changes: number }
+
+/**
+ * The lenient rewrite, applied only after mermaid rejected the literal source (decision 5).
+ * In a sequenceDiagram, `;` inside message or Note text becomes `#59;`: mermaid's sequence
+ * lexer ends the statement at a `;` even after the colon ("Expecting ... got ','"), and the
+ * entity draws the character. A final `;` on the line is the legal terminator and stays, as
+ * does the `;` closing an entity such as `#59;`. Every other diagram type accepts `;` in
+ * labels (verified against mermaid 11.17.2), so nothing else is touched.
+ */
+export function lenientMermaid(source: string): LenientMermaid {
+  const lines = source.split('\n')
+  const first = lines.find((line) => line.trim() !== '')?.trim() ?? ''
+  if (!first.startsWith('sequenceDiagram')) return { source, changes: 0 }
+  let changes = 0
+  const rewritten = lines.map((line) => line.replace(sequenceTextLine, (_line, head: string, text: string) =>
+    head + text.replace(/(#\w+)?;(?!\s*$)/gu, (match, entity: string | undefined) => {
+      if (entity) return match
+      changes += 1
+      return '#59;'
+    })))
+  return changes === 0 ? { source, changes: 0 } : { source: rewritten.join('\n'), changes }
+}
+
+/** The notice above a diagram drawn from the lenient rewrite, so the drawing is known not to be the literal source. */
+export function lenientNotice(changes: number): string {
+  return `mermaid: drawn after escaping ${changes} character${changes === 1 ? '' : 's'} that mermaid rejects`
+}

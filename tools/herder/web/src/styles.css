@@ -668,13 +668,23 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .markdown th { background: var(--bg3); font-weight: 600; }
 .code-block { position: relative; margin: 7px 0; }
 .code-block > pre { margin: 0; }
-.code-block-mode { position: absolute; z-index: 1; top: 4px; right: 4px; }
-.code-block-mode button { font: 10px var(--mono); }
-.code-block-diagram > pre { padding-right: 132px; }
+.code-block-controls { position: absolute; z-index: 1; top: 4px; right: 4px; display: flex; align-items: stretch; gap: 4px; }
+.code-block-mode button, .code-block-maximise { font: 10px var(--mono); }
+.code-block-maximise { padding: 2px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--dim); }
+.code-block-maximise:hover, .code-block-maximise:focus-visible { border-color: var(--accent); color: var(--text); }
+.code-block-diagram > pre { padding-right: 200px; }
 .code-block-notice { margin: 0 0 4px; padding: 3px 8px; border: 1px solid var(--warning-border); border-radius: 5px; background: var(--warning-bg); color: var(--warning-text); font: 10px var(--mono); }
-.mermaid-diagram { max-width: 100%; overflow-x: auto; padding: 24px 8px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); }
-/* The root svg carries its natural width (mermaidRender.intrinsicWidth), so wide diagrams scroll inside the box instead of shrinking. */
-.mermaid-diagram svg { display: block; height: auto; }
+.mermaid-diagram { max-width: 100%; padding: 24px 8px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); }
+/* The root svg carries its natural width (mermaidRender.intrinsicWidth): a wide diagram scales down to the box, a narrow one keeps its size (decision 1). */
+.mermaid-diagram svg { display: block; max-width: 100%; height: auto; }
+.diagram-overlay { position: fixed; z-index: 90; inset: 0; background: var(--overlay-subtle); backdrop-filter: blur(2px); outline: none; }
+.diagram-overlay-viewport { position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none; user-select: none; }
+.diagram-overlay-viewport:active { cursor: grabbing; }
+.diagram-overlay-content { position: absolute; top: 0; left: 0; padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); transform-origin: 0 0; }
+.diagram-overlay-content svg { display: block; height: auto; }
+.diagram-overlay-toolbar { position: absolute; z-index: 1; top: 12px; right: 12px; display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); box-shadow: 0 12px 36px var(--floating-shadow); }
+.diagram-overlay-toolbar button { min-width: 24px; height: 24px; padding: 0 6px; font: 11px var(--mono); }
+.diagram-overlay-zoom { min-width: 44px; color: var(--dim); font: 10px var(--mono); text-align: center; }
 .transcript .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 900px; }
 .transcript :is(.entry-card, .entry-detail, details) { min-width: 0; max-width: 100%; overflow: hidden; }
 .transcript :is(.entry-card, .assistant-entry) header { min-width: 0; overflow: hidden; }

@@ -1,6 +1,7 @@
 // Lazy mermaid loader: the library lands in its own chunk on the first diagram (decision 2).
 // Every request is one serialized task ("initialize if the theme changed, then render") so no
 // render ever sees another request's configuration, and every render call gets a fresh id.
+import { lenientMermaid, lenientNotice } from './mermaidLike.ts'
 import type { ThemeType } from './themeSignal.ts'
 
 export type MermaidLike = {
@@ -33,15 +34,41 @@ export function createMermaidRenderer(load: () => Promise<MermaidLike>): Mermaid
   }
 }
 
-const rootSvg = /^(\s*<svg\b[^>]*?)\swidth="100%"([^>]*?\bstyle="[^"]*?max-width:\s*([\d.]+)px[^"]*"[^>]*>)/u
+const rootSvg = /^(\s*<svg\b[^>]*?)\swidth="100%"([^>]*?)\sstyle="([^"]*?)max-width:\s*([\d.]+)px;?([^"]*)"([^>]*>)/u
 
 /**
- * Mermaid emits `width="100%"` plus `style="max-width: <W>px"` on the root, which shrinks wide
- * diagrams to the box. Pinning the width to that value keeps the natural size so the box scrolls;
- * small diagrams are never upscaled because W is their own natural width.
+ * Mermaid emits `width="100%"` plus an inline `style="max-width: <W>px"` on the root. Pinning
+ * the width attribute to W and dropping the inline max-width leaves the natural size on the
+ * element (the overlay measures it) and hands the fit to the stylesheet: `.mermaid-diagram svg`
+ * carries `max-width: 100%; height: auto`, so a wide diagram scales down to the box and a
+ * narrow one keeps its own width (decision 1). An inline max-width would beat that rule.
  */
 export function intrinsicWidth(svg: string): string {
-  return svg.replace(rootSvg, (_match, head: string, tail: string, width: string) => `${head} width="${width}"${tail}`)
+  return svg.replace(rootSvg, (_match, head: string, mid: string, before: string, width: string, after: string, tail: string) => {
+    const style = `${before}${after}`.replace(/\s+/gu, ' ').trim()
+    return `${head} width="${width}"${mid}${style ? ` style="${style}"` : ''}${tail}`
+  })
 }
 
 export const renderMermaid: MermaidRenderer = createMermaidRenderer(() => import('mermaid').then((mod) => mod.default as unknown as MermaidLike))
+
+export type DiagramRender = { svg: string, notice?: string }
+
+/**
+ * Renders the literal source; when mermaid rejects it, retries once with the lenient rewrite
+ * and says what was escaped (decision 5). The original error surfaces when there is nothing
+ * to rewrite or when the retry fails too.
+ */
+export async function renderLeniently(render: MermaidRenderer, source: string, theme: ThemeType): Promise<DiagramRender> {
+  try {
+    return { svg: await render(source, theme) }
+  } catch (error) {
+    const lenient = lenientMermaid(source)
+    if (lenient.changes === 0) throw error
+    try {
+      return { svg: await render(lenient.source, theme), notice: lenientNotice(lenient.changes) }
+    } catch {
+      throw error
+    }
+  }
+}
