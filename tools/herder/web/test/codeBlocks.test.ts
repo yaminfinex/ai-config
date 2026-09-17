@@ -5,11 +5,11 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { readdirSync } from 'node:fs'
 import { parseAst } from 'rollup/parseAst'
-import { FencedBlock, diagramKey, diagramView } from '../src/shared/CodeBlock.ts'
-import { createMermaidRenderer, intrinsicWidth, type MermaidLike } from '../src/shared/mermaidRender.ts'
+import { DiagramControls, FencedBlock, diagramKey, diagramView } from '../src/shared/CodeBlock.ts'
+import { createMermaidRenderer, intrinsicWidth, renderLeniently, type MermaidLike } from '../src/shared/mermaidRender.ts'
 import { Markdown, fileMarkdownComponents, agentMarkdownOptions } from '../src/shared/Markdown.ts'
 import { agentMentionMatcher } from '../src/shared/agentMentions.ts'
-import { fenceInfo, mermaidKeywords, mermaidLike, mermaidNotice, mermaidSourceLimit } from '../src/shared/mermaidLike.ts'
+import { fenceInfo, lenientMermaid, lenientNotice, mermaidKeywords, mermaidLike, mermaidNotice, mermaidSourceLimit } from '../src/shared/mermaidLike.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 const render = (markdown: string) => renderToStaticMarkup(createElement(Markdown, { components: fileMarkdownComponents }, markdown))
@@ -71,7 +71,8 @@ test('the switch swaps modes: source mode flips aria-pressed and keeps the plain
   assert.match(source, /aria-pressed="false">diagram<\/button><button type="button" class="active" aria-pressed="true">source/)
   assert.match(source, /<pre><code class="language-mermaid">graph TD\n<\/code><\/pre>/)
   const component = read('../src/shared/CodeBlock.ts')
-  assert.match(component, /onClick: \(\) => setMode\(value\)/)
+  assert.match(component, /onClick: \(\) => onMode\(value\)/)
+  assert.match(component, /onMode: setMode/)
   assert.match(component, /useState<BlockMode>\(initialMode\)/)
 })
 
@@ -165,16 +166,21 @@ test('a failed render rejects with its error and does not block the queue', asyn
   assert.match(await render('ok', 'dark'), /id="herder-mermaid-2"/)
 })
 
-test('intrinsicWidth pins the root svg to its natural max-width so wide diagrams scroll and small ones keep their size', () => {
+test('intrinsicWidth pins the root svg to its natural width and drops the inline max-width so the stylesheet fit applies', () => {
   const wide = '<svg id="x" width="100%" xmlns="http://www.w3.org/2000/svg" class="flowchart" style="max-width: 6517.78125px;" viewBox="0 0 6517.78125 70" role="graphics-document document"><g/></svg>'
   const out = intrinsicWidth(wide)
-  assert.match(out, /^<svg id="x" width="6517\.78125" xmlns=/)
-  assert.doesNotMatch(out, /width="100%"/)
+  assert.equal(out, '<svg id="x" width="6517.78125" xmlns="http://www.w3.org/2000/svg" class="flowchart" viewBox="0 0 6517.78125 70" role="graphics-document document"><g/></svg>')
+  assert.doesNotMatch(out, /width="100%"|max-width/)
   const small = '<svg id="y" width="100%" style="max-width: 207.34375px;" viewBox="0 0 207.34375 70"><rect width="100%"/></svg>'
-  assert.match(intrinsicWidth(small), /^<svg id="y" width="207\.34375" style="max-width: 207\.34375px;"/)
-  assert.match(intrinsicWidth(small), /<rect width="100%"\/>/)
+  assert.equal(intrinsicWidth(small), '<svg id="y" width="207.34375" viewBox="0 0 207.34375 70"><rect width="100%"/></svg>')
+  // pie and gantt put the viewBox before the style; other declarations in the style survive
+  const pie = '<svg id="p" width="100%" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 522 450" style="background: red; max-width: 522px; color: blue" role="graphics-document document"><g/></svg>'
+  assert.equal(intrinsicWidth(pie), '<svg id="p" width="522" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 522 450" style="background: red; color: blue" role="graphics-document document"><g/></svg>')
   const fixed = '<svg id="z" width="300" height="100"><g/></svg>'
   assert.equal(intrinsicWidth(fixed), fixed)
+  const css = read('../src/styles.css')
+  assert.match(css, /\.mermaid-diagram svg \{ display: block; max-width: 100%; height: auto; \}/, 'inline fit: a wide diagram scales down to the box, a narrow one keeps its width')
+  assert.doesNotMatch(css, /\.mermaid-diagram \{[^}]*overflow-x/, 'no horizontal scroll inside the block')
 })
 
 test('diagramView draws only a result for the current source and theme; a pending change shows the source', () => {
@@ -193,8 +199,111 @@ test('diagramView draws only a result for the current source and theme; a pendin
   assert.equal(diagramView({ mode: 'source', key, result: failed, tooLarge: false }).notice, undefined)
   assert.deepEqual(diagramView({ mode: 'diagram', key, result: done, tooLarge: true }), { drawn: false, notice: 'mermaid: block too large', svg: undefined })
   assert.equal(diagramView({ mode: 'diagram', key, result: undefined, tooLarge: false }).drawn, false)
+  // a lenient render carries both: drawn with its notice
+  const lenient = { key, svg: '<svg/>', notice: lenientNotice(2) }
+  assert.deepEqual(diagramView({ mode: 'diagram', key, result: lenient, tooLarge: false }), { drawn: true, notice: 'mermaid: drawn after escaping 2 characters that mermaid rejects', svg: '<svg/>' })
+  assert.deepEqual(diagramView({ mode: 'source', key, result: lenient, tooLarge: false }), { drawn: false, notice: undefined, svg: undefined })
   const component = read('../src/shared/CodeBlock.ts')
-  assert.match(component, /setResult\(\{ key, svg \}\)/)
+  assert.match(component, /renderLeniently\(renderMermaid, source, theme\)/)
+  assert.match(component, /setResult\(\{ key, svg, notice \}\)/)
   assert.match(component, /setResult\(\{ key, notice: mermaidNotice\(error\) \}\)/)
   assert.match(component, /const view = diagramView\(\{ mode, key, result, tooLarge \}\)/)
+})
+
+const fixture = `sequenceDiagram
+    participant D as device
+    participant S as AccountService
+    participant DB
+    participant T as Turnkey
+    D->>S: login_challenge(eoa address, device P-256 pubkey)
+    S->>DB: credential → account, state must be ready
+    S->>DB: turnkey_org + device signer → SubOrgTarget (shape == 3, venue key == config)
+    S->>S: author CREATE_API_KEYS_V2 body for Device user (key "device", TTL 7d+5m)
+    S->>S: author SIWE message that embeds that body
+    S->>DB: insert login_challenge (both messages, 5 min)
+    S-->>D: challenge, siwe_message, signing_session_message
+    D->>D: EIP-191 sign both
+    D->>S: login(challenge, siwe_sig, signing_session_sig)
+    S->>DB: load challenge; unconsumed, unexpired, kind eoa, account ready
+    S->>S: verify both signatures recover the credential
+    S->>DB: burn challenge (UPDATE consumed_at, must affect 1 row)
+    S->>T: submit stored body under EIP-191 stamp (Owner's one vote, login-mints-device)
+    T-->>S: api_key_id
+    S->>DB: tx: session row (api_key_id), device_minted event, refresh hash, access JWT
+    S-->>D: SessionCredentials
+`
+
+test('lenientMermaid escapes a mid-text semicolon in sequence messages and notes, and nothing else', () => {
+  // mermaid 11.17.2 rejects the owner's fixture at line 15 ("load challenge; unconsumed": Parse error, got ','); `#59;` is the fix
+  const fixed = lenientMermaid(fixture)
+  assert.equal(fixed.changes, 1)
+  assert.equal(fixed.source, fixture.replace('load challenge; unconsumed', 'load challenge#59; unconsumed'))
+  assert.equal(lenientNotice(fixed.changes), 'mermaid: drawn after escaping 1 character that mermaid rejects')
+  const cases: Array<[string, string, string, number]> = [
+    ['a valid message line is unchanged', 'sequenceDiagram\n  A->>B: hi\n', 'sequenceDiagram\n  A->>B: hi\n', 0],
+    ['a trailing semicolon is the legal terminator and stays', 'sequenceDiagram\n  A->>B: hi;\n  A-->>B: ok ; \n', 'sequenceDiagram\n  A->>B: hi;\n  A-->>B: ok ; \n', 0],
+    ['two interior semicolons on one line, the trailing one kept', 'sequenceDiagram\n  A->>B: a; b; c;\n', 'sequenceDiagram\n  A->>B: a#59; b#59; c;\n', 2],
+    ['every arrow kind and activation marker', 'sequenceDiagram\n  A->B: a; b\n  A-->B: a; b\n  A-xB: a; b\n  A--xB: a; b\n  A-)B: a; b\n  A--)B: a; b\n  A<<->>B: a; b\n  A->>+B: a; b\n  B-->>-A: a; b\n', 'sequenceDiagram\n  A->B: a#59; b\n  A-->B: a#59; b\n  A-xB: a#59; b\n  A--xB: a#59; b\n  A-)B: a#59; b\n  A--)B: a#59; b\n  A<<->>B: a#59; b\n  A->>+B: a#59; b\n  B-->>-A: a#59; b\n', 9],
+    ['a second colon belongs to the text', 'sequenceDiagram\n  S->>DB: tx: a; b\n', 'sequenceDiagram\n  S->>DB: tx#59; a; b\n'.replace('tx#59; a; b', 'tx: a#59; b'), 1],
+    ['note text is tokenised the same way', 'sequenceDiagram\n  A->>B: hi\n  Note over A,B: a; b\n  note right of A: c; d\n', 'sequenceDiagram\n  A->>B: hi\n  Note over A,B: a#59; b\n  note right of A: c#59; d\n', 2],
+    ['an entity already escaped is left alone', 'sequenceDiagram\n  A->>B: a #59; b; c\n', 'sequenceDiagram\n  A->>B: a #59; b#59; c\n', 1],
+    ['structural lines are never touched', 'sequenceDiagram\n  participant A as x; y\n  loop a; b\n  A->>B: hi\n  end\n', 'sequenceDiagram\n  participant A as x; y\n  loop a; b\n  A->>B: hi\n  end\n', 0],
+    ['a participant alias that looks like a message', 'sequenceDiagram\n  participant A as x->>y: a; b\n', 'sequenceDiagram\n  participant A as x->>y: a; b\n', 0],
+    ['a loop label that looks like a message', 'sequenceDiagram\n  loop x->>y: a; b\n  A->>B: hi\n  end\n', 'sequenceDiagram\n  loop x->>y: a; b\n  A->>B: hi\n  end\n', 0],
+    ['an alt label that looks like a message', 'sequenceDiagram\n  alt x->>y: a; b\n  A->>B: hi\n  end\n', 'sequenceDiagram\n  alt x->>y: a; b\n  A->>B: hi\n  end\n', 0],
+    ['a comment that looks like a message', 'sequenceDiagram\n  %% A->>B: a; b\n  A->>B: hi\n', 'sequenceDiagram\n  %% A->>B: a; b\n  A->>B: hi\n', 0],
+    ['every other structural keyword, with arrows and colons', 'sequenceDiagram\n  actor x->>y: a; b\n  title x->>y: a; b\n  autonumber x->>y: a; b\n  box x->>y: a; b\n  rect x->>y: a; b\n  opt x->>y: a; b\n  par x->>y: a; b\n  and x->>y: a; b\n  critical x->>y: a; b\n  option x->>y: a; b\n  break x->>y: a; b\n  else x->>y: a; b\n  activate x->>y: a; b\n  deactivate x->>y: a; b\n  create x->>y: a; b\n  destroy x->>y: a; b\n  links x->>y: a; b\n  link x->>y: a; b\n  properties x->>y: a; b\n  end x->>y: a; b\n', 'sequenceDiagram\n  actor x->>y: a; b\n  title x->>y: a; b\n  autonumber x->>y: a; b\n  box x->>y: a; b\n  rect x->>y: a; b\n  opt x->>y: a; b\n  par x->>y: a; b\n  and x->>y: a; b\n  critical x->>y: a; b\n  option x->>y: a; b\n  break x->>y: a; b\n  else x->>y: a; b\n  activate x->>y: a; b\n  deactivate x->>y: a; b\n  create x->>y: a; b\n  destroy x->>y: a; b\n  links x->>y: a; b\n  link x->>y: a; b\n  properties x->>y: a; b\n  end x->>y: a; b\n', 0],
+    ['free text before the arrow is not a message head', 'sequenceDiagram\n  some words A->>B: a; b\n', 'sequenceDiagram\n  some words A->>B: a; b\n', 0],
+    ['one comment plus one broken message counts one', 'sequenceDiagram\n  %% A->>B: a; b\n  A->>B: c; d\n', 'sequenceDiagram\n  %% A->>B: a; b\n  A->>B: c#59; d\n', 1],
+    ['flowchart labels accept semicolons, so a flowchart is returned as is', 'flowchart LR\n  A[load; go] --> B{c; d}\n  B -->|x; y| C\n', 'flowchart LR\n  A[load; go] --> B{c; d}\n  B -->|x; y| C\n', 0],
+    ['other diagram types are returned as is', 'stateDiagram-v2\n  [*] --> A: a; b\n', 'stateDiagram-v2\n  [*] --> A: a; b\n', 0],
+    ['leading blank lines before the keyword', '\n\n  sequenceDiagram\n  A->>B: a; b\n', '\n\n  sequenceDiagram\n  A->>B: a#59; b\n', 1],
+  ]
+  for (const [name, source, expected, changes] of cases) assert.deepEqual(lenientMermaid(source), { source: expected, changes }, name)
+  assert.equal(lenientNotice(3), 'mermaid: drawn after escaping 3 characters that mermaid rejects')
+  assert.doesNotMatch(read('../src/shared/mermaidLike.ts'), /<[a-z]|innerHTML/u, 'the sanitiser never introduces HTML')
+})
+
+test('renderLeniently retries a rejected source once with the rewrite and keeps the original error otherwise', async () => {
+  const log: string[] = []
+  const mermaid = stubMermaid(log)
+  const rejects = (source: string) => /[^#\d];(?!\s*$)/mu.test(source)
+  mermaid.render = async (id, source) => {
+    log.push(`render:${id}`)
+    if (source === 'bad' || rejects(source)) throw new Error(`Parse error on line 2:\n${source}`)
+    return { svg: `<svg id="${id}">${source}</svg>` }
+  }
+  const render = createMermaidRenderer(async () => mermaid)
+  // valid: one render, no notice
+  assert.deepEqual(await renderLeniently(render, 'sequenceDiagram\n  A->>B: hi', 'dark'), { svg: '<svg id="herder-mermaid-1">sequenceDiagram\n  A->>B: hi</svg>' })
+  // rejected then fixed: two renders, the drawn source is the rewrite, the notice says so
+  assert.deepEqual(await renderLeniently(render, 'sequenceDiagram\n  A->>B: a; b', 'dark'), { svg: '<svg id="herder-mermaid-3">sequenceDiagram\n  A->>B: a#59; b</svg>', notice: 'mermaid: drawn after escaping 1 character that mermaid rejects' })
+  // rejected with nothing to rewrite: the original error, one render
+  await assert.rejects(renderLeniently(render, 'bad', 'dark'), /Parse error on line 2:\nbad/)
+  // rejected, rewritten, rejected again: the original error
+  await assert.rejects(renderLeniently(render, 'sequenceDiagram\n  participant A as x; y\n  A->>B: a; b', 'dark'), /Parse error on line 2:\nsequenceDiagram\n {2}participant A as x; y\n {2}A->>B: a; b$/)
+  assert.deepEqual(log.map((entry) => entry.split(':')[1]), ['init', 'herder-mermaid-1', 'herder-mermaid-2', 'herder-mermaid-3', 'herder-mermaid-4', 'herder-mermaid-5', 'herder-mermaid-6'].map((entry) => entry === 'init' ? 'dark' : entry))
+})
+
+test('DiagramControls shows the maximise button beside the mode switch only when the diagram is drawn; the block wires it to the overlay', () => {
+  const html = (mode: 'diagram' | 'source', drawn: boolean) => renderToStaticMarkup(createElement(DiagramControls, { mode, drawn, onMode: () => undefined, onMaximise: () => undefined }))
+  assert.equal(html('diagram', true), '<div class="code-block-controls"><div class="detail-toggle code-block-mode" role="group" aria-label="Block rendering mode"><button type="button" class="active" aria-pressed="true">diagram</button><button type="button" aria-pressed="false">source</button></div><button type="button" class="code-block-maximise" aria-label="Maximise diagram">maximise</button></div>')
+  assert.equal(html('diagram', false), '<div class="code-block-controls"><div class="detail-toggle code-block-mode" role="group" aria-label="Block rendering mode"><button type="button" class="active" aria-pressed="true">diagram</button><button type="button" aria-pressed="false">source</button></div></div>')
+  assert.doesNotMatch(html('source', false), /code-block-maximise/)
+  // drawn is diagramView's verdict, so source mode, a pending render, a failure and an oversized block all hide it
+  const key = diagramKey('dark', 'graph TD\n')
+  assert.equal(diagramView({ mode: 'source', key, result: { key, svg: '<svg/>' }, tooLarge: false }).drawn, false)
+  assert.equal(diagramView({ mode: 'diagram', key, result: undefined, tooLarge: false }).drawn, false)
+  assert.equal(diagramView({ mode: 'diagram', key, result: { key, notice: 'mermaid: Parse error on line 1:' }, tooLarge: false }).drawn, false)
+  assert.equal(diagramView({ mode: 'diagram', key, result: { key, svg: '<svg/>' }, tooLarge: true }).drawn, false)
+  assert.equal(diagramView({ mode: 'diagram', key, result: { key, svg: '<svg/>', notice: lenientNotice(1) }, tooLarge: false }).drawn, true)
+  const component = read('../src/shared/CodeBlock.ts')
+  assert.match(component, /createElement\(DiagramControls, \{ mode, drawn: view\.drawn, onMode: setMode, onMaximise: \(\) => setOpen\(true\), maximise \}\)/)
+  assert.match(component, /createPortal\(createElement\(DiagramOverlay, \{ svg: view\.svg as string, onClose: close \}\), document\.body\)/)
+  assert.match(component, /if \(!open\) return\n\s+return \(\) => maximise\.current\?\.focus\(\)\n\s+\}, \[open\]\)/, 'focus returns to the maximise button after the overlay unmounts (and un-inerts the app)')
+  assert.match(component, /open && view\.drawn \? createPortal/, 'the overlay closes with the drawing')
+  assert.doesNotMatch(component, /initialResult/, 'no test-only production prop')
+  const css = read('../src/styles.css')
+  assert.match(css, /\.code-block-controls \{ position: absolute; z-index: 1; top: 4px; right: 4px; display: flex;/)
+  assert.match(css, /\.code-block-diagram > pre \{ padding-right: 132px; \}/, 'source mode shows two buttons; the drawn box has its own room')
 })

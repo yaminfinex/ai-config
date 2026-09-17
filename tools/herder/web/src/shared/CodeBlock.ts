@@ -1,25 +1,30 @@
-import { createElement, useEffect, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import { createElement, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode, type Ref } from 'react'
+import { createPortal } from 'react-dom'
 import type { ExtraProps } from 'react-markdown'
+import { DiagramOverlay } from './DiagramOverlay.ts'
 import { fenceInfo, mermaidLike, mermaidNotice, mermaidSourceLimit } from './mermaidLike.ts'
-import { renderMermaid } from './mermaidRender.ts'
+import { renderLeniently, renderMermaid } from './mermaidRender.ts'
 import { useThemeType, type ThemeType } from './themeSignal.ts'
 
 export type BlockMode = 'diagram' | 'source'
 
-/** A finished render, tied to the exact source and theme it was produced from. */
+/**
+ * A finished render, tied to the exact source and theme it was produced from: an SVG (with a
+ * notice when it came from the lenient rewrite) or a notice alone for a failure.
+ */
 export type DiagramResult = { key: string, svg?: string, notice?: string }
 
 export const diagramKey = (theme: ThemeType, source: string) => `${theme}\n${source}`
 
 /**
  * What a diagram block shows (pure, tested): the SVG only when the last result matches the
- * current source and theme; otherwise the source, with a notice when the result is an error
- * for this key or the block is too large.
+ * current source and theme; otherwise the source. The notice is shown for a failure or an
+ * oversized block (source shown) and for a lenient render (SVG shown); source mode has none.
  */
 export function diagramView({ mode, key, result, tooLarge }: { mode: BlockMode, key: string, result: DiagramResult | undefined, tooLarge: boolean }) {
   const current = result?.key === key ? result : undefined
   const notice = mode !== 'diagram' ? undefined : tooLarge ? 'mermaid: block too large' : current?.notice
-  const drawn = mode === 'diagram' && !notice && current?.svg !== undefined
+  const drawn = mode === 'diagram' && !tooLarge && current?.svg !== undefined
   return { drawn, notice, svg: drawn ? current?.svg : undefined }
 }
 
@@ -37,8 +42,22 @@ export function FencedBlock({ node, children, initialMode, ...props }: FencedBlo
   return createElement(DiagramBlock, { source, initialMode: initialMode ?? 'diagram', children: pre })
 }
 
+export type DiagramControlsProps = { mode: BlockMode, drawn: boolean, onMode: (mode: BlockMode) => void, onMaximise: () => void, maximise?: Ref<HTMLButtonElement> }
+
+/** The block's controls (presentational): the mode switch always, the maximise button only for a drawn diagram (decision 2). */
+export function DiagramControls({ mode, drawn, onMode, onMaximise, maximise }: DiagramControlsProps) {
+  const modeButton = (value: BlockMode) => createElement('button', {
+    type: 'button', className: mode === value ? 'active' : undefined, 'aria-pressed': mode === value, onClick: () => onMode(value),
+  }, value)
+  return createElement('div', { className: 'code-block-controls' },
+    createElement('div', { className: 'detail-toggle code-block-mode', role: 'group', 'aria-label': 'Block rendering mode' }, modeButton('diagram'), modeButton('source')),
+    drawn ? createElement('button', { ref: maximise, type: 'button', className: 'code-block-maximise', 'aria-label': 'Maximise diagram', onClick: onMaximise }, 'maximise') : null)
+}
+
 function DiagramBlock({ source, initialMode, children }: { source: string, initialMode: BlockMode, children: ReactNode }) {
   const [mode, setMode] = useState<BlockMode>(initialMode)
+  const [open, setOpen] = useState(false)
+  const maximise = useRef<HTMLButtonElement | null>(null)
   const theme = useThemeType()
   const tooLarge = source.length > mermaidSourceLimit
   const key = diagramKey(theme, source)
@@ -47,19 +66,25 @@ function DiagramBlock({ source, initialMode, children }: { source: string, initi
   useEffect(() => {
     if (mode !== 'diagram' || tooLarge) return
     let cancelled = false
-    renderMermaid(source, theme)
-      .then((svg) => { if (!cancelled) setResult({ key, svg }) })
+    renderLeniently(renderMermaid, source, theme)
+      .then(({ svg, notice }) => { if (!cancelled) setResult({ key, svg, notice }) })
       .catch((error: unknown) => { if (!cancelled) setResult({ key, notice: mermaidNotice(error) }) })
     return () => { cancelled = true }
   }, [mode, source, theme, key, tooLarge])
 
+  // Focus returns to the maximise button once the overlay is gone (its cleanup has un-inerted the app by then).
+  useEffect(() => {
+    if (!open) return
+    return () => maximise.current?.focus()
+  }, [open])
+
   const view = diagramView({ mode, key, result, tooLarge })
-  const modeButton = (value: BlockMode) => createElement('button', {
-    type: 'button', className: mode === value ? 'active' : undefined, 'aria-pressed': mode === value, onClick: () => setMode(value),
-  }, value)
+  const close = () => setOpen(false)
   return createElement('div', { className: 'code-block code-block-diagram', 'data-mode': mode },
-    createElement('div', { className: 'detail-toggle code-block-mode', role: 'group', 'aria-label': 'Block rendering mode' }, modeButton('diagram'), modeButton('source')),
+    createElement(DiagramControls, { mode, drawn: view.drawn, onMode: setMode, onMaximise: () => setOpen(true), maximise }),
     view.notice ? createElement('div', { className: 'code-block-notice', role: 'status' }, view.notice) : null,
     // Mermaid's own sanitised output (securityLevel strict); no user HTML reaches this node (decision 6).
-    view.drawn ? createElement('div', { className: 'mermaid-diagram', dangerouslySetInnerHTML: { __html: view.svg as string } }) : children)
+    view.drawn ? createElement('div', { className: 'mermaid-diagram', dangerouslySetInnerHTML: { __html: view.svg as string } }) : children,
+    // The overlay shows the same SVG string; it closes with the drawing when the source or theme changes.
+    open && view.drawn ? createPortal(createElement(DiagramOverlay, { svg: view.svg as string, onClose: close }), document.body) : null)
 }
