@@ -1,49 +1,22 @@
-# Hand-off formats
+# Hand-off: feedback
 
-Written beside the tracker in the closing turn, in the form the operator asks for. Both begin with a line naming the source tracker path and draw only from it: every item keeps its number, so the operator can trace a comment or a brief line back to the ruling that produced it. `posted` items are already delivered and stay out of both.
+Written beside the tracker in the closing turn, file `<tracker-stem>-feedback.md`. It is feedback for whoever comes next, a design, planning or build seat, and rarely buildable as it stands. It draws only from the tracker: every item keeps its number, so a reader can trace a line back to the ruling that produced it. `posted` items are already delivered and stay out.
 
-When the operator stops with findings still `open`, each format ends with a section headed "Unresolved" that lists every open item by number with its text unchanged. An open item keeps its own words there; the settled sections carry only rulings.
+Items are grouped by unit. Each carries its number, anchor, status, and the three parts (what is there, why it costs, what would resolve it). An `overruled` item keeps its three parts and ends with the operator's rule verbatim, `Rule: "…"`; the Rule is the operator's position and what the next seat acts on.
 
-## PR review comments
-
-File: `<tracker-stem>-review-comments.md`. One block per item with status `agreed`, `overruled`, or `build-seat`; `dismissed` items stay out. Ready to paste: each block is one paragraph in the operator's voice, with the anchor as its heading.
+When the operator stops with findings still `open`, the file ends with a section headed "Unresolved" that lists every open item, its text unchanged.
 
 ```markdown
-Source: <tracker path>
+# Feedback: <scope in one line>
 
-### `path/file.rs:123` (item 7, agreed)
+Source: <tracker path>. Head <sha>. Read-only walkthrough; nothing here is built. A design, planning or build seat may take it from here.
 
-<one paragraph: what the reader sees, why it is a problem, what would resolve it>
+## <unit>
+
+- <item n> · `path/from/repo/root/file.ts:123` · <status> · What: <what is there>. Why: <what it costs>. Resolve: <what would resolve it>.
+- <item m> · `path/from/repo/root/file.ts:123` · overruled · What: <what is there>. Why: <what it costs>. Resolve: <what would resolve it>. Rule: "<the operator's words verbatim>"
 
 ## Unresolved
 
-- <item n> · `path/file.rs:123` · <the finding's text, unchanged>
-```
-
-An `overruled` item's paragraph is the operator's rule, so the comment states the operator's position.
-
-## Build brief
-
-File: `<tracker-stem>-build-brief.md`. For the build seat: the settled decisions first, then the work, then what is unresolved.
-
-```markdown
-# Build brief: <scope in one line>
-
-Source: <tracker path>. Head <sha>.
-
-## Settled decisions
-
-- <item n>: <the operator's rule or the agreed finding, one sentence>
-
-## Build-seat items
-
-- <item n> · `path/file.rs:123` · <what to change> · Done when: <checkable criterion>
-
-## Unresolved
-
-- <item n> · `path/file.rs:123` · <the finding's text, unchanged>
-
-## Out of scope
-
-- <dismissed items by number, one clause each>
+- <item n> · `path/from/repo/root/file.ts:123` · open · What: … Why: … Resolve: …
 ```
