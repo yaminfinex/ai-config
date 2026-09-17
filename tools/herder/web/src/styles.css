@@ -660,14 +660,25 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .markdown code { padding: 1px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--chip); font: 11px var(--mono); }
 .markdown pre { margin: 7px 0; }
 .markdown pre code { padding: 0; border: 0; background: transparent; }
-.markdown table { display: block; max-width: 100%; overflow-x: auto; }
+.markdown .table-scroll { max-width: 100%; margin: 6px 0; overflow-x: auto; }
+.markdown table { border-collapse: collapse; border-spacing: 0; }
+.markdown th, .markdown td { padding: var(--space-1) var(--space-2); border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.markdown th { background: var(--bg3); font-weight: 600; }
+.code-block { position: relative; margin: 7px 0; }
+.code-block > pre { margin: 0; }
+.code-block-mode { position: absolute; z-index: 1; top: 4px; right: 4px; }
+.code-block-mode button { font: 10px var(--mono); }
+.code-block-diagram > pre { padding-right: 132px; }
+.code-block-notice { margin: 0 0 4px; padding: 3px 8px; border: 1px solid var(--warning-border); border-radius: 5px; background: var(--warning-bg); color: var(--warning-text); font: 10px var(--mono); }
+.mermaid-diagram { max-width: 100%; overflow-x: auto; padding: 24px 8px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); }
+.mermaid-diagram svg { display: block; max-width: 100%; height: auto; }
 .transcript .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 900px; }
 .transcript :is(.entry-card, .entry-detail, details) { min-width: 0; max-width: 100%; overflow: hidden; }
 .transcript :is(.entry-card, .assistant-entry) header { min-width: 0; overflow: hidden; }
 .transcript :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, code), .transcript .system-chip > div { overflow-wrap: anywhere; }
 .transcript :is(pre, pre code, table, th, td) { overflow-wrap: normal; }
 .transcript pre { max-width: 100%; overflow-x: auto; white-space: pre; }
-.transcript table { display: block; max-width: 100%; overflow-x: auto; }
+.transcript .table-scroll { max-width: 100%; overflow-x: auto; }
 .entry-expander { margin: 6px 0; }
 .entry-expander > summary { display: flex; align-items: center; gap: 8px; min-height: 27px; padding: 4px 9px; list-style: none; border: 1px solid transparent; border-radius: 6px; color: var(--dim); }
 .entry-expander > summary::-webkit-details-marker { display: none; }
