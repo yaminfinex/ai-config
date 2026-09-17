@@ -671,14 +671,14 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .code-block-diagram > pre { padding-right: 132px; }
 .code-block-notice { margin: 0 0 4px; padding: 3px 8px; border: 1px solid var(--warning-border); border-radius: 5px; background: var(--warning-bg); color: var(--warning-text); font: 10px var(--mono); }
 .mermaid-diagram { max-width: 100%; overflow-x: auto; padding: 24px 8px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); }
-.mermaid-diagram svg { display: block; max-width: 100%; height: auto; }
+/* The root svg carries its natural width (mermaidRender.intrinsicWidth), so wide diagrams scroll inside the box instead of shrinking. */
+.mermaid-diagram svg { display: block; height: auto; }
 .transcript .markdown > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 900px; }
 .transcript :is(.entry-card, .entry-detail, details) { min-width: 0; max-width: 100%; overflow: hidden; }
 .transcript :is(.entry-card, .assistant-entry) header { min-width: 0; overflow: hidden; }
 .transcript :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, code), .transcript .system-chip > div { overflow-wrap: anywhere; }
 .transcript :is(pre, pre code, table, th, td) { overflow-wrap: normal; }
 .transcript pre { max-width: 100%; overflow-x: auto; white-space: pre; }
-.transcript .table-scroll { max-width: 100%; overflow-x: auto; }
 .entry-expander { margin: 6px 0; }
 .entry-expander > summary { display: flex; align-items: center; gap: 8px; min-height: 27px; padding: 4px 9px; list-style: none; border: 1px solid transparent; border-radius: 6px; color: var(--dim); }
 .entry-expander > summary::-webkit-details-marker { display: none; }

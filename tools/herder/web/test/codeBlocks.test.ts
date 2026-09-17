@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { FencedBlock } from '../src/shared/CodeBlock.ts'
+import { readdirSync } from 'node:fs'
+import { parseAst } from 'rollup/parseAst'
+import { FencedBlock, diagramKey, diagramView } from '../src/shared/CodeBlock.ts'
+import { createMermaidRenderer, intrinsicWidth, type MermaidLike } from '../src/shared/mermaidRender.ts'
 import { Markdown, fileMarkdownComponents, agentMarkdownOptions } from '../src/shared/Markdown.ts'
 import { agentMentionMatcher } from '../src/shared/agentMentions.ts'
 import { fenceInfo, mermaidKeywords, mermaidLike, mermaidNotice, mermaidSourceLimit } from '../src/shared/mermaidLike.ts'
@@ -17,6 +20,10 @@ test('mermaidLike: tagged mermaid, untagged diagram keywords, and everything els
     ['Mermaid', 'graph TD', true],
     ['ts', 'graph TD; A-->B', false],
     ['text', 'sequenceDiagram', false],
+    ['text', 'graph TD\n  A --> B', false],
+    ['txt', 'graph TD\n  A --> B', false],
+    ['plain', 'graph TD\n  A --> B', false],
+    ['md', 'flowchart LR', false],
     [undefined, '', false],
     [undefined, '\n\n  stateDiagram-v2\n  [*] --> a', true],
     [undefined, 'graph TD; A-->B', true],
@@ -99,13 +106,95 @@ test('GFM tables render inside a scroll wrapper with collapsed borders on every 
   assert.match(dark, /--border: #2e3037/)
 })
 
-test('mermaid loads lazily with strict security and the app theme; the main bundle does not import it statically', () => {
+test('mermaid loads lazily: the built main chunk has no static import of mermaid.core and none of its symbols', () => {
+  const assets = new URL('../../internal/webui/dist/assets/', import.meta.url)
+  const names = readdirSync(assets)
+  const main = names.find((name) => /^index-.*\.js$/u.test(name))
+  const core = names.filter((name) => name.startsWith('mermaid.core'))
+  assert.ok(main, 'built main chunk present')
+  assert.equal(core.length, 1, `one mermaid.core chunk, got ${core.join(', ')}`)
+  const code = readFileSync(new URL(main as string, assets), 'utf8')
+  const ast = parseAst(code) as unknown as { body: Array<{ type: string, source?: { value?: unknown } }> }
+  const staticSources = ast.body.filter((node) => node.type === 'ImportDeclaration').map((node) => String(node.source?.value ?? ''))
+  assert.deepEqual(staticSources.filter((source) => /mermaid/u.test(source)), [], 'no static import of any mermaid chunk')
+  assert.ok(code.includes(`./${core[0]}`), 'the main chunk references the mermaid.core chunk (by dynamic import) so the lazy path is wired')
+  assert.equal(code.includes('mermaidAPI'), false, 'the mermaid.core-only symbol mermaidAPI must not be in the main chunk')
+  assert.equal(readFileSync(new URL(core[0], assets), 'utf8').includes('mermaidAPI'), true)
   const loader = read('../src/shared/mermaidRender.ts')
   assert.match(loader, /import\('mermaid'\)/)
+  assert.doesNotMatch(loader, /^import .* from 'mermaid'/mu)
   assert.match(loader, /securityLevel: 'strict'/)
   assert.match(loader, /startOnLoad: false/)
   assert.match(loader, /theme: theme === 'light' \? 'default' : 'dark'/)
-  assert.match(loader, /mermaid\.render\(`herder-mermaid-\$\{renderSerial\}`, source\)/)
   assert.doesNotMatch(read('../src/shared/CodeBlock.ts') + read('../src/shared/Markdown.ts'), /from 'mermaid'/)
   assert.equal(JSON.parse(read('../package.json')).dependencies.mermaid, '11.17.2')
+})
+
+function stubMermaid(log: string[], delay = 0): MermaidLike {
+  let theme = 'unset'
+  return {
+    initialize: (config) => { theme = config.theme; log.push(`init:${config.theme}`) },
+    render: async (id, source) => {
+      log.push(`render:${id}:${theme}`)
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+      if (source === 'bad') throw new Error('Parse error on line 1:\nmore')
+      return { svg: `<svg id="${id}" data-theme="${theme}">${source}</svg>` }
+    },
+  }
+}
+
+test('renders are serialized: concurrent dark and light requests each see their own theme and fresh ids', async () => {
+  const log: string[] = []
+  let loads = 0
+  const render = createMermaidRenderer(async () => { loads += 1; return stubMermaid(log, 5) })
+  const [dark, light, dark2] = await Promise.all([render('a', 'dark'), render('a', 'light'), render('a', 'dark')])
+  assert.match(dark, /data-theme="dark"/)
+  assert.match(light, /data-theme="default"/)
+  assert.match(dark2, /data-theme="dark"/)
+  assert.deepEqual(log, ['init:dark', 'render:herder-mermaid-1:dark', 'init:default', 'render:herder-mermaid-2:default', 'init:dark', 'render:herder-mermaid-3:dark'])
+  assert.equal(loads, 1)
+  // no cache: the same source and theme renders again with a new id
+  assert.match(await render('a', 'dark'), /id="herder-mermaid-4"/)
+  assert.equal(log.at(-1), 'render:herder-mermaid-4:dark')
+})
+
+test('a failed render rejects with its error and does not block the queue', async () => {
+  const log: string[] = []
+  const render = createMermaidRenderer(async () => stubMermaid(log))
+  await assert.rejects(render('bad', 'dark'), /Parse error on line 1:/)
+  assert.match(await render('ok', 'dark'), /id="herder-mermaid-2"/)
+})
+
+test('intrinsicWidth pins the root svg to its natural max-width so wide diagrams scroll and small ones keep their size', () => {
+  const wide = '<svg id="x" width="100%" xmlns="http://www.w3.org/2000/svg" class="flowchart" style="max-width: 6517.78125px;" viewBox="0 0 6517.78125 70" role="graphics-document document"><g/></svg>'
+  const out = intrinsicWidth(wide)
+  assert.match(out, /^<svg id="x" width="6517\.78125" xmlns=/)
+  assert.doesNotMatch(out, /width="100%"/)
+  const small = '<svg id="y" width="100%" style="max-width: 207.34375px;" viewBox="0 0 207.34375 70"><rect width="100%"/></svg>'
+  assert.match(intrinsicWidth(small), /^<svg id="y" width="207\.34375" style="max-width: 207\.34375px;"/)
+  assert.match(intrinsicWidth(small), /<rect width="100%"\/>/)
+  const fixed = '<svg id="z" width="300" height="100"><g/></svg>'
+  assert.equal(intrinsicWidth(fixed), fixed)
+})
+
+test('diagramView draws only a result for the current source and theme; a pending change shows the source', () => {
+  const key = diagramKey('dark', 'graph TD\nA-->B')
+  const done = { key, svg: '<svg/>' }
+  assert.deepEqual(diagramView({ mode: 'diagram', key, result: done, tooLarge: false }), { drawn: true, notice: undefined, svg: '<svg/>' })
+  // source changed while the new render is pending: the old SVG must not be shown
+  const changed = diagramKey('dark', 'sequenceDiagram\nA->>B: hi')
+  assert.deepEqual(diagramView({ mode: 'diagram', key: changed, result: done, tooLarge: false }), { drawn: false, notice: undefined, svg: undefined })
+  // theme changed: same rule
+  assert.equal(diagramView({ mode: 'diagram', key: diagramKey('light', 'graph TD\nA-->B'), result: done, tooLarge: false }).drawn, false)
+  // an error notice is also tied to its key
+  const failed = { key, notice: 'mermaid: Parse error on line 1:' }
+  assert.equal(diagramView({ mode: 'diagram', key, result: failed, tooLarge: false }).notice, 'mermaid: Parse error on line 1:')
+  assert.equal(diagramView({ mode: 'diagram', key: changed, result: failed, tooLarge: false }).notice, undefined)
+  assert.equal(diagramView({ mode: 'source', key, result: failed, tooLarge: false }).notice, undefined)
+  assert.deepEqual(diagramView({ mode: 'diagram', key, result: done, tooLarge: true }), { drawn: false, notice: 'mermaid: block too large', svg: undefined })
+  assert.equal(diagramView({ mode: 'diagram', key, result: undefined, tooLarge: false }).drawn, false)
+  const component = read('../src/shared/CodeBlock.ts')
+  assert.match(component, /setResult\(\{ key, svg \}\)/)
+  assert.match(component, /setResult\(\{ key, notice: mermaidNotice\(error\) \}\)/)
+  assert.match(component, /const view = diagramView\(\{ mode, key, result, tooLarge \}\)/)
 })

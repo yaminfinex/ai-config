@@ -18,7 +18,7 @@ test('transcript wide content scrolls without wrapping or widening the pane', ()
   assert.match(pre, /white-space:\s*pre\s*;/)
   assert.match(pre, /overflow-x:\s*auto\s*;/)
 
-  const table = ruleFor('.transcript .table-scroll')
+  const table = ruleFor('.markdown .table-scroll')
   assert.match(table, /overflow-x:\s*auto\s*;/)
   assert.match(ruleFor('.markdown table'), /border-collapse:\s*collapse\s*;/)
 
