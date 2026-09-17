@@ -1,7 +1,7 @@
 # Vendored skill
 
 - Source: https://github.com/plannotator/effective-html (`skills/html-diagram/`)
-- Upstream commit: snapshot adopted 2026-06-12 (fc54dbf7); upstream commit not recoverable
+- Upstream commit: 138daad (adopted 2026-06-12 as fc54dbf7; path unchanged upstream until 51d7ebb, 2026-07-29)
 - License: MIT (Copyright (c) 2026 plannotator)
-- Local changes: `disable-model-invocation: true` on all three, `skills/html/references/dark-mode.md` (required dark mode), the example gallery `skills/html/references/html-effectiveness/` (Apache-2.0, Copyright 2026 Anthropic PBC; consolidated under html after being duplicated per skill), `skills/html-diagram/references/architecture-example.html`.
+- Local changes (ebb48cb9): SKILL.md description shortened and body reworded; gallery path repointed to ../html/references/html-effectiveness/ and this skill's duplicate copy deleted; dark-mode paragraph replaced by "follow ../html/references/dark-mode.md". references/architecture-example.html is upstream's.
 - Upstream rewrote these skills into a router (design-artifact, html-wireframe, html-prototype) after this snapshot; not taken, owner decision pending 2026-09-17.
