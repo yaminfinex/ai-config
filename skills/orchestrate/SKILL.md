@@ -46,7 +46,7 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 ## Lifecycle
 
 - **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh <claude|codex> --model M --tag T --group <unit> --title '<kebab-role>' --prompt 'read <playbook> in full, then execute <unit>'`. With no placement flag it opens a new tab in your current herdr workspace; use `--split-from` only when the operator directs it. The wrapper owns `--go`, cwd, autonomy, readiness, hook binding, pane stamping, group/title events, and failure coordinates.
-- **Walkthrough seat.** When the operator wants to be walked through code (a PR, a branch, a scope), spawn a read-only seat whose prompt says to use the `code-walkthrough` skill with the scope and the tracker path. It reports start and stop to you and otherwise talks to the operator in its pane.
+- **Walkthrough seat.** When the operator wants to be walked through code (a PR, a branch, a scope), spawn a read-only seat whose prompt says to use the `code-walkthrough` skill with the scope and the tracker path. It reports start and stop to you and otherwise talks to the operator in its pane. Its hand-off is feedback, not a build brief: route it to a design, planning or build seat.
 - **Message.** Use `hcom send` with an intent and one thread per unit. A `queued` result is
   delivered work: send once. Resolve uncertain names with `hcom list`; inspect a screen with
   `hcom term <name>`.
