@@ -5,33 +5,33 @@ description: Walk the user through code they want to trace and understand before
 
 # Code walkthrough
 
-The operator drives. Each turn you trace one **unit** of the scope, show its structure, volunteer findings under four fixed headings, and rewrite one **tracker** file that outlives the chat. You read and draft; the operator posts and the build seat edits. A change the operator wants becomes a `build-seat` item and the walkthrough continues.
+Each turn you trace one **unit** of the scope, show its structure, volunteer findings under four fixed headings, and rewrite one **tracker** file that outlives the chat. You read and draft; the operator posts and the build seat edits. A change the operator wants becomes a `build-seat` item and the walkthrough continues.
 
-Two rules hold for every sentence you write:
-
-- **Anchor** every claim with `file:line` at the head ref, so the operator can open it.
-- **Shape** before prose: a state diagram, a call tree with checkpoints, a sequence diagram, a covered/not-covered table, a shape-as-data table, or a target-shape sketch. Call the Skill tool with `show-me` for the vocabulary. Words are one-line verdicts beside each shape.
+- **Anchor** every claim about the code with `file:line` at the head sha, so the operator can open it.
+- **Shape** before prose in every explanation: call the Skill tool with `show-me` for the shapes. Words are one-line verdicts beside each shape.
 
 ## Step 1: resolve the scope
 
-Done when the scope is a named set of files at a named head sha, the working tree holds those files at that sha (`git rev-parse HEAD` equals it, or `git diff <sha> -- <files>` is empty), and the design of record is named or recorded as none (a design doc, the PR description, a header contract).
+Done when the scope is a named set of files at a named head sha, `git diff <sha> -- <files>` is empty (the working tree's copies equal that sha's, whatever HEAD is), and the design of record is named or recorded as none (a design doc, the PR description, a header contract).
 
 - PR: `gh pr view <n> --json headRefOid,baseRefOid,files`.
 - Branch: `git merge-base <base> <head>`, then `git diff --name-only <merge-base> <head>`.
 - Commit range: `git diff --name-only <from>..<to>`.
 - Directory, module, or file list: those files at HEAD.
 
-When the working tree holds a different sha, name the sha you need and stop: the operator or orchestrator provides the checkout. Read whole files at the head and use the diff only to learn what changed.
+When the diff is not empty, name the sha and the differing files and stop: the operator or orchestrator provides the checkout. Read whole files at the head and use the diff only to learn what changed. A diff scope keeps each file's change status: a deleted file is read and anchored at the base sha and labelled "(deleted, at base <sha>)" in the unit list and the tracker; a renamed file is one unit under its new path, with the old path noted.
 
 ## Step 2: map the units and open
 
+When a tracker already exists at the announced path (step 4), read it first and resume from its Session line, taking the next action it names in place of a fresh opening.
+
 Split the scope into an ordered list of units, each a file, a type, or a flow that fits one turn: entry points first, then what they call, tests after the code they exercise. Done when every file in scope belongs to a unit.
 
-The opening turn carries, in order: the scope in one line (refs, shas, design of record), the tracker path (step 4), the unit list, then step 3b through 3d for the first unit. Its last line is "Steer me from here."
+The opening turn carries, in order: the scope in one line (refs, shas, design of record), the tracker path, the unit list, 3a for any question in the request that started the walkthrough, then 3b through 3d for the first unit. Its last line is "Steer me from here."
 
 ## Step 3: one turn
 
-Done when 3d is on screen. Every turn runs a to d in order.
+Done when every queued question is answered, one unit is swept under the four headings, the tracker is rewritten, and the menu is on screen. The closing turn (Done) is the one exception: it writes the hand-off and reports both paths in place of a unit and a menu.
 
 **3a. Answer** every question the operator asked since your last turn, each with an anchor, before the planned unit.
 
@@ -48,16 +48,18 @@ Done when 3d is on screen. Every turn runs a to d in order.
 
 ## Rulings
 
-Operator pushback on a finding is a **ruling**. Rewrite the item to the operator's rule verbatim with status `overruled`, and move on. Agreement sets `agreed`; a change the operator wants made sets `build-seat`; an item the operator drops sets `dismissed`.
+Operator pushback on a finding is a **ruling**. Rewrite the item to the operator's rule verbatim with status `overruled`, and move on. Agreement sets `agreed`; a change the operator wants made sets `build-seat`; an item the operator drops sets `dismissed`; the operator confirming an item was posted sets `posted`, and a posted item is already delivered, so every later hand-off leaves it out.
 
 A doubt about completeness ("are you sure that is all?") triggers a second full sweep of the same unit under the same four headings, before the next unit.
 
 ## Step 4: the tracker
 
-One markdown file, the single source of truth, wholesale-rewritten at 3c of every turn. Announce its path in the opening turn. Default: the active mission's artifacts directory (`using-missions` skill) under `code-walkthrough/<scope-slug>.md`; with no mission, a path the operator names in the opening turn. The file lives outside the repository under review. Template: [`references/tracker.md`](references/tracker.md).
+One markdown file, the single source of truth, wholesale-rewritten at 3c of every turn. Announce its path in the opening turn. Default: the active mission's artifacts directory (`using-missions` skill) under `code-walkthrough/<scope-slug>.md`; with no mission, a path the operator names in the opening turn. The file lives outside the repository under review. Template, structure only: [`references/tracker.md`](references/tracker.md).
 
-It carries the scope (refs, shas, file list), the units (visited, current, pending), every finding with a status from `open | agreed | overruled | dismissed | build-seat | posted` (an overruled item quotes the rule), the parked questions, and the design of record when there is one.
+Near its top, one line rewritten every turn: `Session: <in progress | stopped by the operator | done> · next: <the next action> · hand-off: <path or none>`. Below it: the scope (refs, shas, file list), the units (visited, current, pending), every finding with a status from `open | agreed | overruled | dismissed | build-seat | posted`, the parked questions, and the design of record when there is one.
+
+A finding's number is never reused; its number, unit, and heading stay fixed once written; its text and anchor may be corrected, and a ruling replaces the text with the operator's rule verbatim.
 
 ## Done
 
-Done when every unit is visited and every finding carries a status other than `open`, or the operator says stop. The closing turn writes the hand-off beside the tracker in the form the operator asks for, PR review comments or a build brief ([`references/handoff.md`](references/handoff.md)), and reports both paths.
+Done when every unit is visited and every finding carries a status other than `open`, or the operator says stop. The closing turn writes the hand-off beside the tracker in the form the operator asks for, PR review comments or a build brief ([`references/handoff.md`](references/handoff.md)), sets the Session line, and reports both paths.
