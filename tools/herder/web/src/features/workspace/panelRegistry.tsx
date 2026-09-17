@@ -19,6 +19,7 @@ import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQui
 import { liveRosterNames } from '../notes/notesPresentation'
 import { useDockTabMenu } from './DockTabMenu'
 import { ErrorBoundary } from '../../shared/ErrorBoundary'
+import { agentBoardTitle } from '../../shared/agentIdentity'
 
 function usePanelVisibility(api: IDockviewPanelProps['api']) {
   const [visible, setVisible] = useState(api.isVisible)
@@ -144,6 +145,7 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
   const actions = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const presentation = panelPresentation(params)
+  const title = params.kind === 'agent' ? agentBoardTitle(data.board, params.name) : presentation.title
   const boardStatus = params.kind === 'agent' ? agentBusStatus(data.board, params.name) : '-'
   const status = params.kind === 'agent' && boardStatus === '-' ? data.agentStatuses[params.name] ?? '-' : boardStatus
   // Agent tabs stay terse: a status dot plus a tool badge, no status prose (owner ruling 2026-08-30).
@@ -154,10 +156,10 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
     onContextMenu={tabMenu.onContextMenu}
     onDoubleClick={(event) => { if (params.preview) actions.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) actions.closePanel(api.id) }}>
-    <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{presentation.icon}{presentation.title}</span>
+    <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{presentation.icon}{title}</span>
     {params.kind === 'agent' && <span className="dock-tab-meta"><AgentStatusDot status={status} /><ToolBadge tool={agentBoardTool(data.board, params.name)} /></span>}
     {params.kind !== 'agent' && meta && <span className="dock-tab-meta">{meta}</span>}
-    <button type="button" className="dock-tab-close" aria-label={`Close ${presentation.title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closePanel(api.id)}>×</button>
+    <button type="button" className="dock-tab-close" aria-label={`Close ${title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closePanel(api.id)}>×</button>
   </div>{tabMenu.menu}</>
 }
 

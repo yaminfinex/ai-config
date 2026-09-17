@@ -25,6 +25,15 @@ import { AgentNotesStrip } from '../notes/AgentNotesStrip'
 import { useNoteCapture } from '../notes/useNoteCapture'
 import { useGroupNotes, useNotes } from '../notes/NotesProvider'
 import { queueComposerNote } from '../notes/noteQueue'
+import { agentHeaderIdentity } from '../../shared/agentIdentity'
+
+export function AgentHeaderIdentity({ name }: { name: string }) {
+  const identity = agentHeaderIdentity(name)
+  return <div className="agent-identity">
+    <strong className="agent-name">{identity.primary}</strong>
+    {identity.secondary && <span className="agent-full-name">{identity.secondary}</span>}
+  </div>
+}
 
 export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
   const queryClient = useQueryClient()
@@ -95,7 +104,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
 
   return <main className="agent-page" tabIndex={-1} ref={noteCapture.containerRef} onDoubleClickCapture={noteCapture.onDoubleClick}>
     <header className="agent-header">
-      <strong className="agent-name">{name}</strong>
+      <AgentHeaderIdentity name={name} />
       <ToolBadge tool={agent?.tool} />
       <div className="agent-actions">
         <div className="detail-toggle agent-view-toggle" aria-label="Agent view">

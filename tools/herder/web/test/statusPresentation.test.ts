@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { agentBusStatus, agentStatusPresentation } from '../src/shared/agentStatus.ts'
+import { agentBoardTool, agentBusStatus, agentStatusPresentation } from '../src/shared/agentStatus.ts'
 import type { Board } from '../src/types.ts'
 
 test('fleet bus statuses map to honest operator-facing lifecycle semantics', () => {
@@ -42,6 +42,10 @@ test('open-tab status follows placed and unplaced rows from a fleet snapshot', (
   assert.equal(agentBusStatus(board, 'vile-task'), 'listening')
   assert.equal(agentBusStatus(board, 'dore'), 'blocked')
   assert.equal(agentBusStatus(board, 'missing'), '-')
+  assert.equal(agentBoardTool(board, 'vile'), 'codex')
+  assert.equal(agentBoardTool(board, 'vile-task'), 'claude')
+  assert.equal(agentBoardTool(board, 'dore'), 'claude')
+  assert.equal(agentBoardTool(board, 'missing'), '')
 })
 
 test('tool badges are terse, honest, and omitted when unknown', async () => {
@@ -61,7 +65,7 @@ test('agent tabs and the agent header carry the badge; the tab narrates no statu
   assert.match(tab, /<ToolBadge tool=\{agentBoardTool\(data\.board, params\.name\)\} \/>/)
   assert.doesNotMatch(tab, /status !== '-' \? status : presentation\.meta/)
   const header = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
-  assert.match(header, /className="agent-name">\{name\}<\/strong>\n\s*<ToolBadge tool=\{agent\?\.tool\} \/>/)
+  assert.match(header, /<AgentHeaderIdentity name=\{name\} \/>\n\s*<ToolBadge tool=\{agent\?\.tool\} \/>/)
 })
 
 test('the badge renders brand glyphs for claude and codex and text fallback otherwise', async () => {

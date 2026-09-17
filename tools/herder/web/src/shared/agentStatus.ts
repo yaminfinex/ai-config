@@ -18,55 +18,35 @@ export function agentStatusPresentation(status: string): AgentStatusPresentation
 }
 
 export function agentBusStatus(board: Board | undefined, name: string): string {
-  if (!board) return '-'
-  for (const workspace of board.workspaces) {
-    for (const tab of workspace.tabs) {
-      for (const pane of tab.panes) {
-        const status = rowBusStatus(pane, name)
-        if (status) return status
-      }
-    }
-  }
-  for (const row of board.unplaced) {
-    const status = rowBusStatus(row, name)
-    if (status) return status
-  }
-  return '-'
-}
-
-function rowBusStatus(row: Row, name: string): string | undefined {
-  if (row.agent === name) return row.bus_status
-  for (const child of row.subagents ?? []) {
-    const status = rowBusStatus(child, name)
-    if (status) return status
-  }
-  return undefined
+  return findAgentRow(board, name)?.bus_status ?? '-'
 }
 
 export function agentBoardTool(board: Board | undefined, name: string): string {
-  if (!board) return ''
+  return findAgentRow(board, name)?.tool ?? ''
+}
+
+export function findAgentRow(board: Board | undefined, name: string): Row | undefined {
+  if (!board) return undefined
   for (const workspace of board.workspaces) {
     for (const tab of workspace.tabs) {
       for (const pane of tab.panes) {
-        const tool = rowTool(pane, name)
-        if (tool) return tool
+        const row = findRow(pane, name)
+        if (row) return row
       }
     }
   }
-  for (const row of board.unplaced) {
-    const tool = rowTool(row, name)
-    if (tool) return tool
+  for (const candidate of board.unplaced) {
+    const row = findRow(candidate, name)
+    if (row) return row
   }
-  return ''
 }
 
-function rowTool(row: Row, name: string): string | undefined {
-  if (row.agent === name) return row.tool
+function findRow(row: Row, name: string): Row | undefined {
+  if (row.agent === name) return row
   for (const child of row.subagents ?? []) {
-    const tool = rowTool(child, name)
-    if (tool) return tool
+    const match = findRow(child, name)
+    if (match) return match
   }
-  return undefined
 }
 
 // Terse per-tool marker for tab bars and headers; empty when unknown so
