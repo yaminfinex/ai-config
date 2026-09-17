@@ -1,4 +1,4 @@
-import { createElement, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react'
+import { createElement, useEffect, useRef, useState, type ComponentPropsWithoutRef, type ReactNode, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import type { ExtraProps } from 'react-markdown'
 import { DiagramOverlay } from './DiagramOverlay.ts'
@@ -28,28 +28,40 @@ export function diagramView({ mode, key, result, tooLarge }: { mode: BlockMode, 
   return { drawn, notice, svg: drawn ? current?.svg : undefined }
 }
 
-export type FencedBlockProps = ComponentPropsWithoutRef<'pre'> & ExtraProps & { initialMode?: BlockMode, initialResult?: DiagramResult }
+export type FencedBlockProps = ComponentPropsWithoutRef<'pre'> & ExtraProps & { initialMode?: BlockMode }
 
 /**
  * Block chrome for every fenced code block (decision 4). Diagram-capable blocks get a
  * per-block mode switch and default to the drawn SVG; every other block is the plain
  * `<pre>` inside a wrapper that adds no height.
  */
-export function FencedBlock({ node, children, initialMode, initialResult, ...props }: FencedBlockProps) {
+export function FencedBlock({ node, children, initialMode, ...props }: FencedBlockProps) {
   const { lang, source } = fenceInfo(node)
   const pre = createElement('pre', props, children)
   if (!mermaidLike(lang, source)) return createElement('div', { className: 'code-block' }, pre)
-  return createElement(DiagramBlock, { source, initialMode: initialMode ?? 'diagram', initialResult, children: pre })
+  return createElement(DiagramBlock, { source, initialMode: initialMode ?? 'diagram', children: pre })
 }
 
-function DiagramBlock({ source, initialMode, initialResult, children }: { source: string, initialMode: BlockMode, initialResult?: DiagramResult, children: ReactNode }) {
+export type DiagramControlsProps = { mode: BlockMode, drawn: boolean, onMode: (mode: BlockMode) => void, onMaximise: () => void, maximise?: Ref<HTMLButtonElement> }
+
+/** The block's controls (presentational): the mode switch always, the maximise button only for a drawn diagram (decision 2). */
+export function DiagramControls({ mode, drawn, onMode, onMaximise, maximise }: DiagramControlsProps) {
+  const modeButton = (value: BlockMode) => createElement('button', {
+    type: 'button', className: mode === value ? 'active' : undefined, 'aria-pressed': mode === value, onClick: () => onMode(value),
+  }, value)
+  return createElement('div', { className: 'code-block-controls' },
+    createElement('div', { className: 'detail-toggle code-block-mode', role: 'group', 'aria-label': 'Block rendering mode' }, modeButton('diagram'), modeButton('source')),
+    drawn ? createElement('button', { ref: maximise, type: 'button', className: 'code-block-maximise', 'aria-label': 'Maximise diagram', onClick: onMaximise }, 'maximise') : null)
+}
+
+function DiagramBlock({ source, initialMode, children }: { source: string, initialMode: BlockMode, children: ReactNode }) {
   const [mode, setMode] = useState<BlockMode>(initialMode)
   const [open, setOpen] = useState(false)
   const maximise = useRef<HTMLButtonElement | null>(null)
   const theme = useThemeType()
   const tooLarge = source.length > mermaidSourceLimit
   const key = diagramKey(theme, source)
-  const [result, setResult] = useState<DiagramResult | undefined>(initialResult)
+  const [result, setResult] = useState<DiagramResult>()
 
   useEffect(() => {
     if (mode !== 'diagram' || tooLarge) return
@@ -60,15 +72,16 @@ function DiagramBlock({ source, initialMode, initialResult, children }: { source
     return () => { cancelled = true }
   }, [mode, source, theme, key, tooLarge])
 
+  // Focus returns to the maximise button once the overlay is gone (its cleanup has un-inerted the app by then).
+  useEffect(() => {
+    if (!open) return
+    return () => maximise.current?.focus()
+  }, [open])
+
   const view = diagramView({ mode, key, result, tooLarge })
-  const modeButton = (value: BlockMode) => createElement('button', {
-    type: 'button', className: mode === value ? 'active' : undefined, 'aria-pressed': mode === value, onClick: () => setMode(value),
-  }, value)
-  const close = () => { setOpen(false); maximise.current?.focus() }
+  const close = () => setOpen(false)
   return createElement('div', { className: 'code-block code-block-diagram', 'data-mode': mode },
-    createElement('div', { className: 'code-block-controls' },
-      createElement('div', { className: 'detail-toggle code-block-mode', role: 'group', 'aria-label': 'Block rendering mode' }, modeButton('diagram'), modeButton('source')),
-      view.drawn ? createElement('button', { ref: maximise, type: 'button', className: 'code-block-maximise', 'aria-label': 'Maximise diagram', onClick: () => setOpen(true) }, 'maximise') : null),
+    createElement(DiagramControls, { mode, drawn: view.drawn, onMode: setMode, onMaximise: () => setOpen(true), maximise }),
     view.notice ? createElement('div', { className: 'code-block-notice', role: 'status' }, view.notice) : null,
     // Mermaid's own sanitised output (securityLevel strict); no user HTML reaches this node (decision 6).
     view.drawn ? createElement('div', { className: 'mermaid-diagram', dangerouslySetInnerHTML: { __html: view.svg as string } }) : children,

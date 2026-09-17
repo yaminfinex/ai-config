@@ -672,7 +672,7 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .code-block-mode button, .code-block-maximise { font: 10px var(--mono); }
 .code-block-maximise { padding: 2px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--dim); }
 .code-block-maximise:hover, .code-block-maximise:focus-visible { border-color: var(--accent); color: var(--text); }
-.code-block-diagram > pre { padding-right: 200px; }
+.code-block-diagram > pre { padding-right: 132px; }
 .code-block-notice { margin: 0 0 4px; padding: 3px 8px; border: 1px solid var(--warning-border); border-radius: 5px; background: var(--warning-bg); color: var(--warning-text); font: 10px var(--mono); }
 .mermaid-diagram { max-width: 100%; padding: 24px 8px 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg2); }
 /* The root svg carries its natural width (mermaidRender.intrinsicWidth): a wide diagram scales down to the box, a narrow one keeps its size (decision 1). */

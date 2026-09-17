@@ -46,9 +46,14 @@ export function mermaidNotice(error: unknown): string {
 
 /**
  * A sequenceDiagram line whose text after the first `:` mermaid still tokenises: a message
- * (any `-`/`--` arrow before the colon) or a Note. Group 1 is the structural head, group 2 the text.
+ * (a bare participant token, an arrow, an optional activation marker, a bare participant
+ * token, then the colon) or a Note. Group 1 is the structural head, group 2 the text.
  */
-const sequenceTextLine = /^(\s*(?:[Nn]ote\s+(?:over|left of|right of)\b[^:]*|[^:]*?-{1,2}(?:>>|>|x|\))[^:]*):)(.*)$/u
+const sequenceTextLine = /^(\s*(?:[Nn]ote\s+(?:over|left of|right of)\s+[^:]*|[\w-]+\s*(?:<<)?-{1,2}(?:>>|>|x|\))[+-]?\s*[\w-]+\s*)):(.*)$/u
+
+/** Lines that are structure, not text, however they continue: never rewritten. */
+const structuralFirstToken = new Set(['participant', 'actor', 'loop', 'alt', 'else', 'opt', 'par', 'and', 'critical', 'option', 'break', 'rect', 'box', 'title', 'autonumber', 'activate', 'deactivate', 'create', 'destroy', 'links', 'link', 'properties', 'end'])
+const structuralLine = (line: string) => { const first = line.trim().split(/\s/u, 1)[0]; return first.startsWith('%%') || structuralFirstToken.has(first) }
 
 export type LenientMermaid = { source: string, changes: number }
 
@@ -65,8 +70,8 @@ export function lenientMermaid(source: string): LenientMermaid {
   const first = lines.find((line) => line.trim() !== '')?.trim() ?? ''
   if (!first.startsWith('sequenceDiagram')) return { source, changes: 0 }
   let changes = 0
-  const rewritten = lines.map((line) => line.replace(sequenceTextLine, (_line, head: string, text: string) =>
-    head + text.replace(/(#\w+)?;(?!\s*$)/gu, (match, entity: string | undefined) => {
+  const rewritten = lines.map((line) => structuralLine(line) ? line : line.replace(sequenceTextLine, (_line, head: string, text: string) =>
+    head + ':' + text.replace(/(#\w+)?;(?!\s*$)/gu, (match, entity: string | undefined) => {
       if (entity) return match
       changes += 1
       return '#59;'

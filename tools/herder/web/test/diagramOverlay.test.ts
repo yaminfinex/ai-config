@@ -3,35 +3,41 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { DiagramOverlay, centredView, clamp, clampScale, fitPadding, fitScale, overlayAction, panStep, wheelFactor, zoomAbout, zoomBounds, zoomStep } from '../src/shared/DiagramOverlay.ts'
+import { DiagramOverlay, centredView, fitScale, overlayAction, resizedView, wheelFactor, zoomAbout } from '../src/shared/DiagramOverlay.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
 test('fitScale fits the whole diagram into the viewport with a margin, upscales small ones, and stays within the zoom bounds', () => {
-  assert.deepEqual(zoomBounds, { min: 0.1, max: 8 })
-  assert.equal(zoomStep, 1.25)
-  assert.equal(fitPadding, 24)
   // wide: width is the limit
   assert.equal(fitScale({ width: 4000, height: 100 }, { width: 1048, height: 800 }), 0.25)
   // tall: height is the limit
   assert.equal(fitScale({ width: 100, height: 2000 }, { width: 1048, height: 824 }), (824 - 48) / 2000)
   // small: fit means larger than natural size
   assert.equal(fitScale({ width: 100, height: 100 }, { width: 448, height: 1000 }), 4)
-  // tiny: capped at the upper bound; huge: capped at the lower bound
+  // tiny: capped at the upper bound; huge: fit always fits, even below the 0.1 zoom floor
   assert.equal(fitScale({ width: 10, height: 10 }, { width: 1048, height: 1048 }), 8)
-  assert.equal(fitScale({ width: 100000, height: 10 }, { width: 1048, height: 1048 }), 0.1)
+  assert.equal(fitScale({ width: 100000, height: 10 }, { width: 1048, height: 1048 }), 0.01)
+  // the reviewer's case: the 40-node flowchart (6402 px with the box) at 600×500 fits at 0.086, inside the viewport
+  const forty = { width: 6402, height: 88 }
+  const small = { width: 600, height: 500 }
+  const fitted = centredView(forty, small, fitScale(forty, small))
+  assert.ok(fitted.x >= 0 && fitted.x + forty.width * fitted.scale <= 600, JSON.stringify(fitted))
   // nothing measured yet: natural size
   assert.equal(fitScale({ width: 0, height: 0 }, { width: 1048, height: 1048 }), 1)
   assert.equal(fitScale({ width: 400, height: 100 }, { width: 400, height: 100 }, 0), 1)
 })
 
-test('clamp and clampScale bound a value; centredView centres the diagram at a clamped scale', () => {
-  assert.equal(clamp(5, 0, 10), 5)
-  assert.equal(clamp(-1, 0, 10), 0)
-  assert.equal(clamp(11, 0, 10), 10)
-  assert.equal(clampScale(0.01), 0.1)
-  assert.equal(clampScale(9), 8)
-  assert.equal(clampScale(3), 3)
+test('centredView centres the diagram at a clamped scale; resizedView refits only a fitted view', () => {
+  assert.equal(centredView({ width: 1, height: 1 }, { width: 1, height: 1 }, 0.01).scale, 0.01)
+  assert.equal(centredView({ width: 1, height: 1 }, { width: 1, height: 1 }, 9).scale, 8)
+  const content = { width: 4000, height: 100 }
+  const fitted = centredView(content, { width: 1440, height: 1000 }, fitScale(content, { width: 1440, height: 1000 }))
+  // the window shrinks: a fitted view is fitted to the new viewport
+  assert.deepEqual(resizedView(fitted, true, content, { width: 600, height: 500 }), centredView(content, { width: 600, height: 500 }, 0.138))
+  assert.equal(resizedView(fitted, true, content, { width: 600, height: 500 }).scale, (600 - 48) / 4000)
+  // a browsed view (zoomed or panned) is left exactly where it is
+  const browsed = { x: -9048.68, y: 365.7, scale: 3.05 }
+  assert.equal(resizedView(browsed, false, content, { width: 600, height: 500 }), browsed)
   assert.deepEqual(centredView({ width: 400, height: 200 }, { width: 1000, height: 600 }, 1), { x: 300, y: 200, scale: 1 })
   assert.deepEqual(centredView({ width: 400, height: 200 }, { width: 1000, height: 600 }, 2), { x: 100, y: 100, scale: 2 })
   assert.deepEqual(centredView({ width: 400, height: 200 }, { width: 1000, height: 600 }, 100), { x: -1100, y: -500, scale: 8 })
@@ -49,6 +55,9 @@ test('zoomAbout keeps the content under the pointer fixed; wheelFactor maps delt
   // the scale is clamped before the translation is derived
   assert.equal(zoomAbout(view, 50, { x: 0, y: 0 }).scale, 8)
   assert.equal(zoomAbout(view, 0, { x: 0, y: 0 }).scale, 0.1)
+  // from a fit below the floor the user can only zoom in
+  assert.equal(zoomAbout({ x: 0, y: 0, scale: 0.05 }, 0.04, { x: 0, y: 0 }).scale, 0.05)
+  assert.equal(zoomAbout({ x: 0, y: 0, scale: 0.05 }, 0.0625, { x: 0, y: 0 }).scale, 0.0625)
   // wheel: down zooms out, up zooms in, lines are converted, big deltas are capped
   assert.ok(wheelFactor(100, 0) < 1 && wheelFactor(100, 0) > 0.7)
   assert.ok(wheelFactor(-100, 0) > 1 && wheelFactor(-100, 0) < 1.3)
@@ -65,16 +74,16 @@ test('overlayAction maps the keyboard: +/- zoom, 0 fit, 1 natural, arrows pan, E
   assert.equal(overlayAction('0'), 'fit')
   assert.equal(overlayAction('1'), 'natural')
   assert.equal(overlayAction('Escape'), 'close')
-  assert.deepEqual(overlayAction('ArrowLeft'), { x: panStep, y: 0 })
-  assert.deepEqual(overlayAction('ArrowRight'), { x: -panStep, y: 0 })
-  assert.deepEqual(overlayAction('ArrowUp'), { x: 0, y: panStep })
-  assert.deepEqual(overlayAction('ArrowDown'), { x: 0, y: -panStep })
+  assert.deepEqual(overlayAction('ArrowLeft'), { pan: { x: 40, y: 0 } })
+  assert.deepEqual(overlayAction('ArrowRight'), { pan: { x: -40, y: 0 } })
+  assert.deepEqual(overlayAction('ArrowUp'), { pan: { x: 0, y: 40 } })
+  assert.deepEqual(overlayAction('ArrowDown'), { pan: { x: 0, y: -40 } })
   assert.equal(overlayAction('a'), undefined)
   assert.equal(overlayAction('Tab'), undefined)
   assert.equal(overlayAction('Enter'), undefined)
 })
 
-test('DiagramOverlay is a modal dialog holding the given SVG, a toolbar, and the zoom text; Escape and the close button call onClose', () => {
+test('DiagramOverlay is a modal dialog holding the given SVG, a toolbar, and the zoom text; every control goes through one dispatcher', () => {
   let closed = 0
   const html = renderToStaticMarkup(createElement(DiagramOverlay, { svg: '<svg id="d"><g/></svg>', onClose: () => { closed += 1 } }))
   assert.match(html, /^<div class="diagram-overlay" role="dialog" aria-modal="true" aria-label="Diagram" tabindex="-1">/)
@@ -82,18 +91,30 @@ test('DiagramOverlay is a modal dialog holding the given SVG, a toolbar, and the
   assert.match(html, /<div class="diagram-overlay-viewport"><div class="diagram-overlay-content" style="transform:translate\(0px, 0px\) scale\(1\)"><svg id="d"><g\/><\/svg><\/div><\/div><\/div>$/)
   assert.equal(closed, 0)
   const component = read('../src/shared/DiagramOverlay.ts')
-  // the key handler closes on Escape through the pure map, and the close button calls onClose directly
-  assert.match(component, /const action = overlayAction\(event\.key\)/)
+  // one dispatcher: the keyboard map, the toolbar buttons, the wheel and the drag all call apply(action)
+  assert.match(component, /const apply = \(action: OverlayAction\) => \{/)
+  assert.match(component, /const action = overlayAction\(event\.key\)[\s\S]*?apply\(action\)/)
+  assert.match(component, /onClick: \(\) => apply\(action\)/)
   assert.match(component, /if \(action === 'close'\) onClose\(\)/)
-  assert.match(component, /button\('×', 'Close diagram', onClose\)/)
-  // a plain click on the backdrop closes; a drag pans
-  assert.match(component, /if \(start && !start\.moved && !content\.current\?\.contains\(event\.target as Node\)\) onClose\(\)/)
-  // focus moves in on open; the page behind does not scroll; wheel is a native non-passive listener
+  assert.match(component, /button\('×', 'Close diagram', 'close'\)/)
+  // a click that began on the backdrop closes; the captured pointerup target is never consulted
+  assert.match(component, /outside: !content\.current\?\.contains\(event\.target as Node\)/)
+  assert.match(component, /if \(start && start\.outside && !start\.moved\) onClose\(\)/)
+  assert.doesNotMatch(component, /onPointerUp = \(event/)
+  // containment: focus moves in, Tab wraps inside, the covered application is inert, the page behind does not scroll
   assert.match(component, /root\.current\?\.focus\(\)/)
+  assert.match(component, /dialogTabTargetIndex\(items\.indexOf\(document\.activeElement as HTMLElement\), items\.length, event\.shiftKey\)/)
+  assert.match(component, /element\.setAttribute\('inert', ''\)/)
+  assert.match(component, /element\.removeAttribute\('inert'\)/)
   assert.match(component, /document\.body\.style\.overflow = 'hidden'/)
   assert.match(component, /addEventListener\('wheel', onWheel, \{ passive: false \}\)/)
-  assert.match(component, /useLayoutEffect\(\(\) => \{ show\('fit'\) \}, \[svg\]\)/, 'opening state is fit')
-  assert.doesNotMatch(component, /from '(?!react)/u, 'no library: react only')
+  // fit on open; a fitted view follows the viewport size, any zoom or pan stops that
+  assert.match(component, /useLayoutEffect\(\(\) => \{ apply\('fit'\) \}, \[svg\]\)/, 'opening state is fit')
+  assert.match(component, /fitted\.current = action === 'fit'/)
+  assert.match(component, /new ResizeObserver\(\(\) => \{ const measured = sizes\(\); setView\(\(current\) => resizedView\(current, fitted\.current, measured\.content, measured\.viewport\)\) \}\)/)
+  // only the tested helpers are exported; constants and clamp stay private
+  assert.deepEqual([...component.matchAll(/^export (?:function|const|type) (\w+)/gmu)].map((match) => match[1]).sort(), ['DiagramOverlay', 'OverlayAction', 'Point', 'Size', 'View', 'centredView', 'fitScale', 'overlayAction', 'resizedView', 'wheelFactor', 'zoomAbout'])
+  assert.doesNotMatch(component, /from '(?!react|\.\.\/features\/launch\/launchModel)/u, 'no library: react and the existing dialog tab helper only')
 })
 
 test('overlay CSS: fixed full-viewport above the launch dialog, blurred subtle backdrop, transform on the content wrapper', () => {
