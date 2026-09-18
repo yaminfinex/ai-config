@@ -20,6 +20,7 @@ export type WorkspaceActionsValue = {
   setFileViewMode: (id: string, mode: FileViewMode) => void
   setFileGitState: (id: string, state: GitFileState) => void
   setAgentScreenPane: (name: string, paneID?: string) => void
+  setAgentTailPane: (name: string, paneID?: string) => void
   onTerminalFocus: (paneID?: string) => void
   onViewer: (viewer: string) => void
   onAgentStatus: (name: string, status: string) => void

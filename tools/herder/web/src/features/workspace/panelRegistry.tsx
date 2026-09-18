@@ -52,7 +52,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const agents = useLiveRosterNames(data.board)
   return <AgentPanel name={params.name} agents={agents} active={visible} liveStatus={agentBusStatus(data.board, params.name)} screenPaneID={data.agentScreenPanes[params.name]}
     mentionMatcher={data.mentionMatcher} onOpenAgent={(name, placement) => workspace.openAgent(name, true, placementInGroup(placement, api.group.id), true)}
-    onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
+    onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onTailPane={(paneID) => workspace.setAgentTailPane(params.name, paneID)} onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
     onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))}
     onOpenChanges={(root, placement) => workspace.openChanges(root, placementInGroup(placement, api.group.id))}
     identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={() => workspace.pinPanel(api.id)} onStatus={workspace.onAgentStatus}
