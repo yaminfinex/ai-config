@@ -73,6 +73,18 @@ export function overlayAction(key: string): OverlayAction | undefined {
 
 const zoomLabel = (scale: number) => `${Math.round(scale * 100)} %`
 
+/**
+ * Makes the application (#root) inert while the overlay is open and returns the undo. Only #root:
+ * a layer that mounts later as another body child (the quick-open palette) stays interactive above
+ * the overlay. A #root that was inert already is left to whoever made it so.
+ */
+export function coverApplication(doc: Pick<Document, 'getElementById'>): () => void {
+  const app = doc.getElementById('root')
+  if (!app || app.hasAttribute('inert')) return () => {}
+  app.setAttribute('inert', '')
+  return () => app.removeAttribute('inert')
+}
+
 export function DiagramOverlay({ svg, onClose }: { svg: string, onClose: () => void }) {
   const root = useRef<HTMLDivElement | null>(null)
   const viewport = useRef<HTMLDivElement | null>(null)
@@ -104,12 +116,11 @@ export function DiagramOverlay({ svg, onClose }: { svg: string, onClose: () => v
   useEffect(() => {
     // Modal containment: focus moves in, the covered application is inert, the page behind does not scroll.
     root.current?.focus()
-    const covered = [...document.body.children].filter((element) => element !== root.current && !element.hasAttribute('inert'))
-    covered.forEach((element) => element.setAttribute('inert', ''))
+    const uncover = coverApplication(document)
     const { overflow } = document.body.style
     document.body.style.overflow = 'hidden'
     return () => {
-      covered.forEach((element) => element.removeAttribute('inert'))
+      uncover()
       document.body.style.overflow = overflow
     }
   }, [])
