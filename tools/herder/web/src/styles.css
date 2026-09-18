@@ -590,10 +590,10 @@ h2, h3, p { margin-top: 0; }
 .transcript-unavailable strong { display: block; color: var(--text); }
 .transcript-unavailable button { margin-top: 0.5rem; }
 .transcript-live-tail { display: flex; flex: 0 0 auto; min-width: 0; flex-direction: column; overflow: hidden; padding: 4px 14px 5px; border-top: 1px solid var(--border); background: var(--bg2); font: 10.5px/1.4 var(--mono); }
-.live-tail-label { display: flex; flex: 0 0 auto; align-items: baseline; gap: 6px; margin-bottom: 2px; color: var(--dimmer); font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; }
+.live-tail-label { display: flex; flex: 0 0 auto; align-items: baseline; gap: 6px; margin-bottom: 2px; color: var(--dim); font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; }
 .live-tail-word { color: var(--green); }
 .live-tail-rows { max-height: calc(var(--live-tail-rows, 8) * 1.4em); margin: 0; padding: 0; overflow: hidden; border-radius: 0; background: transparent; color: var(--dim); font: inherit; white-space: pre; }
-.live-tail-notice { color: var(--dimmer); font-style: italic; }
+.live-tail-notice { color: var(--dim); font-style: italic; }
 .queued-dock { flex: 0 0 auto; padding: 0 14px; background: var(--bg); }
 .queued-dock:empty { display: none; }
 .queued-dock .queued-messages { max-width: 900px; margin-bottom: 7px; }
