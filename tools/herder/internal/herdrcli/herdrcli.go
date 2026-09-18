@@ -2,10 +2,10 @@
 package herdrcli
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -250,8 +250,8 @@ func snapshotFromSocket(socket string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("request herdr session.snapshot: %w", err)
 	}
 
-	scanner := bufio.NewScanner(conn)
-	for scanner.Scan() {
+	decoder := json.NewDecoder(conn)
+	for {
 		var response struct {
 			ID     any             `json:"id"`
 			Result json.RawMessage `json:"result"`
@@ -260,7 +260,13 @@ func snapshotFromSocket(socket string) (Snapshot, error) {
 				Message string `json:"message"`
 			} `json:"error"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &response); err != nil || fmt.Sprint(response.ID) != "herder-list-snapshot" {
+		if err := decoder.Decode(&response); err != nil {
+			if err == io.EOF {
+				return Snapshot{}, fmt.Errorf("herdr socket closed before session.snapshot response")
+			}
+			return Snapshot{}, fmt.Errorf("read herdr session.snapshot: %w", err)
+		}
+		if fmt.Sprint(response.ID) != "herder-list-snapshot" {
 			continue
 		}
 		if response.Error != nil {
@@ -272,10 +278,6 @@ func snapshotFromSocket(socket string) (Snapshot, error) {
 		}
 		return snapshot, nil
 	}
-	if err := scanner.Err(); err != nil {
-		return Snapshot{}, fmt.Errorf("read herdr session.snapshot: %w", err)
-	}
-	return Snapshot{}, fmt.Errorf("herdr socket closed before session.snapshot response")
 }
 
 func paneProcessNameFromSocket(socket, paneID string) (string, error) {

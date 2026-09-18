@@ -164,6 +164,55 @@ func TestLiveSnapshotReadsFixtureFromFakeUnixSocket(t *testing.T) {
 	}
 }
 
+func TestSnapshotFromSocketResponseSizes(t *testing.T) {
+	for _, size := range []int{1024, 200 * 1024} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			socket := filepath.Join(t.TempDir(), "herdr.sock")
+			listener, err := net.Listen("unix", socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			label := strings.Repeat("x", size)
+			done := make(chan error, 1)
+			go func() {
+				conn, err := listener.Accept()
+				if err != nil {
+					done <- err
+					return
+				}
+				defer conn.Close()
+				var request map[string]any
+				if err := json.NewDecoder(conn).Decode(&request); err != nil {
+					done <- err
+					return
+				}
+				encoder := json.NewEncoder(conn)
+				if err := encoder.Encode(map[string]any{"id": "unrelated", "result": nil}); err != nil {
+					done <- err
+					return
+				}
+				done <- encoder.Encode(map[string]any{
+					"id": request["id"],
+					"result": map[string]any{"snapshot": Snapshot{
+						Protocol: 19, Panes: []Pane{{PaneID: "p1", Label: label}},
+					}},
+				})
+			}()
+			snapshot, err := snapshotFromSocket(socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.Protocol != 19 || len(snapshot.Panes) != 1 || snapshot.Panes[0].PaneID != "p1" || snapshot.Panes[0].Label != label {
+				t.Fatalf("snapshot did not preserve the %d-byte label", size)
+			}
+		})
+	}
+}
+
 func TestParsePaneProcessNameUsesReportedForegroundLeader(t *testing.T) {
 	fixture := []byte(`{"type":"pane_process_info","process_info":{"pane_id":"w1:p2","foreground_processes":[{"pid":731,"name":"  htop  ","argv":["htop"]},{"pid":732,"name":"helper"}]}}`)
 	name, err := ParsePaneProcessName(fixture)
