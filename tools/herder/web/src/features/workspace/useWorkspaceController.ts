@@ -27,6 +27,7 @@ import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, w
 import { panelID } from './panelRegistry'
 import { panelFromAPI, useWorkspaceActions } from './useWorkspaceActions'
 import { usePanelRecords } from './usePanelRecords'
+import { screenSubscriptionPaneIDs } from './screenSubscriptions'
 import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
@@ -127,6 +128,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [quickOpenGroup, setQuickOpenGroup] = useState<string>()
   const { records: agentStatuses, set: setAgentStatusRecord, prune: pruneAgentStatus } = usePanelRecords<string>()
   const { records: agentScreenPanes, set: setAgentScreenPaneRecord, prune: pruneAgentScreenPane } = usePanelRecords<string>()
+  const { records: agentTailPanes, set: setAgentTailPaneRecord, prune: pruneAgentTailPane } = usePanelRecords<string>()
   const [focusedScreenPaneID, setFocusedScreenPaneID] = useState<string>()
   const { records: fileGitStates, set: setFileGitStateRecord, prune: pruneFileGitState } = usePanelRecords<GitFileState>(sameGitFileState)
   const { records: folderSelectionHints, set: setFolderSelectionHint, prune: pruneFolderSelectionHint } = usePanelRecords<FileTarget>()
@@ -336,6 +338,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         if (params?.kind !== 'agent') return
         pruneAgentStatus(params.name)
         pruneAgentScreenPane(params.name)
+        pruneAgentTailPane(params.name)
       },
       movePanel: ({ panel }) => { if (pinMovedPreview(panel)) syncDock() },
     })
@@ -345,7 +348,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     if (restoreFailed) setSpaceProblem('This space could not be fully restored. Its unreadable layout was kept for recovery; other spaces were not changed.')
     setActivePanelID(event.api.activePanel?.id ?? '')
     setRevision((value) => value + 1)
-  }, [activeSpaceID, applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
+  }, [activeSpaceID, applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneAgentTailPane, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
 
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
@@ -369,7 +372,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   }) ?? restoredPanels
   const agentNames = [...new Set(openPanels.flatMap((params) => params.kind === 'agent' ? [params.name] : []))]
   const provenScreenPaneIDs = openPanels.flatMap((params) => params.kind === 'screen' && screenIdentityState(params, boardQuery.data) === 'ready' ? [params.identity.paneID] : [])
-  const screenPaneIDs = [...new Set([...provenScreenPaneIDs, ...agentNames.flatMap((name) => agentScreenPanes[name] ? [agentScreenPanes[name]] : [])])]
+  const screenPaneIDs = screenSubscriptionPaneIDs(provenScreenPaneIDs, agentNames, agentScreenPanes, agentTailPanes)
   const focusedPane = focusedScreenPaneID && screenPaneIDs.includes(focusedScreenPaneID) ? focusedScreenPaneID : undefined
   const onStateChanged = useCallback((namespace: string, rev: number) => {
     void spacesSyncRef.current?.stateChanged(namespace, rev)
@@ -551,14 +554,15 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const setAgentStatus = useCallback((name: string, status: string) => setAgentStatusRecord(name, status), [setAgentStatusRecord])
   const setFileGitState = useCallback((id: string, state: GitFileState) => setFileGitStateRecord(id, state), [setFileGitStateRecord])
   const setAgentScreenPane = useCallback((name: string, paneID?: string) => setAgentScreenPaneRecord(name, paneID), [setAgentScreenPaneRecord])
+  const setAgentTailPane = useCallback((name: string, paneID?: string) => setAgentTailPaneRecord(name, paneID), [setAgentTailPaneRecord])
   const onViewer = useCallback((resolvedViewer: string) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer }), [queryClient])
 
   const actions = useMemo<WorkspaceActionsValue>(() => ({
     openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
-    setAgentScreenPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
+    setAgentScreenPane, setAgentTailPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
     resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace,
-  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setFileGitState, setFileViewMode, showQuickOpen])
+  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
     board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
     spaces, activeSpaceID, activePanel: activeParams ? { id: activePanelID, params: activeParams } : null,

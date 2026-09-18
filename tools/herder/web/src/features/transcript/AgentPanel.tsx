@@ -16,6 +16,8 @@ import { TranscriptEntries } from './TranscriptEntries'
 import { transcriptUnavailable } from './transcriptUnavailable'
 import { ScreenViewport } from '../screen/ScreenPanel'
 import { agentScreenChoice } from '../screen/screenPresentation'
+import { liveTailShown } from './liveTail'
+import { TranscriptLiveTail } from './TranscriptLiveTail'
 import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
 import type { FileTarget, FolderTarget } from '../../types'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
@@ -35,7 +37,7 @@ export function AgentHeaderIdentity({ name }: { name: string }) {
   </div>
 }
 
-export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
+export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -50,6 +52,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
   const entriesNotice = transcriptNotice(entriesQuery.isPending, unavailable ? '' : entriesQuery.error?.message ?? '')
   const screenChoice = agentScreenChoice(agentQuery.data, screenPaneID)
   const screenMode = screenChoice.active
+  const liveTailPaneID = liveTailShown({ visible: active, status: liveStatus, screenMode }) ? screenChoice.paneID : undefined
   const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode, active && !screenMode)
   const cleanView = viewMode === 'compact'
   const showSystem = viewMode === 'full'
@@ -135,6 +138,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
       {fileResolver.element}
       <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onBottom={transcriptFollow.jumpToBottom} />
     </div>}
+    {liveTailPaneID && <TranscriptLiveTail paneID={liveTailPaneID} status={liveStatus} onTailPane={onTailPane} />}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />
     {agent && <AgentNotesStrip agent={name} agents={agents} focusRequest={notesFocusRequest} />}
