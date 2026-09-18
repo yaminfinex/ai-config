@@ -45,8 +45,18 @@ test('QuickOpen is a body-level layer above the diagram overlay: portaled to doc
   assert.match(css, /\.diagram-overlay \{ position: fixed; z-index: 90;/)
 })
 
-test('QuickOpen owns Escape in its input: it closes the palette and stops the event before any layer under it', () => {
-  assert.match(source, /if \(event\.key === 'Escape'\) \{\s*(?:\/\/[^\n]*\n\s*)?event\.stopPropagation\(\)\s*onClose\(\)\s*\} else if \(event\.key === 'ArrowDown'/)
+test('QuickOpen contains the keyboard at its dialog boundary: Tab wraps inside the palette, Escape closes it from anywhere in it and stops before any layer under it', () => {
+  assert.match(source, /import \{ dialogTabTargetIndex \} from '\.\.\/launch\/launchModel\.ts'/)
+  assert.match(source, /const focusableSelector = 'button:not\(\[disabled\]\), input, \[tabindex\]:not\(\[tabindex="-1"\]\)'/)
+  // both handlers live on the section[role=dialog], not on the input
+  const section = source.match(/<section className="quick-open" role="dialog"[\s\S]*?onKeyDown=\{\(event\) => \{([\s\S]*?)\}\}>/)
+  assert.ok(section, 'the dialog section has a key handler')
+  assert.match(section![1], /if \(event\.key === 'Tab'\) \{\s*const items = \[\.\.\.event\.currentTarget\.querySelectorAll<HTMLElement>\(focusableSelector\)\]\s*const next = dialogTabTargetIndex\(items\.indexOf\(document\.activeElement as HTMLElement\), items\.length, event\.shiftKey\)\s*if \(next === null\) return\s*event\.preventDefault\(\)\s*items\[next\]\?\.focus\(\)/)
+  assert.match(section![1], /else if \(event\.key === 'Escape'\) \{\s*event\.preventDefault\(\)\s*event\.stopPropagation\(\)\s*onClose\(\)\s*\}/)
+  // the input keeps only its own keys
+  assert.match(source, /<input ref=\{inputRef\}[\s\S]*?onKeyDown=\{\(event\) => \{\s*if \(event\.key === 'ArrowDown' \|\| event\.key === 'ArrowUp'\)/)
+  assert.equal((source.match(/event\.key === 'Escape'/g) ?? []).length, 1)
+  assert.equal((source.match(/event\.key === 'Tab'/g) ?? []).length, 1)
   // focus goes back to whoever had it at open (the overlay root when the palette was summoned over a diagram)
   assert.match(source, /restoreFocus\.current = document\.activeElement as HTMLElement \| null/)
   assert.match(source, /restoreFocus\.current\?\.focus\(\)/)
