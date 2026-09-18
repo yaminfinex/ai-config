@@ -363,7 +363,7 @@ h2, h3, p { margin-top: 0; }
   .launch-agent-help { margin-left: 0; }
 }
 
-.quick-open-backdrop { position: fixed; z-index: 20; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 120px) 16px 16px; background: var(--overlay-subtle); backdrop-filter: blur(2px); }
+.quick-open-backdrop { position: fixed; z-index: 100; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding: min(15vh, 120px) 16px 16px; background: var(--overlay-subtle); backdrop-filter: blur(2px); }
 .quick-open { display: flex; width: min(680px, 100%); max-height: min(620px, 72vh); flex-direction: column; overflow: hidden; border: 1px solid var(--border2); border-radius: 9px; background: var(--bg2); box-shadow: 0 12px 36px var(--floating-shadow); }
 .quick-open > header { display: flex; align-items: center; gap: 9px; padding: 9px 11px 7px; color: var(--dim); font-size: 10px; }
 .quick-open > header strong { color: var(--text); font: 600 12px var(--mono); }

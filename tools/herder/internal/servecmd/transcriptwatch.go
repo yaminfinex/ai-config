@@ -2,6 +2,7 @@ package servecmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -12,6 +13,8 @@ import (
 )
 
 const transcriptWatchDebounce = 120 * time.Millisecond
+
+var errTranscriptWatchStopped = errors.New("transcript watcher stopped")
 
 type transcriptWatchTarget struct {
 	Agent string
@@ -69,6 +72,11 @@ func (s *transcriptWatchSubscription) Update(targets []transcriptWatchTarget) er
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		return errTranscriptWatchStopped
+	default:
+	}
 	added := make([]string, 0)
 	for directory := range dirs {
 		if s.dirs[directory] {
@@ -101,8 +109,12 @@ func (s *transcriptWatchSubscription) Close() {
 }
 
 func (s *transcriptWatchSubscription) run(ctx context.Context, changes chan<- []string, watchErrors chan<- error, debounce time.Duration) {
-	defer close(s.done)
-	defer s.watcher.Close()
+	defer func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		_ = s.watcher.Close()
+		close(s.done)
+	}()
 	pending := make(map[string]bool)
 	timer := time.NewTimer(time.Hour)
 	if !timer.Stop() {

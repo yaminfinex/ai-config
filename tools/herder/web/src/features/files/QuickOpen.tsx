@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { assignAgent, mutationProblem, queryKeys, resolveFiles } from '../../api/client'
 import type { Board, FileCandidate, FileTarget, FolderTarget } from '../../types'
@@ -6,6 +7,7 @@ import { keyboardCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { dialogTabTargetIndex } from '../launch/launchModel.ts'
 import { quickOpenEnterTarget, quickOpenInitialSelection, quickOpenMoveSelection, quickOpenSelectedIndex, type QuickOpenActionRow, type QuickOpenLookup, type QuickOpenMode } from './quickOpenModel.ts'
 import { useNotes } from '../notes/NotesProvider.tsx'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
@@ -13,6 +15,7 @@ import { useWorkspaceActionsContext, useWorkspaceData } from '../workspace/works
 import { flattenedBoardRows, quickOpenRows, reassignDescendants, reassignSelection } from '../sidebar/reassignModel.ts'
 
 const QUICK_OPEN_RESULT_LIMIT = 100
+const focusableSelector = 'button:not([disabled]), input, [tabindex]:not([tabindex="-1"])'
 
 function useDebounced(value: string, delay = 120) {
   const [debounced, setDebounced] = useState(value)
@@ -138,8 +141,26 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const agentActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'agent')
   const paneActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'reassign-action')
   const reassignActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'reassign')
-  return <div className="quick-open-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="quick-open" role="dialog" aria-modal="true" aria-label={normalMode ? 'Quick open spaces, agents, files, or folders' : `Reassign ${mode.subject} to…`}>
+  // A body-level layer (not a child of #root): it sits above the diagram overlay, which makes only #root inert.
+  // preventDefault: the browser must not move focus to the body on the click; the close effect returns it to whoever had it at open.
+  return createPortal(<div className="quick-open-backdrop" onMouseDown={(event) => { if (event.target !== event.currentTarget) return; event.preventDefault(); onClose() }}>
+    <section className="quick-open" role="dialog" aria-modal="true" aria-label={normalMode ? 'Quick open spaces, agents, files, or folders' : `Reassign ${mode.subject} to…`}
+      onKeyDown={(event) => {
+        // The dialog boundary: Tab and Shift+Tab wrap inside the palette (the layer under it, an overlay or the
+        // launch dialog, is never reached), and Escape closes it from the input or a result button alike; the
+        // layer under never sees the Escape.
+        if (event.key === 'Tab') {
+          const items = [...event.currentTarget.querySelectorAll<HTMLElement>(focusableSelector)]
+          const next = dialogTabTargetIndex(items.indexOf(document.activeElement as HTMLElement), items.length, event.shiftKey)
+          if (next === null) return
+          event.preventDefault()
+          items[next]?.focus()
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          onClose()
+        }
+      }}>
       <header><strong>{normalMode ? 'Quick open' : `Reassign ${mode.subject} to…`}</strong><span>{normalMode ? agent ? `prioritizing ${agent}` : 'all roots' : 'name or title'}</span><kbd>Esc</kbd></header>
       <input ref={inputRef} value={query} aria-label={normalMode ? 'Find a space, agent, file, or folder' : 'Find a new parent by name or title'} placeholder={normalMode ? 'Type a space, agent, file, or folder…' : 'Type a name or title…'} autoComplete="off" spellCheck={false}
         onChange={(event) => {
@@ -148,8 +169,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
           const nextRows = quickOpenRows(mode, event.target.value, rowContext)
           setSelection(normalMode ? quickOpenInitialSelection(nextRows, event.target.value) : reassignSelection(nextRows, event.target.value))
         }} onKeyDown={(event) => {
-          if (event.key === 'Escape') onClose()
-          else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
             setSelection(quickOpenMoveSelection(actions, fileKeys, selection, event.key === 'ArrowDown' ? 'down' : 'up'))
           } else if (event.key === 'Enter') {
             const candidate = settledResolution
@@ -205,5 +225,5 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
       </div>
       <footer>{normalMode ? <><span>↑↓ choose</span><span>Enter open</span><span>No match · Enter saves a note</span><span>Results are ranked by the server</span></> : <><span>↑↓ choose</span><span>Enter reassign</span><span>Esc cancel</span></>}</footer>
     </section>
-  </div>
+  </div>, document.body)
 }

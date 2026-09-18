@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { DiagramOverlay, centredView, fitScale, overlayAction, resizedView, wheelFactor, zoomAbout } from '../src/shared/DiagramOverlay.ts'
+import { DiagramOverlay, centredView, coverApplication, fitScale, overlayAction, resizedView, wheelFactor, zoomAbout } from '../src/shared/DiagramOverlay.ts'
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
 
@@ -104,8 +104,8 @@ test('DiagramOverlay is a modal dialog holding the given SVG, a toolbar, and the
   // containment: focus moves in, Tab wraps inside, the covered application is inert, the page behind does not scroll
   assert.match(component, /root\.current\?\.focus\(\)/)
   assert.match(component, /dialogTabTargetIndex\(items\.indexOf\(document\.activeElement as HTMLElement\), items\.length, event\.shiftKey\)/)
-  assert.match(component, /element\.setAttribute\('inert', ''\)/)
-  assert.match(component, /element\.removeAttribute\('inert'\)/)
+  assert.match(component, /const uncover = coverApplication\(document\)[\s\S]*?return \(\) => \{\s*uncover\(\)/)
+  assert.doesNotMatch(component, /document\.body\.children/, 'only the application is covered, never every body child')
   assert.match(component, /document\.body\.style\.overflow = 'hidden'/)
   assert.match(component, /addEventListener\('wheel', onWheel, \{ passive: false \}\)/)
   // fit on open; a fitted view follows the viewport size, any zoom or pan stops that
@@ -113,7 +113,7 @@ test('DiagramOverlay is a modal dialog holding the given SVG, a toolbar, and the
   assert.match(component, /fitted\.current = action === 'fit'/)
   assert.match(component, /new ResizeObserver\(\(\) => \{ const measured = sizes\(\); setView\(\(current\) => resizedView\(current, fitted\.current, measured\.content, measured\.viewport\)\) \}\)/)
   // only the tested helpers are exported; constants and clamp stay private
-  assert.deepEqual([...component.matchAll(/^export (?:function|const|type) (\w+)/gmu)].map((match) => match[1]).sort(), ['DiagramOverlay', 'OverlayAction', 'Point', 'Size', 'View', 'centredView', 'fitScale', 'overlayAction', 'resizedView', 'wheelFactor', 'zoomAbout'])
+  assert.deepEqual([...component.matchAll(/^export (?:function|const|type) (\w+)/gmu)].map((match) => match[1]).sort(), ['DiagramOverlay', 'OverlayAction', 'Point', 'Size', 'View', 'centredView', 'coverApplication', 'fitScale', 'overlayAction', 'resizedView', 'wheelFactor', 'zoomAbout'])
   assert.doesNotMatch(component, /from '(?!react|\.\.\/features\/launch\/launchModel)/u, 'no library: react and the existing dialog tab helper only')
 })
 
@@ -124,6 +124,31 @@ test('overlay CSS: fixed full-viewport above the launch dialog, blurred subtle b
   assert.match(css, /\.diagram-overlay-viewport \{ position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none;/)
   assert.match(css, /\.diagram-overlay-content \{ position: absolute; top: 0; left: 0;[^}]*transform-origin: 0 0; \}/)
   assert.match(css, /\.diagram-overlay-content svg \{ display: block; height: auto; \}/)
+  // Only the quick-open palette (a body-level layer the user may summon while reading a diagram) sits above the overlay.
+  assert.match(css, /\.quick-open-backdrop \{ position: fixed; z-index: 100; inset: 0;/)
   const zIndexes = [...css.matchAll(/z-index: (\d+)/gu)].map((match) => Number(match[1]))
-  assert.equal(Math.max(...zIndexes), 90, 'nothing sits above the diagram overlay')
+  assert.deepEqual(zIndexes.filter((z) => z > 90), [100], 'nothing but the palette sits above the diagram overlay')
+})
+
+test('coverApplication makes only #root inert on open; a sibling body child (the palette) stays interactive; close undoes exactly that', () => {
+  const element = (inert = false) => {
+    const attributes = new Map<string, string>(inert ? [['inert', '']] : [])
+    return { attributes, hasAttribute: (name: string) => attributes.has(name), setAttribute: (name: string, value: string) => { attributes.set(name, value) }, removeAttribute: (name: string) => { attributes.delete(name) } }
+  }
+  const root = element()
+  const palette = element()
+  const body = new Map([['root', root]])
+  const doc = { getElementById: (id: string) => (body.get(id) ?? null) as unknown as HTMLElement | null }
+  const uncover = coverApplication(doc)
+  assert.equal(root.hasAttribute('inert'), true, '#root is inert while the overlay is open')
+  assert.equal(palette.hasAttribute('inert'), false, 'a later body child is never inert')
+  uncover()
+  assert.equal(root.hasAttribute('inert'), false, 'close restores the application')
+  assert.equal(palette.hasAttribute('inert'), false)
+  // a #root someone else made inert is left alone, on open and on close
+  const alreadyInert = element(true)
+  coverApplication({ getElementById: () => alreadyInert as unknown as HTMLElement })()
+  assert.equal(alreadyInert.hasAttribute('inert'), true)
+  // no #root (a test page): nothing to do, nothing thrown
+  assert.doesNotThrow(() => coverApplication({ getElementById: () => null })())
 })

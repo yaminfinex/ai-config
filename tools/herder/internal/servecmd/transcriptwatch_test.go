@@ -123,6 +123,32 @@ func TestTranscriptWatcherSetupFailureIsReturnedForSafetySweepFallback(t *testin
 	}
 }
 
+func TestTranscriptWatcherUpdateAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	subscription, err := startTranscriptWatches(ctx, fsnotify.NewWatcher, transcriptWatchDebounce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	cancel()
+	select {
+	case <-subscription.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("watcher did not stop after cancellation")
+	}
+	// A nil handle proves Update never calls fsnotify after run exits.
+	subscription.watcher = nil
+	for _, targets := range [][]transcriptWatchTarget{
+		nil,
+		{{Agent: "dore", Path: filepath.Join(t.TempDir(), "session.jsonl")}},
+	} {
+		if err := subscription.Update(targets); !errors.Is(err, errTranscriptWatchStopped) {
+			t.Fatalf("Update after cancellation = %v, want stopped sentinel", err)
+		}
+	}
+}
+
 func TestTranscriptWatcherRuntimeStopIsReportedForSafetySweepFallback(t *testing.T) {
 	subscription, err := startTranscriptWatches(context.Background(), fsnotify.NewWatcher, transcriptWatchDebounce)
 	if err != nil {
