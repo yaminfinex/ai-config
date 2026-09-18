@@ -2161,7 +2161,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		if len(targets) == 0 {
 			if transcriptWatches != nil {
 				if err := transcriptWatches.Update(nil); err != nil {
-					deps.audit("herder serve: transcript watch update failed; using safety sweep: %v", err)
+					if !errors.Is(err, errTranscriptWatchStopped) {
+						deps.audit("herder serve: transcript watch update failed; using safety sweep: %v", err)
+					}
 					closeTranscriptWatches()
 				}
 			}
@@ -2183,7 +2185,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			transcriptWatchErrorCh = started.Errors
 		}
 		if err := transcriptWatches.Update(targets); err != nil {
-			deps.audit("herder serve: transcript watch update failed; using safety sweep: %v", err)
+			if !errors.Is(err, errTranscriptWatchStopped) {
+				deps.audit("herder serve: transcript watch update failed; using safety sweep: %v", err)
+			}
 			closeTranscriptWatches()
 		}
 	}
