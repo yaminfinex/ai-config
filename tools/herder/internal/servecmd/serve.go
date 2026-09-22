@@ -171,7 +171,7 @@ func (c *rosterCache) resolve(raw string) string {
 var liveDependencies = dependencies{
 	snapshot:             herdrcli.LiveSnapshot,
 	paneProcessNames:     herdrcli.PaneProcessNames,
-	worktrees:            herdrcli.WorktreeParents,
+	worktrees:            cachedWorktreeParents(herdrcli.WorktreeParents),
 	roster:               hcomidentity.List,
 	stopped:              hcomidentity.Stopped,
 	messages:             hcomevents.Subscribe,
