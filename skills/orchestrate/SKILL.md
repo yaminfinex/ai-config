@@ -30,12 +30,18 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
   door** — fork, options, chosen and why — and queue provisional decisions for operator
   ratification on return.
 - **Models.** Pin every spawn's model explicitly — the box default is often wrong for the role.
-  Standing lineup (owner ruling 2026-09-09; a playbook may override for one run, saying why):
-  - Builders, by spec strength: codex `gpt-5.6-sol` effort low when medium complexity but mostly
-    specced; codex `gpt-5.6-luna` effort high when very well specced and mostly mechanical; claude
-    `claude-fable-5-1` effort low when real implementation decisions remain or the spec is lighter.
-  - Reviewers: codex `gpt-6-astra` or claude `claude-fable-5-1` only; both when the unit matters.
-    Prefer cross-family: the reviewer's family differs from the builder's.
+  Standing lineup (owner ruling 2026-09-22, #311216, replacing the 2026-09-09 lineup; a playbook
+  may override for one run, saying why):
+  - Default orchestrator: claude `claude-opus-5-5` effort medium.
+  - Default builder: claude `claude-opus-5-5` effort medium.
+  - Higher-level thinking and tough tasks (design, architecture, hard diagnosis, anything the
+    default seat would struggle with): claude `claude-fable-5-1`, effort high unless the playbook
+    says otherwise.
+  - Reviewers, especially reviews that look for refactors, simplification or rearchitecture:
+    claude `claude-fable-5-1` or codex `gpt-6-astra` (effort high); both when the unit matters.
+    Prefer cross-family when both qualify: the reviewer's family differs from the builder's.
+  - Codex builders (`gpt-5.6-sol`, `gpt-5.6-luna`) are no longer in the standing lineup; a
+    playbook may still pick one for a run, saying why.
   - Review target is simplicity, not just correctness. New code must be earned; edge cases must
     cover real edges and be worth the complexity they add; ask whether the requirement can be
     avoided or deleted, or whether an architecture move removes most of the code. Readability

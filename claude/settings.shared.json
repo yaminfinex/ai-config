@@ -1,5 +1,11 @@
 {
   "disableWorkflows": true,
+  "model": "claude-opus-5-5[1m]",
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "effortLevel": "medium"
+    }
+  },
   "enabledPlugins": {
     "compound-engineering@compound-engineering-plugin": true
   },

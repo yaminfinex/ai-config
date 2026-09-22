@@ -20,3 +20,10 @@ __AI_CONFIG_ROOT__/docs/fencing-convention.md
 Herder titles (spawn.sh --title, herder register annotate --title):
 short kebab-case, and never repeat the seat's name in it; the name is
 already shown beside the title.
+
+Seat lineup (owner ruling 2026-09-22): pin every spawn's model. Default
+orchestrator and default builder: claude claude-opus-5-5 effort medium.
+Higher-level thinking and tough tasks: claude claude-fable-5-1. Reviews,
+especially those looking for refactors, simplification or
+rearchitecture: claude-fable-5-1 or codex gpt-6-astra. Full table:
+__AI_CONFIG_ROOT__/skills/orchestrate/SKILL.md ("Models").
