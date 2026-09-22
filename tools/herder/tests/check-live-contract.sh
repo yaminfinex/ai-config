@@ -248,7 +248,7 @@ import sys
 
 try:
     out = subprocess.check_output(
-        [sys.argv[1], "status", "server"],
+        [sys.argv[1], "status", "server", "--json"],
         stderr=subprocess.STDOUT,
         text=True,
         timeout=2.0,
@@ -273,12 +273,12 @@ except json.JSONDecodeError:
             continue
         if key.strip() == "socket":
             sock = value.strip()
-        elif key.strip() == "protocol":
+        elif key.strip() in ("protocol", "private_protocol"):
             try:
                 protocol = int(value.strip())
             except ValueError:
                 pass
-        elif key.strip() == "compatible":
+        elif key.strip() in ("compatible", "private_protocol_compatible", "endpoint_compatible"):
             compatible = value.strip().lower()
 if not isinstance(protocol, int) or protocol < 19:
     print(f"herdr status server reported protocol {protocol!r}, older than supported protocol 19", file=sys.stderr)
