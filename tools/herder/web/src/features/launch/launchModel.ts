@@ -12,8 +12,8 @@ export type LaunchFormState = {
 }
 
 const models: Record<LaunchTool, string[]> = {
-  claude: ['claude-fable-5-1', 'opus', 'sonnet'],
-  codex: ['gpt-5.4', 'gpt-5.4-mini'],
+  claude: ['claude-opus-5-5', 'claude-fable-5-1'],
+  codex: ['gpt-6-astra'],
 }
 
 const efforts: Record<LaunchTool, string[]> = {
@@ -21,10 +21,15 @@ const efforts: Record<LaunchTool, string[]> = {
   codex: ['low', 'medium', 'high', 'xhigh'],
 }
 
+const defaultEfforts: Record<LaunchTool, string> = {
+  claude: 'medium',
+  codex: '',
+}
+
 const modelLabels: Record<string, string> = {
+  'claude-opus-5-5': 'Opus 5.5',
   'claude-fable-5-1': 'Fable 5.1',
-  opus: 'Opus',
-  sonnet: 'Sonnet',
+  'gpt-6-astra': 'GPT-6 Astra',
 }
 
 export function launchModelLabel(model: string) {
@@ -34,9 +39,9 @@ export function launchModelLabel(model: string) {
 export function initialLaunchForm(tool: LaunchTool = 'claude'): LaunchFormState {
   return {
     tool,
-    model: tool === 'codex' ? '' : models[tool][0],
+    model: models[tool][0],
     modelOptions: [...models[tool]],
-    effort: '',
+    effort: defaultEfforts[tool],
     effortOptions: [...efforts[tool]],
     tag: 'impl',
   }
