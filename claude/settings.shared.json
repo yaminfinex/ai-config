@@ -49,6 +49,16 @@
             "timeout": 3
           }
         ]
+      },
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x \"$HOME/.claude/hooks/notes-refresh.sh\" ] && exec \"$HOME/.claude/hooks/notes-refresh.sh\" || exit 0",
+            "timeout": 3
+          }
+        ]
       }
     ],
     "MessageDisplay": [
