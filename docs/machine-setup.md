@@ -118,6 +118,11 @@ the first after moving the checkout (it stores absolute paths).
    Edit the repo file, never the hcom config directly, then re-run the script.
    `ai-setup` applies the launch notes, and `ai-doctor` checks them for drift.
 
+   `apply-hcom-notes.sh` sets the launch-time copy for new seats only. Running
+   Claude seats get the current file from `claude/hooks/notes-refresh.sh`, a
+   SessionStart hook that re-injects the rendered notes at every compaction and
+   resume. Codex seats need a relaunch to see new notes.
+
 3. **herdr's claude session registration** — the SessionStart hook that reports claude
    session ids to herdr, the display cache's session evidence:
 
