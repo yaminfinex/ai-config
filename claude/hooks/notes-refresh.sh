@@ -7,9 +7,10 @@ set -u
 
 [ "${HCOM_LAUNCHED:-}" = 1 ] || exit 0
 jq_bin=$(command -v jq) || exit 0
-IFS=$'\t' read -r event start_source < <(
-  "$jq_bin" -er '[.hook_event_name, (.source // "")] | select(all(.[]; type == "string")) | @tsv' 2>/dev/null
-) || exit 0
+payload=$(cat 2>/dev/null) || exit 0
+# A plain substitution keeps jq's status, so trailing garbage after a valid object fails.
+fields=$("$jq_bin" -er '[.hook_event_name, (.source // "")] | select(all(.[]; type == "string")) | @tsv' <<<"$payload" 2>/dev/null) || exit 0
+IFS=$'\t' read -r event start_source <<<"$fields" || exit 0
 [ "$event" = "SessionStart" ] || exit 0
 case "$start_source" in compact|resume) ;; *) exit 0 ;; esac
 
@@ -19,7 +20,7 @@ root=${self%/claude/hooks/notes-refresh.sh}
 [ "$root" != "$self" ] && [ -n "$root" ] || exit 0
 notes_file="$root/docs/hcom-launch-notes.txt"
 [ -s "$notes_file" ] || exit 0
-notes=$(<"$notes_file") 2>/dev/null || exit 0
+{ notes=$(<"$notes_file"); } 2>/dev/null || exit 0
 
 # Same rendering as tools/fleet/apply-hcom-notes.sh.
 notes=${notes//__AI_CONFIG_ROOT__/$root}

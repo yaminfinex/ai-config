@@ -93,7 +93,9 @@ assert_eq "HCOM_LAUNCHED unset: silent" "$RC:$OUT$ERR" "0:"
 run_hook SessionStart compact 0
 assert_eq "HCOM_LAUNCHED=0: silent" "$RC:$OUT$ERR" "0:"
 
-for garbage in '' '{garbage' '[]' '{"hook_event_name":7,"source":"compact"}' 'plain text'; do
+for garbage in '' '{garbage' '[]' '{"hook_event_name":7,"source":"compact"}' 'plain text' \
+  '{"hook_event_name":"SessionStart","source":"compact"} garbage' \
+  '{"hook_event_name":"SessionStart","source":"compact"}{'; do
   run_raw "$garbage"
   assert_eq "garbage [$garbage]: silent" "$RC:$OUT$ERR" "0:"
 done
@@ -109,6 +111,14 @@ rm -f "$NOTES"
 run_hook SessionStart compact
 assert_eq "missing notes: silent" "$RC:$OUT$ERR" "0:"
 cp "$ROOT/notes.bak" "$NOTES"
+if [ "$(id -u)" -eq 0 ]; then
+  printf 'SKIP  unreadable notes: running as root\n'
+else
+  chmod 000 "$NOTES"
+  run_hook SessionStart compact
+  assert_eq "unreadable notes: silent, no stderr" "$RC:$OUT$ERR" "0:"
+  chmod 644 "$NOTES"
+fi
 
 # A copy (not a symlink) outside a claude/hooks layout finds no notes.
 mkdir -p "$ROOT/loose"
