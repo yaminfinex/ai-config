@@ -42,7 +42,7 @@ Provision and cull Claude/Codex peer sessions through `$AI_CONFIG_ROOT/tools/fle
 - Cull: `$AI_CONFIG_ROOT/tools/fleet/cull.sh <exact-hcom-name>`; it sends the courtesy release notice and verifies managed pane closure.
 - Resume: create a verified idle pane, then `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom r <name-or-uuid>`.
 - Fork: create a verified idle pane, then `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom f <name-or-uuid>`.
-- Watchdogs: hcom's request watcher (`reqwatch`) reports unanswered requests; use `hcom events sub` for explicit lifecycle/status wakeups. Subscribe, then end the turn instead of polling.
+- Watchdogs: `hcom events sub [filters] [--once]` delivers the next matching event to you as a message; `--idle <name>` wakes you when a seat goes idle (listening) without having reported, and `--blocked <name>` when it blocks. hcom has no watcher for unanswered requests, so subscribe for the idle or blocked case yourself. Subscribe, then end the turn instead of polling.
 - Observe: `hcom list` is live bus state; `herdr pane list` is live placement; `herder list` displays their live join and shows placement gaps explicitly.
 
 Before reporting DONE, release external resources you opened. Never close your own pane or remove a checkout while its seat is live.

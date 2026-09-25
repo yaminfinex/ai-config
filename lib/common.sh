@@ -149,7 +149,6 @@ portable_link_specs() {
     "claude/hooks/notes-refresh.sh|$HOME/.claude/hooks/notes-refresh.sh" \
     "claude/commands|$HOME/.claude/commands" \
     "claude/statusline.sh|$HOME/.claude/statusline.sh" \
-    "codex/AGENTS.md|$HOME/.codex/AGENTS.md" \
     "cursor/rules|$HOME/.cursor/rules"
 }
 
