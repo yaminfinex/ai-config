@@ -81,7 +81,8 @@ run_setup() {
 }
 
 # 1. The real tree no longer links codex/AGENTS.md: a live ~/.codex/AGENTS.md
-#    survives both a dry run and a full run untouched and unbacked-up.
+#    survives both a dry run and a full run untouched and unbacked-up, and
+#    every portable spec in the real tree has a source, so nothing is skipped.
 make_case codex_agents
 printf 'live codex agents\n' >"$HOME_DIR/.codex/AGENTS.md"
 run_setup "$REPO" --dry-run
@@ -92,6 +93,7 @@ assert_eq "codex full run: exit 0" "$RUN_RC" "0"
 assert_not_contains "codex full run: AGENTS.md not mentioned" "$RUN_OUT" "codex/AGENTS.md"
 assert_plain_file "codex full run: live AGENTS.md untouched" "$HOME_DIR/.codex/AGENTS.md" "live codex agents"
 assert_not_exists "codex full run: no AGENTS.md backup" "$BACKUPS/20260925T000000/.codex/AGENTS.md"
+assert_eq "real tree full run: no skip-link warnings" "$(grep -c 'skip link' <<<"$RUN_OUT")" "0"
 
 # 2. Guard: a copy of the repo with two linked sources deleted. One target
 #    already exists as a real file, the other is absent.
