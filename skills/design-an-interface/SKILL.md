@@ -34,7 +34,7 @@ Before spawning anything, answer in the conversation:
 - What constraints exist? (performance, compatibility, existing patterns)
 - What should stay hidden inside vs be exposed?
 
-If the user did not supply all of these, ask — one round, 1–3 questions max, per the ask-vs-infer rule.
+If the user did not supply all of these, ask once — 1–3 questions in a single round — rather than guessing the shape; a wrong guess here wastes three designs.
 
 ## Step 2: Generate divergent designs
 

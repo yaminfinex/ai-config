@@ -144,13 +144,9 @@ is_ignored_live_skill_name() {
 
 portable_link_specs() {
   printf '%s\n' \
-    "claude/CLAUDE.md|$HOME/.claude/CLAUDE.md" \
     "claude/hooks/context-nudge.sh|$HOME/.claude/hooks/context-nudge.sh" \
     "claude/hooks/notes-refresh.sh|$HOME/.claude/hooks/notes-refresh.sh" \
-    "claude/commands|$HOME/.claude/commands" \
-    "claude/statusline.sh|$HOME/.claude/statusline.sh" \
-    "codex/AGENTS.md|$HOME/.codex/AGENTS.md" \
-    "cursor/rules|$HOME/.cursor/rules"
+    "claude/statusline.sh|$HOME/.claude/statusline.sh"
 }
 
 skill_root_specs() {

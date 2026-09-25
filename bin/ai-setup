@@ -121,8 +121,10 @@ install_link() {
   local parent
   local backup
 
+  # A spec whose repo source is absent would back up the live target and
+  # leave a dangling link in its place; refuse it and touch nothing.
   [ -e "$src" ] || {
-    log_info "skip missing source: $src"
+    log_warn "skip link: repo source missing: $src (left $dst untouched)"
     return
   }
 

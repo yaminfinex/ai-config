@@ -90,7 +90,7 @@ Support picking more than one cluster and handling each differently:
 | Disposition  | When it fits                                                                              | What to do                                                                      |
 | ------------ | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | **Inline**   | The cluster the user most wants to steer, or one so small it's faster to do than hand off | Loop Phases 3–7 for this cluster now                                            |
-| **Handoff**  | Worth exploring but not worth live attention; parallel work                               | Invoke the `handoff` skill with a Phase-3-ready package (contents below)        |
+| **Handoff**  | Worth exploring but not worth live attention; parallel work                               | Write a Phase-3-ready package (contents below) to `<mission>/artifacts/improve-architecture/handoff-<cluster-name>.md` for a fresh seat |
 | **Deferred** | Noted but not prioritized                                                                 | List in the cluster docs' dir (`candidates.md`) as "not yet explored" — no document written |
 
 Handoff package must include:
