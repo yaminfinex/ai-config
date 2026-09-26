@@ -9,7 +9,7 @@ export type NoteSelection = {
 
 type ClickModifiers = { command?: boolean, shift?: boolean }
 type KeyLike = { key: string, metaKey?: boolean, ctrlKey?: boolean, shiftKey?: boolean }
-export type NoteListAction = 'copy' | 'delete' | 'hand-off' | 'assign' | 'edit' | 'clear' | null
+export type NoteListAction = 'copy' | 'select-all' | 'delete' | 'hand-off' | 'assign' | 'edit' | 'clear' | null
 
 function range(ordered: string[], fromID: string, toID: string) {
   const from = ordered.indexOf(fromID)
@@ -40,6 +40,13 @@ export function selectionAfterArrow(state: NoteSelection, ordered: string[], dir
   if (!extend) return { selected: new Set([cursor]), anchor: cursor, cursor }
   const anchor = state.anchor && ordered.includes(state.anchor) ? state.anchor : cursor
   return { selected: range(ordered, anchor, cursor), anchor, cursor }
+}
+
+// Select every note in list order; the cursor stays put when it is still present, else lands on the first note.
+export function selectionAll(state: NoteSelection, ordered: string[]): NoteSelection {
+  if (ordered.length === 0) return { selected: new Set(), anchor: undefined, cursor: undefined }
+  const cursor = state.cursor && ordered.includes(state.cursor) ? state.cursor : ordered[0]
+  return { selected: new Set(ordered), anchor: ordered[0], cursor }
 }
 
 export function shouldPreventNoteCardMouseDown(event: { shiftKey: boolean }) {
@@ -74,6 +81,7 @@ export function noteListAction(event: KeyLike, editable: boolean): NoteListActio
   if (editable) return null
   const key = event.key.toLowerCase()
   if ((event.metaKey || event.ctrlKey) && key === 'c') return 'copy'
+  if ((event.metaKey || event.ctrlKey) && !event.shiftKey && key === 'a') return 'select-all'
   if (event.key === 'Backspace' || event.key === 'Delete') return 'delete'
   if (event.key === 'Enter') return 'hand-off'
   if (!event.metaKey && !event.ctrlKey && !event.shiftKey && key === 'a') return 'assign'
@@ -114,4 +122,15 @@ export function sendAllPlan(groups: Array<{ group: string, orphaned?: boolean }>
 export function notesFocusLanding(state: NoteSelection, notes: Array<Pick<Note, 'id' | 'group'>>, agent: string) {
   if (state.cursor && notes.some((note) => note.id === state.cursor)) return state.cursor
   return notes.find((note) => note.group === agent)?.id ?? notes[0]?.id
+}
+
+// ArrowUp from an empty composer lands on notesFocusLanding with every note selected, so Enter hands them all off.
+export function notesFocusSelection(state: NoteSelection, notes: Array<Pick<Note, 'id' | 'group'>>, agent: string): NoteSelection | undefined {
+  const landing = notesFocusLanding(state, notes, agent)
+  if (!landing) return undefined
+  return selectionAll({ ...state, cursor: landing }, notes.map((note) => note.id))
+}
+
+export function sendAllToComposerLabel(count: number) {
+  return `Send all ${count} ${count === 1 ? 'note' : 'notes'} to composer`
 }

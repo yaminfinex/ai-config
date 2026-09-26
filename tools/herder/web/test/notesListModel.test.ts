@@ -7,6 +7,9 @@ import {
   dragNoteIDs,
   handOffRoute,
   notesFocusLanding,
+  notesFocusSelection,
+  sendAllToComposerLabel,
+  selectionAll,
   sendAllPlan,
   noteListAction,
   selectionAfterRemoval,
@@ -107,7 +110,10 @@ test('card shortcuts never claim native keys from an editor, chip comment, or se
   assert.equal(noteListAction({ key: 'Backspace' }, false), 'delete')
   assert.equal(noteListAction({ key: 'Enter' }, false), 'hand-off')
   assert.equal(noteListAction({ key: 'a' }, false), 'assign')
-  for (const event of [{ key: 'c', metaKey: true }, { key: 'Backspace' }, { key: 'Enter' }, { key: 'a' }]) {
+  assert.equal(noteListAction({ key: 'a', metaKey: true }, false), 'select-all')
+  assert.equal(noteListAction({ key: 'A', ctrlKey: true }, false), 'select-all')
+  assert.equal(noteListAction({ key: 'a', metaKey: true, shiftKey: true }, false), null)
+  for (const event of [{ key: 'c', metaKey: true }, { key: 'Backspace' }, { key: 'Enter' }, { key: 'a' }, { key: 'a', metaKey: true }]) {
     assert.equal(noteListAction(event, true), null)
   }
 })
@@ -167,4 +173,37 @@ test("ArrowUp from a composer lands on the cursor, else that agent's first note,
   assert.deepEqual([...landed.selected], ['a1'])
   assert.equal(landed.anchor, 'a1')
   assert.equal(landed.cursor, 'a1')
+})
+
+test('select all takes every note in list order and keeps a present cursor', () => {
+  const ids = ['a', 'b', 'c']
+  const all = selectionAll(empty(), ids)
+  assert.deepEqual([...all.selected], ids)
+  assert.equal(all.anchor, 'a')
+  assert.equal(all.cursor, 'a')
+  assert.equal(selectionAll({ selected: new Set(['c']), anchor: 'c', cursor: 'c' }, ids).cursor, 'c')
+  assert.equal(selectionAll({ selected: new Set(), anchor: undefined, cursor: 'gone' }, ids).cursor, 'a')
+  assert.equal(selectionAll(empty(), []).selected.size, 0)
+})
+
+test('ArrowUp from the composer lands with every note selected, then a plain arrow narrows to one', () => {
+  const notes = [note('a1', 'ann'), note('a2', 'ann'), note('a3', 'ann')]
+  const ids = notes.map(({ id }) => id)
+  const landed = notesFocusSelection(empty(), notes, 'ann')
+  assert.ok(landed)
+  assert.deepEqual([...landed.selected], ids)
+  assert.equal(landed.cursor, 'a1')
+  const remembered = notesFocusSelection({ selected: new Set(), anchor: undefined, cursor: 'a2' }, notes, 'ann')
+  assert.deepEqual([...remembered!.selected], ids)
+  assert.equal(remembered!.cursor, 'a2')
+  const down = selectionAfterArrow(landed, ids, 1, false)
+  assert.deepEqual([...down.selected], ['a2'])
+  const up = selectionAfterArrow(remembered!, ids, -1, false)
+  assert.deepEqual([...up.selected], ['a1'])
+  assert.equal(notesFocusSelection(empty(), [], 'ann'), undefined)
+})
+
+test('send-all button names how many notes go to the composer', () => {
+  assert.equal(sendAllToComposerLabel(1), 'Send all 1 note to composer')
+  assert.equal(sendAllToComposerLabel(4), 'Send all 4 notes to composer')
 })

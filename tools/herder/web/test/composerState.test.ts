@@ -266,7 +266,7 @@ test('ArrowUp travels as props: the composer calls back, the panel counts a requ
   assert.equal(strip.match(/setExpandedBy\(0\)/g)?.length, 1)
   assert.match(strip, /<NotesList [^>]*focusRequest=\{expandedBy\} returnTo=\{agent\}/)
   const list = readFileSync(new URL('../src/features/notes/NotesList.tsx', import.meta.url), 'utf8')
-  assert.match(list, /if \(!focusRequest \|\| !returnTo\) return\n\s*const landing = notesFocusLanding\(selection, notes, returnTo\)[\s\S]*?setSelection\(selectionAfterClick\(selection, ids, landing, \{ shift: false, command: false \}\)\)\n\s*focus\(landing\)[\s\S]*?\}, \[focusRequest\]\)/)
+  assert.match(list, /if \(!focusRequest \|\| !returnTo\) return\n\s*const landed = notesFocusSelection\(selection, notes, returnTo\)\n\s*if \(!landed\) return\n\s*setSelection\(landed\)\n\s*focus\(landed\.cursor\)\n\s*\}, \[focusRequest\]\)/)
   const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
   assert.match(actions, /field\.disabled \? field\.closest<HTMLElement>\('\.agent-page'\)/)
 })
