@@ -58,12 +58,13 @@ export function aggregateActivityPills<T extends { key: string, label: string, a
 // Status chips are monospace, so one character is one ch. styles.css caps the
 // chip's content box at exactly this many ch; longer text is cut with an
 // ellipsis and the chip becomes a toggle that shows the full text. The chip
-// is white-space: nowrap, so runs of whitespace render as one space and the
-// ends are trimmed before the count.
+// is white-space: nowrap, so runs of CSS whitespace (space, tab, line breaks)
+// render as one space and the ends are trimmed before the count. Other spaces,
+// such as U+00A0, are preserved and count one ch each.
 export const statusChipChars = 26
 
 export function statusChipTruncates(label: string) {
-  return [...label.replace(/\s+/g, ' ').trim()].length > statusChipChars
+  return [...label.replace(/[ \t\n\r\f]+/g, ' ').replace(/^ | $/g, '')].length > statusChipChars
 }
 
 export function markerOnlyAssistantActivity(content: string) {
