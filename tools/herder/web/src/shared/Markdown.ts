@@ -87,15 +87,36 @@ function mentionPlugin(matcher: AgentMentionMatcher) {
   }
 }
 
+const skippedBreakParents = new Set(['code', 'inlineCode', 'html'])
+
+// Chat messages keep the writer's line breaks: a single newline inside a
+// paragraph becomes a hard break, as remark-breaks does.
+function lineBreaksPlugin() {
+  return (tree: MarkdownNode) => {
+    const transform = (parent: MarkdownNode) => {
+      if (skippedBreakParents.has(parent.type) || !parent.children) return
+      parent.children = parent.children.flatMap((child) => {
+        if (child.type !== 'text' || !child.value?.includes('\n')) {
+          transform(child)
+          return [child]
+        }
+        return child.value.split(/\r?\n/).flatMap((part, index) => index === 0 ? [{ type: 'text', value: part }] : [{ type: 'break' }, { type: 'text', value: part }])
+      })
+    }
+    transform(tree)
+  }
+}
+
 type AgentMarkdown = { matcher: AgentMentionMatcher, onOpen: AgentMentionOpen, sideHint?: string }
 
 export function agentMarkdownOptions(matcher: AgentMentionMatcher, onOpen: AgentMentionOpen, sideHint?: string) {
   return { agentMentions: { matcher, onOpen, sideHint } }
 }
 
-export const Markdown = memo(function Markdown({ children, components, agentMentions }: { children: string, components?: Components, agentMentions?: AgentMarkdown }): ReactNode {
+export const Markdown = memo(function Markdown({ children, components, agentMentions, lineBreaks = false }: { children: string, components?: Components, agentMentions?: AgentMarkdown, lineBreaks?: boolean }): ReactNode {
   const options = useMemo(() => {
-    if (!agentMentions) return { remarkPlugins: [remarkGfm], components: { ...blockComponents, ...components } }
+    const breaks = lineBreaks ? [lineBreaksPlugin] : []
+    if (!agentMentions) return { remarkPlugins: [remarkGfm, ...breaks], components: { ...blockComponents, ...components } }
     const mentionComponents: Components = {
       ...blockComponents,
       ...components,
@@ -126,10 +147,10 @@ export const Markdown = memo(function Markdown({ children, components, agentMent
       },
     }
     return {
-      remarkPlugins: [remarkGfm, mentionPlugin(agentMentions.matcher)],
+      remarkPlugins: [remarkGfm, mentionPlugin(agentMentions.matcher), ...breaks],
       components: mentionComponents,
       urlTransform: (url: string) => url.startsWith(agentScheme) || isLocalHref(url) ? url : defaultUrlTransform(url),
     }
-  }, [agentMentions, components])
+  }, [agentMentions, components, lineBreaks])
   return createElement(ReactMarkdown, { ...options, children })
 })

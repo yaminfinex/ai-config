@@ -635,6 +635,9 @@ h2, h3, p { margin-top: 0; }
 .hcom-card { border-left: 3px solid var(--accent); }
 .operator-card { max-width: 820px; margin-left: min(6%, 54px); border-left-color: var(--green); background: var(--operator-bg); }
 .operator-card header strong { color: var(--operator-strong); }
+.hcom-body.is-trimmed { mask-image: linear-gradient(to bottom, black calc(100% - 2.2em), transparent); }
+.hcom-expand { margin-top: 2px; padding: 0; border: 0; background: transparent; color: var(--accent-text); font: 10px var(--mono); }
+.hcom-expand:hover:not(:disabled) { text-decoration: underline; }
 .operator-badge { padding: 0 5px; border: 1px solid var(--operator-badge-border); border-radius: 4px; background: var(--operator-badge-bg); color: var(--green); font: 9px var(--mono); white-space: nowrap; }
 .intent-badge, .thread-chip, .message-id, .command-chip { padding: 0 6px; border-radius: 4px; font: 9px var(--mono); }
 .intent-badge { border: 1px solid var(--border2); background: var(--chip); color: var(--dim); }
@@ -712,7 +715,12 @@ button.inline-link:hover:not(:disabled) { border-color: transparent; }
 .activity-strip[open] > summary::before { transform: rotate(90deg); }
 .activity-strip > summary:hover, .activity-strip[open] > summary { border-color: var(--border); background: var(--bg2); }
 .activity-pill { flex: 0 0 auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: 10px; background: var(--chip); color: var(--dim); font: 9px var(--mono); white-space: nowrap; }
-.activity-pill.assistant-status { max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); }
+.activity-pill.assistant-status { max-width: calc(26ch + 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-color: var(--info-border); background: var(--info-bg); color: var(--info-text); }
+/* The cap is 26ch of content plus 7px padding and 1px border each side: cleanView statusChipChars decides which chips are toggles. */
+button.activity-pill.status-chip { line-height: inherit; text-align: left; cursor: pointer; }
+.activity-pill.status-chip-open { max-width: 100%; overflow-wrap: anywhere; text-overflow: clip; white-space: pre-wrap; }
+.status-chip-toggle { margin-left: 5px; padding: 0 3px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; line-height: inherit; }
+:is(.status-chip, .status-chip-toggle, .hcom-expand):focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .activity-pill.tool { border-color: var(--pill-tool-border); background: var(--pill-tool-bg); color: var(--pill-tool-text); }
 .activity-pill.thinking { border-color: var(--pill-thinking-border); background: var(--pill-thinking-bg); color: var(--pill-thinking-text); }
 .activity-pill.message { border-color: var(--pill-message-border); background: var(--pill-message-bg); color: var(--pill-message-text); }

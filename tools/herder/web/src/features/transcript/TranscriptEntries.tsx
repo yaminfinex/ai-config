@@ -1,10 +1,11 @@
-import { createContext, Fragment, useContext, useMemo, useState, type MouseEvent } from 'react'
-import { duplicateHcomDeliveryIndices, isWebOperatorMessage, polishHcomDeliveryText } from '../../messagePolish'
+import { createContext, Fragment, useContext, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { duplicateHcomDeliveryIndices } from '../../messagePolish'
 import { agentMarkdownOptions, Markdown } from '../../shared/Markdown'
 import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMentions'
 import type { TranscriptEntry } from '../../types'
-import { aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun } from './cleanView'
+import { aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun, statusChipTruncates } from './cleanView'
 import { cleanRows, messageText, objectValue, valueText, type CleanActivity, type ObjectValue } from './cleanRows'
+import { deliveryExpandLabel, hcomDeliveryPresentation } from './deliveryModel'
 import { parseAssistantFencing } from './fencingModel'
 import { systemEntryPresentation, unknownEntryLabel } from './systemEntries'
 
@@ -21,10 +22,42 @@ function MentionText({ children }: { children: string }) {
   return mentions ? <AgentMentionText text={children} matcher={mentions.matcher} onOpen={mentions.onOpenAgent} sideHint={mentions.sideHint} /> : children
 }
 
-function MentionMarkdown({ children }: { children: string }) {
+function MentionMarkdown({ children, lineBreaks = false }: { children: string, lineBreaks?: boolean }) {
   const mentions = useContext(MentionContext)
   const options = useMemo(() => mentions ? agentMarkdownOptions(mentions.matcher, mentions.onOpenAgent, mentions.sideHint) : {}, [mentions])
-  return <Markdown {...options}>{children}</Markdown>
+  return <Markdown {...options} lineBreaks={lineBreaks}>{children}</Markdown>
+}
+
+// A status chip longer than its cap is a disclosure: collapsed it is one
+// ellipsized button; expanded it wraps the full text with a collapse button.
+// Focus follows the control that replaces the one just pressed.
+function StatusChip({ text, children }: { text: string, children?: ReactNode }) {
+  const [expanded, setExpanded] = useState(false)
+  const moveFocus = useRef(false)
+  const focusOnMount = (node: HTMLButtonElement | null) => {
+    if (!node || !moveFocus.current) return
+    moveFocus.current = false
+    node.focus()
+  }
+  const toggle = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    moveFocus.current = true
+    setExpanded((value) => !value)
+  }
+  if (!statusChipTruncates(text)) return <span className="activity-pill assistant-status">{children ?? text}</span>
+  if (!expanded) return <button type="button" className="activity-pill assistant-status status-chip" aria-expanded="false" title="Show full status" ref={focusOnMount} onClick={toggle}>{text}</button>
+  return <span className="activity-pill assistant-status status-chip-open">{children ?? text}<button type="button" className="status-chip-toggle" aria-expanded="true" aria-label="Collapse status" title="Collapse status" ref={focusOnMount} onClick={toggle}>‹</button></span>
+}
+
+function HcomMessageBody({ body, preview }: { body: string, preview: ReturnType<typeof hcomDeliveryPresentation>['preview'] }) {
+  const [expanded, setExpanded] = useState(false)
+  const id = useId()
+  if (!preview) return <div className="markdown hcom-body" data-note-capture-content><MentionMarkdown lineBreaks>{body || '(delivery body unavailable)'}</MentionMarkdown></div>
+  return <>
+    <div className={`markdown hcom-body${expanded ? '' : ' is-trimmed'}`} id={id} data-note-capture-content><MentionMarkdown lineBreaks>{expanded ? body : preview.text}</MentionMarkdown></div>
+    <button type="button" className="hcom-expand" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded((value) => !value)}>{deliveryExpandLabel(preview, expanded)}</button>
+  </>
 }
 
 function formatDuration(milliseconds: number) {
@@ -156,16 +189,14 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
   const parsed = visibleValues.some(({ raw }) => Boolean(valueText(objectValue(raw).sender) && valueText(objectValue(raw).message_id)))
   if (!parsed) return showSystem ? <details className="system-chip unknown-entry"><summary>unparsed hook attachment · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{visibleValues.map(({ raw }) => valueText(objectValue(raw).text)).filter(Boolean).join('\n')}</pre></details> : null
   return <>{visibleValues.map(({ raw, index }) => {
-    const delivery = objectValue(raw)
-    const text = valueText(delivery.text)
-    const webOperator = isWebOperatorMessage(text)
-    return <article className={`entry-card hcom-card${webOperator ? ' operator-card' : ''}`} key={`${entry.uuid ?? entry.byteOffset}:${index}`}>
-      <header><strong>{valueText(delivery.sender) || 'unknown sender'}</strong>{webOperator && <span className="operator-badge">web operator</span>}<span>→ {valueText(delivery.recipient) || 'unknown recipient'}</span>
-        {valueText(delivery.intent) && <span className={`intent-badge ${valueText(delivery.intent)}`}>{valueText(delivery.intent)}</span>}
-        {valueText(delivery.message_id) && <span className="message-id">#{valueText(delivery.message_id)}</span>}
-        {valueText(delivery.thread) && <span className="thread-chip">{valueText(delivery.thread)}</span>}
+    const message = hcomDeliveryPresentation(objectValue(raw))
+    return <article className={`entry-card hcom-card${message.operator ? ' operator-card' : ''}`} key={`${entry.uuid ?? entry.byteOffset}:${index}`}>
+      <header><strong>{message.sender || 'unknown sender'}</strong>{message.operator && <span className="operator-badge">web operator</span>}<span>→ {message.recipient || 'unknown recipient'}</span>
+        {message.intent && <span className={`intent-badge ${message.intent}`}>{message.intent}</span>}
+        {message.messageId && <span className="message-id">#{message.messageId}</span>}
+        {message.thread && <span className="thread-chip">{message.thread}</span>}
         <Timestamp timestamp={entry.timestamp} now={now} />
-      </header><div data-note-capture-content><MentionText>{polishHcomDeliveryText(text) || '(delivery body unavailable)'}</MentionText></div>
+      </header><HcomMessageBody body={message.body} preview={message.preview} />
     </article>
   })}</>
 }
@@ -173,7 +204,9 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
 function ActivityStrip({ activities, entries, relationships, agentName, now }: { activities: CleanActivity[], entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number }) {
   const [open, setOpen] = useState(false)
   return <details className="activity-strip" onToggle={(event) => setOpen(event.currentTarget.open)}><summary aria-label={`${activities.length} hidden transcript activities`}>
-    {aggregateActivityPills(activities).map((pill) => <span className={`activity-pill ${pill.tone}`} title={pill.title} key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
+    {aggregateActivityPills(activities).map((pill) => pill.tone === 'assistant-status'
+      ? <StatusChip text={`${pill.label}${pill.count > 1 ? ` ×${pill.count}` : ''}`} key={pill.key} />
+      : <span className={`activity-pill ${pill.tone}`} title={pill.title} key={pill.key}>{pill.label}{pill.count > 1 && ` ×${pill.count}`}</span>)}
   </summary>{open && <div className="activity-run-detail">
     {activities.map((activity) => <ActivityEntry activity={activity} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem key={activity.key} />)}
   </div>}</details>
@@ -199,7 +232,7 @@ function AssistantText({ content, agentName, timestamp, now, showSystem }: { con
   const segments = <div className="assistant-fenced-content">{fencing.segments.map((segment, index) => {
     if (segment.kind === 'text') return segment.content.trim() && <div className="markdown" data-note-capture-content key={index}><MentionMarkdown>{segment.content}</MentionMarkdown></div>
     if (segment.kind === 'internal') return <details className="internal-note" open={showSystem} onToggle={event => { if (showSystem) event.currentTarget.open = true }} key={index}><summary className="activity-pill thinking">internal note · {segment.wordCount} {segment.wordCount === 1 ? 'word' : 'words'}</summary><div className="entry-detail markdown" data-note-capture-content><MentionMarkdown>{segment.content}</MentionMarkdown></div></details>
-    return <span className="activity-pill assistant-status" key={index}><MentionText>{segment.content}</MentionText></span>
+    return <StatusChip text={segment.content} key={index}><MentionText>{segment.content}</MentionText></StatusChip>
   })}</div>
 
   if (!fencing.hasVisibleText) return segments

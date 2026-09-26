@@ -55,6 +55,15 @@ export function aggregateActivityPills<T extends { key: string, label: string, a
   return pills
 }
 
+// Status chips are monospace, so one character is one ch. styles.css caps the
+// chip's content box at exactly this many ch; longer text is cut with an
+// ellipsis and the chip becomes a toggle that shows the full text.
+export const statusChipChars = 26
+
+export function statusChipTruncates(label: string) {
+  return [...label].length > statusChipChars
+}
+
 export function markerOnlyAssistantActivity(content: string) {
   const fencing = parseAssistantFencing(content)
   if (!fencing.fenced || fencing.hasVisibleText) return null
