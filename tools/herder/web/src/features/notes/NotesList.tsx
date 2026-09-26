@@ -6,11 +6,12 @@ import {
   dragNoteIDs,
   handOffRoute,
   noteListAction,
-  notesFocusLanding,
+  notesFocusSelection,
   pruneNoteSelection,
   selectionAfterArrow,
   selectionAfterClick,
   selectionAfterRemoval,
+  selectionAll,
   shouldPreventNoteCardMouseDown,
   type NoteSelection,
 } from './notesListModel.ts'
@@ -64,14 +65,14 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange, focusReq
   const notesByGroup = useMemo(() => new Map(displayGroups.map(({ group }) => [group, displayNotes.filter((note) => note.group === group)])), [displayGroups, displayNotes])
 
   useEffect(() => { setSelection((current) => pruneNoteSelection(current, ids)) }, [ids])
-  // A focus request (ArrowUp from the strip's composer) lands on the last-focused card, else that agent's first note, else the first card.
+  // A focus request (ArrowUp from the strip's composer) selects every note and lands on the last-focused card, else that agent's first note, else the first card.
   // The effect runs on mount too, so a list mounted by the request lands without a second one.
   useEffect(() => {
     if (!focusRequest || !returnTo) return
-    const landing = notesFocusLanding(selection, notes, returnTo)
-    if (!landing) return
-    setSelection(selectionAfterClick(selection, ids, landing, { shift: false, command: false }))
-    focus(landing)
+    const landed = notesFocusSelection(selection, notes, returnTo)
+    if (!landed) return
+    setSelection(landed)
+    focus(landed.cursor)
   }, [focusRequest])
   useEffect(() => {
     onEditingChange?.(editingActive)
@@ -136,6 +137,7 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange, focusReq
     announce(`Deleted ${result.value} ${result.value === 1 ? 'note' : 'notes'}.`)
   }
   const runAction = (action: ReturnType<typeof noteListAction>) => {
+    if (action === 'select-all') { const next = selectionAll(selection, ids); setSelection(next); focus(next.cursor); return }
     if (!action || selection.selected.size === 0) return
     if (action === 'copy') void copy()
     else if (action === 'delete') remove()

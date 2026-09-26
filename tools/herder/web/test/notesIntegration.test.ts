@@ -230,3 +230,20 @@ test('notes storage families share one versioned namespace and stay disjoint fro
   assert.match(store, /recovery:/)
   assert.doesNotMatch(store, /messageDraft|dockLayout/)
 })
+
+test('agent strip send all reuses the guarded hand-off and shows whether collapsed or not', () => {
+  const strip = read('../src/features/notes/AgentNotesStrip.tsx')
+  assert.match(strip, /handOffSelectedNotes\(\{ target: agent, notes: pending, guard: handOffGuard, append: appendToComposer/)
+  assert.match(strip, /onHandOff=\{appendToComposer\}/)
+  assert.match(strip, /aria-label=\{sendAllToComposerLabel\(count\)\}/)
+  const header = strip.slice(strip.indexOf('<header'), strip.indexOf('</header>'))
+  assert.match(header, /count > 0 && <button[^>]*onClick=\{sendAll\}/)
+  assert.doesNotMatch(header, /collapsed &&/)
+})
+
+test('notes list select-all runs even with nothing selected and the focus request selects all', () => {
+  const list = read('../src/features/notes/NotesList.tsx')
+  const run = list.slice(list.indexOf('const runAction'))
+  assert.ok(run.indexOf("action === 'select-all'") < run.indexOf('selection.selected.size === 0'))
+  assert.match(list, /notesFocusSelection\(selection, notes, returnTo\)/)
+})

@@ -129,6 +129,8 @@ h2, h3, p { margin-top: 0; }
 .agent-notes-toggle > span:last-child { padding: 0 var(--space-1); border-radius: var(--space-2); background: var(--chip); }
 .agent-notes-label { padding-left: 20px; }
 .agent-notes-header .note-quick-add { margin-left: auto; }
+.agent-notes-header .notes-send-all-button { margin-left: auto; }
+.agent-notes-header .notes-send-all-button + .note-quick-add { margin-left: 0; }
 .agent-notes-strip .notes-group-heading { display: none; }
 .agent-notes-strip .notes-list { max-height: 184px; overflow-y: auto; }
 .note-quick-add { position: relative; display: inline-flex; align-items: center; }
