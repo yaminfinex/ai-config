@@ -244,6 +244,9 @@ test('agent strip send all reuses the guarded hand-off and shows whether collaps
 test('notes list select-all runs even with nothing selected and the focus request selects all', () => {
   const list = read('../src/features/notes/NotesList.tsx')
   const run = list.slice(list.indexOf('const runAction'))
-  assert.ok(run.indexOf("action === 'select-all'") < run.indexOf('selection.selected.size === 0'))
+  const selectAll = run.indexOf("action === 'select-all'")
+  assert.ok(selectAll >= 0)
+  assert.ok(selectAll < run.indexOf('selection.selected.size === 0'))
+  assert.match(run, /if \(action === 'select-all'\) \{ const next = selectionAll\(selection, ids\); setSelection\(next\); focus\(next\.cursor\); return \}/)
   assert.match(list, /notesFocusSelection\(selection, notes, returnTo\)/)
 })
