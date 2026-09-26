@@ -21,7 +21,32 @@ export type DeliveryPresentation = {
   preview: DeliveryPreview | null
 }
 
-const fenceLine = /^\s{0,3}(?:```|~~~)/
+type Fence = { char: string, length: number }
+
+const fenceOpener = /^ {0,3}(`{3,}|~{3,})(.*)$/
+
+function openingFence(line: string): Fence | null {
+  const match = fenceOpener.exec(line)
+  if (!match) return null
+  const [, run, info] = match
+  if (run[0] === '`' && info.includes('`')) return null
+  return { char: run[0], length: run.length }
+}
+
+function closesFence(line: string, fence: Fence) {
+  const match = /^ {0,3}(`{3,}|~{3,})\s*$/.exec(line)
+  return !!match && match[1][0] === fence.char && match[1].length >= fence.length
+}
+
+// openFenceAfter returns the code fence still open after these lines, if any.
+function openFenceAfter(lines: string[]) {
+  let open: Fence | null = null
+  for (const line of lines) {
+    if (open) { if (closesFence(line, open)) open = null }
+    else open = openingFence(line)
+  }
+  return open
+}
 
 function cutAtWord(line: string, limit: number) {
   const slice = line.slice(0, limit)
@@ -51,7 +76,8 @@ export function deliveryPreview(body: string): DeliveryPreview | null {
   }
   while (kept.length > 1 && !kept[kept.length - 1].trim()) kept.pop()
   const hiddenLines = lines.slice(kept.length).filter((line) => line.trim()).length
-  if (kept.filter((line) => fenceLine.test(line)).length % 2 === 1) kept.push('```')
+  const open = openFenceAfter(kept)
+  if (open) kept.push(open.char.repeat(open.length))
   return { text: kept.join('\n'), hiddenLines }
 }
 

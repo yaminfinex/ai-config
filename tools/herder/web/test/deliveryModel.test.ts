@@ -41,7 +41,9 @@ test('operator text renders as markdown with its single line breaks kept', () =>
 
 test('line breaks stay off by default and never enter code', () => {
   assert.doesNotMatch(renderToStaticMarkup(createElement(Markdown, null, 'one\ntwo')), /<br/)
-  const html = renderToStaticMarkup(createElement(Markdown, { lineBreaks: true }, 'a `x`\n\n```\nline 1\nline 2\n```'))
+  const html = renderToStaticMarkup(createElement(Markdown, { lineBreaks: true }, 'a `x\ny` b\n\n```\nline 1\nline 2\n```'))
+  assert.match(html, /<p>a <code>x y<\/code> b<\/p>/)
+  assert.doesNotMatch(html, /x<br/)
   assert.match(html, /<code>line 1\nline 2\n<\/code>/)
   assert.doesNotMatch(html, /line 1<br/)
 })
@@ -91,6 +93,20 @@ test('the preview cuts one huge line at a word and closes an open code fence', (
   assert.equal(fenced.hiddenLines, 4)
 })
 
+test('the preview closes a tilde or long fence with a matching closer', () => {
+  const lines = (open: string, close: string, body: string[]) => deliveryPreview(['Result:', open, ...body, 'ok 4', 'ok 5', 'ok 6', close].join('\n'))
+  assert.equal(lines('~~~', '~~~', ['ok 1', 'ok 2', 'ok 3'])?.text, 'Result:\n~~~\nok 1\nok 2\nok 3\n~~~')
+  assert.equal(lines('````md', '````', ['ok 1', '```', 'ok 3'])?.text, 'Result:\n````md\nok 1\n```\nok 3\n````')
+  assert.equal(lines('~~~', '~~~', ['```', 'ok 2', '```'])?.text, 'Result:\n~~~\n```\nok 2\n```\n~~~')
+  assert.equal(lines('~~~~', '~~~~', ['~~~', 'ok 2', 'ok 3'])?.text, 'Result:\n~~~~\n~~~\nok 2\nok 3\n~~~~')
+  assert.equal(deliveryPreview(['A:', '```', 'x', '```', 'B:', '~~~', 'y', 'z', 'w', 'v'].join('\n'))?.text, 'A:\n```\nx\n```\nB:')
+  assert.equal(deliveryPreview(['A:', '```', 'x', '``` not a closer', 'y', 'z', 'w', 'v', 'u'].join('\n'))?.text, 'A:\n```\nx\n``` not a closer\ny\n```')
+  for (const preview of [lines('~~~', '~~~', ['ok 1', 'ok 2', 'ok 3']), lines('````', '````', ['ok 1', '```', 'ok 3'])]) {
+    const html = renderToStaticMarkup(createElement(Markdown, null, `${preview?.text}\n\nafter`))
+    assert.match(html, /<p>after<\/p>/)
+  }
+})
+
 test('hcom cards render every delivery through the presentation and a real disclosure', () => {
   const cards = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function HcomCards'), transcriptEntriesSource.indexOf('function ActivityStrip'))
   const body = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function HcomMessageBody'), transcriptEntriesSource.indexOf('function formatDuration'))
@@ -109,6 +125,9 @@ test('status chips toggle only when their text passes the CSS cap', () => {
   assert.equal(statusChipTruncates('lino is fixing the --idle wording'), true)
   assert.equal(statusChipTruncates('lipe is reviewing audit-fixes'), true)
   assert.equal(statusChipTruncates('go on both; writing briefs'), false)
+  assert.equal(statusChipTruncates(`${'a'.repeat(20)}${' '.repeat(10)}b`), false)
+  assert.equal(statusChipTruncates(`  ${'a'.repeat(26)}\n\t`), false)
+  assert.equal(statusChipTruncates(`${'a'.repeat(13)}  \n ${'b'.repeat(13)}`), true)
   assert.match(stylesSource, new RegExp(`\\.activity-pill\\.assistant-status \\{ max-width: calc\\(${statusChipChars}ch \\+ 16px\\);`))
   assert.match(stylesSource, /\.activity-pill \{ flex: 0 0 auto; padding: 1px 7px; border: 1px solid/)
   assert.match(stylesSource, /\.activity-pill\.status-chip-open \{ max-width: 100%;[^}]*white-space: pre-wrap/)
