@@ -48,12 +48,17 @@ test('the VS Code URL is the Remote-SSH scheme vsc-opener builds, for absolute p
 test('host aliases are trimmed and refuse characters that would break the URI', () => {
   assert.deepEqual(validateHostAlias('  devbox  '), { ok: true, value: 'devbox' })
   assert.deepEqual(validateHostAlias('user@dev-box.example_1:22'), { ok: true, value: 'user@dev-box.example_1:22' })
-  for (const bad of ['', '   ', 'dev box', 'dev\tbox', 'dev/box', 'dev+box', 'dev?box', 'dev#box']) {
+  for (const bad of ['', '   ', 'dev box', 'dev\tbox', 'dev/box', 'dev+box', 'dev?box', 'dev#box', 'dev%2fwrong', 'dev%00', 'dev\u0000box', 'dev\u007fbox', 'dev\u0085box']) {
     const result = validateHostAlias(bad)
     assert.equal(result.ok, false, bad)
     assert.ok(!result.ok && result.reason.length > 0)
   }
   assert.match((validateHostAlias('a+b') as { reason: string }).reason, /“\+”/)
+  assert.match((validateHostAlias('dev%2fwrong') as { reason: string }).reason, /“%”/)
+  assert.match((validateHostAlias('dev\u0000box') as { reason: string }).reason, /control characters/)
+  // VS Code decodes the authority before splitting, so an alias like
+  // dev%2fwrong would open host dev at /wrong; no URL is built for it.
+  assert.equal(vscodeRemoteURL('dev%2fwrong', '/a'), null)
 })
 
 test('the mapping key is the lower-cased hostname without the port', () => {
@@ -78,7 +83,7 @@ test('mapping edits are pure and validated', () => {
 
 test('stored mappings are versioned and malformed data is refused', () => {
   assert.deepEqual(parseVSCodeHosts('{"version":1,"hosts":{"bench":"devbox"}}'), { version: 1, hosts: { bench: 'devbox' } })
-  for (const raw of [null, '', 'nope', '{"version":2,"hosts":{}}', '{"version":1,"hosts":[]}', '{"version":1,"hosts":{"bench":"a b"}}', '{"version":1,"hosts":{"bench":3}}']) {
+  for (const raw of [null, '', 'nope', '{"version":2,"hosts":{}}', '{"version":1,"hosts":[]}', '{"version":1,"hosts":{"bench":"a b"}}', '{"version":1,"hosts":{"bench":3}}', '{"version":1,"hosts":{"bench":"dev%2fwrong"}}', '{"version":1,"hosts":{"bench":"dev\\u0000"}}']) {
     assert.equal(parseVSCodeHosts(raw), null, String(raw))
   }
 })
@@ -108,7 +113,7 @@ test('the store sets, clears, notifies, persists, and reloads on another tab wri
   const dispose = store.subscribe(() => { notified += 1 })
   assert.equal(listeners.size, 1)
   assert.deepEqual(store.get(), {})
-  assert.deepEqual(store.set('bench', ' dev '), { ok: true, value: 'dev' })
+  assert.deepEqual(store.set('bench', ' dev '), { ok: true, value: 'dev', persisted: true })
   assert.equal(store.set('bench', 'bad alias').ok, false)
   assert.deepEqual(store.get(), { bench: 'dev' })
   assert.equal(notified, 1)
@@ -121,16 +126,35 @@ test('the store sets, clears, notifies, persists, and reloads on another tab wri
   assert.equal(notified, 2)
   assert.deepEqual(store.get(), { bench: 'dev', other: 'x' })
 
-  store.remove('bench')
-  store.remove('missing')
+  assert.equal(store.remove('bench'), true)
+  assert.equal(store.remove('missing'), true)
   assert.deepEqual(store.get(), { other: 'x' })
   assert.equal(notified, 3)
   dispose()
   assert.equal(listeners.size, 0)
 })
 
-test('a store without storage still works for the session', () => {
+test('a store without storage still works for the session and says so', () => {
   const store = createVSCodeHostsStore(() => { throw new Error('blocked') })
-  assert.deepEqual(store.set('bench', 'dev'), { ok: true, value: 'dev' })
+  assert.deepEqual(store.set('bench', 'dev'), { ok: true, value: 'dev', persisted: false })
   assert.deepEqual(store.get(), { bench: 'dev' })
+  assert.equal(store.remove('bench'), false)
+  assert.deepEqual(store.get(), {})
+})
+
+test('failed writes and removals keep the session value and report it was not stored', () => {
+  const storage = new FakeStorage()
+  const store = createVSCodeHostsStore(() => storage)
+  assert.deepEqual(store.set('bench', 'one'), { ok: true, value: 'one', persisted: true })
+  storage.failWrites = true
+  assert.deepEqual(store.set('bench', 'two'), { ok: true, value: 'two', persisted: false })
+  assert.deepEqual(store.get(), { bench: 'two' })
+  assert.deepEqual(readVSCodeHosts(storage), { bench: 'one' })
+  assert.equal(store.remove('bench'), false)
+  assert.deepEqual(store.get(), {})
+  assert.deepEqual(readVSCodeHosts(storage), { bench: 'one' })
+  storage.failWrites = false
+  assert.equal(store.remove('bench'), true)
+  assert.deepEqual(store.set('bench', 'three'), { ok: true, value: 'three', persisted: true })
+  assert.deepEqual(createVSCodeHostsStore(() => storage).get(), { bench: 'three' })
 })

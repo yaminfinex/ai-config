@@ -4,7 +4,8 @@ import { validateHostAlias } from './vscodeModel.ts'
 export const hostAliasHint = "The Host name in your laptop's ~/.ssh/config for this machine."
 
 // HostAliasForm validates on submit and shows the refusal inline; it never
-// stores anything itself.
+// stores anything itself. It stays mounted across saves so focus stays put,
+// and takes a new initial value (a save, clear, or another tab) in place.
 export function HostAliasForm({ hostKey, initial, submitLabel, inputRef, onSave, onCancel }: {
   hostKey: string
   initial: string
@@ -15,6 +16,8 @@ export function HostAliasForm({ hostKey, initial, submitLabel, inputRef, onSave,
 }) {
   const [value, setValue] = useState(initial)
   const [problem, setProblem] = useState('')
+  const [seen, setSeen] = useState(initial)
+  if (seen !== initial) { setSeen(initial); setValue(initial); setProblem('') }
   const inputID = `vscode-alias-${hostKey}`
   return <form className="vscode-alias-form" noValidate onSubmit={(event) => {
     event.preventDefault()

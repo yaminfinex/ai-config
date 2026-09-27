@@ -325,6 +325,8 @@ h2, h3, p { margin-top: 0; }
 .rail-status-toggle[aria-pressed='true'] path { fill: currentColor; stroke: none; }
 .rail-status-toggle:hover:not(:disabled), .rail-status-toggle:focus-visible { border-color: var(--accent); background: var(--bg2); }
 .shortcut-button { width: 20px; height: 20px; flex: 0 0 auto; padding: 0; border-color: var(--border); background: var(--chip); color: var(--status-bar-text); font: 600 11px var(--mono); }
+.modal-dialog { max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); margin: auto; padding: 0; overflow: auto; }
+.modal-dialog::backdrop { background: var(--overlay-subtle); backdrop-filter: blur(2px); }
 .shortcut-backdrop { position: fixed; z-index: 30; inset: 0; display: grid; place-items: center; padding: 16px; background: var(--overlay-subtle); backdrop-filter: blur(2px); }
 .shortcut-reference { width: min(470px, 100%); padding: 12px; border: 1px solid var(--border2); border-radius: 8px; background: var(--bg2); box-shadow: 0 12px 36px var(--floating-shadow); }
 .shortcut-reference > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
