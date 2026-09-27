@@ -24,6 +24,17 @@ test('the VS Code link is a plain anchor once mapped and asks just in time other
   assert.doesNotMatch(link, /createPortal|'Escape'/)
 })
 
+test('the VS Code control is the icon alone, named and titled by the label in both states', () => {
+  const link = source('features/vscode/VSCodeLink.tsx')
+  assert.match(link, /const vscodeMark = <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true" focusable="false">\s*<path d="M23\.15 /)
+  assert.match(link, /<a className="context-fact context-vscode" href=\{url\} aria-label=\{label\} title=\{label\}>\{vscodeMark\}<\/a>/)
+  assert.match(link, /<button type="button" className="context-fact context-vscode" aria-label=\{label\} aria-haspopup="dialog" title=\{label\} onClick=\{\(\) => setPrompting\(true\)\}>\{vscodeMark\}<\/button>/)
+  assert.doesNotMatch(link, />VS Code<|↗/)
+  const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  assert.match(styles, /\.context-vscode svg \{ display: block; fill: currentColor; \}/)
+  assert.match(styles, /\.context-vscode:hover, \.context-vscode:focus-visible \{ border-color: var\(--accent\); background: var\(--accent-dim\); \}/)
+})
+
 test('modal dialogs are native: showModal gives the focus trap, Escape and focus return', () => {
   const dialog = source('shared/ModalDialog.tsx')
   assert.match(dialog, /<dialog className=\{`modal-dialog \$\{className\}`\} aria-labelledby=\{labelledBy\} onClose=\{onClose\}/)
