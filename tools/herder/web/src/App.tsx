@@ -1,9 +1,10 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { FleetViewToggle } from './features/sidebar/FleetViewToggle'
 import { QuickOpen } from './features/files/QuickOpen'
 import { ShortcutReference } from './features/layout/ShortcutReference'
+import { SettingsPanel } from './features/settings/SettingsPanel'
 import { RailStatusToggle, UtilityRail } from './features/layout/UtilityRail'
 import { dockComponents, DockTab } from './features/workspace/panelRegistry'
 import { DockHeaderActions, DockWatermark } from './features/workspace/workspaceChrome'
@@ -53,7 +54,7 @@ function StreamBanners({ fleetProblem, viewerProblem, spaceProblem, flushLayout 
   </div>
 }
 
-function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, spaceStrip }: {
+function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, onSettings, spaceStrip }: {
   fleetProblem: string
   viewer: string
   viewerPending: boolean
@@ -62,6 +63,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   onToggleFleet: () => void
   onToggleNotes: () => void
   onShortcuts: () => void
+  onSettings: () => void
   spaceStrip: ReactNode
 }) {
   const stream = useStreamStatus()
@@ -80,6 +82,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
       <span className="status-notes-count"><NotesCount /></span>
       <span className="status-last">last event: {lastEvent}</span>
       <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={onShortcuts}>?</button>
+      <button type="button" className="shortcut-button settings-button" title="Settings" aria-label="Open settings" aria-haspopup="dialog" onClick={onSettings}><span aria-hidden="true">⚙</span></button>
       <ThemeToggle />
       <RailStatusToggle side="right" label="Notes" shortcut={shortcuts.toggleNotesRail} collapsed={notesCollapsed} onToggle={onToggleNotes} />
     </div>
@@ -88,6 +91,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
 
 function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing' }> }) {
   const workspace = useWorkspaceController(initialRoute)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const {
     openAgent, openScreen, openFile, openFolder,
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
@@ -100,6 +104,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onMode={(mode) => workspace.actions.showQuickOpen(workspace.quickOpenGroup, mode)}
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
+    <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     <UtilityRail side="left" label="Fleet" headingStart={<span className="status-dot listening" />}
       subheading={<FleetViewToggle view={fleetView} onView={setFleetView} />}
       width={fleetRail.width} collapsed={fleetRail.collapsed}
@@ -127,6 +132,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
       onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
       onShortcuts={() => workspace.setShortcutReference(true)}
+      onSettings={() => setSettingsOpen(true)}
       spaceStrip={<SpaceStrip {...workspace.spaces} />} />
   </div></FileWatchContext.Provider></WorkspaceProviders>
 }
