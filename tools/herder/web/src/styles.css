@@ -624,7 +624,8 @@ h2, h3, p { margin-top: 0; }
 .context-cwd-wrap .context-cwd:not(:disabled):hover { border-color: var(--accent); background: var(--accent-dim); }
 .context-cwd-wrap .context-cwd:disabled { opacity: .65; }
 .context-vscode-wrap { display: inline-flex; flex: 0 0 auto; }
-.context-vscode { padding: 1px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--accent-text); font: 10px var(--mono); text-decoration: none; }
+.context-vscode { padding: 1px 3px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--accent-text); font: 10px var(--mono); text-decoration: none; }
+.context-vscode svg { display: block; fill: currentColor; }
 .context-vscode:hover, .context-vscode:focus-visible { border-color: var(--accent); background: var(--accent-dim); }
 .vscode-alias-form { display: grid; gap: 6px; padding: 12px; color: var(--dim); font: 11px var(--mono); }
 .vscode-alias-form label { display: block; color: var(--dim); font: 11px var(--mono); }
