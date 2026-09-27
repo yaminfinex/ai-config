@@ -20,10 +20,10 @@ export function vscodeHostKey(location: Pick<Location, 'hostname'>) {
   return location.hostname.toLowerCase()
 }
 
-// encodeRemotePath matches Python's urllib.parse.quote(path) as used by
-// bin/vsc-opener: '/' and unreserved characters stay, everything else is
-// percent-encoded as UTF-8. encodeURIComponent also leaves !'()* bare, so
-// those are escaped here to keep the two builders byte-identical.
+// encodeRemotePath matches Python's urllib.parse.quote(path), the encoding the
+// retired VS Code opener scripts used: '/' and unreserved characters stay,
+// everything else is percent-encoded as UTF-8. encodeURIComponent also leaves
+// !'()* bare, so those are escaped here to stay byte-identical to quote().
 export function encodeRemotePath(path: string) {
   return path.split('/').map((segment) => encodeURIComponent(segment)
     .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)).join('/')

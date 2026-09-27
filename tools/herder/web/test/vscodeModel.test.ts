@@ -25,7 +25,7 @@ class FakeStorage {
   setItem(key: string, value: string) { if (this.failWrites) throw new Error('quota'); this.values.set(key, value) }
 }
 
-test('remote path encoding matches bin/vsc-opener urllib.parse.quote byte for byte', () => {
+test('remote path encoding matches Python urllib.parse.quote byte for byte', () => {
   // Expected values were produced by python3 urllib.parse.quote(path).
   const cases: [string, string][] = [
     ['/home/ubuntu/Coding/ai-config', '/home/ubuntu/Coding/ai-config'],
@@ -37,7 +37,7 @@ test('remote path encoding matches bin/vsc-opener urllib.parse.quote byte for by
   for (const [path, expected] of cases) assert.equal(encodeRemotePath(path), expected, path)
 })
 
-test('the VS Code URL is the Remote-SSH scheme vsc-opener builds, for absolute paths only', () => {
+test('the VS Code URL is the Remote-SSH vscode:// scheme, for absolute paths only', () => {
   assert.equal(vscodeRemoteURL('devbox', '/mnt/bench-nvme/herdr-worktrees/ai-config/vscode-link'),
     'vscode://vscode-remote/ssh-remote+devbox/mnt/bench-nvme/herdr-worktrees/ai-config/vscode-link')
   assert.equal(vscodeRemoteURL('devbox', '/a b'), 'vscode://vscode-remote/ssh-remote+devbox/a%20b')
