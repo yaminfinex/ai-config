@@ -337,6 +337,14 @@ h2, h3, p { margin-top: 0; }
 .shortcut-reference dd, .shortcut-reference p { color: var(--dim); font-size: 10px; }
 .shortcut-reference p { margin: 9px 0 0; line-height: 1.45; }
 .shortcut-reference p strong { color: var(--text); }
+.settings-panel h3 { margin: 4px 0 0; color: var(--text); font: 600 11px var(--mono); }
+.settings-panel h4 { margin: 10px 0 4px; color: var(--dim); font: 600 10px var(--mono); }
+.settings-panel .vscode-alias-form { padding: 8px 0 0; }
+.settings-row-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dim); font: 10px var(--mono); }
+.settings-row-actions button, .settings-host-list button { min-height: 24px; padding: 2px 10px; border-color: var(--border2); background: var(--chip); color: var(--text); font: 10px var(--mono); }
+.settings-host-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.settings-host-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); color: var(--dim); font: 10px var(--mono); }
+.settings-host-list strong { color: var(--text); }
 
 .launch-agent-backdrop { position: fixed; z-index: 80; inset: 0; display: grid; place-items: center; padding: 16px; background: var(--overlay-subtle); backdrop-filter: blur(2px); }
 .launch-agent-dialog { width: min(440px, 100%); overflow: hidden; border: 1px solid var(--border2); border-radius: 8px; background: var(--bg2); color: var(--text); box-shadow: 0 12px 36px var(--floating-shadow); white-space: normal; }
@@ -613,6 +621,17 @@ h2, h3, p { margin-top: 0; }
 .context-cwd-wrap .context-cwd { padding: 1px 5px; border-color: transparent; background: transparent; font: 10px var(--mono); }
 .context-cwd-wrap .context-cwd:not(:disabled):hover { border-color: var(--accent); background: var(--accent-dim); }
 .context-cwd-wrap .context-cwd:disabled { opacity: .65; }
+.context-vscode-wrap { display: inline-flex; flex: 0 0 auto; }
+.context-vscode { padding: 1px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--accent-text); font: 10px var(--mono); text-decoration: none; }
+.context-vscode:hover, .context-vscode:focus-visible { border-color: var(--accent); background: var(--accent-dim); }
+.vscode-alias-form { display: grid; gap: 6px; padding: 12px; color: var(--dim); font: 11px var(--mono); }
+.vscode-alias-form label { display: block; color: var(--dim); font: 11px var(--mono); }
+.vscode-alias-form label strong { color: var(--text); }
+.vscode-alias-form input { width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--border2); border-radius: 4px; outline: none; background: var(--bg); color: var(--text); font: 11px var(--mono); }
+.vscode-alias-form input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+.vscode-alias-form input[aria-invalid='true'] { border-color: var(--error-border); }
+.vscode-alias-hint { margin: 0; color: var(--dimmer); font-size: 10px; line-height: 1.4; }
+.vscode-alias-problem { margin: 0; padding: 4px 8px; border: 1px solid var(--error-border); border-radius: 4px; background: var(--error-bg); color: var(--error-text); font-size: 10px; }
 .context-repository { color: var(--accent-text); }
 .context-repository a { color: var(--accent-text); text-decoration: underline solid; text-decoration-thickness: 1px; text-underline-offset: 2px; }
 .context-repository a:hover { color: var(--accent); text-decoration-thickness: 2px; }

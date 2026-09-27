@@ -8,6 +8,7 @@ import { queryKeys, resolveFiles } from '../../api/client'
 import { cwdFolderTarget, exactRootChangesTarget } from '../folders/folderModel'
 import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { useDOMEvent, useSizeObserver } from '../../shared/lifecycle'
+import { VSCodeLink } from '../vscode/index.ts'
 
 export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChanges }: { agent?: AgentDetail, liveStatus: string, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void }) {
   const context = agent ? agentContextPresentation(agent, liveStatus) : undefined
@@ -36,6 +37,7 @@ export function AgentContextStrip({ agent, liveStatus, onOpenFolder, onOpenChang
     {context && <div className="agent-context-strip-inner" ref={innerRef}>
       {context.vitals.map((vital, index) => <span className="context-vital" key={`${index}:${vital}`}>{vital}</span>)}
       {context.cwd && <span className="context-cwd-wrap" title={`${cwdReason} · ${sideHint}`}><button type="button" className="context-fact context-cwd" disabled={!cwdTarget} onClick={(event) => { if (cwdTarget) onOpenFolder(cwdTarget, placementFromModifiers(event)) }}><span>cwd</span>{context.cwd.display}<span aria-hidden="true">↗</span></button></span>}
+      {cwd && <VSCodeLink cwd={cwd} />}
       {context.repository && <span className="context-fact context-repository" title={context.repository.remote}><span>repo</span>{context.repository.links && context.repository.repo
         ? <><a href={context.repository.links.repository} target="_blank" rel="noreferrer">{context.repository.repo}</a>{context.repository.branch && <> · {context.repository.links.branch
           ? <a href={context.repository.links.branch} target="_blank" rel="noreferrer">{context.repository.branch}</a>
