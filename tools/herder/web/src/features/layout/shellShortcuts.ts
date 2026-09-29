@@ -22,6 +22,7 @@ export type ShortcutLabels = {
   quickOpen: string
   switchTabs: string
   switchSpaces: string
+  spaceSwitcher: string
   focusFleet: string
   toggleNotesRail: string
   focusComposer: string
@@ -43,6 +44,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     quickOpen: '⌘K',
     switchTabs: '⌥← / ⌥→',
     switchSpaces: '⇧⌥← / ⇧⌥→',
+    spaceSwitcher: '⌥Tab / ⇧⌥Tab',
     focusFleet: '⌥1',
     toggleNotesRail: '⌥3',
     focusComposer: '⌥2',
@@ -57,6 +59,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     quickOpen: 'Ctrl+K',
     switchTabs: 'Alt+Left / Alt+Right',
     switchSpaces: 'Shift+Alt+Left / Shift+Alt+Right',
+    spaceSwitcher: 'Alt+Tab / Shift+Alt+Tab',
     focusFleet: 'Alt+1',
     toggleNotesRail: 'Alt+3',
     focusComposer: 'Alt+2',
@@ -107,4 +110,56 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     // Target guards are deliberately owned by our individual callbacks.
     ignore: (event) => event.repeat || event.isComposing,
   })
+}
+
+export type SwitcherIntent = 'forward' | 'backward' | 'release' | 'cancel'
+
+export type SpaceSwitcherKeys = {
+  // cycle opens the switcher or moves it; false leaves Tab to the browser.
+  cycle: (direction: 'forward' | 'backward') => boolean | void
+  holding: () => boolean
+  intent: (intent: SwitcherIntent) => void
+}
+
+// switcherKeyIntent maps a key pressed while the switcher is held. A key
+// arriving without Alt means the Alt keyup was missed, so it commits.
+export function switcherKeyIntent(event: Pick<KeyboardEvent, 'key' | 'altKey'>): SwitcherIntent | null {
+  if (event.key === 'Escape') return 'cancel'
+  if (event.key === 'ArrowDown') return 'forward'
+  if (event.key === 'ArrowUp') return 'backward'
+  if (event.key === 'Enter') return 'release'
+  if (event.key === 'Alt' || event.key === 'Shift') return null
+  return event.altKey ? null : 'release'
+}
+
+// bindSpaceSwitcher claims ⌥Tab (Alt+Tab) in the capture phase so the
+// browser does not cycle focus and no panel swallows it first. Holding
+// state then follows the Alt keyup; a window blur cancels (see
+// spaceSwitcherModel for why blur cancels rather than commits).
+export function bindSpaceSwitcher(target: Window, keys: SpaceSwitcherKeys) {
+  const stopTinykeys = tinykeys(target, {
+    'Alt+Tab': claimed(() => keys.cycle('forward')),
+    'Shift+Alt+Tab': claimed(() => keys.cycle('backward')),
+  }, { capture: true, ignore: (event) => event.isComposing })
+  const keydown = (event: KeyboardEvent) => {
+    if (!keys.holding() || (event.key === 'Tab' && event.altKey)) return
+    const intent = switcherKeyIntent(event)
+    if (!intent) return
+    event.preventDefault()
+    event.stopPropagation()
+    keys.intent(intent)
+  }
+  const keyup = (event: KeyboardEvent) => {
+    if (keys.holding() && (event.key === 'Alt' || !event.altKey)) keys.intent('release')
+  }
+  const blur = () => { if (keys.holding()) keys.intent('cancel') }
+  target.addEventListener('keydown', keydown, true)
+  target.addEventListener('keyup', keyup, true)
+  target.addEventListener('blur', blur)
+  return () => {
+    stopTinykeys()
+    target.removeEventListener('keydown', keydown, true)
+    target.removeEventListener('keyup', keyup, true)
+    target.removeEventListener('blur', blur)
+  }
 }
