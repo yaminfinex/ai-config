@@ -214,6 +214,52 @@ esac
 	}
 }
 
+func TestSubscribeListeningFiltersInHcomAndProjectsStatus(t *testing.T) {
+	dir := t.TempDir()
+	stub := filepath.Join(dir, "hcom")
+	log := filepath.Join(dir, "args")
+	script := `#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STATUS_ARGS"
+case " $* " in
+  *" events --last 5000 --full --type status --sql status_val = 'listening' AND COALESCE(json_extract(data, '\$.old_status'), '') <> 'listening' "*)
+    printf '%s\n' '{"id":41,"ts":"2026-09-29T06:21:47Z","type":"status","instance":"moma","data":{"old_status":"active","new_status":"listening","status":"listening","session":"s1"}}'
+    ;;
+  *" events --wait 30 --full --type status --sql id > 41 AND (status_val = 'listening' AND COALESCE(json_extract(data, '\$.old_status'), '') <> 'listening') "*)
+    printf '%s\n' '{"id":44,"type":"status"}'
+    ;;
+  *" events --last 10000 --full --type status --sql id > 41 AND (status_val = 'listening' AND COALESCE(json_extract(data, '\$.old_status'), '') <> 'listening') "*)
+    printf '%s\n' '{"id":44,"ts":"2026-09-29T06:22:00Z","type":"status","instance":"riko","data":{"old_status":"blocked","status":"listening"}}'
+    ;;
+  *) printf 'unexpected args: %s\n' "$*" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	t.Setenv("STATUS_ARGS", log)
+	ctx, cancel := context.WithCancel(context.Background())
+	var got []Status
+	cursor := &Cursor{}
+	err := SubscribeListening(ctx, cursor, func(status Status) error {
+		got = append(got, status)
+		if len(got) == 2 {
+			cancel()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Status{
+		{ID: 41, Instance: "moma", OldStatus: "active", NewStatus: "listening", Session: "s1"},
+		{ID: 44, Instance: "riko", OldStatus: "blocked", NewStatus: "listening"},
+	}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] || cursor.ID != 44 {
+		t.Fatalf("got=%#v cursor=%d", got, cursor.ID)
+	}
+}
+
 func TestDecodeRejectsNonJSON(t *testing.T) {
 	if _, err := decode([]byte("subscription exploded")); err == nil {
 		t.Fatal("decode accepted non-JSON output")
@@ -245,7 +291,7 @@ printf '%s\n' \
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
-	events, err := query(context.Background(), 10000, 40, "message")
+	events, err := query(context.Background(), 10000, 40, "message", "")
 	if err != nil {
 		t.Fatal(err)
 	}

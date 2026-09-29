@@ -30,6 +30,8 @@ import { usePanelRecords } from './usePanelRecords'
 import { screenSubscriptionPaneIDs } from './screenSubscriptions'
 import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
+import { useSpaceAttention } from './useSpaceAttention'
+import { useSpaceSwitcher } from './useSpaceSwitcher'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import { useNotes } from '../notes/NotesProvider.tsx'
 import { planOpenGroupAsSpace, runOpenGroupAsSpace } from '../sidebar/groupDropModel.ts'
@@ -548,6 +550,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
   useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace })
+  const spaceAttention = useSpaceAttention({ apiRef, revision, board: boardQuery.data, spaces, activeSpaceID, activeAgents: agentNames })
+  const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
@@ -601,7 +605,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       close: closeSpace,
       reopen: reopenSpace,
       announcement: spaceAnnouncement,
+      attention: spaceAttention.attention,
+      collapsed: layout.spacesCollapsed,
+      onCollapsed: layout.setSpacesCollapsed,
     },
+    spaceSwitcher,
     spaceProblem,
     fleetProblem, viewerProblem, viewer, viewerPending: viewerQuery.isPending,
   }

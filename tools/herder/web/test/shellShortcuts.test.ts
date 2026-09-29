@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { bindShellShortcuts, isEditableShortcutTarget, shortcutLabels, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
+import { bindShellShortcuts, bindSpaceSwitcher, isEditableShortcutTarget, shortcutLabels, switcherKeyIntent, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
+import { idleSwitcher, reduceSwitcher, type SwitcherEvent, type SwitcherState } from '../src/features/spaces/spaceSwitcherModel.ts'
 
 type KeyboardInit = {
   key: string
@@ -195,6 +196,8 @@ test('shortcut reference labels are platform-aware and Escape stays neutral', ()
   assert.equal(shortcutLabels('Linux').toggleNotesRail, 'Alt+3')
   assert.equal(shortcutLabels('Macintosh').switchSpaces, '⇧⌥← / ⇧⌥→')
   assert.equal(shortcutLabels('Linux').switchSpaces, 'Shift+Alt+Left / Shift+Alt+Right')
+  assert.equal(shortcutLabels('Macintosh').spaceSwitcher, '⌥Tab / ⇧⌥Tab')
+  assert.equal(shortcutLabels('Linux').spaceSwitcher, 'Alt+Tab / Shift+Alt+Tab')
   assert.doesNotMatch(shortcutLabels('Macintosh').switchTabs, /legacy/i)
   assert.doesNotMatch(shortcutLabels('Linux').switchTabs, /legacy/i)
 })
@@ -212,4 +215,191 @@ test('unclaimed actions do not prevent browser defaults', () => {
   } finally {
     unsubscribe()
   }
+})
+
+// Node's EventTarget keeps a capture listener after removeEventListener(..,
+// true); browsers remove it. This target drops the phase flag so disposal
+// is tested the way a browser window behaves.
+class WindowLikeTarget extends EventTarget {
+  override addEventListener(type: string, listener: EventListenerOrEventListenerObject | null) { super.addEventListener(type, listener) }
+  override removeEventListener(type: string, listener: EventListenerOrEventListenerObject | null) { super.removeEventListener(type, listener) }
+}
+
+// A held switcher wired to the real reducer, as useSpaceSwitcher wires it.
+function heldSwitcher(target: EventTarget, order: string[], enabled = true) {
+  let state: SwitcherState = idleSwitcher
+  const commits: string[] = []
+  const apply = (event: SwitcherEvent) => {
+    const result = reduceSwitcher(state, event)
+    state = result.state
+    if (result.commit) commits.push(result.commit)
+    return state
+  }
+  const dispose = bindSpaceSwitcher(target as unknown as Window, {
+    cycle: (direction) => enabled && apply({ type: 'cycle', direction, order }).phase === 'holding',
+    holding: () => state.phase === 'holding',
+    intent: (intent) => { apply(intent === 'forward' || intent === 'backward' ? { type: 'step', direction: intent } : { type: intent }) },
+  })
+  return { dispose, commits, state: () => state }
+}
+
+function keyup(target: EventTarget, init: KeyboardInit) {
+  const event = new TestKeyboardEvent('keyup', init)
+  target.dispatchEvent(event)
+  return event
+}
+
+const altTab = { key: 'Tab', code: 'Tab', altKey: true }
+
+test('Option-Tab is claimed so focus does not cycle, and a quick tap flips to the last space on Option release', () => {
+  const target = new WindowLikeTarget()
+  const switcher = heldSwitcher(target, ['now', 'last', 'older'])
+  try {
+    assert.equal(dispatch(target, altTab).defaultPrevented, true)
+    assert.equal(switcher.state().phase, 'holding')
+    keyup(target, { key: 'Alt', code: 'AltLeft' })
+    assert.deepEqual(switcher.commits, ['last'])
+    assert.equal(switcher.state().phase, 'idle')
+  } finally {
+    switcher.dispose()
+  }
+})
+
+test('Tab and Shift-Tab cycle the held list; Option release commits the highlighted space', () => {
+  const target = new WindowLikeTarget()
+  const switcher = heldSwitcher(target, ['now', 'last', 'older'])
+  try {
+    dispatch(target, altTab)
+    assert.equal(dispatch(target, altTab).defaultPrevented, true)
+    assert.equal(dispatch(target, altTab).defaultPrevented, true)
+    assert.equal(dispatch(target, { ...altTab, shiftKey: true }).defaultPrevented, true)
+    assert.deepEqual(switcher.state(), { phase: 'holding', order: ['now', 'last', 'older'], index: 2, shown: false })
+    keyup(target, { key: 'Alt', code: 'AltRight' })
+    assert.deepEqual(switcher.commits, ['older'])
+  } finally {
+    switcher.dispose()
+  }
+})
+
+test('Shift-Option-Tab opens on the oldest space and arrows step while held', () => {
+  const target = new WindowLikeTarget()
+  const switcher = heldSwitcher(target, ['now', 'last', 'older'])
+  try {
+    assert.equal(dispatch(target, { ...altTab, shiftKey: true }).defaultPrevented, true)
+    assert.equal(switcher.state().phase === 'holding' && switcher.state().index, 2)
+    assert.equal(dispatch(target, { key: 'ArrowDown', code: 'ArrowDown', altKey: true }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: 'ArrowDown', code: 'ArrowDown', altKey: true }).defaultPrevented, true)
+    keyup(target, { key: 'Alt', code: 'AltLeft' })
+    assert.deepEqual(switcher.commits, ['last'])
+  } finally {
+    switcher.dispose()
+  }
+})
+
+test('Escape cancels the held switcher and swallows the key; the Option release then changes nothing', () => {
+  const target = new WindowLikeTarget()
+  const switcher = heldSwitcher(target, ['now', 'last'])
+  try {
+    dispatch(target, altTab)
+    assert.equal(dispatch(target, { key: 'Escape', code: 'Escape', altKey: true }).defaultPrevented, true)
+    assert.equal(switcher.state().phase, 'idle')
+    keyup(target, { key: 'Alt', code: 'AltLeft' })
+    assert.deepEqual(switcher.commits, [])
+  } finally {
+    switcher.dispose()
+  }
+})
+
+test('losing window focus while held cancels rather than commits', () => {
+  const target = new WindowLikeTarget()
+  const switcher = heldSwitcher(target, ['now', 'last'])
+  try {
+    dispatch(target, altTab)
+    target.dispatchEvent(new Event('blur'))
+    assert.equal(switcher.state().phase, 'idle')
+    keyup(target, { key: 'Alt', code: 'AltLeft' })
+    assert.deepEqual(switcher.commits, [])
+  } finally {
+    switcher.dispose()
+  }
+})
+
+test('a key without Option while held means the release was missed, so it commits', () => {
+  const target = new WindowLikeTarget()
+  const switcher = heldSwitcher(target, ['now', 'last'])
+  try {
+    dispatch(target, altTab)
+    dispatch(target, { key: 'a', code: 'KeyA' })
+    assert.deepEqual(switcher.commits, ['last'])
+    assert.equal(switcher.state().phase, 'idle')
+  } finally {
+    switcher.dispose()
+  }
+})
+
+test('while held, every other key is consumed before any shell shortcut: Alt+W, Shift-Option-arrows and Option-arrows change nothing', () => {
+  const target = new WindowLikeTarget()
+  const calls: string[] = []
+  // The switcher binds in the capture phase, so it runs before the bubble
+  // phase shell shortcuts; this flat target runs listeners in bind order.
+  const switcher = heldSwitcher(target, ['now', 'last', 'older'])
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    dispatch(target, altTab)
+    for (const init of [
+      { key: '∑', code: 'KeyW', altKey: true },
+      { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true, shiftKey: true },
+      { key: 'ArrowRight', code: 'ArrowRight', altKey: true, shiftKey: true },
+      { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true },
+      { key: 'Dead', code: 'Digit3', altKey: true },
+    ]) {
+      assert.equal(dispatch(target, init).defaultPrevented, true, init.code)
+    }
+    assert.deepEqual(calls, [], 'no shell shortcut ran under the held switcher')
+    assert.deepEqual(switcher.state(), { phase: 'holding', order: ['now', 'last', 'older'], index: 1, shown: false })
+    keyup(target, { key: 'Alt', code: 'AltLeft' })
+    assert.deepEqual(switcher.commits, ['last'])
+    dispatch(target, { key: '∑', code: 'KeyW', altKey: true })
+    assert.deepEqual(calls, ['close'], 'released, shortcuts work again')
+  } finally {
+    unsubscribe()
+    switcher.dispose()
+  }
+})
+
+test('Option-Tab is left to the browser with fewer than two spaces or while spaces are unavailable', () => {
+  const single = new WindowLikeTarget()
+  const one = heldSwitcher(single, ['only'])
+  const disabledTarget = new WindowLikeTarget()
+  const disabled = heldSwitcher(disabledTarget, ['now', 'last'], false)
+  try {
+    assert.equal(dispatch(single, altTab).defaultPrevented, false)
+    assert.equal(one.state().phase, 'idle')
+    assert.equal(dispatch(disabledTarget, altTab).defaultPrevented, false)
+  } finally {
+    one.dispose()
+    disabled.dispose()
+  }
+})
+
+test('plain Tab and keys outside a hold stay untouched, and disposal unbinds everything', () => {
+  const target = new WindowLikeTarget()
+  const switcher = heldSwitcher(target, ['now', 'last'])
+  assert.equal(dispatch(target, { key: 'Tab', code: 'Tab' }).defaultPrevented, false)
+  assert.equal(dispatch(target, { key: 'Escape', code: 'Escape' }).defaultPrevented, false)
+  assert.equal(switcher.state().phase, 'idle')
+  switcher.dispose()
+  assert.equal(dispatch(target, altTab).defaultPrevented, false)
+  assert.equal(switcher.state().phase, 'idle')
+})
+
+test('held-key intents: arrows step, Enter commits, Escape cancels, bare modifiers wait', () => {
+  assert.equal(switcherKeyIntent({ key: 'Escape', altKey: true }), 'cancel')
+  assert.equal(switcherKeyIntent({ key: 'ArrowDown', altKey: true }), 'forward')
+  assert.equal(switcherKeyIntent({ key: 'ArrowUp', altKey: true }), 'backward')
+  assert.equal(switcherKeyIntent({ key: 'Enter', altKey: true }), 'release')
+  assert.equal(switcherKeyIntent({ key: 'Shift', altKey: true }), null)
+  assert.equal(switcherKeyIntent({ key: 'Alt', altKey: true }), null)
+  assert.equal(switcherKeyIntent({ key: 'x', altKey: true }), null)
+  assert.equal(switcherKeyIntent({ key: 'x', altKey: false }), 'release')
 })

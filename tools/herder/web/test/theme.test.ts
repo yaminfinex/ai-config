@@ -227,3 +227,42 @@ test('the space history button meets WCAG AA against its chip surface in both th
     assert.ok(ratio >= 4.5, `space history button contrast ${ratio.toFixed(2)} must meet WCAG AA`)
   }
 })
+
+test('every Spaces rail and switcher text pairing meets WCAG AA in both themes', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  const pairs = [
+    ['create button', token(rule(css, '.space-create'), 'color'), token(rule(css, '.space-create'), 'background')],
+    ['unread mark', token(rule(css, '.space-mark.unread'), 'color'), token(rule(css, '.space-mark.unread'), 'background')],
+    ['blocked mark', token(rule(css, '.space-mark.blocked'), 'color'), token(rule(css, '.space-mark.blocked'), 'background')],
+    ['space row', token(rule(css, '.space-name'), 'color'), 'sidebar'],
+    ['space row hover', token(rule(css, '.space-name'), 'color'), token(rule(css, '.space-row:hover'), 'background')],
+    ['active space row', token(rule(css, '.space-row.active .space-name'), 'color'), token(rule(css, '.space-row.active'), 'background')],
+    ['section heading', token(rule(css, '.spaces-collapse'), 'color'), 'sidebar'],
+    ['switcher option', token(rule(css, '.space-switcher-option'), 'color'), token(rule(css, '.space-switcher'), 'background')],
+    ['highlighted switcher option', token(rule(css, '.space-switcher-option'), 'color'), token(rule(css, '.space-switcher-option.highlighted'), 'background')],
+    ['switcher current tag', token(rule(css, '.space-switcher-current'), 'color'), token(rule(css, '.space-switcher'), 'background')],
+  ]
+  const failures: string[] = []
+  for (const block of themeBlocks(css)) {
+    for (const [label, foregroundName, backgroundName] of pairs) {
+      const foreground = block.match(new RegExp(`--${foregroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+      const background = block.match(new RegExp(`--${backgroundName}: (#[\\da-f]{6})`, 'i'))?.[1]
+      assert.ok(foreground && background, `${label} tokens must be concrete theme declarations`)
+      const ratio = contrast(foreground, background)
+      if (ratio < 4.5) failures.push(`${label}: ${ratio.toFixed(2)}`)
+    }
+  }
+  assert.deepEqual(failures, [], `Spaces contrast failures: ${failures.join(', ')}`)
+})
+
+test('the blocked mark is louder than the unread mark in both themes', () => {
+  const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
+  for (const block of themeBlocks(css)) {
+    const surface = block.match(/--sidebar: (#[\da-f]{6})/i)?.[1]
+    const unread = block.match(/--space-mark-unread-bg: (#[\da-f]{6})/i)?.[1]
+    const blocked = block.match(/--space-mark-blocked-bg: (#[\da-f]{6})/i)?.[1]
+    assert.ok(surface && unread && blocked)
+    assert.ok(contrast(blocked, surface) >= 3, 'the blocked mark must stand out from the rail as a UI element')
+    assert.ok(contrast(blocked, surface) > contrast(unread, surface), 'blocked must be louder than unread against the rail')
+  }
+})

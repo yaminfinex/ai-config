@@ -20,6 +20,8 @@ export type StoredShellPreferences = {
   // pendingGroups are groups created on the web that no fleet frame has
   // shown yet: local placeholder headers, dropped once the label is real.
   pendingGroups?: string[]
+  // spacesCollapsed folds the Spaces section at the top of the fleet rail.
+  spacesCollapsed?: boolean
 }
 
 type UnknownRecord = Record<string, unknown>
@@ -45,7 +47,8 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
       (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems)) ||
       (value.knownManagerItems !== undefined && !strings(value.knownManagerItems)) ||
       (value.fleetView !== undefined && !isFleetView(value.fleetView)) ||
-      (value.pendingGroups !== undefined && !strings(value.pendingGroups))) return null
+      (value.pendingGroups !== undefined && !strings(value.pendingGroups)) ||
+      (value.spacesCollapsed !== undefined && typeof value.spacesCollapsed !== 'boolean')) return null
     const fleet = rail(value.rails.fleet)
     const notes = rail(value.rails.notes)
     if (!fleet || !notes) return null
@@ -57,6 +60,7 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
       ...(value.knownManagerItems === undefined ? {} : { knownManagerItems: value.knownManagerItems }),
       ...(value.fleetView === undefined ? {} : { fleetView: value.fleetView }),
       ...(value.pendingGroups === undefined ? {} : { pendingGroups: value.pendingGroups }),
+      ...(value.spacesCollapsed === undefined ? {} : { spacesCollapsed: value.spacesCollapsed }),
     }
   } catch {
     return null
@@ -65,7 +69,8 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
 
 // shellPreferencesValue is the one shape the shell writes: rails always,
 // the tree state lists when known, the fleet view always (so a reload
-// lands on the view the operator last chose) and pending groups while any.
+// lands on the view the operator last chose), pending groups while any and
+// the Spaces section fold only while folded.
 export function shellPreferencesValue(state: {
   fleetRail: RailPreferences['fleet']
   notesRail: RailPreferences['notes']
@@ -74,9 +79,11 @@ export function shellPreferencesValue(state: {
   knownManagerItems: string[] | null
   fleetView: FleetView
   pendingGroups: string[]
+  spacesCollapsed?: boolean
 }): StoredShellPreferences {
   const value: StoredShellPreferences = { version: 1, rails: { fleet: state.fleetRail, notes: state.notesRail }, fleetView: state.fleetView }
   if (state.pendingGroups.length > 0) value.pendingGroups = state.pendingGroups
+  if (state.spacesCollapsed) value.spacesCollapsed = true
   if (state.expandedItems !== null) value.expandedItems = state.expandedItems
   if (state.knownWorkspaceItems !== null) value.knownWorkspaceItems = state.knownWorkspaceItems
   if (state.knownManagerItems !== null) value.knownManagerItems = state.knownManagerItems

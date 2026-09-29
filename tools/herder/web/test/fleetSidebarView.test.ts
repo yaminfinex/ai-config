@@ -74,8 +74,20 @@ test('the fleet view persists through the real shell serializer and parser (defa
   assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'groups', pendingGroups: [] })))?.fleetView, 'groups')
   // The hook writes through the serializer, so the field cannot be dropped on one path only.
   const hook = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
-  assert.match(hook, /shellPreferencesValue\(\{ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, pendingGroups \}\)/)
+  assert.match(hook, /shellPreferencesValue\(\{ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, pendingGroups, spacesCollapsed \}\)/)
   assert.equal((hook.match(/pendingGroups/g) ?? []).length >= 10, true, 'pendingGroups rides every preference path (initial, snapshot, flush, dirty, return)')
+})
+
+test('the Spaces section fold persists through the shell serializer and parser: written only while folded, rejected unless boolean', () => {
+  const base = { ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision' as const, pendingGroups: [] }
+  assert.equal('spacesCollapsed' in shellPreferencesValue(base), false)
+  assert.equal('spacesCollapsed' in shellPreferencesValue({ ...base, spacesCollapsed: false }), false)
+  const written = shellPreferencesValue({ ...base, spacesCollapsed: true })
+  assert.equal(parseShellPreferences(JSON.stringify(written))?.spacesCollapsed, true)
+  assert.equal(parseShellPreferences(JSON.stringify({ ...written, spacesCollapsed: 'yes' })), null)
+  const hook = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
+  assert.match(hook, /spacesCollapsed: shell\.stored\.spacesCollapsed \?\? false/, 'a reload restores the stored fold')
+  assert.equal((hook.match(/spacesCollapsed/g) ?? []).length >= 8, true, 'spacesCollapsed rides every preference path (initial, snapshot, flush, dirty, return)')
 })
 
 test('pending groups persist through the shell serializer and parser: written only while non-empty, rejected unless string[]', () => {

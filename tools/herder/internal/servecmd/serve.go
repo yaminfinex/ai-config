@@ -67,6 +67,8 @@ type dependencies struct {
 	stopped              func(string) (hcomidentity.Row, error)
 	messages             func(context.Context, *hcomevents.Cursor, func(hcomevents.Message) error, func() error) error
 	life                 func(context.Context, *hcomevents.Cursor, func(hcomevents.Life) error) error
+	listening            func(context.Context, *hcomevents.Cursor, func(hcomevents.Status) error) error
+	turnEnds             *hcomevents.TurnEnds // Folded turn ends; nil means omit turn_end_id.
 	recentMessages       func(context.Context, int) ([]hcomevents.Message, error)
 	latestDelivery       func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error)
 	entryEnd             func(hcomidentity.Row) (int64, error)
@@ -176,6 +178,7 @@ var liveDependencies = dependencies{
 	stopped:              hcomidentity.Stopped,
 	messages:             hcomevents.Subscribe,
 	life:                 hcomevents.SubscribeLife,
+	listening:            hcomevents.SubscribeListening,
 	recentMessages:       hcomevents.Recent,
 	latestDelivery:       hcomevents.LatestDelivery,
 	entryEnd:             entryTailEnd,
@@ -445,6 +448,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.configuredRoots = configuredRoots
 	runtimeDependencies.stateChanges = newStateChangeBroker()
 	runtimeDependencies.rosterCache = &rosterCache{}
+	runtimeDependencies.turnEnds = startTurnEnds(ctx, runtimeDependencies)
 	var socket *herdersock.Server
 	stateDir, stateDirErr := herderstate.Dir()
 	if stateDirErr != nil {
@@ -561,6 +565,44 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 			}
 		}
 	}()
+}
+
+// startTurnEnds folds hcom's listening entries into per-agent turn ends for
+// the board's turn_end_id. One process-local cursor: a baseline of the
+// recent entries, then only entries newer than the last one folded; a
+// failed subscription resumes from the same cursor after a poll.
+func startTurnEnds(ctx context.Context, deps dependencies) *hcomevents.TurnEnds {
+	if deps.listening == nil {
+		return nil
+	}
+	ends := hcomevents.NewTurnEnds()
+	go func() {
+		cursor := &hcomevents.Cursor{}
+		lastError := ""
+		for ctx.Err() == nil {
+			err := deps.listening(ctx, cursor, func(status hcomevents.Status) error {
+				ends.Apply(status)
+				return nil
+			})
+			if ctx.Err() != nil {
+				return
+			}
+			if err == nil {
+				lastError = ""
+			} else if err.Error() != lastError {
+				deps.audit("hcom turn ends: %v", err)
+				lastError = err.Error()
+			}
+			timer := time.NewTimer(deps.poll)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			}
+		}
+	}()
+	return ends
 }
 
 // rosterSessionFor returns the session rows hold for name. mirror.ready always resolves BOTH the name and the session from ONE fresh
@@ -1039,6 +1081,7 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 	board := fleetview.Build(snapshot, roster, parents)
 	fleetview.FoldBoard(&board, roster, readProjection(deps))
 	foldBoardVitals(&board, roster, deps.boardVitals)
+	foldBoardTurnEnds(&board, roster, deps.turnEnds)
 	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace
@@ -1095,6 +1138,52 @@ func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup s
 					pane.ContextUsed = value
 				}
 				foldRows(pane.Subagents)
+			}
+		}
+	}
+	foldRows(board.Unplaced)
+}
+
+// foldBoardTurnEnds stamps each agent's latest turn end on every row and
+// pane that names it, placed or not, so a browser's read marker follows the
+// agent. hcom keys status events by base name; a row resolves through its
+// roster row, and only a turn folded from that row's current session counts,
+// so a new incarnation or a namesake never inherits another session's turn.
+func foldBoardTurnEnds(board *fleetview.Board, roster []hcomidentity.Row, ends *hcomevents.TurnEnds) {
+	if ends == nil {
+		return
+	}
+	rosterRows := make(map[string]hcomidentity.Row, len(roster))
+	for _, row := range roster {
+		rosterRows[row.Name] = row
+	}
+	turnEnd := func(name string) int64 {
+		row, ok := rosterRows[name]
+		if name == "" || !ok {
+			return 0
+		}
+		instance := row.BaseName
+		if instance == "" {
+			instance = row.Name
+		}
+		id, _ := ends.Lookup(instance, row.SessionID)
+		return id
+	}
+	var foldRows func([]fleetview.Row)
+	foldRows = func(rows []fleetview.Row) {
+		for i := range rows {
+			rows[i].TurnEndID = turnEnd(rows[i].Agent)
+			if rows[i].Subagents != nil {
+				foldRows(*rows[i].Subagents)
+			}
+		}
+	}
+	for workspaceIndex := range board.Workspaces {
+		for tabIndex := range board.Workspaces[workspaceIndex].Tabs {
+			panes := board.Workspaces[workspaceIndex].Tabs[tabIndex].Panes
+			for paneIndex := range panes {
+				panes[paneIndex].TurnEndID = turnEnd(panes[paneIndex].Agent)
+				foldRows(panes[paneIndex].Subagents)
 			}
 		}
 	}

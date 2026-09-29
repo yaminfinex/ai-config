@@ -8,11 +8,14 @@ import {
   type RailSide,
 } from './utilityRailModel'
 
-export function UtilityRail({ side, label, headingStart, headingAction, subheading, width, collapsed, onWidth, onToggle, children }: {
+export function UtilityRail({ side, label, headingStart, headingAction, preface, subheading, width, collapsed, onWidth, onToggle, children }: {
   side: RailSide
   label: string
   headingStart?: ReactNode
   headingAction?: ReactNode
+  // preface renders between the heading line and the subheading: a section
+  // pinned above the rail's own view controls (the fleet rail's Spaces).
+  preface?: ReactNode
   // subheading renders on its own row directly under the heading line, for
   // controls too wide to share the row with the label and collapse button.
   subheading?: ReactNode
@@ -33,6 +36,7 @@ export function UtilityRail({ side, label, headingStart, headingAction, subheadi
     <header className="rail-heading">{headingStart}<strong>{label}</strong>{headingAction}<button type="button"
       className={`rail-toggle rail-toggle-${side}`} aria-label={`Collapse ${label} rail`} title={`Collapse ${label} rail`}
       onClick={onToggle}><span aria-hidden="true">{side === 'left' ? '‹' : '›'}</span></button></header>
+    {preface}
     {subheading && <div className="rail-subheading">{subheading}</div>}
     {children}
   </aside>

@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
 import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { FleetViewToggle } from './features/sidebar/FleetViewToggle'
@@ -20,7 +20,7 @@ import { NotesProvider, useNotes, useNotesCount } from './features/notes/NotesPr
 import { NotesRail } from './features/notes/NotesRail'
 import { NoteQuickAdd } from './features/notes/NoteQuickAdd'
 import { shortcutLabels } from './features/layout/shellShortcuts'
-import { browserOnlySpacesMessage, defaultMaxSpaces, serverSpaceLookupMessage, SpaceStrip } from './features/spaces/index.ts'
+import { browserOnlySpacesMessage, defaultMaxSpaces, serverSpaceLookupMessage, SpacesSection, SpaceSwitcher } from './features/spaces/index.ts'
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
 import { preserveDockTabBrowserHistory } from './features/workspace/dockTabHistoryModel.ts'
 import { ErrorBoundary } from './shared/ErrorBoundary'
@@ -54,7 +54,7 @@ function StreamBanners({ fleetProblem, viewerProblem, spaceProblem, flushLayout 
   </div>
 }
 
-function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, onSettings, spaceStrip }: {
+function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, onSettings }: {
   fleetProblem: string
   viewer: string
   viewerPending: boolean
@@ -64,7 +64,6 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   onToggleNotes: () => void
   onShortcuts: () => void
   onSettings: () => void
-  spaceStrip: ReactNode
 }) {
   const stream = useStreamStatus()
   const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
@@ -74,7 +73,6 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   return <footer className="status-bar">
     <div className="status-primary">
       <div className="fleet-status-group"><RailStatusToggle side="left" label="Fleet" shortcut={shortcuts.focusFleet} collapsed={fleetCollapsed} onToggle={onToggleFleet} /></div>
-      <div className="workspace-switcher-slot">{spaceStrip}</div>
     </div>
     <div className="status-secondary">
       <span className="status-health">{health.map((tick) => <StatusTick tick={tick} key={tick.label} />)}</span>
@@ -105,7 +103,10 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
     <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
     <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+    <SpaceSwitcher state={workspace.spaceSwitcher.state} spaces={workspace.spaces.items} activeID={workspace.spaces.activeID}
+      attention={workspace.spaces.attention} onChoose={workspace.spaceSwitcher.choose} />
     <UtilityRail side="left" label="Fleet" headingStart={<span className="status-dot listening" />}
+      preface={<SpacesSection {...workspace.spaces} />}
       subheading={<FleetViewToggle view={fleetView} onView={setFleetView} />}
       width={fleetRail.width} collapsed={fleetRail.collapsed}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
@@ -132,8 +133,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
       onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
       onShortcuts={() => workspace.setShortcutReference(true)}
-      onSettings={() => setSettingsOpen(true)}
-      spaceStrip={<SpaceStrip {...workspace.spaces} />} />
+      onSettings={() => setSettingsOpen(true)} />
   </div></FileWatchContext.Provider></WorkspaceProviders>
 }
 
