@@ -8,7 +8,7 @@ import { AttentionMarks } from './SpacesSection.tsx'
 // was (the keys belong to the window binding), so the highlighted option
 // is announced through a live region as well as aria-activedescendant.
 // The list scrolls, so the highlighted option is scrolled into view on
-// reveal and on every step.
+// open and on every step.
 const optionID = (id: string) => `space-switcher-${encodeURIComponent(id)}`
 
 export function SpaceSwitcher({ state, spaces, activeID, attention, onChoose }: {
@@ -18,11 +18,11 @@ export function SpaceSwitcher({ state, spaces, activeID, attention, onChoose }: 
   attention: Record<string, SpaceAttention>
   onChoose: (id: string) => void
 }) {
-  const shownID = state.phase === 'holding' && state.shown ? state.order[state.index] : undefined
+  const shownID = state.phase === 'holding' ? state.order[state.index] : undefined
   useEffect(() => {
     if (shownID) document.getElementById(optionID(shownID))?.scrollIntoView({ block: 'nearest' })
   }, [shownID])
-  if (state.phase !== 'holding' || !state.shown) return null
+  if (state.phase !== 'holding') return null
   const byID = new Map(spaces.map((space) => [space.id, space]))
   const options = state.order.flatMap((id) => {
     const space = byID.get(id)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { highlightedSpace, idleSwitcher, reduceSwitcher, switcherRevealDelayMs, type SwitcherEvent, type SwitcherState } from '../src/features/spaces/spaceSwitcherModel.ts'
+import { highlightedSpace, idleSwitcher, reduceSwitcher, type SwitcherEvent, type SwitcherState } from '../src/features/spaces/spaceSwitcherModel.ts'
 import { dwelledAgents, nextDwellDelay, nextViewing, viewDwellMs, viewedAgents } from '../src/features/spaces/viewingModel.ts'
 
 const order = ['now', 'last', 'older', 'oldest']
@@ -15,21 +15,19 @@ function run(events: SwitcherEvent[], state: SwitcherState = idleSwitcher) {
   return { state, commits }
 }
 
-test('opening highlights the previous space forward and the oldest backward, hidden until revealed', () => {
-  assert.deepEqual(run([{ type: 'cycle', direction: 'forward', order }]).state, { phase: 'holding', order, index: 1, shown: false })
+test('opening holds the list at once, highlighting the previous space forward and the oldest backward', () => {
+  assert.deepEqual(run([{ type: 'cycle', direction: 'forward', order }]).state, { phase: 'holding', order, index: 1 })
   assert.equal(highlightedSpace(run([{ type: 'cycle', direction: 'backward', order }]).state), 'oldest')
-  assert.equal(run([{ type: 'cycle', direction: 'forward', order }, { type: 'show' }]).state.phase === 'holding', true)
-  assert.ok(switcherRevealDelayMs > 0 && switcherRevealDelayMs <= 250)
 })
 
-test('a quick tap commits the last space without ever showing the list', () => {
+test('a quick tap commits the last space', () => {
   const tap = run([{ type: 'cycle', direction: 'forward', order }, { type: 'release' }])
   assert.deepEqual(tap, { state: idleSwitcher, commits: ['last'] })
 })
 
 test('Tab and Shift-Tab wrap through the list; release commits the highlight', () => {
   const cycled = run([
-    { type: 'cycle', direction: 'forward', order }, { type: 'show' },
+    { type: 'cycle', direction: 'forward', order },
     { type: 'cycle', direction: 'forward', order }, { type: 'cycle', direction: 'forward', order },
     { type: 'cycle', direction: 'forward', order },
   ])
@@ -41,11 +39,11 @@ test('Tab and Shift-Tab wrap through the list; release commits the highlight', (
 test('releasing on the current space, Escape and blur all leave the space unchanged', () => {
   const back = run([{ type: 'cycle', direction: 'forward', order }, { type: 'step', direction: 'backward' }, { type: 'release' }])
   assert.deepEqual(back, { state: idleSwitcher, commits: [] })
-  assert.deepEqual(run([{ type: 'cycle', direction: 'forward', order }, { type: 'show' }, { type: 'cancel' }]), { state: idleSwitcher, commits: [] })
+  assert.deepEqual(run([{ type: 'cycle', direction: 'forward', order }, { type: 'cancel' }]), { state: idleSwitcher, commits: [] })
 })
 
 test('pointing at an option commits it, unless it is the current space or unknown', () => {
-  const held = run([{ type: 'cycle', direction: 'forward', order }, { type: 'show' }]).state
+  const held = run([{ type: 'cycle', direction: 'forward', order }]).state
   assert.deepEqual(run([{ type: 'choose', id: 'oldest' }], held).commits, ['oldest'])
   assert.deepEqual(run([{ type: 'choose', id: 'now' }], held), { state: idleSwitcher, commits: [] })
   assert.deepEqual(run([{ type: 'choose', id: 'ghost' }], held).commits, [])
@@ -53,7 +51,7 @@ test('pointing at an option commits it, unless it is the current space or unknow
 
 test('the switcher does not open for fewer than two spaces and ignores stray events while idle', () => {
   assert.deepEqual(run([{ type: 'cycle', direction: 'forward', order: ['only'] }]).state, idleSwitcher)
-  assert.deepEqual(run([{ type: 'release' }, { type: 'step', direction: 'forward' }, { type: 'show' }, { type: 'choose', id: 'now' }]), { state: idleSwitcher, commits: [] })
+  assert.deepEqual(run([{ type: 'release' }, { type: 'step', direction: 'forward' }, { type: 'choose', id: 'now' }]), { state: idleSwitcher, commits: [] })
 })
 
 test('viewed agents are the active agent panels of visible groups while the page is visible', () => {

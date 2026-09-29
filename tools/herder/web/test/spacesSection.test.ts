@@ -69,8 +69,10 @@ test('the degraded section keeps an honest status and the live announcement stay
   assert.match(source, /role="status" aria-live="polite">\{props\.announcement\}/)
 })
 
-test('the rows scroll within a compact max height so the fleet tree keeps the rail', () => {
-  assert.match(styles, /\.spaces-list \{[^}]*max-height: 176px;[^}]*overflow-y: auto/)
+test('the section grows with its rows up to half the rail, then its list scrolls', () => {
+  assert.match(styles, /\.spaces-section \{[^}]*max-height: 50%;[^}]*flex: 0 0 auto; flex-direction: column; min-height: 0;/)
+  assert.match(styles, /\.spaces-list \{ min-height: 0; flex: 0 1 auto;[^}]*overflow-y: auto/)
+  assert.doesNotMatch(styles, /\.spaces-list \{[^}]*max-height/)
   assert.match(styles, /\.space-label \{[^}]*overflow: hidden; text-overflow: ellipsis; white-space: nowrap/)
 })
 
@@ -79,7 +81,7 @@ test('the switcher is a listbox that tracks and announces the highlighted option
   assert.match(switcher, /aria-activedescendant=\{highlighted \? optionID\(highlighted\) : undefined\}/)
   assert.match(switcher, /role="option" id=\{optionID\(space\.id\)\} key=\{space\.id\} aria-selected=\{space\.id === highlighted\}/)
   assert.match(switcher, /role="status" aria-live="assertive">\{current \?/)
-  assert.match(switcher, /if \(state\.phase !== 'holding' \|\| !state\.shown\) return null/)
+  assert.match(switcher, /if \(state\.phase !== 'holding'\) return null/)
 })
 
 test('the app mounts the switcher with the controller state and attention', () => {
@@ -88,7 +90,7 @@ test('the app mounts the switcher with the controller state and attention', () =
 
 test('the controller derives attention and the MRU switcher from the live workspace', () => {
   assert.match(controller, /useSpaceAttention\(\{ apiRef, revision, board: boardQuery\.data, spaces, activeSpaceID, activeAgents: agentNames \}\)/)
-  assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), spaces, activeSpaceID, switchSpace \}\)/)
+  assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), spaces, activeSpaceID, switchSpace: switchSpaceFocusing \}\)/)
   assert.match(controller, /attention: spaceAttention\.attention/)
   assert.match(controller, /spaceSwitcher,/)
 })
@@ -110,8 +112,8 @@ test('every switch, whatever started it, touches the MRU order, which lives besi
   assert.doesNotMatch(attentionHook, /MRU|mru/)
 })
 
-test('the switcher scrolls the highlighted option into view on reveal and on every step', () => {
-  assert.match(switcher, /const shownID = state\.phase === 'holding' && state\.shown \? state\.order\[state\.index\] : undefined/)
+test('the switcher scrolls the highlighted option into view on open and on every step', () => {
+  assert.match(switcher, /const shownID = state\.phase === 'holding' \? state\.order\[state\.index\] : undefined/)
   assert.match(switcher, /if \(shownID\) document\.getElementById\(optionID\(shownID\)\)\?\.scrollIntoView\(\{ block: 'nearest' \}\)\s+\}, \[shownID\]\)/)
   assert.ok(switcher.indexOf('useEffect(') < switcher.indexOf('return null'), 'the hook runs before the hidden early return')
 })
@@ -119,7 +121,7 @@ test('the switcher scrolls the highlighted option into view on reveal and on eve
 test('the switcher hook binds through the shell shortcut layer and commits through switchSpace', () => {
   assert.match(switcherHook, /bindSpaceSwitcher\(window,/)
   assert.match(switcherHook, /if \(result\.commit\) switchSpace\(result\.commit\)/)
-  assert.match(switcherHook, /switcherRevealDelayMs/)
+  assert.doesNotMatch(switcherHook, /setTimeout|RevealDelay/, 'the list opens on the first keydown')
 })
 
 test('the bottom SpaceStrip and its overflow model are gone', () => {

@@ -296,7 +296,7 @@ h2, h3, p { margin-top: 0; }
 .fleet-status-group { display: flex; height: 20px; flex: 0 0 auto; align-items: center; gap: 4px; }
 .launch-agent-button { width: 20px; height: 20px; flex: 0 0 20px; margin-left: auto; padding: 0; border-color: var(--border2); background: var(--chip); color: var(--status-bar-text); font: 600 13px var(--mono); }
 .launch-agent-button:hover, .launch-agent-button:focus-visible { border-color: var(--accent); background: var(--bg2); color: var(--text); }
-.spaces-section { position: relative; display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--border); }
+.spaces-section { position: relative; display: flex; max-height: 50%; flex: 0 0 auto; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--border); }
 .spaces-section.degraded { padding: 4px 10px; }
 .spaces-degraded { color: var(--warning-text); font: 10px var(--mono); }
 .spaces-heading { display: flex; height: 24px; align-items: center; gap: 4px; padding: 0 6px 0 4px; }
@@ -311,7 +311,7 @@ h2, h3, p { margin-top: 0; }
 .space-history-menu { position: absolute; z-index: 70; top: 22px; right: 0; display: grid; min-width: 160px; max-width: 260px; overflow: hidden; padding: 4px; border: 1px solid var(--border2); border-radius: 6px; background: var(--bg2); box-shadow: 0 12px 36px var(--floating-shadow); }
 .space-history-menu button { overflow: hidden; padding: 6px 8px; border: 0; background: transparent; color: var(--text); font: 11px var(--mono); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .space-history-menu button:hover, .space-history-menu button:focus-visible { outline: none; background: var(--accent-dim); }
-.spaces-list { max-height: 176px; margin: 0; padding: 0 4px 4px; overflow-y: auto; list-style: none; }
+.spaces-list { min-height: 0; flex: 0 1 auto; margin: 0; padding: 0 4px 4px; overflow-y: auto; list-style: none; }
 .space-row { display: flex; min-width: 0; height: 22px; align-items: center; gap: 2px; border: 1px solid transparent; border-radius: 4px; }
 .space-row:hover { background: var(--bg3); }
 .space-row.active { border-color: var(--border2); background: var(--bg2); box-shadow: inset 2px 0 var(--accent); }

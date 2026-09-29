@@ -5,7 +5,6 @@ import {
   mruSpaceIDs,
   readSpaceMRU,
   reduceSwitcher,
-  switcherRevealDelayMs,
   touchSpaceMRU,
   writeSpaceMRU,
   type SpaceDefinition,
@@ -13,7 +12,7 @@ import {
 } from '../spaces/index.ts'
 
 // useSpaceSwitcher owns the ⌥Tab switcher: the persisted MRU space order,
-// the reducer state, the delayed reveal and the window key bindings. The
+// the reducer state and the window key bindings. The
 // MRU order is read when ⌥Tab opens it.
 export function useSpaceSwitcher({ enabled, spaces, activeSpaceID, switchSpace }: {
   enabled: boolean
@@ -44,13 +43,6 @@ export function useSpaceSwitcher({ enabled, spaces, activeSpaceID, switchSpace }
     if (result.commit) switchSpace(result.commit)
     return result.state
   }, [switchSpace])
-
-  const reveal = state.phase === 'holding' && !state.shown
-  useEffect(() => {
-    if (!reveal) return
-    const timer = window.setTimeout(() => dispatch({ type: 'show' }), switcherRevealDelayMs)
-    return () => window.clearTimeout(timer)
-  }, [dispatch, reveal])
 
   useEffect(() => bindSpaceSwitcher(window, {
     cycle: (direction) => {

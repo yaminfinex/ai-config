@@ -32,6 +32,7 @@ import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import { useSpaceAttention } from './useSpaceAttention'
 import { useSpaceSwitcher } from './useSpaceSwitcher'
+import { useSwitchSpaceFocusing } from './useSwitchSpaceFocusing'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import { useNotes } from '../notes/NotesProvider.tsx'
 import { planOpenGroupAsSpace, runOpenGroupAsSpace } from '../sidebar/groupDropModel.ts'
@@ -549,9 +550,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       window.requestAnimationFrame(() => target?.isConnected && target.focus())
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace })
+  // Deliberate switches (rail, ⌥Tab, ⇧⌥←/→) land in the new space's composer.
+  const switchSpaceFocusing = useSwitchSpaceFocusing(apiRef, switchSpace)
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace: switchSpaceFocusing })
   const spaceAttention = useSpaceAttention({ apiRef, revision, board: boardQuery.data, spaces, activeSpaceID, activeAgents: agentNames })
-  const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace })
+  const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceFocusing })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
@@ -596,7 +599,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       activeID: activeSpaceID,
       status: spacesStatus,
       problem: spaceProblem,
-      switch: switchSpace,
+      switch: switchSpaceFocusing,
       create: createSpace,
       createNamed: createNamedSpace,
       openGroup: openGroupAsSpace,
