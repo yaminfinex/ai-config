@@ -19,6 +19,7 @@ export { agentsInDock, attentionLabel, markViewedRead, pruneReadMarkers, quietAt
 export { parseReadMarkers, readMarkersKey, readReadMarkers, writeReadMarkers, type ReadMarkers } from './readMarkerStore.ts'
 export { mruSpaceIDs, readSpaceMRU, touchSpaceMRU, writeSpaceMRU } from './spaceMRU.ts'
 export { dwelledAgents, nextDwellDelay, nextViewing, viewedAgents, viewDwellMs, type ViewingState } from './viewingModel.ts'
-export { highlightedSpace, idleSwitcher, reduceSwitcher, switcherRevealDelayMs, type SwitcherEvent, type SwitcherState } from './spaceSwitcherModel.ts'
+export { highlightedSpace, idleSwitcher, reduceSwitcher, type SwitcherEvent, type SwitcherState } from './spaceSwitcherModel.ts'
 export { SpacesSection } from './SpacesSection.tsx'
 export { SpaceSwitcher } from './SpaceSwitcher.tsx'
+export { focusAtEnd, focusOrigin, switchFocusDecision, type SwitchFocusDecision, type SwitchFocusInput } from './switchFocusModel.ts'

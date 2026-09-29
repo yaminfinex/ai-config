@@ -273,7 +273,7 @@ test('Tab and Shift-Tab cycle the held list; Option release commits the highligh
     assert.equal(dispatch(target, altTab).defaultPrevented, true)
     assert.equal(dispatch(target, altTab).defaultPrevented, true)
     assert.equal(dispatch(target, { ...altTab, shiftKey: true }).defaultPrevented, true)
-    assert.deepEqual(switcher.state(), { phase: 'holding', order: ['now', 'last', 'older'], index: 2, shown: false })
+    assert.deepEqual(switcher.state(), { phase: 'holding', order: ['now', 'last', 'older'], index: 2 })
     keyup(target, { key: 'Alt', code: 'AltRight' })
     assert.deepEqual(switcher.commits, ['older'])
   } finally {
@@ -356,7 +356,7 @@ test('while held, every other key is consumed before any shell shortcut: Alt+W, 
       assert.equal(dispatch(target, init).defaultPrevented, true, init.code)
     }
     assert.deepEqual(calls, [], 'no shell shortcut ran under the held switcher')
-    assert.deepEqual(switcher.state(), { phase: 'holding', order: ['now', 'last', 'older'], index: 1, shown: false })
+    assert.deepEqual(switcher.state(), { phase: 'holding', order: ['now', 'last', 'older'], index: 1 })
     keyup(target, { key: 'Alt', code: 'AltLeft' })
     assert.deepEqual(switcher.commits, ['last'])
     dispatch(target, { key: '∑', code: 'KeyW', altKey: true })
