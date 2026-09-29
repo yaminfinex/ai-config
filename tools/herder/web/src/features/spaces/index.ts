@@ -15,7 +15,7 @@ export {
   type SpacesInitialization,
   type SpaceResult,
 } from './spacesModel.ts'
-export { agentsInDock, attentionLabel, markViewedRead, quietAttention, seedReadMarkers, spaceAttention, storedSpaceAgents, totalAttention, turnFingerprint, type SpaceAttention } from './spaceAttentionModel.ts'
+export { agentsInDock, attentionLabel, markViewedRead, pruneReadMarkers, quietAttention, seedReadMarkers, spaceAttention, storedSpaceAgents, totalAttention, turnEnd, type SpaceAttention } from './spaceAttentionModel.ts'
 export { parseReadMarkers, readMarkersKey, readReadMarkers, writeReadMarkers, type ReadMarkers } from './readMarkerStore.ts'
 export { mruSpaceIDs, readSpaceMRU, touchSpaceMRU, writeSpaceMRU } from './spaceMRU.ts'
 export { dwelledAgents, nextDwellDelay, nextViewing, viewedAgents, viewDwellMs, type ViewingState } from './viewingModel.ts'

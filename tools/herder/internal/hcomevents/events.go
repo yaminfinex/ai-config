@@ -40,6 +40,16 @@ type Life struct {
 	IsHcomLaunched *bool
 }
 
+// Status is one hcom status transition. Instance is the agent's base name;
+// Session is the agent session that wrote it, empty on very old events.
+type Status struct {
+	ID        int64
+	Instance  string
+	OldStatus string
+	NewStatus string
+	Session   string
+}
+
 // DeliveryWatermark is the recipient cursor recorded by hcom after a delivery
 // batch. Position is the last bus event consumed by that concrete recipient;
 // MessageTimestamp identifies the batch tail and is corroboration only.
@@ -78,6 +88,10 @@ type event struct {
 		Instances      []string    `json:"instances"`
 		ParentName     string      `json:"parent_name"`
 		IsHcomLaunched *bool       `json:"is_hcom_launched"`
+		OldStatus      string      `json:"old_status"`
+		NewStatus      string      `json:"new_status"`
+		StatusValue    string      `json:"status"`
+		Session        string      `json:"session"`
 	} `json:"data"`
 	TimedOut bool `json:"timed_out"`
 }
@@ -127,7 +141,7 @@ func projectDelivery(parsed event) (DeliveryWatermark, error) {
 // same event decoder and projection as Subscribe so endpoint reads and stream
 // wake frames cannot drift in shape.
 func Recent(ctx context.Context, limit int) ([]Message, error) {
-	events, err := query(ctx, limit, -1, "message")
+	events, err := query(ctx, limit, -1, "message", "")
 	if err != nil {
 		return nil, err
 	}
@@ -148,18 +162,32 @@ func Recent(ctx context.Context, limit int) ([]Message, error) {
 // Subscribe blocks, forwarding every new bus message until ctx is canceled.
 // The blocking --wait query is hcom's own event subscription/wakeup path.
 func Subscribe(ctx context.Context, cursor *Cursor, emit func(Message) error, healthy func() error) error {
-	return subscribe(ctx, cursor, "message", 1, false, projectMessage, emit, healthy)
+	return subscribe(ctx, cursor, "message", "", 1, false, projectMessage, emit, healthy)
 }
 
 // SubscribeLife catches up the bounded recent life history, then forwards
 // new life events until ctx is canceled. Its cursor is process-local.
 func SubscribeLife(ctx context.Context, cursor *Cursor, emit func(Life) error) error {
-	return subscribe(ctx, cursor, "life", 500, true, projectLife, emit, func() error { return nil })
+	return subscribe(ctx, cursor, "life", "", 500, true, projectLife, emit, func() error { return nil })
 }
 
-func subscribe[T any](ctx context.Context, cursor *Cursor, eventType string, initialLimit int, emitInitial bool, project func(event) (T, error), emit func(T) error, healthy func() error) error {
+// listeningEntries selects the status events where an agent entered
+// listening from another status: about one per agent turn, where the raw
+// status stream carries every tool call. Very old events lack old_status.
+const listeningEntries = "status_val = 'listening' AND COALESCE(json_extract(data, '$.old_status'), '') <> 'listening'"
+
+// SubscribeListening catches up the bounded recent history of listening
+// entries, then forwards new ones until ctx is canceled. The filter runs in
+// hcom's query, so neither the baseline nor a wake scans every status event.
+func SubscribeListening(ctx context.Context, cursor *Cursor, emit func(Status) error) error {
+	return subscribe(ctx, cursor, "status", listeningEntries, 5000, true, projectStatus, emit, func() error { return nil })
+}
+
+// subscribe baselines the last initialLimit events of eventType (optionally
+// narrowed by an SQL filter), then waits for and catches up newer ones.
+func subscribe[T any](ctx context.Context, cursor *Cursor, eventType, filter string, initialLimit int, emitInitial bool, project func(event) (T, error), emit func(T) error, healthy func() error) error {
 	if !cursor.initialized {
-		events, err := query(ctx, initialLimit, -1, eventType)
+		events, err := query(ctx, initialLimit, -1, eventType, filter)
 		if err != nil {
 			return fmt.Errorf("hcom %s subscription baseline failed: %w", eventType, err)
 		}
@@ -188,8 +216,7 @@ func subscribe[T any](ctx context.Context, cursor *Cursor, eventType string, ini
 		}
 	}
 	for {
-		filter := fmt.Sprintf("id > %d", cursor.ID)
-		wake, err := run(ctx, "events", "--wait", "30", "--full", "--type", eventType, "--sql", filter)
+		wake, err := run(ctx, "events", "--wait", "30", "--full", "--type", eventType, "--sql", afterFilter(cursor.ID, filter))
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -203,7 +230,7 @@ func subscribe[T any](ctx context.Context, cursor *Cursor, eventType string, ini
 			continue
 		}
 		queryCtx, cancel := context.WithTimeout(ctx, catchUpTimeout)
-		events, err := query(queryCtx, 10000, cursor.ID, eventType)
+		events, err := query(queryCtx, 10000, cursor.ID, eventType, filter)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("hcom %s subscription catch-up failed: %w", eventType, err)
@@ -253,6 +280,22 @@ func projectLife(parsed event) (Life, error) {
 		IsHcomLaunched: parsed.Data.IsHcomLaunched}, nil
 }
 
+func projectStatus(parsed event) (Status, error) {
+	id, err := eventID(parsed)
+	if err != nil {
+		return Status{}, err
+	}
+	if parsed.Type != "status" {
+		return Status{}, fmt.Errorf("invalid hcom status event type %q", parsed.Type)
+	}
+	newStatus := parsed.Data.NewStatus
+	if newStatus == "" {
+		newStatus = parsed.Data.StatusValue
+	}
+	return Status{ID: id, Instance: parsed.Instance, OldStatus: parsed.Data.OldStatus,
+		NewStatus: newStatus, Session: parsed.Data.Session}, nil
+}
+
 func projectMessage(parsed event) (Message, error) {
 	id, err := eventID(parsed)
 	if err != nil {
@@ -300,10 +343,20 @@ func run(ctx context.Context, args ...string) (event, error) {
 	return parsed, nil
 }
 
-func query(ctx context.Context, limit int, afterID int64, eventType string) ([]event, error) {
+func afterFilter(afterID int64, filter string) string {
+	clause := fmt.Sprintf("id > %d", afterID)
+	if filter != "" {
+		clause += " AND (" + filter + ")"
+	}
+	return clause
+}
+
+func query(ctx context.Context, limit int, afterID int64, eventType, filter string) ([]event, error) {
 	args := []string{"events", "--last", strconv.Itoa(limit), "--full", "--type", eventType}
 	if afterID >= 0 {
-		args = append(args, "--sql", fmt.Sprintf("id > %d", afterID))
+		args = append(args, "--sql", afterFilter(afterID, filter))
+	} else if filter != "" {
+		args = append(args, "--sql", filter)
 	}
 	cmd := command(ctx, args...)
 	out, err := cmd.Output()

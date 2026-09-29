@@ -551,7 +551,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   }, [layout.notesRail.collapsed, layout.setNotesRail])
   useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace })
   const spaceAttention = useSpaceAttention({ apiRef, revision, board: boardQuery.data, spaces, activeSpaceID, activeAgents: agentNames })
-  const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), mruOrder: spaceAttention.mruOrder, switchSpace })
+  const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined

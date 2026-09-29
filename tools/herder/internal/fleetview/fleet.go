@@ -26,7 +26,10 @@ type Row struct {
 	Gap         string `json:"gap"`
 	ParentAgent string `json:"parent_agent,omitempty"`
 	ContextUsed int64  `json:"context_used,omitempty"`
-	Subagents   *Rows  `json:"subagents,omitempty"`
+	// TurnEndID is the hcom status event id of the agent's latest completed
+	// turn (active or blocked to listening); absent until one is seen.
+	TurnEndID int64 `json:"turn_end_id,omitempty"`
+	Subagents *Rows `json:"subagents,omitempty"`
 	// Store-folded columns (FoldStore). Launcher is immutable provenance,
 	// Manager the mutable hierarchy pointer, Group the current assignment.
 	// A bus row with no store record prints "unregistered"; a pane with no
@@ -270,6 +273,7 @@ type Pane struct {
 	Title          string `json:"title,omitempty"`
 	CreatedAt      string `json:"created_at,omitempty"`
 	ContextUsed    int64  `json:"context_used,omitempty"`
+	TurnEndID      int64  `json:"turn_end_id,omitempty"`
 	Subagents      []Row  `json:"subagents,omitempty"`
 }
 

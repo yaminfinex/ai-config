@@ -88,13 +88,14 @@ test('the app mounts the switcher with the controller state and attention', () =
 
 test('the controller derives attention and the MRU switcher from the live workspace', () => {
   assert.match(controller, /useSpaceAttention\(\{ apiRef, revision, board: boardQuery\.data, spaces, activeSpaceID, activeAgents: agentNames \}\)/)
-  assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), mruOrder: spaceAttention\.mruOrder, switchSpace \}\)/)
+  assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), spaces, activeSpaceID, switchSpace \}\)/)
   assert.match(controller, /attention: spaceAttention\.attention/)
   assert.match(controller, /spaceSwitcher,/)
 })
 
 test('the attention hook seeds, marks read after the dwell and persists through the versioned stores', () => {
-  assert.match(attentionHook, /seedReadMarkers\(current, board, Object\.values\(openBySpace\)\.flat\(\)\)/)
+  assert.match(attentionHook, /const open = Object\.values\(openBySpace\)\.flat\(\)/)
+  assert.match(attentionHook, /seedReadMarkers\(pruneReadMarkers\(current, board, open\), board, open\)/)
   assert.match(attentionHook, /markViewedRead\(seeded, board, dwelledAgents\(viewing, Date\.now\(\)\)\)/)
   assert.match(attentionHook, /writeReadMarkers\(localStorage, markers, markerState\.current\)/)
   assert.match(attentionHook, /group\.api\.isVisible/)
@@ -102,9 +103,17 @@ test('the attention hook seeds, marks read after the dwell and persists through 
   assert.match(attentionHook, /storedSpaceAgents\(localStorage, space\.id\)/)
 })
 
-test('every switch, whatever started it, touches the MRU order', () => {
-  assert.match(attentionHook, /useEffect\(\(\) => \{\s+if \(activeSpaceID\) setMRU\(\(order\) => touchSpaceMRU\(order, activeSpaceID\)\)\s+\}, \[activeSpaceID\]\)/)
-  assert.match(attentionHook, /writeSpaceMRU\(localStorage, mru, mruState\.current\)/)
+test('every switch, whatever started it, touches the MRU order, which lives beside the switcher', () => {
+  assert.match(switcherHook, /useEffect\(\(\) => \{\s+if \(activeSpaceID\) setMRU\(\(order\) => touchSpaceMRU\(order, activeSpaceID\)\)\s+\}, \[activeSpaceID\]\)/)
+  assert.match(switcherHook, /writeSpaceMRU\(localStorage, mru, mruState\.current\)/)
+  assert.match(switcherHook, /mruSpaceIDs\(mru, spaces, activeSpaceID\)/)
+  assert.doesNotMatch(attentionHook, /MRU|mru/)
+})
+
+test('the switcher scrolls the highlighted option into view on reveal and on every step', () => {
+  assert.match(switcher, /const shownID = state\.phase === 'holding' && state\.shown \? state\.order\[state\.index\] : undefined/)
+  assert.match(switcher, /if \(shownID\) document\.getElementById\(optionID\(shownID\)\)\?\.scrollIntoView\(\{ block: 'nearest' \}\)\s+\}, \[shownID\]\)/)
+  assert.ok(switcher.indexOf('useEffect(') < switcher.indexOf('return null'), 'the hook runs before the hidden early return')
 })
 
 test('the switcher hook binds through the shell shortcut layer and commits through switchSpace', () => {

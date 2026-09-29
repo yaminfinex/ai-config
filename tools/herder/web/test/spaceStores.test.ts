@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readBrowserRecord, writeBrowserRecord } from '../src/features/spaces/browserRecord.ts'
-import { maxReadMarkers, parseReadMarkers, readMarkersKey, readReadMarkers, setMarkers, writeReadMarkers } from '../src/features/spaces/readMarkerStore.ts'
+import { keepMarkers, parseReadMarkers, readMarkersKey, readReadMarkers, setMarkers, writeReadMarkers } from '../src/features/spaces/readMarkerStore.ts'
 import { maxSpaceMRU, mruSpaceIDs, parseSpaceMRU, readSpaceMRU, spaceMRUKey, touchSpaceMRU, writeSpaceMRU } from '../src/features/spaces/spaceMRU.ts'
 import { clearAllLayoutFamilies } from '../src/features/spaces/spacesModel.ts'
 
@@ -18,7 +18,7 @@ function memoryStorage(initial: Record<string, string> = {}) {
 }
 
 test('both stores use versioned keys outside the layout families', () => {
-  assert.equal(readMarkersKey, 'herder.web.read-markers.v1')
+  assert.equal(readMarkersKey, 'herder.web.read-markers.v2')
   assert.equal(spaceMRUKey, 'herder.web.spaces.mru.v1')
   const storage = memoryStorage({ [readMarkersKey]: 'x', [spaceMRUKey]: 'y' })
   clearAllLayoutFamilies(storage)
@@ -30,24 +30,27 @@ test('read markers round-trip and reject other versions and shapes', () => {
   const storage = memoryStorage()
   const { markers, state } = readReadMarkers(storage)
   assert.deepEqual(markers, {})
-  writeReadMarkers(storage, { mavu: 's:10', ziru: '' }, state)
-  assert.deepEqual(readReadMarkers(storage).markers, { mavu: 's:10', ziru: '' })
-  assert.equal(parseReadMarkers(JSON.stringify({ version: 2, markers: {} })), null)
-  assert.equal(parseReadMarkers(JSON.stringify({ version: 1, markers: { a: 1 } })), null)
-  assert.equal(parseReadMarkers(JSON.stringify({ version: 1, markers: [] })), null)
+  writeReadMarkers(storage, { mavu: 348655, ziru: 12 }, state)
+  assert.deepEqual(readReadMarkers(storage).markers, { mavu: 348655, ziru: 12 })
+  assert.deepEqual(JSON.parse(storage.getItem(readMarkersKey) ?? ''), { version: 2, markers: { mavu: 348655, ziru: 12 } })
+  assert.equal(parseReadMarkers(JSON.stringify({ version: 1, markers: { a: 's:1' } })), null, 'v1 fingerprints are not migrated')
+  assert.equal(parseReadMarkers(JSON.stringify({ version: 2, markers: { a: 's:1' } })), null)
+  assert.equal(parseReadMarkers(JSON.stringify({ version: 2, markers: { a: 0 } })), null)
+  assert.equal(parseReadMarkers(JSON.stringify({ version: 2, markers: { a: 1.5 } })), null)
+  assert.equal(parseReadMarkers(JSON.stringify({ version: 2, markers: [] })), null)
   assert.equal(parseReadMarkers('{broken'), null)
 })
 
 test('a corrupt primary recovers from the last-good backup without rotating the backup away', () => {
-  const good = JSON.stringify({ version: 1, markers: { mavu: 's:1' } })
+  const good = JSON.stringify({ version: 2, markers: { mavu: 1 } })
   const storage = memoryStorage({ [readMarkersKey]: '{broken', [`${readMarkersKey}.last-good`]: good })
   const { markers, state } = readReadMarkers(storage)
-  assert.deepEqual(markers, { mavu: 's:1' })
+  assert.deepEqual(markers, { mavu: 1 })
   assert.equal(state.recovering, true)
-  const next = writeReadMarkers(storage, { mavu: 's:2' }, state)
+  const next = writeReadMarkers(storage, { mavu: 2 }, state)
   assert.equal(storage.getItem(`${readMarkersKey}.last-good`), good, 'recovery writes the primary only')
   assert.deepEqual(next, { recovering: false, lastGoodRaw: storage.getItem(readMarkersKey) })
-  writeReadMarkers(storage, { mavu: 's:3' }, next)
+  writeReadMarkers(storage, { mavu: 3 }, next)
   assert.equal(storage.getItem(`${readMarkersKey}.last-good`), next.lastGoodRaw, 'the backup then trails the last good primary')
 })
 
@@ -63,17 +66,18 @@ test('the record helper skips unchanged writes and survives blocked storage', ()
   assert.deepEqual(read, { value: null, state: { recovering: false, lastGoodRaw: null } })
 })
 
-test('marker updates keep identity when unchanged and cap by dropping the least recently touched', () => {
-  const markers = { a: '1', b: '2' }
-  assert.equal(setMarkers(markers, { a: '1' }), markers)
-  assert.deepEqual(Object.keys(setMarkers(markers, { a: '3' })), ['b', 'a'])
-  const full = Object.fromEntries(Array.from({ length: maxReadMarkers }, (_, index) => [`agent-${index}`, 'x']))
-  const touched = setMarkers(full, { 'agent-0': 'y' })
-  const capped = setMarkers(touched, { newcomer: '' })
-  assert.equal(Object.keys(capped).length, maxReadMarkers)
-  assert.equal(capped['agent-1'], undefined, 'the oldest untouched marker goes first')
-  assert.equal(capped['agent-0'], 'y')
-  assert.equal(capped.newcomer, '')
+test('marker updates keep identity when unchanged and there is no count cap', () => {
+  const markers = { a: 1, b: 2 }
+  assert.equal(setMarkers(markers, { a: 1 }), markers)
+  assert.deepEqual(setMarkers(markers, { a: 3, c: 4 }), { a: 3, b: 2, c: 4 })
+  const many = Object.fromEntries(Array.from({ length: 1000 }, (_, index) => [`agent-${index}`, index + 1]))
+  assert.equal(Object.keys(setMarkers(many, { newcomer: 7 })).length, 1001, 'nothing is evicted to make room')
+})
+
+test('keepMarkers drops only names outside the keep set, preserving identity otherwise', () => {
+  const markers = { a: 1, b: 2 }
+  assert.equal(keepMarkers(markers, new Set(['a', 'b', 'c'])), markers)
+  assert.deepEqual(keepMarkers(markers, new Set(['b'])), { b: 2 })
 })
 
 test('MRU touch moves a space to the front, keeps identity when already first and caps', () => {

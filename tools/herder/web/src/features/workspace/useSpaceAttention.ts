@@ -6,20 +6,17 @@ import { panelParams } from '../layout/dockLayout'
 import {
   dwelledAgents,
   markViewedRead,
-  mruSpaceIDs,
   nextDwellDelay,
   nextViewing,
   readMarkersKey,
   parseReadMarkers,
+  pruneReadMarkers,
   readReadMarkers,
-  readSpaceMRU,
   seedReadMarkers,
   spaceAttention,
   storedSpaceAgents,
-  touchSpaceMRU,
   viewedAgents,
   writeReadMarkers,
-  writeSpaceMRU,
   type SpaceAttention,
   type SpaceDefinition,
   type ViewingState,
@@ -31,7 +28,7 @@ function documentVisible() {
 
 // useSpaceAttention derives each space's waiting/blocked agents from the
 // live dock (active space), the stored layouts (other spaces), the fleet
-// board and this browser's read markers, and keeps the MRU space order.
+// board and this browser's read markers.
 export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpaceID, activeAgents }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   revision: number
@@ -43,9 +40,6 @@ export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpace
   const [initialMarkers] = useState(() => readReadMarkers(localStorage))
   const [markers, setMarkers] = useState(initialMarkers.markers)
   const markerState = useRef(initialMarkers.state)
-  const [initialMRU] = useState(() => readSpaceMRU(localStorage))
-  const [mru, setMRU] = useState<readonly string[]>(initialMRU.order)
-  const mruState = useRef(initialMRU.state)
   const [visible, setVisible] = useState(documentVisible)
   const [storageTick, setStorageTick] = useState(0)
   const [viewing, setViewing] = useState<ViewingState>({})
@@ -88,8 +82,9 @@ export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpace
   }, [dwellTick, viewing])
 
   useEffect(() => {
+    const open = Object.values(openBySpace).flat()
     setMarkers((current) => {
-      const seeded = seedReadMarkers(current, board, Object.values(openBySpace).flat())
+      const seeded = seedReadMarkers(pruneReadMarkers(current, board, open), board, open)
       return markViewedRead(seeded, board, dwelledAgents(viewing, Date.now()))
     })
   }, [board, dwellTick, openBySpace, viewing])
@@ -97,15 +92,7 @@ export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpace
     markerState.current = writeReadMarkers(localStorage, markers, markerState.current)
   }, [markers])
 
-  useEffect(() => {
-    if (activeSpaceID) setMRU((order) => touchSpaceMRU(order, activeSpaceID))
-  }, [activeSpaceID])
-  useEffect(() => {
-    mruState.current = writeSpaceMRU(localStorage, mru, mruState.current)
-  }, [mru])
-
   const attention = useMemo(() => Object.fromEntries(Object.entries(openBySpace)
     .map(([id, agents]) => [id, spaceAttention(board, agents, markers)])) as Record<string, SpaceAttention>, [board, markers, openBySpace])
-  const mruOrder = useMemo(() => mruSpaceIDs(mru, spaces, activeSpaceID), [activeSpaceID, mru, spaces])
-  return { attention, mruOrder }
+  return { attention }
 }

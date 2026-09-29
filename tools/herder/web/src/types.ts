@@ -6,6 +6,9 @@ export interface Row {
   bus_status: string
   gap: string
   context_used?: number
+  // turn_end_id is the hcom status event id of the agent's latest completed
+  // turn (monotonic); absent until the serve has seen one.
+  turn_end_id?: number
   parent_agent?: string
   subagents?: Row[]
   // Supervision edge (herder-mastered augmenting data, never lifecycle

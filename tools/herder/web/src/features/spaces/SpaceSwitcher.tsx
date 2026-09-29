@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import type { SpaceDefinition } from './spacesModel.ts'
 import { attentionLabel, quietAttention, type SpaceAttention } from './spaceAttentionModel.ts'
 import type { SwitcherState } from './spaceSwitcherModel.ts'
@@ -6,6 +7,10 @@ import { AttentionMarks } from './SpacesSection.tsx'
 // SpaceSwitcher paints the held ⌥Tab list. Keyboard focus stays where it
 // was (the keys belong to the window binding), so the highlighted option
 // is announced through a live region as well as aria-activedescendant.
+// The list scrolls, so the highlighted option is scrolled into view on
+// reveal and on every step.
+const optionID = (id: string) => `space-switcher-${encodeURIComponent(id)}`
+
 export function SpaceSwitcher({ state, spaces, activeID, attention, onChoose }: {
   state: SwitcherState
   spaces: SpaceDefinition[]
@@ -13,6 +18,10 @@ export function SpaceSwitcher({ state, spaces, activeID, attention, onChoose }: 
   attention: Record<string, SpaceAttention>
   onChoose: (id: string) => void
 }) {
+  const shownID = state.phase === 'holding' && state.shown ? state.order[state.index] : undefined
+  useEffect(() => {
+    if (shownID) document.getElementById(optionID(shownID))?.scrollIntoView({ block: 'nearest' })
+  }, [shownID])
   if (state.phase !== 'holding' || !state.shown) return null
   const byID = new Map(spaces.map((space) => [space.id, space]))
   const options = state.order.flatMap((id) => {
@@ -20,7 +29,6 @@ export function SpaceSwitcher({ state, spaces, activeID, attention, onChoose }: 
     return space ? [space] : []
   })
   const highlighted = state.order[state.index]
-  const optionID = (id: string) => `space-switcher-${encodeURIComponent(id)}`
   const current = highlighted ? byID.get(highlighted) : undefined
   return <div className="space-switcher-backdrop" role="presentation">
     <div className="space-switcher" role="listbox" aria-label="Switch space" tabIndex={-1}

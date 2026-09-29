@@ -1,14 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { bindSpaceSwitcher } from '../layout/shellShortcuts'
-import { idleSwitcher, reduceSwitcher, switcherRevealDelayMs, type SwitcherEvent } from '../spaces/index.ts'
+import {
+  idleSwitcher,
+  mruSpaceIDs,
+  readSpaceMRU,
+  reduceSwitcher,
+  switcherRevealDelayMs,
+  touchSpaceMRU,
+  writeSpaceMRU,
+  type SpaceDefinition,
+  type SwitcherEvent,
+} from '../spaces/index.ts'
 
-// useSpaceSwitcher owns the ⌥Tab switcher: the reducer state, the delayed
-// reveal and the window key bindings. mruOrder is read when ⌥Tab opens it.
-export function useSpaceSwitcher({ enabled, mruOrder, switchSpace }: {
+// useSpaceSwitcher owns the ⌥Tab switcher: the persisted MRU space order,
+// the reducer state, the delayed reveal and the window key bindings. The
+// MRU order is read when ⌥Tab opens it.
+export function useSpaceSwitcher({ enabled, spaces, activeSpaceID, switchSpace }: {
   enabled: boolean
-  mruOrder: readonly string[]
+  spaces: SpaceDefinition[]
+  activeSpaceID: string | null
   switchSpace: (id: string) => boolean
 }) {
+  const [initialMRU] = useState(() => readSpaceMRU(localStorage))
+  const [mru, setMRU] = useState<readonly string[]>(initialMRU.order)
+  const mruState = useRef(initialMRU.state)
+  useEffect(() => {
+    if (activeSpaceID) setMRU((order) => touchSpaceMRU(order, activeSpaceID))
+  }, [activeSpaceID])
+  useEffect(() => {
+    mruState.current = writeSpaceMRU(localStorage, mru, mruState.current)
+  }, [mru])
+  const mruOrder = useMemo(() => mruSpaceIDs(mru, spaces, activeSpaceID), [activeSpaceID, mru, spaces])
+
   const [state, setState] = useState(idleSwitcher)
   const stateRef = useRef(state)
   const orderRef = useRef(mruOrder)

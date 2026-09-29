@@ -121,8 +121,9 @@ export type SpaceSwitcherKeys = {
   intent: (intent: SwitcherIntent) => void
 }
 
-// switcherKeyIntent maps a key pressed while the switcher is held. A key
-// arriving without Alt means the Alt keyup was missed, so it commits.
+// switcherKeyIntent maps a key pressed while the switcher is held; null
+// keys are swallowed without effect. A key arriving without Alt means the
+// Alt keyup was missed, so it commits.
 export function switcherKeyIntent(event: Pick<KeyboardEvent, 'key' | 'altKey'>): SwitcherIntent | null {
   if (event.key === 'Escape') return 'cancel'
   if (event.key === 'ArrowDown') return 'forward'
@@ -141,13 +142,15 @@ export function bindSpaceSwitcher(target: Window, keys: SpaceSwitcherKeys) {
     'Alt+Tab': claimed(() => keys.cycle('forward')),
     'Shift+Alt+Tab': claimed(() => keys.cycle('backward')),
   }, { capture: true, ignore: (event) => event.isComposing })
+  // While held, every key but ⌥Tab itself belongs to the switcher: it is
+  // consumed here, in the window's capture phase, so no shell shortcut
+  // (Alt+W, ⇧⌥←/→ …) or panel mutates the workspace under the overlay.
   const keydown = (event: KeyboardEvent) => {
     if (!keys.holding() || (event.key === 'Tab' && event.altKey)) return
-    const intent = switcherKeyIntent(event)
-    if (!intent) return
     event.preventDefault()
-    event.stopPropagation()
-    keys.intent(intent)
+    event.stopImmediatePropagation()
+    const intent = switcherKeyIntent(event)
+    if (intent) keys.intent(intent)
   }
   const keyup = (event: KeyboardEvent) => {
     if (keys.holding() && (event.key === 'Alt' || !event.altKey)) keys.intent('release')

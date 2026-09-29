@@ -163,6 +163,15 @@ GET `/api/fleet`
   - `context_used` — used tokens from the serve's in-process observer. It is
     absent when the observer does not know the session and is never persisted;
     the board does not fall back to reading transcripts directly.
+  - `turn_end_id` — the hcom status event id of the agent's latest completed
+    turn: the newest event where it went from `active` or `blocked` to
+    `listening` (a launch from `pending` or a reattach from `inactive` is not
+    a turn). The serve folds hcom's listening entries through one
+    process-local id cursor (a bounded baseline of recent entries, then only
+    newer ones); a new session for the name clears it. Present on placed panes
+    and unplaced rows alike, and on subagent rows; absent until the current
+    incarnation finishes a turn the serve has seen. Ids are monotonic, so a
+    browser can keep one as a read marker per agent name.
 
   `created_at` is hcom-mastered: it is the roster's own creation time,
   passed through unchanged. `manager`, `manager_state` and `title` are

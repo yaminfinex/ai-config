@@ -337,6 +337,36 @@ test('a key without Option while held means the release was missed, so it commit
   }
 })
 
+test('while held, every other key is consumed before any shell shortcut: Alt+W, Shift-Option-arrows and Option-arrows change nothing', () => {
+  const target = new WindowLikeTarget()
+  const calls: string[] = []
+  // The switcher binds in the capture phase, so it runs before the bubble
+  // phase shell shortcuts; this flat target runs listeners in bind order.
+  const switcher = heldSwitcher(target, ['now', 'last', 'older'])
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    dispatch(target, altTab)
+    for (const init of [
+      { key: '∑', code: 'KeyW', altKey: true },
+      { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true, shiftKey: true },
+      { key: 'ArrowRight', code: 'ArrowRight', altKey: true, shiftKey: true },
+      { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true },
+      { key: 'Dead', code: 'Digit3', altKey: true },
+    ]) {
+      assert.equal(dispatch(target, init).defaultPrevented, true, init.code)
+    }
+    assert.deepEqual(calls, [], 'no shell shortcut ran under the held switcher')
+    assert.deepEqual(switcher.state(), { phase: 'holding', order: ['now', 'last', 'older'], index: 1, shown: false })
+    keyup(target, { key: 'Alt', code: 'AltLeft' })
+    assert.deepEqual(switcher.commits, ['last'])
+    dispatch(target, { key: '∑', code: 'KeyW', altKey: true })
+    assert.deepEqual(calls, ['close'], 'released, shortcuts work again')
+  } finally {
+    unsubscribe()
+    switcher.dispose()
+  }
+})
+
 test('Option-Tab is left to the browser with fewer than two spaces or while spaces are unavailable', () => {
   const single = new WindowLikeTarget()
   const one = heldSwitcher(single, ['only'])

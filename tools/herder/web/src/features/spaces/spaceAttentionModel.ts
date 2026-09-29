@@ -1,7 +1,7 @@
-import type { Board, Pane, Row } from '../../types.ts'
+import type { Board, Row } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { panelParams, readStoredSpaceLayout } from '../layout/dockLayout.ts'
-import { setMarkers, type ReadMarkers } from './readMarkerStore.ts'
+import { keepMarkers, setMarkers, type ReadMarkers } from './readMarkerStore.ts'
 
 export type SpaceAttention = { unread: string[], blocked: string[] }
 export const quietAttention: SpaceAttention = { unread: [], blocked: [] }
@@ -28,20 +28,21 @@ export function storedSpaceAgents(storage: Pick<Storage, 'getItem'>, spaceID: st
   }
 }
 
-// turnFingerprint is the turn-end signal: while an agent is listening, its
-// session plus the context tokens herder folds from the transcript's
-// last API call. Every finished turn moves context_used, a new session
-// resets it, and both survive the browser closing. No fingerprint (not
-// listening, or no vitals yet) means nothing can be unread.
-export function turnFingerprint(row: Row | undefined): string | null {
-  if (!row || row.bus_status !== 'listening' || typeof row.context_used !== 'number') return null
-  return `${(row as Pane).agent_session ?? ''}:${row.context_used}`
+// turnEnd is the turn-end signal: the id of the agent's latest completed
+// turn, stamped by the serve on placed panes and unplaced rows alike. No id
+// means nothing can be unread; a retired or stopped agent never counts.
+export function turnEnd(row: Row | undefined): number | null {
+  if (!row || row.bus_status === 'retired' || row.bus_status === 'stopped') return null
+  return typeof row.turn_end_id === 'number' && row.turn_end_id > 0 ? row.turn_end_id : null
 }
 
-export function agentAttention(row: Row | undefined, marker: string | undefined): 'blocked' | 'unread' | null {
+// agentAttention: blocked always shows; unread is a turn that ended after
+// the marker. With no marker the baseline is unknown, so nothing is unread
+// until seeding records one.
+export function agentAttention(row: Row | undefined, marker: number | undefined): 'blocked' | 'unread' | null {
   if (row?.bus_status === 'blocked') return 'blocked'
-  const fingerprint = turnFingerprint(row)
-  return fingerprint !== null && marker !== undefined && fingerprint !== marker ? 'unread' : null
+  const id = turnEnd(row)
+  return id !== null && marker !== undefined && id > marker ? 'unread' : null
 }
 
 export function spaceAttention(board: Board | undefined, agents: readonly string[], markers: ReadMarkers): SpaceAttention {
@@ -53,31 +54,52 @@ export function spaceAttention(board: Board | undefined, agents: readonly string
   return result
 }
 
-// seedReadMarkers gives every open agent the board has never marked a
-// marker at first sight, so a panel only turns unread for a turn that ends
-// after it was in the layout. It waits for a board: seeding blind would
-// record "no turn yet" and light up every agent when the board arrives.
+// seedReadMarkers silently records the current turn end of every open agent
+// that has none: one never seen, or one whose first turn_end_id arrives
+// late (an unknown baseline is not a new completion). A panel then turns
+// unread only for a turn that ends after that.
 export function seedReadMarkers(markers: ReadMarkers, board: Board | undefined, agents: readonly string[]): ReadMarkers {
-  if (!board) return markers
-  const updates: Record<string, string> = {}
+  const updates: Record<string, number> = {}
   for (const name of agents) {
     if (markers[name] !== undefined) continue
-    const row = findAgentRow(board, name)
-    if (row) updates[name] = turnFingerprint(row) ?? ''
+    const id = turnEnd(findAgentRow(board, name))
+    if (id !== null) updates[name] = id
   }
   return setMarkers(markers, updates)
 }
 
-// markViewedRead records the current turn of each agent the owner has been
-// looking at for the dwell. An agent mid-turn keeps its old marker so the
-// turn it is running still lands as unread if the owner looks away first.
+// markViewedRead records the latest turn end of each agent the owner has
+// been looking at for the dwell. A turn still running has no id yet, so it
+// lands as unread if the owner looks away before it ends.
 export function markViewedRead(markers: ReadMarkers, board: Board | undefined, viewed: readonly string[]): ReadMarkers {
-  const updates: Record<string, string> = {}
+  const updates: Record<string, number> = {}
   for (const name of viewed) {
-    const fingerprint = turnFingerprint(findAgentRow(board, name))
-    if (fingerprint !== null) updates[name] = fingerprint
+    const id = turnEnd(findAgentRow(board, name))
+    if (id !== null && id > (markers[name] ?? 0)) updates[name] = id
   }
   return setMarkers(markers, updates)
+}
+
+// boardAgents names every agent row on the board, placed, unplaced or
+// subagent.
+export function boardAgents(board: Board): Set<string> {
+  const names = new Set<string>()
+  const visit = (row: Row) => {
+    if (row.agent) names.add(row.agent)
+    for (const child of row.subagents ?? []) visit(child)
+  }
+  for (const workspace of board.workspaces) for (const tab of workspace.tabs) for (const pane of tab.panes) visit(pane)
+  for (const row of board.unplaced) visit(row)
+  return names
+}
+
+// pruneReadMarkers forgets agents that are neither open in any space nor on
+// the board. It waits for a board, and never drops an open agent's marker.
+export function pruneReadMarkers(markers: ReadMarkers, board: Board | undefined, openAgents: readonly string[]): ReadMarkers {
+  if (!board) return markers
+  const keep = boardAgents(board)
+  for (const name of openAgents) keep.add(name)
+  return keepMarkers(markers, keep)
 }
 
 export function attentionLabel(attention: SpaceAttention): string {
