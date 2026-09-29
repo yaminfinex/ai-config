@@ -87,13 +87,19 @@ test('an agent is unread only when a turn ended after the marker this browser ho
   assert.equal(agentAttention(pane('a', 'listening', { context_used: 900 }), 41), null, 'no turn_end_id: never unread')
 })
 
-test('blocked always shows, read or not and with or without a turn end; retired and unknown agents never count', () => {
+test('blocked always shows, read or not and with or without a turn end', () => {
   assert.equal(agentAttention(pane('a', 'blocked'), undefined), 'blocked')
   assert.equal(agentAttention(pane('a', 'blocked'), 12), 'blocked')
   assert.equal(agentAttention(pane('a', 'blocked', { turn_end_id: 5 }), 5), 'blocked')
-  assert.equal(agentAttention(pane('a', 'stopped', { turn_end_id: 5 }), 1), null)
-  assert.equal(agentAttention(pane('a', 'retired', { turn_end_id: 5 }), 1), null)
   assert.equal(agentAttention(undefined, 1), null)
+})
+
+test('unread is allow-listed to listening and active; every other status with a newer turn never counts', () => {
+  assert.equal(agentAttention(pane('a', 'listening', { turn_end_id: 110 }), 100), 'unread')
+  assert.equal(agentAttention(pane('a', 'active', { turn_end_id: 110 }), 100), 'unread', 'an unviewed turn stays unread while the next one runs')
+  for (const status of ['unknown', '-', 'inactive', 'pending', 'retired', 'stopped', '']) {
+    assert.equal(agentAttention(pane('a', status, { turn_end_id: 110 }), 100), null, status)
+  }
 })
 
 test('space attention collects unread and blocked open agents from the board, subagents and unplaced included', () => {

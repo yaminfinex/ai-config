@@ -18,9 +18,9 @@ func TestFoldBoardTurnEndsStampsPlacedUnplacedAndSubagentsByBaseName(t *testing.
 	ends.Apply(hcomevents.Status{ID: 42, Instance: "vava", OldStatus: "active", NewStatus: "listening", Session: "s2"})
 	ends.Apply(hcomevents.Status{ID: 43, Instance: "kiro", OldStatus: "blocked", NewStatus: "listening", Session: "s3"})
 	roster := []hcomidentity.Row{
-		{Name: "impl-dore", BaseName: "dore"},
-		{Name: "vava", BaseName: "vava"},
-		{Name: "review-kiro", BaseName: "kiro"},
+		{Name: "impl-dore", BaseName: "dore", SessionID: "s1"},
+		{Name: "vava", BaseName: "vava", SessionID: "s2"},
+		{Name: "review-kiro", BaseName: "kiro", SessionID: "s3"},
 	}
 	subagents := fleetview.Rows{{Agent: "review-kiro"}}
 	board := fleetview.Board{
@@ -85,5 +85,43 @@ func TestStartTurnEndsFoldsTheSubscriptionIntoTheBoard(t *testing.T) {
 	}
 	if got := board.Workspaces[0].Tabs[0].Panes[0].TurnEndID; got != 50 {
 		t.Fatalf("placed turn_end_id = %d, want 50", got)
+	}
+}
+
+// A new incarnation, before its first turn end or while it is active when
+// the serve restarts, must not inherit the previous session's turn.
+func TestFoldBoardTurnEndsBelongToTheCurrentRosterIncarnation(t *testing.T) {
+	ends := hcomevents.NewTurnEnds()
+	ends.Apply(hcomevents.Status{ID: 41, Instance: "mole", OldStatus: "active", NewStatus: "listening", Session: "old-session"})
+	roster := []hcomidentity.Row{{Name: "impl-mole", BaseName: "mole", SessionID: "new-session", Status: "active"}}
+	board := fleetview.Board{Unplaced: []fleetview.Row{{Agent: "impl-mole", BusStatus: "active"}}}
+	foldBoardTurnEnds(&board, roster, ends)
+	if got := board.Unplaced[0].TurnEndID; got != 0 {
+		t.Fatalf("new-session received old-session turn_end_id=%d", got)
+	}
+	ends.Apply(hcomevents.Status{ID: 60, Instance: "mole", OldStatus: "active", NewStatus: "listening", Session: "new-session"})
+	foldBoardTurnEnds(&board, roster, ends)
+	if got := board.Unplaced[0].TurnEndID; got != 60 {
+		t.Fatalf("new-session's own turn = %d, want 60", got)
+	}
+}
+
+func TestFoldBoardTurnEndsDistinctSessionsSharingABaseNameDoNotShare(t *testing.T) {
+	ends := hcomevents.NewTurnEnds()
+	ends.Apply(hcomevents.Status{ID: 41, Instance: "mole", OldStatus: "active", NewStatus: "listening", Session: "session-one"})
+	roster := []hcomidentity.Row{
+		{Name: "impl-mole", BaseName: "mole", SessionID: "session-one"},
+		{Name: "review-mole", BaseName: "mole", SessionID: "session-two"},
+	}
+	board := fleetview.Board{Unplaced: []fleetview.Row{{Agent: "impl-mole"}, {Agent: "review-mole"}, {Agent: "not-in-roster"}}}
+	foldBoardTurnEnds(&board, roster, ends)
+	if got := board.Unplaced[0].TurnEndID; got != 41 {
+		t.Fatalf("session-one = %d, want 41", got)
+	}
+	if got := board.Unplaced[1].TurnEndID; got != 0 {
+		t.Fatalf("session-two received session-one turn_end_id=%d", got)
+	}
+	if got := board.Unplaced[2].TurnEndID; got != 0 {
+		t.Fatalf("a row outside the roster got a turn: %d", got)
 	}
 }

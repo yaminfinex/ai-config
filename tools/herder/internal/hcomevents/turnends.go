@@ -39,14 +39,18 @@ func (t *TurnEnds) Apply(status Status) {
 	t.agents[status.Instance] = current
 }
 
-// Lookup returns the agent's latest turn-end id, or false while the current
-// incarnation has not finished a turn this serve has seen.
-func (t *TurnEnds) Lookup(instance string) (int64, bool) {
-	if t == nil {
+// Lookup returns the agent's latest turn-end id for exactly the given
+// session, or false while that incarnation has not finished a turn this
+// serve has seen: an older session's turn never answers for a newer one.
+func (t *TurnEnds) Lookup(instance, session string) (int64, bool) {
+	if t == nil || session == "" {
 		return 0, false
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	current, ok := t.agents[instance]
-	return current.id, ok && current.id > 0
+	if !ok || current.session != session || current.id <= 0 {
+		return 0, false
+	}
+	return current.id, true
 }

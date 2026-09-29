@@ -1147,26 +1147,26 @@ func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup s
 // foldBoardTurnEnds stamps each agent's latest turn end on every row and
 // pane that names it, placed or not, so a browser's read marker follows the
 // agent. hcom keys status events by base name; a row resolves through its
-// roster row and falls back to its own name.
+// roster row, and only a turn folded from that row's current session counts,
+// so a new incarnation or a namesake never inherits another session's turn.
 func foldBoardTurnEnds(board *fleetview.Board, roster []hcomidentity.Row, ends *hcomevents.TurnEnds) {
 	if ends == nil {
 		return
 	}
-	baseNames := make(map[string]string, len(roster))
+	rosterRows := make(map[string]hcomidentity.Row, len(roster))
 	for _, row := range roster {
-		if row.BaseName != "" {
-			baseNames[row.Name] = row.BaseName
-		}
+		rosterRows[row.Name] = row
 	}
 	turnEnd := func(name string) int64 {
-		if name == "" {
+		row, ok := rosterRows[name]
+		if name == "" || !ok {
 			return 0
 		}
-		instance := baseNames[name]
+		instance := row.BaseName
 		if instance == "" {
-			instance = name
+			instance = row.Name
 		}
-		id, _ := ends.Lookup(instance)
+		id, _ := ends.Lookup(instance, row.SessionID)
 		return id
 	}
 	var foldRows func([]fleetview.Row)

@@ -168,9 +168,11 @@ GET `/api/fleet`
     `listening` (a launch from `pending` or a reattach from `inactive` is not
     a turn). The serve folds hcom's listening entries through one
     process-local id cursor (a bounded baseline of recent entries, then only
-    newer ones); a new session for the name clears it. Present on placed panes
-    and unplaced rows alike, and on subagent rows; absent until the current
-    incarnation finishes a turn the serve has seen. Ids are monotonic, so a
+    newer ones); a new session for the name clears it. Stamped only when the
+    folded turn's session equals the row's current roster `session_id`, so a
+    new incarnation or a namesake never inherits another session's turn.
+    Present on placed panes and unplaced rows alike, and on subagent rows;
+    absent until the current incarnation finishes a turn the serve has seen. Ids are monotonic, so a
     browser can keep one as a read marker per agent name.
 
   `created_at` is hcom-mastered: it is the roster's own creation time,

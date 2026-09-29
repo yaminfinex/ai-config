@@ -36,11 +36,16 @@ export function turnEnd(row: Row | undefined): number | null {
   return typeof row.turn_end_id === 'number' && row.turn_end_id > 0 ? row.turn_end_id : null
 }
 
+// Only a listening agent, or one already on its next turn, can be waiting
+// on a finished turn; inactive, pending, unknown or '-' never count.
+const unreadStatuses = new Set(['listening', 'active'])
+
 // agentAttention: blocked always shows; unread is a turn that ended after
 // the marker. With no marker the baseline is unknown, so nothing is unread
 // until seeding records one.
 export function agentAttention(row: Row | undefined, marker: number | undefined): 'blocked' | 'unread' | null {
   if (row?.bus_status === 'blocked') return 'blocked'
+  if (!row || !unreadStatuses.has(row.bus_status)) return null
   const id = turnEnd(row)
   return id !== null && marker !== undefined && id > marker ? 'unread' : null
 }
