@@ -574,8 +574,10 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 				}
 				if kind == agentstore.KindMirrorReady {
 					// A cold-start seed above IS this event's one roster call.
-					// The session comes ONLY from the fresh result; a failed
-					// refresh writes the event unstamped whatever the cache holds.
+					// Name and session come together from that one fresh
+					// result, even when the cache refused it for a newer
+					// snapshot; a failed refresh writes the event unstamped
+					// under the cache's name, whatever the cache holds.
 					fresh, err := roster, error(nil)
 					if rosterReady {
 						observed := deps.rosterCache.clock()
@@ -584,11 +586,13 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 							deps.rosterCache.setObserved(fresh, observed)
 						}
 					}
-					name = resolve(life.Instance)
-					event.Name = name
 					if err == nil {
+						name = resolveInRoster(fresh, life.Instance, resolve)
 						event.Session = rosterSessionFor(fresh, name)
+					} else {
+						name = resolve(life.Instance)
 					}
+					event.Name = name
 				}
 				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
 					deps.audit("hcom life mirror: skip %d: %v", life.ID, err)
@@ -661,6 +665,22 @@ func startTurnEnds(ctx context.Context, deps dependencies) *hcomevents.TurnEnds 
 // the fresh result. A failed refresh leaves the cache as it was and the event
 // is written unstamped (whatever the cache holds) without an error.
 // mirror.created never stamps a session.
+// resolveInRoster resolves raw against one roster snapshot the way
+// rosterCache.resolve does, so a name and the session looked up from the
+// same rows belong to one incarnation. A name the snapshot does not know
+// falls back to fallback (the cache's remembered names).
+func resolveInRoster(rows []hcomidentity.Row, raw string, fallback func(string) string) string {
+	if row, ok := hcomidentity.ByUniqueBaseName(rows, raw); ok {
+		return row.Name
+	}
+	for _, row := range rows {
+		if row.BaseName == raw || row.Name == raw {
+			return raw
+		}
+	}
+	return fallback(raw)
+}
+
 func rosterSessionFor(rows []hcomidentity.Row, name string) string {
 	for _, row := range rows {
 		if row.Name == name {
