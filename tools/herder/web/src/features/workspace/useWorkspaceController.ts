@@ -32,6 +32,7 @@ import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
 import { useSpaceAttention } from './useSpaceAttention'
 import { useSpaceSwitcher } from './useSpaceSwitcher'
+import { useSpaceMembers } from './useSpaceMembers'
 import { useSwitchSpaceFocusing } from './useSwitchSpaceFocusing'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import { useNotes } from '../notes/NotesProvider.tsx'
@@ -377,10 +378,21 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const provenScreenPaneIDs = openPanels.flatMap((params) => params.kind === 'screen' && screenIdentityState(params, boardQuery.data) === 'ready' ? [params.identity.paneID] : [])
   const screenPaneIDs = screenSubscriptionPaneIDs(provenScreenPaneIDs, agentNames, agentScreenPanes, agentTailPanes)
   const focusedPane = focusedScreenPaneID && screenPaneIDs.includes(focusedScreenPaneID) ? focusedScreenPaneID : undefined
+  const onMembersStateChanged = useSpaceMembers({
+    store: spacesRuntime.store,
+    apiRef,
+    activeSpaceIDRef,
+    revision,
+    spaces,
+    syncDock,
+    withHistorySuppressed: historySuppressor.run,
+    onProblem: (problem) => setSpaceProblem(problem || spacesRuntime.store?.status().problem || ''),
+  })
   const onStateChanged = useCallback((namespace: string, rev: number) => {
     void spacesSyncRef.current?.stateChanged(namespace, rev)
+    onMembersStateChanged(namespace, rev)
     onNotesStateChanged(namespace, rev)
-  }, [onNotesStateChanged])
+  }, [onMembersStateChanged, onNotesStateChanged])
   useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane, onStateChanged)
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
