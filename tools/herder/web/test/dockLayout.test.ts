@@ -154,6 +154,26 @@ test('a panel is appended to the target active group with its exact params', () 
   assert.equal(dock?.grid.root.data[0].data.activeView, 'agent:ziru')
 })
 
+test('a single-group layout as Dockview serializes it reads clean and accepts a panel', () => {
+  // Dockview gives the root branch its own size and the lone leaf another.
+  const raw = JSON.stringify({ version: 4, dock: {
+    ...singleGroupDock,
+    grid: { root: { type: 'branch', data: [{ ...singleGroupDock.grid.root.data[0], size: 900 }], size: 876 }, width: 900, height: 876, orientation: 'HORIZONTAL' },
+  } })
+  assert.equal(parseStoredSpaceLayout(raw)?.salvaged, false)
+  const values = new Map<string, string>([['herder.web.layout.v4:target', raw], ['herder.web.layout.v4.last-good:target', raw]])
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  }
+  assert.equal(readStoredSpaceLayout(storage, 'target').recovering, false)
+  assert.deepEqual(writePanelToStoredSpace(storage, 'target', { kind: 'agent', name: 'ziru', preview: false }), { ok: true, duplicate: false })
+  const root = readStoredSpaceLayout(storage, 'target').stored?.dock?.grid.root
+  assert.equal(root?.size, 876)
+  assert.equal(root?.data[0].size, 900)
+  assert.deepEqual(root?.data[0].data.views, ['agent:mavu', 'file:%2Frepo:README.md', 'folder:%2Frepo:src', 'agent:ziru'])
+})
+
 test('an empty target receives one canonical branch-root group', () => {
   const values = new Map<string, string>([[
     'herder.web.layout.v4:empty', JSON.stringify({ version: 4, dock: null }),

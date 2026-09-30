@@ -23,3 +23,6 @@ export { highlightedSpace, idleSwitcher, reduceSwitcher, type SwitcherEvent, typ
 export { SpacesSection } from './SpacesSection.tsx'
 export { SpaceSwitcher } from './SpaceSwitcher.tsx'
 export { focusAtEnd, focusOrigin, switchFocusDecision, type SwitchFocusDecision, type SwitchFocusInput } from './switchFocusModel.ts'
+export { memberParams, membersFromDock, parseMembersRow, reconcileSpaceMembers, sameMembers, storedSpaceMembers, type SpaceMember, type SpaceMembersRow } from './spaceMembersModel.ts'
+export { createSpaceMembersStore, type SpaceMembersStore } from './spaceMembersStore.ts'
+export { browserSpaceMembersTransport, createSpaceMembersSync, createSpaceMembersSyncPersistence, spaceMembersNamespace, spaceMembersStoreSyncAdapter } from './spaceMembersSync.ts'

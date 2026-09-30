@@ -122,9 +122,8 @@ function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, 
     return []
   }))
   const keep = new Set(Object.keys(panels))
-  const prunedRoot = pruneGridNode(value.grid.root, keep)
-  if (!prunedRoot || keep.size === 0) return { dock: null, salvaged: true }
-  const root: GridNode = prunedRoot.type === 'branch' ? prunedRoot : { type: 'branch', data: [prunedRoot] }
+  const root = pruneGridRoot(value.grid.root, keep)
+  if (!root || keep.size === 0) return { dock: null, salvaged: true }
   if (JSON.stringify(root) !== JSON.stringify(value.grid.root)) salvaged = true
   const ids = groupIDs(root)
   const activeGroup = typeof value.activeGroup === 'string' && ids.has(value.activeGroup) ? value.activeGroup : firstGroupID(root)
@@ -396,6 +395,19 @@ function pruneGridNode(value: unknown, keep: Set<string>): GridNode | null {
     ...(typeof value.size === 'number' ? { size: value.size } : {}),
     ...(typeof value.visible === 'boolean' ? { visible: value.visible } : {}),
   }
+  return { type: 'branch', data: children, ...(typeof value.size === 'number' ? { size: value.size } : {}), ...(typeof value.visible === 'boolean' ? { visible: value.visible } : {}) }
+}
+
+// pruneGridRoot keeps the root a branch even when one leaf survives: Dockview
+// serializes a single-group dock that way, and collapsing it would move the
+// root's size onto the leaf and read every such layout as salvaged.
+function pruneGridRoot(value: UnknownRecord, keep: Set<string>): GridNode | null {
+  if (!Array.isArray(value.data)) return null
+  const children = value.data.flatMap((child) => {
+    const kept = pruneGridNode(child, keep)
+    return kept ? [kept] : []
+  })
+  if (children.length === 0) return null
   return { type: 'branch', data: children, ...(typeof value.size === 'number' ? { size: value.size } : {}), ...(typeof value.visible === 'boolean' ? { visible: value.visible } : {}) }
 }
 
