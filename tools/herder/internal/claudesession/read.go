@@ -246,21 +246,7 @@ func ReadSubagentTail(path string, limit int) (ReadResult, int64, error) {
 
 func readTail(path string, limit int, includeSidechain bool) (ReadResult, int64, error) {
 	result := ReadResult{}
-	var inspect func([]byte)
-	if !includeSidechain {
-		inspect = func(raw []byte) {
-			if tailSidechain(raw) {
-				result.Stats.SidechainSkipped++
-			}
-		}
-	}
-	end, err := sessionjsonl.ScanCompleteTail(path, inspect, func(raw []byte, line, offset int64) bool {
-		entry, render, _ := classifyMode(raw, line, offset, includeSidechain)
-		if render {
-			result.Entries = append(result.Entries, entry)
-		}
-		return len(result.Entries) < limit
-	})
+	end, _, err := sessionjsonl.ScanCompleteTail(path, BackwardVisit(&result, limit, claudeClassifier(includeSidechain)))
 	if err != nil {
 		return ReadResult{}, 0, err
 	}
@@ -273,108 +259,70 @@ func readTail(path string, limit int, includeSidechain bool) (ReadResult, int64,
 	return result, from, nil
 }
 
-func tailSidechain(raw []byte) bool {
-	if !json.Valid(raw) {
-		return false
+// Classifier reports one record as (entry, render, sidechain skipped).
+type Classifier func(raw []byte, line, offset int64) (Entry, bool, bool)
+
+func claudeClassifier(includeSidechain bool) Classifier {
+	return func(raw []byte, line, offset int64) (Entry, bool, bool) {
+		return classifyMode(raw, line, offset, includeSidechain)
 	}
-	i := skipJSONSpace(raw, 0)
-	if i >= len(raw) || raw[i] != '{' {
-		return false
-	}
-	i++
-	candidate := false
-	for {
-		i = skipJSONSpace(raw, i)
-		if i >= len(raw) || raw[i] == '}' {
-			break
-		}
-		if raw[i] != '"' {
-			return false
-		}
-		keyStart := i
-		i = jsonStringEnd(raw, i)
-		keyRaw := raw[keyStart:i]
-		isSidechain := bytes.Equal(keyRaw, []byte(`"isSidechain"`))
-		if !isSidechain && bytes.IndexByte(keyRaw, '\\') >= 0 {
-			key, err := strconv.Unquote(string(keyRaw))
-			isSidechain = err == nil && key == "isSidechain"
-		}
-		i = skipJSONSpace(raw, i)
-		if i >= len(raw) || raw[i] != ':' {
-			return false
-		}
-		i = skipJSONSpace(raw, i+1)
-		valueEnd := jsonValueEnd(raw, i)
-		if isSidechain {
-			candidate = bytes.Equal(bytes.TrimSpace(raw[i:valueEnd]), []byte("true"))
-		}
-		i = skipJSONSpace(raw, valueEnd)
-		if i < len(raw) && raw[i] == ',' {
-			i++
-			continue
-		}
-		if i >= len(raw) || raw[i] != '}' {
-			return false
-		}
-		break
-	}
-	if !candidate {
-		return false
-	}
-	var env envelope
-	return json.Unmarshal(raw, &env) == nil && env.IsSidechain
 }
 
-func skipJSONSpace(raw []byte, i int) int {
-	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\t' || raw[i] == '\r' || raw[i] == '\n') {
-		i++
+// BackwardVisit folds a newest-first scan into result until limit renderable
+// entries are held. SidechainSkipped counts only the records the scan
+// visited, so a tail or backward window costs its window, not the file.
+func BackwardVisit(result *ReadResult, limit int, classify Classifier) func(raw []byte, line, offset int64) bool {
+	return func(raw []byte, line, offset int64) bool {
+		entry, render, sidechain := classify(raw, line, offset)
+		if sidechain {
+			result.Stats.SidechainSkipped++
+		} else if render {
+			result.Entries = append(result.Entries, entry)
+		}
+		return len(result.Entries) < limit
 	}
-	return i
 }
 
-func jsonStringEnd(raw []byte, start int) int {
-	for i := start + 1; i < len(raw); i++ {
-		if raw[i] == '\\' {
-			i++
-			continue
-		}
-		if raw[i] == '"' {
-			return i + 1
-		}
-	}
-	return len(raw)
+// ReadBefore returns up to limit renderable complete entries that end at or
+// before cursor.Offset, oldest-first, skipping sidechain records like ReadWindow.
+func ReadBefore(path, sessionID string, cursor Cursor, limit int) (BeforeResult, error) {
+	return ReadBeforeWith(path, sessionID, cursor, limit, claudeClassifier(false))
 }
 
-func jsonValueEnd(raw []byte, start int) int {
-	if start >= len(raw) {
-		return start
+// ReadSubagentBefore is ReadBefore over a proven dedicated Task transcript,
+// rendering its sidechain records like ReadSubagentWindow.
+func ReadSubagentBefore(path, transcriptID string, cursor Cursor, limit int) (BeforeResult, error) {
+	return ReadBeforeWith(path, transcriptID, cursor, limit, claudeClassifier(true))
+}
+
+// ReadBeforeWith is the backward window for any transcript classifier.
+// cursor.Offset must be a record boundary a previous read produced
+// (sessionjsonl.ErrNotRecordBoundary otherwise). A cursor from another
+// session or past the current size is an explicit Reset, like a forward tail.
+// Read.NextOffset is cursor.Offset; PrevOffset is the first returned entry's
+// offset, or 0 once no complete record remains before the window.
+func ReadBeforeWith(path, sessionID string, cursor Cursor, limit int, classify Classifier) (BeforeResult, error) {
+	if limit < 1 {
+		return BeforeResult{}, fmt.Errorf("session entry limit must be positive: %d", limit)
 	}
-	if raw[start] == '"' {
-		return jsonStringEnd(raw, start)
+	if cursor.SessionID != "" && cursor.SessionID != sessionID {
+		return BeforeResult{Reset: &Reset{Reason: ResetSessionChanged, PreviousSessionID: cursor.SessionID, SessionID: sessionID, PreviousOffset: cursor.Offset}}, nil
 	}
-	if raw[start] != '{' && raw[start] != '[' {
-		for i := start; i < len(raw); i++ {
-			if raw[i] == ',' || raw[i] == '}' {
-				return i
-			}
-		}
-		return len(raw)
+	result := ReadResult{NextOffset: cursor.Offset}
+	reachedStart, err := sessionjsonl.ScanCompleteBefore(path, cursor.Offset, BackwardVisit(&result, limit, classify))
+	var beyond *sessionjsonl.BeyondSizeError
+	if errors.As(err, &beyond) {
+		return BeforeResult{Reset: &Reset{Reason: ResetTruncated, PreviousSessionID: cursor.SessionID, SessionID: sessionID, PreviousOffset: cursor.Offset}}, nil
 	}
-	depth := 0
-	for i := start; i < len(raw); i++ {
-		switch raw[i] {
-		case '"':
-			i = jsonStringEnd(raw, i) - 1
-		case '{', '[':
-			depth++
-		case '}', ']':
-			depth--
-			if depth == 0 {
-				return i + 1
-			}
-		}
+	if err != nil {
+		return BeforeResult{}, err
 	}
-	return len(raw)
+	slices.Reverse(result.Entries)
+	var prev int64
+	if !reachedStart && len(result.Entries) > 0 {
+		prev = result.Entries[0].ByteOffset
+	}
+	return BeforeResult{Read: result, PrevOffset: prev}, nil
 }
 
 func lineAt(f *os.File, offset int64) (int64, error) {

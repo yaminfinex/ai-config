@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/sessionjsonl"
 )
 
@@ -219,13 +220,7 @@ func ReadTail(path string, limit int) (ReadResult, int64, error) {
 		return ReadResult{}, 0, fmt.Errorf("session entry limit must be positive: %d", limit)
 	}
 	result := ReadResult{}
-	end, err := sessionjsonl.ScanCompleteTail(path, nil, func(raw []byte, line, offset int64) bool {
-		entry, render := classify(raw, line, offset)
-		if render {
-			result.Entries = append(result.Entries, entry)
-		}
-		return len(result.Entries) < limit
-	})
+	end, _, err := sessionjsonl.ScanCompleteTail(path, claudesession.BackwardVisit(&result, limit, classifyWindow))
 	if err != nil {
 		return ReadResult{}, 0, err
 	}
@@ -236,6 +231,20 @@ func ReadTail(path string, limit int) (ReadResult, int64, error) {
 		from = result.Entries[0].ByteOffset
 	}
 	return result, from, nil
+}
+
+// ReadBefore returns up to limit renderable complete rollout entries that end
+// at or before cursor.Offset, oldest-first, under claudesession.ReadBeforeWith's
+// boundary, reset and PrevOffset rules.
+func ReadBefore(path, sessionID string, cursor Cursor, limit int) (claudesession.BeforeResult, error) {
+	return claudesession.ReadBeforeWith(path, sessionID, cursor, limit, classifyWindow)
+}
+
+// classifyWindow adapts classify to the shared backward window. Rollouts have
+// no sidechain records.
+func classifyWindow(raw []byte, line, offset int64) (Entry, bool, bool) {
+	entry, render := classify(raw, line, offset)
+	return entry, render, false
 }
 
 func lineAt(f *os.File, offset int64) (int64, error) {

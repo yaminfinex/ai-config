@@ -812,6 +812,7 @@ func TestAgentEndpointUsesLiveFirstThenRetainedStoppedEvidence(t *testing.T) {
 	}
 
 	deps.roster = func() ([]hcomidentity.Row, error) { return nil, nil }
+	expireRosterCache(&deps)
 	queueReads := 0
 	deps.recentMessages = func(context.Context, int) ([]hcomevents.Message, error) {
 		queueReads++
@@ -858,6 +859,7 @@ func TestAgentEndpointCarriesOnlyProvenSubagentParent(t *testing.T) {
 			{Name: "probe-child", BaseName: "child", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active"},
 		}, nil
 	}
+	expireRosterCache(&deps)
 	response := httptest.NewRecorder()
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/probe-child", nil))
 	var detail agentDetail
@@ -871,6 +873,7 @@ func TestAgentEndpointCarriesOnlyProvenSubagentParent(t *testing.T) {
 	deps.roster = func() ([]hcomidentity.Row, error) {
 		return []hcomidentity.Row{{Name: "probe-child", BaseName: "child", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active"}}, nil
 	}
+	expireRosterCache(&deps)
 	response = httptest.NewRecorder()
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/probe-child", nil))
 	if err := json.Unmarshal(response.Body.Bytes(), &detail); err != nil {
@@ -887,6 +890,7 @@ func TestAgentEndpointCarriesOnlyProvenSubagentParent(t *testing.T) {
 			{Name: "probe-child", BaseName: "child", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active"},
 		}, nil
 	}
+	expireRosterCache(&deps)
 	response = httptest.NewRecorder()
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/agents/probe-child", nil))
 	detail = agentDetail{}
@@ -2074,4 +2078,10 @@ func readSSELine(t *testing.T, reader *bufio.Reader, want string) string {
 		t.Fatalf("timed out waiting for SSE line %q", want)
 		return ""
 	}
+}
+
+// expireRosterCache stands for RosterFreshness passing: the next per-agent
+// read asks the swapped roster live instead of the cached one.
+func expireRosterCache(deps *dependencies) {
+	deps.rosterCache = &rosterCache{}
 }

@@ -52,6 +52,12 @@ const (
 	HeartbeatCadence        = 15 * time.Second
 	TranscriptSafetyCadence = 30 * time.Second
 	ReloadDrainTimeout      = 150 * time.Second
+	// RosterFreshness bounds how old a cached roster a per-agent read may
+	// resolve an agent from. The observer's roster poll refreshes the cache
+	// every PollCadence and one `hcom list` takes ~0.2-0.5 s, so a running
+	// poll always keeps the cache inside this bound; past it (poll stalled,
+	// no observer) every per-agent read asks hcom live again.
+	RosterFreshness = PollCadence + time.Second
 	webNoteStart            = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
 	webNoteEnd              = "[HERDER_WEB_OPERATOR_NOTE_END]"
 )
@@ -115,6 +121,8 @@ type rosterCache struct {
 	mu          sync.RWMutex
 	rows        []hcomidentity.Row
 	initialized bool
+	now         func() time.Time // Stamps set; nil means time.Now.
+	at          time.Time
 	remembered  map[string]string
 	ambiguous   map[string]bool
 }
@@ -126,6 +134,7 @@ func (c *rosterCache) set(rows []hcomidentity.Row) {
 	c.mu.Lock()
 	c.rows = append([]hcomidentity.Row(nil), rows...)
 	c.initialized = true
+	c.at = c.clock()
 	if c.remembered == nil {
 		c.remembered = map[string]string{}
 		c.ambiguous = map[string]bool{}
@@ -151,6 +160,29 @@ func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return append([]hcomidentity.Row(nil), c.rows...), c.initialized
+}
+
+func (c *rosterCache) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// fresh returns the cached roster only while it was set within bound of now.
+// The stamp is when the `hcom list` answer arrived, so the rows can be at
+// most one list call older than bound.
+func (c *rosterCache) fresh(bound time.Duration) ([]hcomidentity.Row, bool) {
+	if c == nil {
+		return nil, false
+	}
+	now := c.clock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.initialized || now.Sub(c.at) > bound || now.Before(c.at) {
+		return nil, false
+	}
+	return append([]hcomidentity.Row(nil), c.rows...), true
 }
 
 func (c *rosterCache) resolve(raw string) string {
@@ -447,7 +479,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.buildIdentity = buildIdentity
 	runtimeDependencies.configuredRoots = configuredRoots
 	runtimeDependencies.stateChanges = newStateChangeBroker()
-	runtimeDependencies.rosterCache = &rosterCache{}
+	runtimeDependencies.rosterCache = &rosterCache{now: runtimeDependencies.now}
 	runtimeDependencies.turnEnds = startTurnEnds(ctx, runtimeDependencies)
 	var socket *herdersock.Server
 	stateDir, stateDirErr := herderstate.Dir()
@@ -1337,7 +1369,21 @@ func transcriptParentName(row hcomidentity.Row, roster []hcomidentity.Row) strin
 // resolveAgentEvidence is deliberately live-first: a reused live name always
 // wins over an older stopped record. Stopped hcom history is the only retired
 // identity authority; a client-held session ID is never accepted as evidence.
+//
+// A roster the serve's own polls cached within RosterFreshness answers a name
+// it holds without another `hcom list` (GET /api/agents/{name} and
+// /api/agents/{name}/entries resolve per request). A name the cache lacks, or
+// a stale or invalid cache, asks hcom live, so a new incarnation's session
+// can be served the previous session's path for at most RosterFreshness.
 func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, bool, []hcomidentity.Row, error) {
+	if cached, ok := deps.rosterCache.fresh(RosterFreshness); ok && fleetview.ValidateRoster(cached) == nil {
+		cached = hcomidentity.WithParents(cached)
+		for _, row := range cached {
+			if row.Name == name {
+				return row, false, cached, nil
+			}
+		}
+	}
 	roster, err := deps.roster()
 	if err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", err}
@@ -1345,6 +1391,7 @@ func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, boo
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
+	deps.rosterCache.set(roster)
 	roster = hcomidentity.WithParents(roster)
 	for _, row := range roster {
 		if row.Name == name {
