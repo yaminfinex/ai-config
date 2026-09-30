@@ -5,11 +5,17 @@
 //! Steps: `wait:<ms>` · `key:<keystroke>` (GPUI syntax such as `cmd-=`, through
 //! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
-//! `cpu:<ms>` (CPU over `ms`, drawing a frame every 200 ms as a visible window does while a working dot
-//! pulses; a window behind others is not drawn at all). Units add `type:`, `cpuscroll:`, `keycpu:`.
+//! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile). Units add
+//! `type:`, `cpuscroll:` and `keycpu:` as they need them.
+//!
+//! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
+//! instead of behind, still without focus: a window behind others is never drawn, so measuring
+//! what a visible window costs needs one that is.
 
-use gpui_kit::{AsyncWindowContext, Keystroke};
+use crate::views::PULSE_PAINTS;
+use gpui_kit::{AsyncWindowContext, Keystroke, Pixels, Size, px, size};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 static T0: OnceLock<Instant> = OnceLock::new();
@@ -17,6 +23,24 @@ static T0: OnceLock<Instant> = OnceLock::new();
 /// Call once at the top of `main` so metrics are relative to process start.
 pub fn start_clock() {
     T0.get_or_init(Instant::now);
+}
+
+/// Shell renders, for the `cpu:` step.
+pub static RENDERS: AtomicU32 = AtomicU32::new(0);
+
+/// The window's size: `HERDER_NATIVE_WINDOW`, else 1400 × 900.
+pub fn window_size() -> Size<Pixels> {
+    let var = std::env::var("HERDER_NATIVE_WINDOW").unwrap_or_default();
+    let wh = var
+        .split_once('x')
+        .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
+    let (w, h) = wh.unwrap_or((1400.0, 900.0));
+    size(px(w), px(h))
+}
+
+/// A harness run whose window should be seen (in front, unfocused).
+pub fn visible() -> bool {
+    std::env::var("HERDER_NATIVE_VISIBLE").is_ok_and(|v| v == "1")
 }
 
 /// The script, if this is a harness run.
@@ -91,16 +115,25 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
             },
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
             "cpu" => {
-                let (ms, before) = (arg.parse().unwrap_or(10_000u64), cpu_s());
-                for _ in 0..ms / 200 {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(200))
-                        .await;
-                    let _ = cx.update(|window, cx| window.draw(cx).clear(cx));
-                }
+                let ms = arg.parse().unwrap_or(10_000u64);
+                let count = || {
+                    (
+                        PULSE_PAINTS.load(Ordering::Relaxed),
+                        RENDERS.load(Ordering::Relaxed),
+                    )
+                };
+                let (before, (paints, renders)) = (cpu_s(), count());
+                cx.background_executor()
+                    .timer(Duration::from_millis(ms))
+                    .await;
                 let pct = (cpu_s() - before) / (ms as f64 / 1000.0) * 100.0;
+                let (p, r) = (count().0 - paints, count().1 - renders);
+                let seen = cx
+                    .update(|_, _| crate::platform_mac::on_screen())
+                    .unwrap_or(false);
+                let on = if seen { "on screen" } else { "occluded" };
                 metric(format!(
-                    "cpu {pct:.1}% of one core over {ms} ms, drawing at the pulse rate"
+                    "cpu {pct:.2}% of one core over {ms} ms ({on}): {p} pulse paints, {r} shell renders"
                 ));
             }
             "shot" => {
@@ -124,7 +157,9 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
 fn shot(dir: &str, name: &str, cx: &mut AsyncWindowContext) -> Result<(), String> {
     let path = format!("{dir}/{name}.png");
     // render_to_image reads the last drawn scene; a window ordered behind others may not have drawn
-    // since the state changed, so draw now.
+    // since the state changed, so draw now, twice: a draw can queue a follow-up (revealing the selection).
+    cx.update(|window, cx| window.draw(cx).clear(cx))
+        .map_err(|e| e.to_string())?;
     let image = cx
         .update(|window, cx| {
             window.draw(cx).clear(cx);

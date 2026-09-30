@@ -3,16 +3,31 @@
 //! `global-hotkey` bridge (U6). Notifications use GPUI's own `show_system_notification`.
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::NSApplication;
+use objc2_app_kit::{NSApplication, NSWindow, NSWindowOcclusionState};
 
-/// Push every window of this app behind the other apps' windows without activating anything.
-/// Automated runs call this right after opening, so the owner keeps focus (settled decision 8).
-pub fn order_windows_back() {
+/// Push every window of this app behind the other apps' windows (or in front of them, `front`)
+/// without activating anything. Automated runs call this right after opening, so the owner keeps
+/// focus (settled decision 8).
+pub fn order_windows(front: bool) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
     let app = NSApplication::sharedApplication(mtm);
     for window in app.windows().iter() {
-        window.orderBack(None);
+        match front {
+            true => window.orderFrontRegardless(),
+            false => window.orderBack(None),
+        }
     }
+}
+
+/// Whether any window of this app is at least partly on screen (AppKit's occlusion state). An
+/// occluded window draws no frames, so the harness reports this beside a CPU figure.
+pub fn on_screen() -> bool {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let visible = |w: &NSWindow| w.occlusionState().contains(NSWindowOcclusionState::Visible);
+    app.windows().iter().any(|w| visible(&w))
 }

@@ -1,14 +1,13 @@
 //! Spaces and what is in them (U1), plus the owner's lens choices (U2).
 //!
-//! Spaces come from the `spaces` namespace and members from `spaces.members` (both server rows shared
-//! with web, tombstones dropped, ordered by `order` then id as web does; members in dock order). Local,
-//! never on the server (`Prefs`): the row each space sits in (focus / watch / background), the visible
-//! agent per space, and the seen mark per agent, which is what "needs you" compares the agent's latest
-//! turn against.
+//! Spaces come from the `spaces` namespace and members from `spaces.members` (server rows shared with
+//! web, tombstones dropped, ordered by `order` then id as web does; members in dock order). Local, never
+//! on the server (`Prefs`): each space's row, its visible agent, the spaces marked unread, and the seen
+//! mark per agent, which "needs you" compares the agent's latest turn and block against.
 
 use crate::api::{Member, MembersValue, SpaceValue, StateRow};
-use crate::store::fleet::Fleet;
-use crate::store::{Effect, Persist, Store};
+use crate::store::fleet::{Fleet, Status};
+use crate::store::{Effect, Persist, Prefs, Store};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -79,25 +78,42 @@ pub fn derive(
     out
 }
 
-/// Agents in this space whose latest turn the owner has not seen.
-pub fn needs_you(space: &Space, fleet: &Fleet, seen: &BTreeMap<String, u64>) -> usize {
-    space
-        .agents()
-        .filter(|name| {
-            let mark = seen.get(*name).copied();
-            fleet.agents.get(*name).is_some_and(|a| a.needs_you(mark))
-        })
-        .count()
+/// The owner's mark on one agent: the latest turn end seen, and whether its current block has been
+/// viewed. Before U2 the mark was the bare turn number; both forms read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(from = "SeenWire")]
+pub struct Seen {
+    pub turn_end: u64,
+    pub blocked: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SeenWire {
+    Turn(u64),
+    Mark { turn_end: u64, blocked: bool },
+}
+
+impl From<SeenWire> for Seen {
+    fn from(w: SeenWire) -> Self {
+        let (turn_end, blocked) = match w {
+            SeenWire::Turn(turn_end) => (turn_end, false),
+            SeenWire::Mark { turn_end, blocked } => (turn_end, blocked),
+        };
+        Seen { turn_end, blocked }
+    }
 }
 
 /// After a new board: an agent seen for the first time gets its current turn as the baseline (an
-/// unknown baseline is not a new turn); marks for agents neither on the board nor in a space are
-/// dropped. True when the marks changed.
-pub fn baseline_seen(seen: &mut BTreeMap<String, u64>, fleet: &Fleet, spaces: &[Space]) -> bool {
+/// unknown baseline is not a new turn), one no longer Blocked loses its block mark (blocking again
+/// alerts again), and marks for agents neither on the board nor in a space drop. True on a change.
+pub fn baseline_seen(seen: &mut BTreeMap<String, Seen>, fleet: &Fleet, spaces: &[Space]) -> bool {
     let before = seen.clone();
     for a in fleet.agents.values() {
-        if let Some(turn) = a.turn_end {
-            seen.entry(a.name.clone()).or_insert(turn);
+        if let Some(turn_end) = a.turn_end {
+            let fresh = SeenWire::Turn(turn_end).into();
+            let mark = seen.entry(a.name.clone()).or_insert(fresh);
+            mark.blocked &= a.status() == Status::Blocked;
         }
     }
     let members: Vec<&str> = spaces.iter().flat_map(|s| s.agents()).collect();
@@ -105,13 +121,18 @@ pub fn baseline_seen(seen: &mut BTreeMap<String, u64>, fleet: &Fleet, spaces: &[
     *seen != before
 }
 
-/// An owner move on the lens.
+/// An owner move on the lens. Spaces are named by id.
 #[derive(Clone, Debug)]
 pub enum Move {
-    /// The owner has looked at this agent's latest turn.
-    Seen(String),
-    /// Make this agent's latest turn unread again.
-    Unseen(String),
+    /// Zoomed into a space, looking at `agent`: the space's unread mark clears and the agent is seen.
+    View {
+        space: String,
+        agent: Option<String>,
+    },
+    /// `m`: every agent in the space is seen, and its unread mark clears.
+    Read(String),
+    /// `u`: the space needs you (bright, sticky) until the next zoom-in.
+    Unread(String),
     /// Put a space (by id) in a lens row.
     SetRow { space: String, row: Row },
     /// Show the space's (by id) next agent on its card.
@@ -122,19 +143,30 @@ pub enum Move {
 impl Store {
     pub(super) fn lens_move(&mut self, m: Move, out: &mut Vec<Effect>) {
         let (fleet, prefs) = (&self.fleet, &mut self.prefs);
+        let space = |id: &str| self.spaces.iter().find(|s| s.id == id);
         let changed = match m {
-            Move::Seen(name) => mark_seen(&mut prefs.seen, fleet, name),
-            Move::Unseen(name) => mark_unseen(&mut prefs.seen, fleet, name),
-            Move::SetRow { space, row } => prefs.rows.insert(space, row) != Some(row),
-            Move::CycleVisible(id) => {
-                let space = self.spaces.iter().find(|s| s.id == id);
-                space.is_some_and(|s| cycle_visible(s, fleet, &mut prefs.visible))
+            Move::View { space, agent } => {
+                let seen = agent.is_some_and(|a| mark_seen(&mut prefs.seen, fleet, &a));
+                prefs.unread.remove(&space) | seen
             }
+            Move::Read(id) => {
+                let agents = space(&id).into_iter().flat_map(Space::agents);
+                let seen = agents.fold(false, |c, a| mark_seen(&mut prefs.seen, fleet, a) | c);
+                prefs.unread.remove(&id) | seen
+            }
+            Move::Unread(id) => space(&id).is_some() && prefs.unread.insert(id),
+            Move::SetRow { space, row } => prefs.rows.insert(space, row) != Some(row),
+            Move::CycleVisible(id) => space(&id).is_some_and(|s| cycle_visible(s, fleet, prefs)),
         };
         if changed {
             out.push(Effect::Persist(Persist::Prefs));
-            self.ask_status_lines(out);
         }
+    }
+
+    /// How many agents in this space need you; at least one while the owner has marked it unread.
+    pub fn needs_you(&self, space: &Space) -> usize {
+        let agents = space.agents().filter(|a| self.agent_needs_you(a)).count();
+        agents.max(usize::from(self.prefs.unread.contains(&space.id)))
     }
 
     /// The spaces in lens order: focus, watch, background, each row in the store's order.
@@ -158,11 +190,10 @@ impl Store {
 
     /// Whether this agent needs you: `fleet::Agent::needs_you` against its seen mark.
     pub fn agent_needs_you(&self, name: &str) -> bool {
-        let seen = self.prefs.seen.get(name).copied();
-        self.fleet
-            .agents
-            .get(name)
-            .is_some_and(|a| a.needs_you(seen))
+        let seen = self.prefs.seen.get(name);
+        let (turn, block) = (seen.map(|s| s.turn_end), seen.is_some_and(|s| s.blocked));
+        let agent = self.fleet.agents.get(name);
+        agent.is_some_and(|a| a.needs_you(turn, block))
     }
 
     /// The first space after `from` in lens order that needs you, wrapping round to `from` itself
@@ -190,40 +221,30 @@ fn visible<'a>(
 }
 
 /// Show the next member on the board after the visible one, wrapping. True when the pick changed.
-fn cycle_visible(space: &Space, fleet: &Fleet, picks: &mut BTreeMap<String, String>) -> bool {
-    let Some(current) = visible(space, fleet, picks) else {
+fn cycle_visible(space: &Space, fleet: &Fleet, prefs: &mut Prefs) -> bool {
+    let Some(current) = visible(space, fleet, &prefs.visible) else {
         return false;
     };
-    let live: Vec<&str> = space
-        .agents()
-        .filter(|a| fleet.agents.contains_key(*a))
-        .collect();
-    let at = live.iter().position(|a| *a == current).unwrap_or(0);
-    let next = live[(at + 1) % live.len()].to_string();
-    picks.insert(space.id.clone(), next.clone()).as_ref() != Some(&next)
+    let live = || space.agents().filter(|a| fleet.agents.contains_key(*a));
+    let after = live().skip_while(|a| *a != current).nth(1);
+    let next = after.or_else(|| live().next()).unwrap_or(current);
+    let before = prefs.visible.insert(space.id.clone(), next.to_string());
+    before.as_deref() != Some(next)
 }
 
-/// The owner has looked at `name`'s latest turn. True when its mark moved.
-fn mark_seen(seen: &mut BTreeMap<String, u64>, fleet: &Fleet, name: String) -> bool {
-    let turn = fleet.agents.get(&name).and_then(|a| a.turn_end);
-    let mark = seen.entry(name).or_default();
-    match turn.filter(|t| t > mark) {
-        Some(turn) => {
-            *mark = turn;
-            true
-        }
-        None => false,
+/// The owner has looked at `name`: its latest turn and its current block are seen. An agent off the
+/// board, or with no turn and no block, gets no mark. True when the mark changed.
+fn mark_seen(seen: &mut BTreeMap<String, Seen>, fleet: &Fleet, name: &str) -> bool {
+    let Some(a) = fleet.agents.get(name) else {
+        return false;
+    };
+    let before = seen.get(name).copied().unwrap_or_default();
+    let mut mark = before;
+    mark.turn_end = mark.turn_end.max(a.turn_end.unwrap_or(0));
+    mark.blocked = a.status() == Status::Blocked;
+    let changed = mark != before;
+    if changed {
+        seen.insert(name.to_string(), mark);
     }
-}
-
-/// Make `name`'s latest turn unread again. True when its mark moved.
-fn mark_unseen(seen: &mut BTreeMap<String, u64>, fleet: &Fleet, name: String) -> bool {
-    let Some(before) = fleet
-        .agents
-        .get(&name)
-        .and_then(|a| a.turn_end?.checked_sub(1))
-    else {
-        return false;
-    };
-    seen.insert(name, before) != Some(before)
+    changed
 }

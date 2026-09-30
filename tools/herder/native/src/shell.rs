@@ -14,13 +14,12 @@
 //! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
 //! send was decided (`save_then_send`); a save still pending elsewhere cannot be overtaken.
 
-use crate::api::client::{Client, Page, base_url};
+use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
-use crate::store::transcript;
 use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
-use crate::views::{Host, lens, theme};
+use crate::views::{Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, theme};
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
@@ -35,10 +34,6 @@ const APP_ID: &str = "dev.herder.native";
 /// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
-/// Entries read for a card's `<status>` line: a turn ends with its text, a hook chip and its duration.
-const STATUS_TAIL: u32 = 12;
-
-actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 pub struct Shell {
     pub store: Store,
@@ -77,7 +72,6 @@ impl Shell {
             }
         })
         .detach();
-        lens::pulse(cx);
         Shell {
             store,
             ui: lens::Ui::new(cx),
@@ -237,11 +231,6 @@ fn run_fetch(client: &Client, fetch: Fetch) -> Event {
             };
             Event::Sync { ns, step }
         }
-        Fetch::StatusLine { agent, turn } => {
-            let tail = client.entries(&agent, &Page::Tail { limit: STATUS_TAIL });
-            let line = tail.ok().and_then(|t| transcript::status_line(&t.entries));
-            Event::StatusLine { agent, turn, line }
-        }
     }
 }
 
@@ -276,17 +265,14 @@ pub fn save_then_send(
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.painted {
-            self.painted = true;
-            let from = if self.store.spaces.is_empty() {
-                "empty"
-            } else {
-                "snapshot"
-            };
+        if !std::mem::replace(&mut self.painted, true) {
+            let empty = self.store.spaces.is_empty();
+            let from = if empty { "empty" } else { "snapshot" };
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
+        harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let t = theme::type_scale(self.store.prefs.text_scale);
-        let lens = lens::render(&self.store, &self.ui, t, cx);
+        let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()
             .id("root")
             .key_context("Lens")
@@ -318,21 +304,12 @@ pub fn run() {
         gpui_kit::init(cx);
         cx.set_app_identity(APP_ID, APP_NAME);
         theme::dark(cx);
-        // App-wide chords bind on `Lens` alone; navigation letters (`lens::bind`) use
-        // `Lens && !Input && !Terminal`, because a predicate sees the whole focus stack.
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, Some("Lens")),
-            KeyBinding::new("cmd-=", TextBigger, Some("Lens")),
-            KeyBinding::new("cmd-shift-=", TextBigger, Some("Lens")),
-            KeyBinding::new("cmd--", TextSmaller, Some("Lens")),
-            KeyBinding::new("cmd-0", TextReset, Some("Lens")),
-        ]);
-        lens::bind(cx);
+        crate::views::bind(cx);
         harness::metric("init done");
 
         let automated = script.is_some();
         let opts = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(1400.), px(900.)), cx)),
+            window_bounds: Some(WindowBounds::centered(harness::window_size(), cx)),
             titlebar: Some(TitlebarOptions {
                 title: Some(APP_NAME.into()),
                 ..Default::default()
@@ -341,10 +318,17 @@ pub fn run() {
             focus: !automated,
             ..Default::default()
         };
-        let (handle, shell) =
-            gpui_kit::open_window(opts, cx, |_, cx| cx.new(Shell::new)).expect("window");
+        let mut shell = None;
+        let frame = |_: &mut Window, cx: &mut App| {
+            let s = cx.new(Shell::new);
+            let dots = s.read(cx).ui.dots.clone();
+            shell = Some(s.clone());
+            cx.new(|cx| Frame::new(s.into(), dots, cx))
+        };
+        let (handle, _) = gpui_kit::open_window(opts, cx, frame).expect("window");
+        let shell = shell.expect("the window built the shell");
         if automated {
-            platform_mac::order_windows_back();
+            platform_mac::order_windows(harness::visible());
         } else {
             cx.activate(true);
         }
