@@ -1,8 +1,12 @@
-//! One agent's transcript as the compact view renders it (U3).
+//! One agent's transcript as the compact view renders it (U3). Pages arrive in both directions, so this
+//! is not an append-only fold.
 //!
-//! Raw `api::Entry` rows fold into `Item`s: prompts, deliveries, task notifications, system chips,
-//! compact dividers, assistant markdown (with `<internal>…</internal>` stripped and `<status>` unwrapped),
-//! thinking, tool calls paired with their results by `tool_use_id`, and errors. Items keep their
-//! `(session_id, byte_offset)` so the list has stable keys. Two cursors: `next_offset` reads forward on
-//! `entry:` wakes, `prev_offset` pages backward with `before=` until it reaches `0`. A `reset` or
-//! `rewindow` throws the window away and re-reads the tail.
+//! `items: BTreeMap<byte_offset, Item>` — row order is key order, so a `before=` page is an insertion
+//! and no stored index ever moves; rows are keyed `(session_id, byte_offset)`. Tool pairing uses
+//! `calls: HashMap<tool_use_id, byte_offset>` plus `orphans: HashMap<tool_use_id, ToolResult>`: a result
+//! whose call is known fills it, otherwise it waits in `orphans` until an older page brings the call.
+//! Cursors: `next_offset` is set only by tail and `from=` responses; `prev_offset` is seeded from the
+//! tail's `window.from` and then from each `before=` page's `prevOffset` (`0` = start of file); a
+//! `before=` response never touches `next_offset`. Every request carries `(session_id, generation)` and
+//! a response with a stale tag is dropped; `rewindow`/`reset` bumps the generation, clears everything and
+//! re-reads the tail. Assistant text has `<internal>…</internal>` stripped and `<status>` unwrapped.

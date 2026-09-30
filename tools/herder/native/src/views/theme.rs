@@ -33,8 +33,16 @@ pub fn type_scale(scale: f32) -> TypeScale {
     }
 }
 
-/// Push the scale into the kit's theme so its own widgets (inputs, lists, markdown) follow it.
+/// Push the scale into the kit's theme so its own widgets follow it: `font_size` for inputs, lists and
+/// markdown, `mono_font_size` for the code editor. The kit rebuilds its Base defaults only in
+/// `sync_base`, and open windows only pick the change up when refreshed.
 pub fn apply(scale: f32, cx: &mut App) {
     let t = type_scale(scale);
-    Theme::global_mut(cx).font_size = t.body;
+    {
+        let theme = Theme::global_mut(cx);
+        theme.font_size = t.body;
+        theme.mono_font_size = t.code;
+    }
+    Theme::sync_base(cx);
+    cx.refresh_windows();
 }

@@ -1,10 +1,13 @@
 //! Scripted runs for screenshots and metrics, driven by `HERDER_NATIVE_SCRIPT` (space-separated steps).
-//! Such a run opens its window without focus and behind everything else, and quits when told
-//! (settled decision 8). Steps in A0: `wait:<ms>` · `shot:<name>` (needs `--features shots`; written to
-//! `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`. Units add `key:`, `type:`, `cpuscroll:` and `keycpu:`
-//! as they need them; keys go through `Window::dispatch_keystroke`, the same path as real input.
+//! Such a run opens its window without focus and behind everything else, quits when the script ends,
+//! and exits non-zero when any step fails (settled decision 8 and the A0 review).
+//!
+//! Steps: `wait:<ms>` · `key:<keystroke>` (GPUI syntax such as `cmd-=`, through
+//! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
+//! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
+//! Units add `type:`, `cpuscroll:` and `keycpu:` as they need them.
 
-use gpui_kit::AsyncWindowContext;
+use gpui_kit::{AsyncWindowContext, Keystroke};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -49,6 +52,11 @@ pub fn rss_mb() -> f64 {
 
 pub async fn run(script: String, cx: &mut AsyncWindowContext) {
     let shot_dir = std::env::var("HERDER_NATIVE_SHOT_DIR").unwrap_or_else(|_| ".".into());
+    let mut failed = false;
+    let mut fail = |what: String| {
+        eprintln!("harness: FAILED {what}");
+        failed = true;
+    };
     for step in script.split_whitespace() {
         let (op, arg) = step.split_once(':').unwrap_or((step, ""));
         match op {
@@ -58,30 +66,52 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
                     .timer(Duration::from_millis(ms))
                     .await;
             }
+            "key" => match Keystroke::parse(arg) {
+                Ok(keystroke) => {
+                    let handled = cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
+                    match handled {
+                        Ok(true) => metric(format!("key {arg}")),
+                        _ => fail(format!("key {arg}: not handled by any binding")),
+                    }
+                }
+                Err(e) => fail(format!("key {arg}: {e}")),
+            },
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
-            "shot" => shot(&shot_dir, arg, cx),
-            "quit" => {
-                metric("quit");
-                let _ = cx.update(|_, cx| cx.quit());
+            "shot" => {
+                if let Err(e) = shot(&shot_dir, arg, cx) {
+                    fail(format!("shot {arg}: {e}"));
+                }
             }
-            _ => eprintln!("harness: unknown step {step}"),
+            "quit" => break,
+            _ => fail(format!("unknown step {step}")),
         }
     }
+    if failed {
+        metric("quit (failed)");
+        std::process::exit(1);
+    }
+    metric("quit");
+    let _ = cx.update(|_, cx| cx.quit());
 }
 
 #[cfg(feature = "shots")]
-fn shot(dir: &str, name: &str, cx: &mut AsyncWindowContext) {
+fn shot(dir: &str, name: &str, cx: &mut AsyncWindowContext) -> Result<(), String> {
     let path = format!("{dir}/{name}.png");
-    match cx.update(|window, _| window.render_to_image()) {
-        Ok(Ok(img)) => match img.save(&path) {
-            Ok(()) => metric(format!("shot {path}")),
-            Err(e) => eprintln!("harness: shot {path}: {e}"),
-        },
-        e => eprintln!("harness: shot failed: {:?}", e.err()),
-    }
+    // render_to_image reads the last drawn scene; a window ordered behind others may not have drawn
+    // since the state changed, so draw now.
+    let image = cx
+        .update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.render_to_image()
+        })
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    image.save(&path).map_err(|e| e.to_string())?;
+    metric(format!("shot {path}"));
+    Ok(())
 }
 
 #[cfg(not(feature = "shots"))]
-fn shot(_dir: &str, name: &str, _cx: &mut AsyncWindowContext) {
-    eprintln!("harness: shot:{name} skipped (build with --features shots)");
+fn shot(_dir: &str, name: &str, _cx: &mut AsyncWindowContext) -> Result<(), String> {
+    Err(format!("shot:{name} needs a build with --features shots"))
 }

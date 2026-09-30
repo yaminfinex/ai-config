@@ -1,6 +1,6 @@
 //! The app shell: owns the `Store`, the background threads, the one channel into the foreground, the
-//! window, the keymap and the kit widget state. Views render from the store it holds; every change to
-//! the store goes through `Shell::dispatch`, which runs `Store::apply` and then the effects.
+//! window and the keymap. Views render from the store it holds and own their own widget entities; every
+//! change to the store goes through `Shell::dispatch`, which runs `Store::apply` and then the effects.
 //!
 //! Boot order matters for the 300 ms budget: theme fonts are seeded before `gpui_kit::init` (the
 //! kit otherwise enumerates every installed font to resolve `.SystemUIFont`, ~150 ms), then the window
@@ -12,6 +12,7 @@ use crate::{harness, local, platform_mac};
 use gpui_kit::component::theme::{ThemeConfig, ThemeRegistry};
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::*;
+use std::time::Duration;
 
 /// Window title and app name.
 pub const APP_NAME: &str = "herder native";
@@ -19,12 +20,16 @@ const APP_ID: &str = "dev.herder.native";
 /// The families are explicit so the kit never enumerates fonts (see the module doc). U2 owns the choice.
 const FONT: &str = "Menlo";
 const MONO: &str = "Monaco";
+/// A held ⌘+ produces a burst of saves; only the last one is written.
+const PERSIST_DEBOUNCE: Duration = Duration::from_millis(150);
 
 actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 pub struct Shell {
     pub store: Store,
     focus: FocusHandle,
+    /// The pending prefs write; replacing it cancels the one still waiting out the debounce.
+    persist: Option<Task<()>>,
 }
 
 impl Shell {
@@ -37,6 +42,7 @@ impl Shell {
         Shell {
             store,
             focus: cx.focus_handle(),
+            persist: None,
         }
     }
 
@@ -46,9 +52,13 @@ impl Shell {
             match effect {
                 Effect::Persist(prefs) => {
                     theme::apply(prefs.text_scale, cx);
-                    cx.background_executor()
-                        .spawn(async move { local::save_prefs(&prefs) })
-                        .detach();
+                    let seq = local::next_seq();
+                    self.persist = Some(cx.spawn(async move |_, cx| {
+                        cx.background_executor().timer(PERSIST_DEBOUNCE).await;
+                        cx.background_executor()
+                            .spawn(async move { local::save_prefs(&prefs, seq) })
+                            .await;
+                    }));
                 }
             }
         }
@@ -129,6 +139,8 @@ pub fn run() {
         Theme::global_mut(cx).dark_theme = dark;
         Theme::change(ThemeMode::Dark, None, cx);
         Theme::sync_base(cx);
+        // App-wide chords bind on `Lens` alone; navigation letters (U2+) must use
+        // `Lens && !Input && !Terminal`, because a predicate sees the whole focus stack.
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, Some("Lens")),
             KeyBinding::new("cmd-=", TextBigger, Some("Lens")),

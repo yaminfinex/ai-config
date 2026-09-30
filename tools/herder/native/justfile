@@ -6,7 +6,7 @@ export PATH := env_var("HOME") + "/.cargo/bin:" + env_var("PATH")
 _default:
     @just --list
 
-# The three code gates, uncached where it matters.
+# The three code gates.
 check:
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
@@ -23,17 +23,28 @@ run *args: build
     ./target/release/herder-native {{args}}
 
 # Scripted run that never takes focus: `just harness "wait:800 shot:lens rss quit"`.
-# Screenshots land in shots/ and need the `shots` feature (GPUI test-support).
+# Screenshots land in shots/ and need the `shots` feature (GPUI test-support). Exits non-zero on a failed step.
 harness script:
     cargo build --release --features shots
     mkdir -p shots
     HERDER_NATIVE_SCRIPT="{{script}}" HERDER_NATIVE_SHOT_DIR=shots ./target/release/herder-native
 
+# Key scenario (A0): cmd-= through the real input path must reach TextBigger and persist 1.1.
+# Runs against a throwaway HOME so the owner's prefs are untouched.
+check-keys: build
+    #!/usr/bin/env sh
+    set -eu
+    home=$(mktemp -d)
+    HOME="$home" HERDER_NATIVE_SCRIPT="wait:300 key:cmd-= wait:400 quit" ./target/release/herder-native
+    prefs="$home/Library/Application Support/herder-native/prefs.json"
+    grep -q '"text_scale": 1.1' "$prefs" && echo "check-keys: ok (text_scale 1.1 persisted)"
+    rm -rf "$home"
+
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id).
 bundle *args:
     scripts/bundle.sh {{args}}
 
-# Re-record testdata/ from the live serve (read-only GETs).
+# Re-record testdata/ from the live serve (read-only GETs, staged, scrubbed, then published).
 record:
     testdata/record.sh
 
