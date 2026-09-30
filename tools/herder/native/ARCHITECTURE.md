@@ -115,7 +115,8 @@ bound only in `Lens` and `Lens > Space`, never where text is typed.
 
 ## 5. Type scale and theme
 
-One app-wide **text scale** (`Prefs::text_scale`, default 1.0 = 11 px body, range 0.7–1.8 in ×1.1 steps)
+One app-wide **text scale** (`Prefs::text_scale`, range 0.7–1.8 in ×1.1 steps; 1.0 is the spike's sizes × 0.9,
+the owner's ruling: body 10.8 px, code 11.7 px, meta 9.9 px)
 is the only source of text size. `views::theme::type_scale(scale)` gives the tokens `small`, `body`,
 `title`, `code`, `line`; views use those and never a literal `px()` for text. The shell pushes `body` into
 the kit theme so its inputs, lists and markdown follow, and the code view and terminal read `code`. The
