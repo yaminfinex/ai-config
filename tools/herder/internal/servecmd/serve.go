@@ -52,8 +52,14 @@ const (
 	HeartbeatCadence        = 15 * time.Second
 	TranscriptSafetyCadence = 30 * time.Second
 	ReloadDrainTimeout      = 150 * time.Second
-	webNoteStart            = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
-	webNoteEnd              = "[HERDER_WEB_OPERATOR_NOTE_END]"
+	// RosterFreshness bounds how old a cached roster a per-agent read may
+	// resolve an agent from. The observer's roster poll refreshes the cache
+	// every PollCadence and one `hcom list` takes ~0.2-0.5 s, so a running
+	// poll always keeps the cache inside this bound; past it (poll stalled,
+	// no observer) every per-agent read asks hcom live again.
+	RosterFreshness = PollCadence + time.Second
+	webNoteStart    = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
+	webNoteEnd      = "[HERDER_WEB_OPERATOR_NOTE_END]"
 )
 
 var errRosterPending = errors.New("roster not polled yet")
@@ -115,17 +121,34 @@ type rosterCache struct {
 	mu          sync.RWMutex
 	rows        []hcomidentity.Row
 	initialized bool
+	now         func() time.Time // Observation clock; nil means time.Now.
+	at          time.Time        // When the cached rows' `hcom list` began.
 	remembered  map[string]string
 	ambiguous   map[string]bool
 }
 
+// set caches rows observed now. Serve code that fetched them uses
+// setObserved with the time its fetch began.
 func (c *rosterCache) set(rows []hcomidentity.Row) {
+	c.setObserved(rows, c.clock())
+}
+
+// setObserved caches rows whose `hcom list` began at observed and reports
+// whether it did. A slow fetch that began before the cached rows were
+// observed is refused: it would otherwise resurrect a replaced session and
+// restart the freshness clock on rows older than those it overwrote.
+func (c *rosterCache) setObserved(rows []hcomidentity.Row, observed time.Time) bool {
 	if c == nil {
-		return
+		return false
 	}
 	c.mu.Lock()
+	if c.initialized && observed.Before(c.at) {
+		c.mu.Unlock()
+		return false
+	}
 	c.rows = append([]hcomidentity.Row(nil), rows...)
 	c.initialized = true
+	c.at = observed
 	if c.remembered == nil {
 		c.remembered = map[string]string{}
 		c.ambiguous = map[string]bool{}
@@ -142,6 +165,7 @@ func (c *rosterCache) set(rows []hcomidentity.Row) {
 		c.remembered[row.BaseName] = row.Name
 	}
 	c.mu.Unlock()
+	return true
 }
 
 func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
@@ -151,6 +175,29 @@ func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return append([]hcomidentity.Row(nil), c.rows...), c.initialized
+}
+
+func (c *rosterCache) clock() time.Time {
+	if c != nil && c.now != nil {
+		return c.now()
+	}
+	return time.Now()
+}
+
+// fresh returns the cached roster only while its observation began within
+// bound of now. The stamp is when that `hcom list` started, so rows served
+// are never older than bound, however slow the fetch was.
+func (c *rosterCache) fresh(bound time.Duration) ([]hcomidentity.Row, bool) {
+	if c == nil {
+		return nil, false
+	}
+	now := c.clock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if !c.initialized || now.Sub(c.at) > bound || now.Before(c.at) {
+		return nil, false
+	}
+	return append([]hcomidentity.Row(nil), c.rows...), true
 }
 
 func (c *rosterCache) resolve(raw string) string {
@@ -447,7 +494,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.buildIdentity = buildIdentity
 	runtimeDependencies.configuredRoots = configuredRoots
 	runtimeDependencies.stateChanges = newStateChangeBroker()
-	runtimeDependencies.rosterCache = &rosterCache{}
+	runtimeDependencies.rosterCache = &rosterCache{now: runtimeDependencies.now}
 	runtimeDependencies.turnEnds = startTurnEnds(ctx, runtimeDependencies)
 	var socket *herdersock.Server
 	stateDir, stateDirErr := herderstate.Dir()
@@ -501,11 +548,12 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 				}
 				roster, rosterReady := deps.rosterCache.get()
 				if !rosterReady {
+					observed := deps.rosterCache.clock()
 					roster, err = deps.roster()
 					if err != nil {
 						return errRosterPending
 					}
-					deps.rosterCache.set(roster)
+					deps.rosterCache.setObserved(roster, observed)
 				}
 				resolve := func(raw string) string {
 					return deps.rosterCache.resolve(raw)
@@ -526,20 +574,25 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 				}
 				if kind == agentstore.KindMirrorReady {
 					// A cold-start seed above IS this event's one roster call.
-					// The session comes ONLY from the fresh result; a failed
-					// refresh writes the event unstamped whatever the cache holds.
+					// Name and session come together from that one fresh
+					// result, even when the cache refused it for a newer
+					// snapshot; a failed refresh writes the event unstamped
+					// under the cache's name, whatever the cache holds.
 					fresh, err := roster, error(nil)
 					if rosterReady {
+						observed := deps.rosterCache.clock()
 						fresh, err = deps.roster()
 						if err == nil {
-							deps.rosterCache.set(fresh)
+							deps.rosterCache.setObserved(fresh, observed)
 						}
 					}
-					name = resolve(life.Instance)
-					event.Name = name
 					if err == nil {
+						name = resolveInRoster(fresh, life.Instance, resolve)
 						event.Session = rosterSessionFor(fresh, name)
+					} else {
+						name = resolve(life.Instance)
 					}
+					event.Name = name
 				}
 				if _, err = store.Append(event); err != nil && !errors.Is(err, agentstore.ErrUnavailable) {
 					deps.audit("hcom life mirror: skip %d: %v", life.ID, err)
@@ -612,6 +665,22 @@ func startTurnEnds(ctx context.Context, deps dependencies) *hcomevents.TurnEnds 
 // the fresh result. A failed refresh leaves the cache as it was and the event
 // is written unstamped (whatever the cache holds) without an error.
 // mirror.created never stamps a session.
+// resolveInRoster resolves raw against one roster snapshot the way
+// rosterCache.resolve does, so a name and the session looked up from the
+// same rows belong to one incarnation. A name the snapshot does not know
+// falls back to fallback (the cache's remembered names).
+func resolveInRoster(rows []hcomidentity.Row, raw string, fallback func(string) string) string {
+	if row, ok := hcomidentity.ByUniqueBaseName(rows, raw); ok {
+		return row.Name
+	}
+	for _, row := range rows {
+		if row.BaseName == raw || row.Name == raw {
+			return raw
+		}
+	}
+	return fallback(raw)
+}
+
 func rosterSessionFor(rows []hcomidentity.Row, name string) string {
 	for _, row := range rows {
 		if row.Name == name {
@@ -1222,6 +1291,7 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 	if err := fleetview.ValidateSnapshot(snapshot); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
 	}
+	observed := deps.rosterCache.clock()
 	roster, err := deps.roster()
 	if err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", err}
@@ -1229,7 +1299,7 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
-	deps.rosterCache.set(roster)
+	deps.rosterCache.setObserved(roster, observed)
 	return snapshot, hcomidentity.WithParents(roster), nil
 }
 
@@ -1337,7 +1407,22 @@ func transcriptParentName(row hcomidentity.Row, roster []hcomidentity.Row) strin
 // resolveAgentEvidence is deliberately live-first: a reused live name always
 // wins over an older stopped record. Stopped hcom history is the only retired
 // identity authority; a client-held session ID is never accepted as evidence.
+//
+// A roster the serve's own polls cached within RosterFreshness answers a name
+// it holds without another `hcom list` (GET /api/agents/{name} and
+// /api/agents/{name}/entries resolve per request). A name the cache lacks, or
+// a stale or invalid cache, asks hcom live, so a new incarnation's session
+// can be served the previous session's path for at most RosterFreshness.
 func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, bool, []hcomidentity.Row, error) {
+	if cached, ok := deps.rosterCache.fresh(RosterFreshness); ok && fleetview.ValidateRoster(cached) == nil {
+		cached = hcomidentity.WithParents(cached)
+		for _, row := range cached {
+			if row.Name == name {
+				return row, false, cached, nil
+			}
+		}
+	}
+	observed := deps.rosterCache.clock()
 	roster, err := deps.roster()
 	if err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", err}
@@ -1345,6 +1430,9 @@ func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, boo
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
+	// A newer cached observation keeps the cache; this read still answers
+	// from the rows it fetched.
+	deps.rosterCache.setObserved(roster, observed)
 	roster = hcomidentity.WithParents(roster)
 	for _, row := range roster {
 		if row.Name == name {

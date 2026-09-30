@@ -186,3 +186,47 @@ func TestAssignmentAfterAnnotateOnClosedLifeShowsOnTheFleetRow(t *testing.T) {
 		}
 	}
 }
+
+func TestLifeMirrorReadyKeepsNameAndSessionFromItsOwnRosterWhenCacheRefusesIt(t *testing.T) {
+	// A newer snapshot (same base name, changed full name) is cached while
+	// this ready's roster fetch is in flight, so the cache refuses the
+	// fetch. The event still takes name and session from that one fetch;
+	// it never pairs the cache's newer name with the fetched roster.
+	oldRow := hcomidentity.Row{Name: "old-guna", BaseName: "guna", Tool: "claude", SessionID: "S-old"}
+	newRow := hcomidentity.Row{Name: "new-guna", BaseName: "guna", Tool: "claude", SessionID: "S-new"}
+	for _, warm := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cold seed", true: "warm refresh"}[warm], func(t *testing.T) {
+			clock := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+			deps := fixtureDeps()
+			deps.store = agentstore.Open(t.TempDir(), nil)
+			deps.rosterCache = &rosterCache{now: func() time.Time { return clock }}
+			if warm {
+				deps.rosterCache.set([]hcomidentity.Row{oldRow})
+			}
+			rosterCalls := 0
+			deps.roster = func() ([]hcomidentity.Row, error) {
+				rosterCalls++
+				clock = clock.Add(time.Second)
+				deps.rosterCache.set([]hcomidentity.Row{newRow})
+				clock = clock.Add(time.Second)
+				return []hcomidentity.Row{oldRow}, nil
+			}
+			proj := runLifeMirror(t, deps,
+				hcomevents.Life{ID: 7, TS: "2026-09-30T12:00:00Z", Instance: "guna", Action: "ready", By: "user"},
+			)
+			if rosterCalls != 1 {
+				t.Fatalf("rosterCalls = %d", rosterCalls)
+			}
+			if got := proj.Latest("new-guna"); got != nil {
+				t.Fatalf("ready paired the cache's newer name with the fetched roster: %+v", got.Events)
+			}
+			guna := proj.Latest("old-guna")
+			if guna == nil || len(guna.Events) != 1 || guna.Events[0].Session != "S-old" {
+				t.Fatalf("old-guna = %+v", guna)
+			}
+			if rows, _ := deps.rosterCache.get(); len(rows) != 1 || rows[0].Name != "new-guna" {
+				t.Fatalf("cache accepted the older fetch: %+v", rows)
+			}
+		})
+	}
+}

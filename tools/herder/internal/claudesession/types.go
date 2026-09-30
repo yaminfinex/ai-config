@@ -108,6 +108,13 @@ type TailResult struct {
 	Reset  *Reset     `json:"reset,omitempty"`
 }
 
+// BeforeResult is one backward window: entries or a Reset, never both.
+type BeforeResult struct {
+	Read       ReadResult `json:"read"`
+	PrevOffset int64      `json:"prev_offset"`
+	Reset      *Reset     `json:"reset,omitempty"`
+}
+
 // PairedEntry is a consumer-side view over immutable entries.
 type PairedEntry struct {
 	Primary Entry  `json:"primary"`

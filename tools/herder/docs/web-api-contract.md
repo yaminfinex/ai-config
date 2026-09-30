@@ -439,7 +439,7 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   window; an offset beyond the current complete file returns its typed
   `truncated` reset. Reset responses contain `sessionId`, `window`, and
   `reset`, but no entries or fabricated next offset. `sessionId` without
-  `from` is a 400. Refusals: 404 unknown bus agent; 409 `no independent transcript` for a proven subagent whose dedicated transcript cannot be resolved; 409 no resolvable Claude
+  `from` or `before` is a 400. Refusals: 404 unknown bus agent; 409 `no independent transcript` for a proven subagent whose dedicated transcript cannot be resolved; 409 no resolvable Claude
   session (wrong tool, missing/invalid ID, or absent derived file); 502 bus,
   filesystem, or other substrate failure.
 
@@ -455,6 +455,49 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   only when the target exists, names the exact validated agent, and resolves
   inside `$HOME/.claude/projects`; otherwise the server falls back to the
   parent-derived path. An arbitrary or escaping roster path is never read.
+
+### AMENDMENT (entries-paging, 2026-09-30) — backward history pages and cached identity
+
+  `GET /api/agents/{bus-name}/entries?before={byteOffset}&limit=N&sessionId={id}`
+  reads the up-to-N complete classified entries that end before `before`
+  and returns them oldest-first with `window.mode` `before`. The window
+  reports `before` and `from` (the first returned entry's offset, or
+  `prevOffset` for an empty window). `nextOffset` equals `before`;
+  `prevOffset` is the first returned entry's byte offset, or `0` once the
+  page reached the start of the file, so a client pages history with
+  `before=prevOffset` until `prevOffset` is 0. A tail read reports no
+  `prevOffset`; its first backward page is `before=window.from`. Line numbers
+  and byte offsets are identical to the same entries read forward. Claude
+  main sessions, proven Claude Task subagents, and Codex sessions all serve
+  `before`.
+
+  `before` must be a record boundary: 0, or an offset immediately after a
+  complete newline-terminated record (every `byteOffset`, `window.from`,
+  `nextOffset`, and `prevOffset` the server returns). Any other offset,
+  including one inside a record or at a held-back partial trailing line, is a
+  400 rather than a silent snap, because a mid-record offset is a client bug,
+  not a substrate change. An offset beyond the current file size returns the
+  typed `truncated` reset; a mismatched `sessionId` returns `session_changed`,
+  with the same reset shape as `from`. `from` and `before` together are a 400;
+  `sessionId` is accepted with either and remains a 400 without both.
+
+  `stats.sidechainSkipped` is window-scoped on `tail` and `before` reads: it
+  counts only sidechain records skipped while scanning back to fill that
+  window, not the whole file. `from` reads count skips in `[from, end)` as
+  before. Tail and backward reads never parse records outside their window.
+
+  Per-agent reads (`GET /api/agents/{bus-name}` and its `/entries`) resolve
+  the name from the serve's cached hcom roster when the `hcom list` that
+  produced it began less than 3 s ago (the observer's 2 s poll plus one
+  second of slack; the observer poll, fleet reads, the life mirror, and every
+  live fallback refresh it). A roster fetch that began before the cached one
+  is refused, so a slow answer never replaces a newer snapshot or restarts
+  its age. A stale or absent cache, a failed
+  roster validation, or a name absent from the cached roster falls back to
+  one live `hcom list`, then to retained stopped evidence as above. A new
+  incarnation that reuses a name is therefore served within at most 3 s;
+  any read in that window pins `sessionId`, so a session swap surfaces as
+  `session_changed` on the next read rather than mixing offsets.
 
 ### AMENDMENT (owner-ratified, conductor-acked, 2026-08-28) — opaque-root file reads and resolution
 

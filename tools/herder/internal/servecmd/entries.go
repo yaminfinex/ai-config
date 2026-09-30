@@ -18,9 +18,10 @@ import (
 const maxEntryWindow = 500
 
 type entriesWindow struct {
-	Mode  string `json:"mode"`
-	From  int64  `json:"from"`
-	Limit int    `json:"limit"`
+	Mode   string `json:"mode"`
+	From   int64  `json:"from"`
+	Before *int64 `json:"before,omitempty"`
+	Limit  int    `json:"limit"`
 }
 
 type entriesStats struct {
@@ -42,6 +43,7 @@ type entriesResponse struct {
 	Window     entriesWindow        `json:"window"`
 	Entries    *[]entryResponse     `json:"entries,omitempty"`
 	NextOffset *int64               `json:"nextOffset,omitempty"`
+	PrevOffset *int64               `json:"prevOffset,omitempty"`
 	Reset      *claudesession.Reset `json:"reset,omitempty"`
 	Stats      *entriesStats        `json:"stats,omitempty"`
 }
@@ -52,14 +54,23 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
-	from, hasFrom, err := entryOffset(r)
+	from, hasFrom, err := entryOffset(r, "from")
 	if err != nil {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
+	before, hasBefore, err := entryOffset(r, "before")
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	if hasFrom && hasBefore {
+		refuse(w, http.StatusBadRequest, "bad request", "from and before are mutually exclusive")
+		return
+	}
 	previousSessionID := r.URL.Query().Get("sessionId")
-	if !hasFrom && previousSessionID != "" {
-		refuse(w, http.StatusBadRequest, "bad request", "sessionId requires from")
+	if !hasFrom && !hasBefore && previousSessionID != "" {
+		refuse(w, http.StatusBadRequest, "bad request", "sessionId requires from or before")
 		return
 	}
 
@@ -92,6 +103,33 @@ func serveEntries(w http.ResponseWriter, r *http.Request, deps dependencies, nam
 	window := entriesWindow{Mode: "from", From: from, Limit: limit}
 	currentTranscriptID := entryTranscriptID(row)
 	var read claudesession.ReadResult
+	if hasBefore {
+		window = entriesWindow{Mode: "before", Before: &before, Limit: limit}
+		page, beforeErr := readEntryBefore(path, row, claudesession.Cursor{SessionID: previousSessionID, Offset: before}, limit)
+		if errors.Is(beforeErr, sessionjsonl.ErrNotRecordBoundary) {
+			refuse(w, http.StatusBadRequest, "bad request", "before must be a record boundary a previous read returned")
+			return
+		}
+		if beforeErr != nil {
+			refuse(w, http.StatusBadGateway, "substrate unreachable", beforeErr.Error())
+			return
+		}
+		if page.Reset != nil {
+			writeJSON(w, http.StatusOK, entriesResponse{SessionID: currentTranscriptID, Window: window, Reset: page.Reset})
+			return
+		}
+		entries := serializeEntries(page.Read.Entries)
+		window.From = page.PrevOffset
+		if len(entries) > 0 {
+			window.From = entries[0].ByteOffset
+		}
+		stats := entriesStats{SidechainSkipped: page.Read.Stats.SidechainSkipped}
+		writeJSON(w, http.StatusOK, entriesResponse{
+			SessionID: currentTranscriptID, Window: window, Entries: &entries,
+			NextOffset: &before, PrevOffset: &page.PrevOffset, Stats: &stats,
+		})
+		return
+	}
 	if hasFrom {
 		tail, tailErr := readEntryWindow(path, row, claudesession.Cursor{SessionID: previousSessionID, Offset: from}, limit)
 		if tailErr != nil {
@@ -159,17 +197,17 @@ func entryLimit(r *http.Request) (int, error) {
 	return limit, nil
 }
 
-func entryOffset(r *http.Request) (int64, bool, error) {
-	raw, present := r.URL.Query()["from"]
+func entryOffset(r *http.Request, key string) (int64, bool, error) {
+	raw, present := r.URL.Query()[key]
 	if !present {
 		return 0, false, nil
 	}
 	if len(raw) != 1 {
-		return 0, false, errors.New("from must be one non-negative byte offset")
+		return 0, false, fmt.Errorf("%s must be one non-negative byte offset", key)
 	}
 	offset, err := strconv.ParseInt(raw[0], 10, 64)
 	if err != nil || offset < 0 {
-		return 0, false, errors.New("from must be one non-negative byte offset")
+		return 0, false, fmt.Errorf("%s must be one non-negative byte offset", key)
 	}
 	return offset, true, nil
 }
@@ -271,6 +309,16 @@ func readEntryWindow(path string, row hcomidentity.Row, cursor claudesession.Cur
 		return claudesession.TailSubagentWindow(path, entryTranscriptID(row), cursor, limit)
 	}
 	return claudesession.TailWindow(path, entryTranscriptID(row), cursor, limit)
+}
+
+func readEntryBefore(path string, row hcomidentity.Row, cursor claudesession.Cursor, limit int) (claudesession.BeforeResult, error) {
+	if row.Tool == "codex" {
+		return codexsession.ReadBefore(path, entryTranscriptID(row), cursor, limit)
+	}
+	if isSubagent(row) {
+		return claudesession.ReadSubagentBefore(path, entryTranscriptID(row), cursor, limit)
+	}
+	return claudesession.ReadBefore(path, entryTranscriptID(row), cursor, limit)
 }
 
 func readEntryTail(path string, row hcomidentity.Row, limit int) (claudesession.ReadResult, int64, error) {

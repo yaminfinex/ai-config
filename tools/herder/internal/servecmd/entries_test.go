@@ -3,12 +3,14 @@ package servecmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ai-config/tools/herder/internal/claudesession"
 	"ai-config/tools/herder/internal/codexsession"
@@ -22,6 +24,7 @@ type fixtureEntriesResponse struct {
 	Window     fixtureEntriesWindow `json:"window"`
 	Entries    *[]fixtureEntry      `json:"entries,omitempty"`
 	NextOffset *int64               `json:"nextOffset,omitempty"`
+	PrevOffset *int64               `json:"prevOffset,omitempty"`
 	Reset      *claudesession.Reset `json:"reset,omitempty"`
 	Stats      *fixtureEntriesStats `json:"stats,omitempty"`
 }
@@ -40,9 +43,10 @@ type fixtureEntry struct {
 }
 
 type fixtureEntriesWindow struct {
-	Mode  string `json:"mode"`
-	From  int64  `json:"from"`
-	Limit int    `json:"limit"`
+	Mode   string `json:"mode"`
+	From   int64  `json:"from"`
+	Before *int64 `json:"before,omitempty"`
+	Limit  int    `json:"limit"`
 }
 
 func TestEntriesEndpointReadsCompleteClassifiedWindows(t *testing.T) {
@@ -374,6 +378,11 @@ func TestEntriesEndpointValidatesWindow(t *testing.T) {
 		"/api/agents/dore/entries?limit=0",
 		"/api/agents/dore/entries?limit=501",
 		"/api/agents/dore/entries?sessionId=" + fixtureSessionID,
+		"/api/agents/dore/entries?before=-1",
+		"/api/agents/dore/entries?before=x",
+		"/api/agents/dore/entries?before=0&before=0",
+		"/api/agents/dore/entries?from=0&before=3",
+		"/api/agents/dore/entries?before=1",
 	} {
 		response := requestEntries(t, entryFixtureDeps(), path)
 		if response.Code != http.StatusBadRequest {
@@ -405,6 +414,151 @@ func TestEntriesEndpointServesRetiredAgentFromStoppedSessionEvidence(t *testing.
 	if response.Code != http.StatusOK || page.SessionID != fixtureSessionID || page.Entries == nil || len(*page.Entries) != 1 {
 		t.Fatalf("retired entries = %d %#v", response.Code, page)
 	}
+}
+
+func TestEntriesEndpointPagesBackwardToStartOfFile(t *testing.T) {
+	a := `{"type":"assistant","uuid":"invented-a","message":{"content":[{"type":"text","text":"a"}]}}`
+	side := `{"type":"assistant","isSidechain":true,"uuid":"invented-side","message":{"content":[{"type":"text","text":"side"}]}}`
+	bookkeeping := `{"type":"queue-operation","uuid":"invented-bookkeeping"}`
+	c := `{"type":"assistant","uuid":"invented-c","message":{"content":[{"type":"text","text":"c"}]}}`
+	d := `{"type":"assistant","uuid":"invented-d","message":{"content":[{"type":"text","text":"d"}]}}`
+	e := `{"type":"assistant","uuid":"invented-e","message":{"content":[{"type":"text","text":"e"}]}}`
+	complete := sessionLines(a, side, bookkeeping, c, d, e)
+	home, _ := writeEntrySession(t, complete+`{"type":"assistant","uuid":"invented-partial"`)
+	t.Setenv("HOME", home)
+	offset := func(line string) int64 { return int64(strings.Index(complete, line)) }
+	deps := entryFixtureDeps()
+	page := func(query string) fixtureEntriesResponse {
+		t.Helper()
+		response := requestEntries(t, deps, "/api/agents/dore/entries?"+query)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s", query, response.Code, response.Body.String())
+		}
+		return decodeEntriesResponse(t, response)
+	}
+	uuids := func(p fixtureEntriesResponse) []string {
+		var ids []string
+		for _, entry := range *p.Entries {
+			ids = append(ids, entry.UUID)
+		}
+		return ids
+	}
+
+	tail := page("limit=2")
+	if tail.Window.From != offset(d) || strings.Join(uuids(tail), ",") != "invented-d,invented-e" || tail.PrevOffset != nil {
+		t.Fatalf("tail = %#v", tail)
+	}
+	before := offset(d)
+	first := page(fmt.Sprintf("before=%d&limit=1&sessionId=%s", before, fixtureSessionID))
+	if first.SessionID != fixtureSessionID || first.Window != (fixtureEntriesWindow{Mode: "before", From: offset(c), Before: first.Window.Before, Limit: 1}) || first.Window.Before == nil || *first.Window.Before != before {
+		t.Fatalf("first page window = %#v", first.Window)
+	}
+	if strings.Join(uuids(first), ",") != "invented-c" || (*first.Entries)[0].Line != 3 || first.PrevOffset == nil || *first.PrevOffset != offset(c) || first.NextOffset == nil || *first.NextOffset != before || first.Stats.SidechainSkipped != 0 {
+		t.Fatalf("first page = %#v", first)
+	}
+	second := page(fmt.Sprintf("before=%d&limit=5", *first.PrevOffset))
+	if strings.Join(uuids(second), ",") != "invented-a" || (*second.Entries)[0].Line != 0 || *second.PrevOffset != 0 || second.Stats.SidechainSkipped != 1 {
+		t.Fatalf("second page = %#v", second)
+	}
+	// The first record filling the window is still the start of file.
+	exact := page(fmt.Sprintf("before=%d&limit=2", offset(d)))
+	if strings.Join(uuids(exact), ",") != "invented-a,invented-c" || *exact.PrevOffset != 0 {
+		t.Fatalf("window ending on the first record = %#v", exact)
+	}
+	start := page("before=0")
+	if start.Entries == nil || len(*start.Entries) != 0 || *start.PrevOffset != 0 {
+		t.Fatalf("start of file = %#v", start)
+	}
+
+	for _, query := range []string{
+		fmt.Sprintf("before=%d", offset(d)+1),
+		fmt.Sprintf("before=%d", len(complete)+3),
+	} {
+		if response := requestEntries(t, deps, "/api/agents/dore/entries?"+query); response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "record boundary") {
+			t.Fatalf("%s = %d %s", query, response.Code, response.Body.String())
+		}
+	}
+	for _, test := range []struct {
+		query  string
+		reason claudesession.ResetReason
+	}{
+		{fmt.Sprintf("before=%d&sessionId=73200000-0000-4000-8000-000000000732", before), claudesession.ResetSessionChanged},
+		{fmt.Sprintf("before=%d&sessionId=%s", len(complete)+731, fixtureSessionID), claudesession.ResetTruncated},
+	} {
+		reset := page(test.query)
+		if reset.Reset == nil || reset.Reset.Reason != test.reason || reset.Entries != nil || reset.PrevOffset != nil || reset.NextOffset != nil || reset.Window.Mode != "before" {
+			t.Fatalf("%s = %#v", test.query, reset)
+		}
+	}
+}
+
+func TestEntriesEndpointTailCountsSidechainSkipsInItsWindowOnly(t *testing.T) {
+	side := `{"type":"assistant","isSidechain":true,"uuid":"invented-side","message":{"content":[{"type":"text","text":"side"}]}}`
+	a := `{"type":"assistant","uuid":"invented-a","message":{"content":[{"type":"text","text":"a"}]}}`
+	b := `{"type":"assistant","uuid":"invented-b","message":{"content":[{"type":"text","text":"b"}]}}`
+	home, _ := writeEntrySession(t, sessionLines(side, a, side, b))
+	t.Setenv("HOME", home)
+	for _, test := range []struct {
+		limit, skipped int
+	}{{1, 0}, {2, 1}, {3, 2}} {
+		page := decodeEntriesResponse(t, requestEntries(t, entryFixtureDeps(), fmt.Sprintf("/api/agents/dore/entries?limit=%d", test.limit)))
+		if page.Stats == nil || page.Stats.SidechainSkipped != test.skipped {
+			t.Fatalf("tail limit %d stats = %#v", test.limit, page.Stats)
+		}
+	}
+}
+
+func TestEntriesEndpointPagesSubagentAndCodexBackward(t *testing.T) {
+	t.Run("subagent renders its sidechain records", func(t *testing.T) {
+		home := t.TempDir()
+		project := filepath.Join(home, ".claude", "projects", claudesession.Slug("/invented/violet"))
+		childPath := filepath.Join(project, fixtureSessionID, "subagents", "agent-a35b593a6be7a9ba5.jsonl")
+		if err := os.MkdirAll(filepath.Dir(childPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, fixtureSessionID+".jsonl"), []byte("{}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		child := sessionLines(
+			`{"isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"assistant","uuid":"invented-child-one","message":{"role":"assistant","content":[{"type":"text","text":"one"}]}}`,
+			`{"isSidechain":true,"agentId":"a35b593a6be7a9ba5","type":"assistant","uuid":"invented-child-two","message":{"role":"assistant","content":[{"type":"text","text":"two"}]}}`,
+		)
+		if err := os.WriteFile(childPath, []byte(child), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HOME", home)
+		deps := fixtureDeps()
+		deps.roster = func() ([]hcomidentity.Row, error) {
+			return []hcomidentity.Row{
+				{Name: "probe-fame", BaseName: "fame", Tool: "claude", Status: "active", Directory: "/invented/violet", SessionID: fixtureSessionID},
+				{Name: "probe-fame_general_purpose_1", BaseName: "fame_general_purpose_1", ParentName: "fame", AgentID: "a35b593a6be7a9ba5", Tool: "claude", Status: "active", Directory: "/invented/violet"},
+			}, nil
+		}
+		response := requestEntries(t, deps, fmt.Sprintf("/api/agents/probe-fame_general_purpose_1/entries?before=%d&sessionId=subagent:a35b593a6be7a9ba5", len(child)))
+		page := decodeEntriesResponse(t, response)
+		if response.Code != http.StatusOK || page.SessionID != "subagent:a35b593a6be7a9ba5" || page.Entries == nil || len(*page.Entries) != 2 || (*page.Entries)[0].UUID != "invented-child-one" || *page.PrevOffset != 0 || page.Stats.SidechainSkipped != 0 {
+			t.Fatalf("subagent backward = %d %#v %s", response.Code, page, response.Body.String())
+		}
+	})
+	t.Run("codex", func(t *testing.T) {
+		prompt := `{"timestamp":"2026-01-02T03:04:05Z","type":"event_msg","payload":{"type":"user_message","message":"Invented Codex prompt.","images":[],"local_images":[],"text_elements":[]}}`
+		answer := `{"timestamp":"2026-01-02T03:04:06Z","type":"response_item","payload":{"type":"message","role":"assistant","phase":"final_answer","content":[{"type":"output_text","text":"Invented Codex answer."}]}}`
+		content := sessionLines(prompt, answer)
+		home, _ := writeCodexEntrySession(t, content)
+		t.Setenv("HOME", home)
+		deps := entryDepsWithRow(hcomidentity.Row{Name: "dore", Tool: "codex", Status: "active", SessionID: fixtureSessionID})
+		response := requestEntries(t, deps, fmt.Sprintf("/api/agents/dore/entries?before=%d&limit=1&sessionId=%s", len(content), fixtureSessionID))
+		page := decodeEntriesResponse(t, response)
+		answerOffset := int64(len(prompt) + 1)
+		if response.Code != http.StatusOK || page.Entries == nil || len(*page.Entries) != 1 || (*page.Entries)[0].Kind != claudesession.KindAssistantText || (*page.Entries)[0].Line != 1 || *page.PrevOffset != answerOffset {
+			t.Fatalf("codex backward = %d %#v %s", response.Code, page, response.Body.String())
+		}
+		response = requestEntries(t, deps, fmt.Sprintf("/api/agents/dore/entries?before=%d&limit=1", answerOffset))
+		page = decodeEntriesResponse(t, response)
+		if response.Code != http.StatusOK || len(*page.Entries) != 1 || (*page.Entries)[0].Kind != claudesession.KindHumanPrompt || *page.PrevOffset != 0 {
+			t.Fatalf("codex first page = %d %#v", response.Code, page)
+		}
+	})
 }
 
 func entryFixtureDeps() dependencies {
@@ -471,4 +625,175 @@ func decodeEntriesResponse(t *testing.T, response *httptest.ResponseRecorder) fi
 		t.Fatal(err)
 	}
 	return page
+}
+
+func TestPerAgentReadsResolveFromFreshRosterCache(t *testing.T) {
+	const nextSessionID = "73200000-0000-4000-8000-000000000732"
+	content := sessionLines(`{"type":"assistant","uuid":"invented-a","message":{"content":[{"type":"text","text":"a"}]}}`)
+	home, path := writeEntrySession(t, content)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), nextSessionID+".jsonl"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	cachedRow := hcomidentity.Row{Name: "dore", Tool: "claude", Status: "active", SessionID: fixtureSessionID, Directory: "/invented/violet"}
+	liveRow := cachedRow
+	liveRow.SessionID = nextSessionID
+	clock := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	deps := fixtureDeps()
+	deps.rosterCache = &rosterCache{now: func() time.Time { return clock }}
+	deps.rosterCache.set([]hcomidentity.Row{cachedRow})
+	rosterCalls := 0
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rosterCalls++
+		return []hcomidentity.Row{liveRow}, nil
+	}
+
+	// Inside RosterFreshness a cached name costs no hcom call, and the new
+	// incarnation hcom already knows is not seen yet: that is the bound.
+	clock = clock.Add(RosterFreshness)
+	page := decodeEntriesResponse(t, requestEntries(t, deps, "/api/agents/dore/entries?limit=1"))
+	if rosterCalls != 0 || page.SessionID != fixtureSessionID {
+		t.Fatalf("fresh cache read = calls %d session %q", rosterCalls, page.SessionID)
+	}
+	detail := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(detail, httptest.NewRequest(http.MethodGet, "/api/agents/dore", nil))
+	if detail.Code != http.StatusOK || rosterCalls != 0 {
+		t.Fatalf("fresh cache detail = %d calls %d %s", detail.Code, rosterCalls, detail.Body.String())
+	}
+
+	// Past the bound the read asks hcom live: the new incarnation's session
+	// replaces the old one and refreshes the cache for the next read.
+	clock = clock.Add(time.Nanosecond)
+	page = decodeEntriesResponse(t, requestEntries(t, deps, "/api/agents/dore/entries?limit=1"))
+	if rosterCalls != 1 || page.SessionID != nextSessionID {
+		t.Fatalf("stale cache read = calls %d session %q", rosterCalls, page.SessionID)
+	}
+	page = decodeEntriesResponse(t, requestEntries(t, deps, "/api/agents/dore/entries?limit=1"))
+	if rosterCalls != 1 || page.SessionID != nextSessionID {
+		t.Fatalf("refreshed cache read = calls %d session %q", rosterCalls, page.SessionID)
+	}
+
+	// A name the fresh cache lacks asks hcom live before the stopped path.
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		rosterCalls++
+		return []hcomidentity.Row{liveRow, {Name: "newcomer", Tool: "claude", Status: "active", SessionID: fixtureSessionID, Directory: "/invented/violet"}}, nil
+	}
+	deps.stopped = func(string) (hcomidentity.Row, error) {
+		t.Fatal("a live newcomer reached the stopped path")
+		return hcomidentity.Row{}, nil
+	}
+	response := requestEntries(t, deps, "/api/agents/newcomer/entries?limit=1")
+	if response.Code != http.StatusOK || rosterCalls != 2 {
+		t.Fatalf("uncached name = %d calls %d %s", response.Code, rosterCalls, response.Body.String())
+	}
+}
+
+func TestObserverRosterPollRefreshesRosterCache(t *testing.T) {
+	deps := fixtureDeps()
+	deps.rosterCache = &rosterCache{}
+	row := hcomidentity.Row{Name: "dore", Tool: "claude", SessionID: fixtureSessionID}
+	deps.roster = func() ([]hcomidentity.Row, error) { return []hcomidentity.Row{row}, nil }
+	if _, err := cachingRoster(deps)(); err != nil {
+		t.Fatal(err)
+	}
+	if rows, ok := deps.rosterCache.fresh(RosterFreshness); !ok || len(rows) != 1 || rows[0].SessionID != row.SessionID {
+		t.Fatalf("cache after observer poll = %#v, %v", rows, ok)
+	}
+	deps.rosterCache = &rosterCache{}
+	deps.roster = func() ([]hcomidentity.Row, error) { return nil, errors.New("invented roster outage") }
+	if _, err := cachingRoster(deps)(); err == nil {
+		t.Fatal("observer poll hid the roster error")
+	}
+	if _, ok := deps.rosterCache.fresh(RosterFreshness); ok {
+		t.Fatal("a failed poll marked the cache fresh")
+	}
+}
+
+// Every roster writer stamps the time its `hcom list` began, so a slow fetch
+// that returns after a newer snapshot was cached cannot resurrect the
+// replaced session or restart the freshness clock.
+func TestDelayedOlderRosterNeverOverwritesNewerSnapshot(t *testing.T) {
+	oldRow := hcomidentity.Row{Name: "dore", Tool: "claude", Status: "active", SessionID: "old", Directory: "/invented/violet"}
+	newRow := oldRow
+	newRow.SessionID = "new"
+	writers := map[string]func(dependencies) error{
+		"observer poll": func(deps dependencies) error {
+			_, err := cachingRoster(deps)()
+			return err
+		},
+		"per-agent fallback": func(deps dependencies) error {
+			_, _, _, err := resolveAgentEvidence(deps, "dore")
+			return err
+		},
+		"fleet read": func(deps dependencies) error {
+			_, _, err := readFleetInputs(deps)
+			return err
+		},
+	}
+	for name, write := range writers {
+		t.Run(name, func(t *testing.T) {
+			clock := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+			deps := fixtureDeps()
+			deps.rosterCache = &rosterCache{now: func() time.Time { return clock }}
+			deps.roster = func() ([]hcomidentity.Row, error) {
+				// While this fetch is in flight another reader caches the
+				// new incarnation at t1; this answer lands at t4.
+				clock = clock.Add(time.Second)
+				deps.rosterCache.set([]hcomidentity.Row{newRow})
+				clock = clock.Add(3 * time.Second)
+				return []hcomidentity.Row{oldRow}, nil
+			}
+			if err := write(deps); err != nil {
+				t.Fatal(err)
+			}
+			rows, ok := deps.rosterCache.get()
+			if !ok || len(rows) != 1 || rows[0].SessionID != "new" {
+				t.Fatalf("cache after delayed older answer = %#v", rows)
+			}
+			// The kept snapshot is aged from t1, not restamped at t4.
+			if _, ok := deps.rosterCache.fresh(3*time.Second - time.Nanosecond); ok {
+				t.Fatal("delayed answer restarted the freshness clock")
+			}
+		})
+	}
+}
+
+// A slow fetch is aged from when it began: rows observed longer ago than
+// RosterFreshness are never served from the cache, however recently they
+// arrived.
+func TestSlowRosterFetchIsAgedFromItsStart(t *testing.T) {
+	clock := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	deps := fixtureDeps()
+	deps.rosterCache = &rosterCache{now: func() time.Time { return clock }}
+	row := hcomidentity.Row{Name: "dore", Tool: "claude", SessionID: fixtureSessionID}
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		clock = clock.Add(RosterFreshness + time.Second)
+		return []hcomidentity.Row{row}, nil
+	}
+	if _, err := cachingRoster(deps)(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deps.rosterCache.fresh(RosterFreshness); ok {
+		t.Fatal("a slow fetch was served as fresh past RosterFreshness from its start")
+	}
+	if rows, ok := deps.rosterCache.get(); !ok || len(rows) != 1 {
+		t.Fatalf("slow fetch was not cached for name resolution: %#v", rows)
+	}
+	quick := time.Date(2026, 9, 30, 13, 0, 0, 0, time.UTC)
+	clock = quick
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		clock = clock.Add(time.Second)
+		return []hcomidentity.Row{row}, nil
+	}
+	if _, err := cachingRoster(deps)(); err != nil {
+		t.Fatal(err)
+	}
+	clock = quick.Add(RosterFreshness)
+	if _, ok := deps.rosterCache.fresh(RosterFreshness); !ok {
+		t.Fatal("a fetch begun exactly RosterFreshness ago was refused")
+	}
+	clock = clock.Add(time.Nanosecond)
+	if _, ok := deps.rosterCache.fresh(RosterFreshness); ok {
+		t.Fatal("a fetch begun past RosterFreshness was served")
+	}
 }

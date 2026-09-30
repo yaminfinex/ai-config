@@ -647,6 +647,9 @@ func TestReadTailMatchesForwardClassifierAcrossWireSensitiveFixtures(t *testing.
 			} else {
 				got, gotFrom, err = ReadTail(path, 2)
 			}
+			// Stats are window-scoped on the tail: this two-entry window
+			// never visits the sidechain record the forward read counted.
+			want.Stats = Stats{}
 			if err != nil || gotFrom != wantFrom || !reflect.DeepEqual(got, want) {
 				t.Fatalf("optimized tail = (%#v, %d, %v), want (%#v, %d)", got, gotFrom, err, want, wantFrom)
 			}
@@ -654,23 +657,29 @@ func TestReadTailMatchesForwardClassifierAcrossWireSensitiveFixtures(t *testing.
 	}
 }
 
-func TestTailSidechainProbeMatchesFullEnvelopeClassification(t *testing.T) {
+func TestReadTailCountsSidechainSkipsWithinItsWindowOnly(t *testing.T) {
 	t.Parallel()
-	for _, raw := range []string{
-		`{"type":"assistant","isSidechain":true,"message":{"content":[]}}`,
-		` { "type": "assistant", "isSidechain" : true, "message": {"content":[]} } `,
-		`{"type":"assistant","\u0069sSidechain":true,"message":{"content":[]}}`,
-		`{"type":"assistant","nested":{"isSidechain":true},"message":{"content":[]}}`,
-		`{"type":"assistant","text":"isSidechain true","message":{"content":[]}}`,
-		`{"type":"assistant","isSidechain":true,"isSidechain":false,"message":{"content":[]}}`,
-		`{"type":"assistant","isSidechain":false,"isSidechain":true,"message":{"content":[]}}`,
-		`{"type":7,"isSidechain":true,"message":{"content":[]}}`,
-		`{"type":"assistant","isSidechain":true`,
+	side := `{"type":"assistant","isSidechain":true,"uuid":"invented-side","message":{"content":[{"type":"text","text":"side"}]}}`
+	main := func(id string) string {
+		return `{"type":"assistant","uuid":"` + id + `","message":{"content":[{"type":"text","text":"main"}]}}`
+	}
+	path := writeTemp(t, side+"\n"+main("invented-a")+"\n"+side+"\n"+main("invented-b")+"\n")
+	for _, test := range []struct {
+		limit       int
+		wantSkipped int
+		wantEntries int
+	}{
+		{limit: 1, wantSkipped: 0, wantEntries: 1},
+		{limit: 2, wantSkipped: 1, wantEntries: 2},
+		{limit: 3, wantSkipped: 2, wantEntries: 2},
 	} {
-		var env envelope
-		want := json.Unmarshal([]byte(raw), &env) == nil && env.IsSidechain
-		if got := tailSidechain([]byte(raw)); got != want {
-			t.Fatalf("tailSidechain(%q) = %v, want %v", raw, got, want)
+		got, _, err := ReadTail(path, test.limit)
+		if err != nil || got.Stats.SidechainSkipped != test.wantSkipped || len(got.Entries) != test.wantEntries {
+			t.Fatalf("tail limit %d = %d entries, %d skipped, %v; want %d, %d", test.limit, len(got.Entries), got.Stats.SidechainSkipped, err, test.wantEntries, test.wantSkipped)
+		}
+		sub, _, err := ReadSubagentTail(path, test.limit)
+		if err != nil || sub.Stats.SidechainSkipped != 0 || len(sub.Entries) != min(test.limit, 4) {
+			t.Fatalf("subagent tail limit %d = %+v, %v", test.limit, sub, err)
 		}
 	}
 }

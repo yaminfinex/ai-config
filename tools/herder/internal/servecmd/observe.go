@@ -34,9 +34,11 @@ func readAgentVitals(cache sessionvitals.Lookup) func(hcomidentity.Row) (claudes
 // runs its own 2 s roster poll today because the serve has no process-level
 // one (each SSE connection polls for itself); a later unit gives the serve
 // ONE roster poll feeding rosterCache, the SSE connections and the observer.
+// Until then each successful observer poll also refreshes rosterCache, which
+// keeps per-agent reads inside RosterFreshness without their own hcom call.
 func startObserver(ctx context.Context, deps dependencies) *observer.Observer {
 	obs := observer.New(observer.Options{
-		Roster:  deps.roster,
+		Roster:  cachingRoster(deps),
 		Now:     deps.now,
 		Watcher: observer.WatcherFactory(deps.transcriptWatcher),
 		Poll:    deps.poll,
@@ -45,6 +47,17 @@ func startObserver(ctx context.Context, deps dependencies) *observer.Observer {
 	})
 	obs.Run(ctx)
 	return obs
+}
+
+func cachingRoster(deps dependencies) func() ([]hcomidentity.Row, error) {
+	return func() ([]hcomidentity.Row, error) {
+		observed := deps.rosterCache.clock()
+		rows, err := deps.roster()
+		if err == nil {
+			deps.rosterCache.setObserved(rows, observed)
+		}
+		return rows, err
+	}
 }
 
 // answerVitals is the socket's answer function: nothing but observer.Lookup
