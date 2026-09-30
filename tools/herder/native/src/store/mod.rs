@@ -19,10 +19,10 @@ pub mod transcript;
 #[cfg(test)]
 mod tests;
 
-use crate::api::{Board, StateRow, StateRows, Wire};
+use crate::api::{Board, StateRow, Wire};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use sync::{Ns, Sync};
+use sync::{Ns, Step, Syncs};
 
 /// Connection state, for the status line and read-only decisions.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -104,30 +104,12 @@ pub enum Event {
         generation: u64,
         event: StreamEvent,
     },
-    /// `GET /api/viewer`: the attributed sender, or `None` when refused.
-    Viewer(Option<String>),
-    Pulled {
+    /// `GET /api/viewer`: the attributed name, or the failure's HTTP status (`None`: transport).
+    Viewer(Result<String, Option<u16>>),
+    /// A state namespace's network answer, backoff or local edit.
+    Sync {
         ns: Ns,
-        rows: StateRows,
-    },
-    /// A failed request: its HTTP status, or `None` for a transport failure.
-    PullFailed {
-        ns: Ns,
-        status: Option<u16>,
-    },
-    Posted {
-        ns: Ns,
-    },
-    PostFailed {
-        ns: Ns,
-        status: Option<u16>,
-    },
-    /// A backoff elapsed.
-    Retry(Ns),
-    /// A local edit to shared state: full rows with `(updated, writeID)` already set.
-    Edit {
-        ns: Ns,
-        rows: Vec<StateRow>,
+        step: Step,
     },
     /// The owner has looked at this agent's latest turn.
     Seen(String),
@@ -149,7 +131,6 @@ pub enum Write {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Persist {
     Prefs,
-    /// Written before any send that follows it in the same batch.
     Outbox,
     Snapshot,
 }
@@ -163,8 +144,10 @@ pub enum Effect {
         agents: Vec<String>,
     },
     Fetch(Fetch),
+    /// The shell saves the current outbox first and posts only once that save succeeded; a failed
+    /// save comes back as `Step::PostFailed(None)`.
     Send(Write),
-    /// Dispatch `Event::Retry(ns)` after this long.
+    /// Dispatch `Event::Sync { ns, step: Step::Retry }` after this long.
     Retry {
         ns: Ns,
         after_ms: u64,
@@ -172,39 +155,33 @@ pub enum Effect {
     Persist(Persist),
 }
 
-#[derive(Clone, Debug)]
+/// Who this Mac's writes are attributed to (`GET /api/viewer`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Attribution {
+    /// Not asked yet, or the request failed in transport; asked again on every `hello`.
+    #[default]
+    Unknown,
+    Attributed(String),
+    /// The server refused (409 on loopback or an unattributed peer); writes will be refused too.
+    Refused,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct Store {
     pub conn: Conn,
     /// The server's build changed since this app first connected: show "server updated".
     pub server_updated: bool,
-    pub viewer: Option<String>,
+    pub viewer: Attribution,
     pub prefs: Prefs,
     pub fleet: fleet::Fleet,
     pub spaces: Vec<spaces::Space>,
     pub notes: Vec<notes::Note>,
-    pub sync: BTreeMap<Ns, Sync>,
+    pub sync: Syncs,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
     stream: u64,
-}
-
-impl Default for Store {
-    fn default() -> Self {
-        Store {
-            conn: Conn::Offline,
-            server_updated: false,
-            viewer: None,
-            prefs: Prefs::default(),
-            fleet: fleet::Fleet::default(),
-            spaces: Vec::new(),
-            notes: Vec::new(),
-            sync: Ns::ALL.into_iter().map(|ns| (ns, Sync::new(ns))).collect(),
-            first_build: None,
-            live: false,
-            stream: 0,
-        }
-    }
+    viewer_asked: bool,
 }
 
 impl Store {
@@ -215,17 +192,13 @@ impl Store {
             Event::PrefsLoaded(p) => self.prefs = p,
             Event::Snapshot(snap) => {
                 if !self.live {
-                    for (ns, rows) in snap.rows {
-                        self.sync_mut(ns).merge(rows);
-                    }
+                    self.sync.restore(snap.rows, false);
                     self.derive();
                     self.board(snap.board, &mut out);
                 }
             }
             Event::OutboxLoaded(outbox) => {
-                for (ns, rows) in outbox {
-                    self.sync_mut(ns).queue(rows);
-                }
+                self.sync.restore(outbox, true);
                 self.derive();
             }
             Event::Boot => {
@@ -234,35 +207,34 @@ impl Store {
                     generation: self.stream,
                     agents: Vec::new(),
                 });
-                out.push(Effect::Fetch(Fetch::Viewer));
-                for ns in Ns::ALL {
-                    self.sync_op(ns, &mut out, |s, out| s.pull(out));
-                }
+                self.catch_up(&mut out);
             }
             Event::Stream { generation, event } if generation == self.stream => match event {
                 StreamEvent::Frame(wire) => self.wire(wire, &mut out),
                 StreamEvent::Dropped => self.conn = Conn::Offline,
             },
             Event::Stream { .. } => {}
-            Event::Viewer(v) => self.viewer = v,
-            Event::Pulled { ns, rows } => {
-                self.live = true;
-                self.sync_op(ns, &mut out, |s, out| s.pulled(rows, out));
+            Event::Viewer(v) => {
+                self.viewer_asked = false;
+                self.viewer = match v {
+                    Ok(name) => Attribution::Attributed(name),
+                    Err(Some(_)) => Attribution::Refused,
+                    Err(None) => Attribution::Unknown,
+                };
             }
-            Event::PullFailed { ns, status } => {
-                self.sync_op(ns, &mut out, |s, out| s.pull_failed(status, out))
+            Event::Sync { ns, step } => {
+                self.live |= matches!(step, Step::Pulled(_));
+                let changes = self.sync.get_mut(ns).apply(step, &mut out);
+                if changes.outbox {
+                    out.push(Effect::Persist(Persist::Outbox));
+                }
+                if changes.rows {
+                    self.derive();
+                    out.push(Effect::Persist(Persist::Snapshot));
+                }
             }
-            Event::Posted { ns } => self.sync_op(ns, &mut out, |s, out| s.posted(out)),
-            Event::PostFailed { ns, status } => {
-                self.sync_op(ns, &mut out, |s, out| s.post_failed(status, out))
-            }
-            Event::Retry(ns) => self.sync_op(ns, &mut out, |s, out| s.retry(out)),
-            Event::Edit { ns, rows } => self.sync_op(ns, &mut out, |s, out| s.edit(rows, out)),
             Event::Seen(name) => {
-                let turn = self.fleet.agents.get(&name).and_then(|a| a.turn_end);
-                let mark = self.prefs.seen.entry(name).or_default();
-                if let Some(turn) = turn.filter(|t| t > mark) {
-                    *mark = turn;
+                if spaces::mark_seen(&mut self.prefs.seen, &self.fleet, name) {
                     out.push(Effect::Persist(Persist::Prefs));
                 }
             }
@@ -283,116 +255,62 @@ impl Store {
 
     /// Agents in this space whose latest turn the owner has not seen.
     pub fn needs_you(&self, space: &spaces::Space) -> usize {
-        space
-            .agents()
-            .filter(|name| {
-                let seen = self.prefs.seen.get(*name).copied();
-                self.fleet
-                    .agents
-                    .get(*name)
-                    .is_some_and(|a| a.needs_you(seen))
-            })
-            .count()
+        spaces::needs_you(space, &self.fleet, &self.prefs.seen)
     }
 
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             board: self.fleet.board.clone(),
-            rows: self.rows_by_ns(|s| &s.rows),
+            rows: self.sync.export(false),
         }
     }
 
     pub fn outbox(&self) -> Outbox {
-        self.rows_by_ns(|s| &s.outbox)
+        self.sync.export(true)
     }
 
-    fn rows_by_ns(
-        &self,
-        pick: impl Fn(&Sync) -> &BTreeMap<String, StateRow>,
-    ) -> BTreeMap<Ns, Vec<StateRow>> {
-        self.sync
-            .iter()
-            .map(|(ns, s)| (*ns, pick(s).values().cloned().collect()))
-            .filter(|(_, rows): &(Ns, Vec<StateRow>)| !rows.is_empty())
-            .collect()
+    /// Pull every namespace from its cursor, and ask who we are until the server has said. Runs at boot
+    /// and on every `hello`, the first included: a change made between a boot pull and the stream's
+    /// subscription sends no nudge this client can see. Pulls already in flight coalesce.
+    fn catch_up(&mut self, out: &mut Vec<Effect>) {
+        if matches!(self.viewer, Attribution::Unknown) && !self.viewer_asked {
+            self.viewer_asked = true;
+            out.push(Effect::Fetch(Fetch::Viewer));
+        }
+        for ns in Ns::ALL {
+            self.sync.get_mut(ns).pull(out);
+        }
     }
 
     fn wire(&mut self, wire: Wire, out: &mut Vec<Effect>) {
         match wire {
-            Wire::Hello { build_identity } => {
-                match &self.first_build {
-                    None => self.first_build = Some(build_identity.clone()),
-                    // A reopen: catch up on whatever changed while the stream was down.
-                    Some(first) => {
-                        self.server_updated |= *first != build_identity;
-                        for ns in Ns::ALL {
-                            self.sync_op(ns, out, |s, out| s.pull(out));
-                        }
-                    }
-                }
+            Wire::Hello(hello) => {
+                let first = self.first_build.get_or_insert(hello.build_identity.clone());
+                self.server_updated |= *first != hello.build_identity;
                 self.conn = Conn::Live {
-                    build: build_identity,
+                    build: hello.build_identity,
                 };
+                self.catch_up(out);
             }
             Wire::Fleet(board) => {
                 self.live = true;
                 self.board(board, out);
                 out.push(Effect::Persist(Persist::Snapshot));
             }
-            Wire::StateChanged { namespace, rev } => {
-                if let Some(ns) = Ns::from_name(&namespace) {
-                    self.sync_op(ns, out, |s, out| s.changed(rev, out));
+            Wire::StateChanged(c) => {
+                if let Some(ns) = Ns::from_name(&c.namespace) {
+                    self.sync.get_mut(ns).changed(c.rev, out);
                 }
             }
             // Transcript wakes are U3's.
-            Wire::Entry { .. } | Wire::Rewindow { .. } | Wire::Ping | Wire::Other(_) => {}
+            Wire::Entry { .. } | Wire::Rewindow(_) | Wire::Ping | Wire::Other(_) => {}
         }
     }
 
-    /// Take a board. An agent seen for the first time gets its current turn as the baseline (an unknown
-    /// baseline is not a new turn); marks for agents neither on the board nor in a space are dropped.
     fn board(&mut self, board: Board, out: &mut Vec<Effect>) {
         self.fleet.ingest(board);
-        let before = self.prefs.seen.clone();
-        for a in self.fleet.agents.values() {
-            if let Some(turn) = a.turn_end {
-                self.prefs.seen.entry(a.name.clone()).or_insert(turn);
-            }
-        }
-        let members: Vec<&str> = self.spaces.iter().flat_map(|s| s.agents()).collect();
-        let agents = &self.fleet.agents;
-        self.prefs
-            .seen
-            .retain(|name, _| agents.contains_key(name) || members.contains(&name.as_str()));
-        if self.prefs.seen != before {
+        if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
             out.push(Effect::Persist(Persist::Prefs));
-        }
-    }
-
-    fn sync_mut(&mut self, ns: Ns) -> &mut Sync {
-        self.sync.get_mut(&ns).expect("every namespace has a sync")
-    }
-
-    /// Run one sync step. A changed outbox is persisted before any send the step emits; changed rows
-    /// re-derive the domain and refresh the snapshot.
-    fn sync_op(
-        &mut self,
-        ns: Ns,
-        out: &mut Vec<Effect>,
-        op: impl FnOnce(&mut Sync, &mut Vec<Effect>),
-    ) {
-        let s = self.sync_mut(ns);
-        let (rows, outbox) = (s.rows.clone(), s.outbox.clone());
-        let mut effects = Vec::new();
-        op(s, &mut effects);
-        if s.outbox != outbox {
-            out.push(Effect::Persist(Persist::Outbox));
-        }
-        let rows_changed = s.rows != rows;
-        out.extend(effects);
-        if rows_changed {
-            self.derive();
-            out.push(Effect::Persist(Persist::Snapshot));
         }
     }
 

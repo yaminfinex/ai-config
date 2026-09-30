@@ -45,65 +45,65 @@ pub struct Pane {
     pub subagents: Vec<Pane>,
 }
 
-impl Board {
-    /// Every row that names a bus agent, depth-first: placed panes, their subagents, then unplaced.
-    pub fn agent_rows(&self) -> impl Iterator<Item = (&Workspace, &Pane)> {
-        fn walk<'a>(ws: &'a Workspace, p: &'a Pane, out: &mut Vec<(&'a Workspace, &'a Pane)>) {
-            if !p.agent.is_empty() && p.agent != "-" {
-                out.push((ws, p));
-            }
-            for s in &p.subagents {
-                walk(ws, s, out);
-            }
-        }
-        let mut out = Vec::new();
-        for ws in &self.workspaces {
-            for t in &ws.tabs {
-                for p in &t.panes {
-                    walk(ws, p, &mut out);
-                }
-            }
-        }
-        static NOWHERE: Workspace = Workspace {
-            workspace_id: String::new(),
-            label: String::new(),
-            cwd: None,
-            tabs: Vec::new(),
-        };
-        for p in &self.unplaced {
-            walk(&NOWHERE, p, &mut out);
-        }
-        out.into_iter()
-    }
-}
-
-/// One `/api/events` frame decoded into what it means (`sse::Wire::decode`).
+/// One `/api/events` frame decoded into what it means.
 #[derive(Clone, Debug)]
 pub enum Wire {
     /// The first frame of every connection; a changed identity means the server was updated.
-    Hello {
-        build_identity: String,
-    },
+    Hello(Hello),
     /// A full board snapshot.
     Fleet(Board),
     /// A pull nudge: `namespace` changed and now stands at `rev`.
-    StateChanged {
-        namespace: String,
-        rev: u64,
-    },
+    StateChanged(StateChanged),
     /// One new entry for a subscribed agent; it only means "read forward from `next_offset`".
     Entry {
         agent: String,
         entry: Entry,
     },
     /// A subscribed agent's session or transcript position reset.
-    Rewindow {
-        agent: String,
-    },
+    Rewindow(Rewindow),
     Ping,
     /// A type this client does not use (`message`, `substrate`, `file-change`, newer ones), or a frame
     /// whose data did not decode.
     Other(String),
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hello {
+    pub build_identity: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct StateChanged {
+    pub namespace: String,
+    pub rev: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Rewindow {
+    pub agent: String,
+}
+
+impl Wire {
+    /// Decode one frame's `event:` and `data:` (on the stream's thread, so the board's JSON never costs
+    /// the foreground anything).
+    pub fn decode(event: &str, data: &str) -> Wire {
+        let decoded = match event {
+            "hello" => serde_json::from_str(data).map(Wire::Hello),
+            "fleet" => serde_json::from_str(data).map(Wire::Fleet),
+            "state-changed" => serde_json::from_str(data).map(Wire::StateChanged),
+            "rewindow" => serde_json::from_str(data).map(Wire::Rewindow),
+            "ping" => Ok(Wire::Ping),
+            _ => match event.strip_prefix("entry:") {
+                Some(agent) => serde_json::from_str(data).map(|entry| Wire::Entry {
+                    agent: agent.to_string(),
+                    entry,
+                }),
+                None => return Wire::Other(event.to_string()),
+            },
+        };
+        decoded.unwrap_or_else(|_| Wire::Other(event.to_string()))
+    }
 }
 
 /// `GET /api/agents/{name}`: the detail the transcript header needs.

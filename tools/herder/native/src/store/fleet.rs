@@ -78,10 +78,38 @@ pub struct Fleet {
 impl Fleet {
     /// Replace the fleet with a board. Agents missing from the board are gone (retired or culled).
     pub fn ingest(&mut self, board: Board) {
-        self.agents = board
-            .agent_rows()
+        self.agents = agent_rows(&board)
+            .into_iter()
             .map(|(ws, p)| (p.agent.clone(), Agent::from_row(ws, p)))
             .collect();
         self.board = board;
     }
+}
+
+/// Every board row that names a bus agent, depth-first: placed panes, their subagents, then unplaced.
+pub fn agent_rows(board: &Board) -> Vec<(&Workspace, &Pane)> {
+    fn walk<'a>(ws: &'a Workspace, p: &'a Pane, out: &mut Vec<(&'a Workspace, &'a Pane)>) {
+        if !p.agent.is_empty() && p.agent != "-" {
+            out.push((ws, p));
+        }
+        for s in &p.subagents {
+            walk(ws, s, out);
+        }
+    }
+    static NOWHERE: Workspace = Workspace {
+        workspace_id: String::new(),
+        label: String::new(),
+        cwd: None,
+        tabs: Vec::new(),
+    };
+    let mut out = Vec::new();
+    for ws in &board.workspaces {
+        for p in ws.tabs.iter().flat_map(|t| &t.panes) {
+            walk(ws, p, &mut out);
+        }
+    }
+    for p in &board.unplaced {
+        walk(&NOWHERE, p, &mut out);
+    }
+    out
 }

@@ -2,34 +2,36 @@
 //! window and the keymap. Views render from the store it holds and own their own widget entities; every
 //! change to the store goes through `Shell::dispatch`, which runs `Store::apply` and then the effects.
 //!
-//! Boot order matters for the 300 ms budget: theme fonts are seeded before `gpui_kit::init` (the
-//! kit otherwise enumerates every installed font to resolve `.SystemUIFont`, ~150 ms), then the window
-//! opens and paints from the disk snapshot, which is applied synchronously before the stream thread or
-//! any REST call starts. `Event::Boot` then opens the stream and pulls in parallel.
+//! Boot order matters for the 300 ms budget: theme fonts are seeded before `gpui_kit::init` (see
+//! `theme::seed`), then the window opens and paints from the disk snapshot, which is applied
+//! synchronously before the stream thread or any REST call starts. `Event::Boot` then opens the stream
+//! and pulls in parallel.
 //!
-//! Threads: the SSE read blocks on its own `std::thread` (`sse::Reader`); REST calls and disk writes run on GPUI's
-//! background executor. All of them report back as `Event`s on the one channel, which one foreground
+//! Threads: the SSE read blocks on its own `std::thread` (`sse::Reader`); REST calls and disk writes
+//! run on GPUI's background executor. All of them report back as `Event`s on the one channel, which one foreground
 //! task drains into `dispatch`.
+//!
+//! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
+//! send was decided (`save_then_send`); a save still pending elsewhere cannot be overtaken.
 
 use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
+use crate::local::{self, Disk};
+use crate::store::sync::Step;
 use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
 use crate::views::{debug, theme};
-use crate::{harness, local, platform_mac};
+use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui_kit::component::theme::{ThemeConfig, ThemeRegistry};
-use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
+use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Window title and app name.
 pub const APP_NAME: &str = "herder native";
 const APP_ID: &str = "dev.herder.native";
-/// The families are explicit so the kit never enumerates fonts (see the module doc). U2 owns the choice.
-const FONT: &str = "Menlo";
-const MONO: &str = "Monaco";
 /// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
@@ -40,6 +42,7 @@ pub struct Shell {
     pub store: Store,
     focus: FocusHandle,
     client: Client,
+    disk: Arc<Disk>,
     tx: UnboundedSender<Event>,
     stream: Option<sse::Reader>,
     /// Files with a write waiting out its coalescing window; it reads the store when it fires.
@@ -50,15 +53,15 @@ pub struct Shell {
 
 impl Shell {
     fn new(cx: &mut Context<Self>) -> Self {
-        let mut store = Store::default();
-        if let Some(prefs) = local::load_prefs() {
+        let (mut store, disk) = (Store::default(), Disk::home());
+        if let Some(prefs) = disk.load_prefs() {
             store.apply(Event::PrefsLoaded(prefs));
         }
         // Local state first, synchronously: nothing live has started yet, so nothing can be overwritten.
-        if let Some(snapshot) = local::load_snapshot() {
+        if let Some(snapshot) = disk.load_snapshot() {
             store.apply(Event::Snapshot(snapshot));
         }
-        if let Some(outbox) = local::load_outbox() {
+        if let Some(outbox) = disk.load_outbox() {
             store.apply(Event::OutboxLoaded(outbox));
         }
         harness::metric("local state applied");
@@ -76,6 +79,7 @@ impl Shell {
             store,
             focus: cx.focus_handle(),
             client: Client::new(base_url()),
+            disk: Arc::new(disk),
             tx,
             stream: None,
             saves: HashSet::new(),
@@ -107,15 +111,12 @@ impl Shell {
     }
 
     fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
-        // The outbox is written before any send in the same batch, on the same background task.
-        let mut outbox = None;
+        let mut save_outbox = false;
         let mut sends = Vec::new();
         for effect in effects {
             match effect {
                 Effect::Stream { generation, agents } => {
-                    if let Some(old) = self.stream.take() {
-                        old.close();
-                    }
+                    self.stream = None; // Dropping a reader closes it.
                     let query = format!("agents={}", agents.join(","));
                     let tx = self.tx.clone();
                     let reader =
@@ -142,13 +143,12 @@ impl Shell {
                     cx.background_executor()
                         .spawn(async move {
                             timer.await;
-                            let _ = tx.unbounded_send(Event::Retry(ns));
+                            let step = Step::Retry;
+                            let _ = tx.unbounded_send(Event::Sync { ns, step });
                         })
                         .detach();
                 }
-                Effect::Persist(Persist::Outbox) => {
-                    outbox = Some((local::encode(&self.store.outbox()), local::next_seq()));
-                }
+                Effect::Persist(Persist::Outbox) => save_outbox = true,
                 Effect::Persist(Persist::Prefs) => {
                     self.save_later(local::PREFS, PREFS_COALESCE, cx)
                 }
@@ -157,18 +157,18 @@ impl Shell {
                 }
             }
         }
-        if outbox.is_none() && sends.is_empty() {
+        if !save_outbox && sends.is_empty() {
             return;
         }
-        let (client, tx) = (self.client.clone(), self.tx.clone());
+        // Saved now even when this batch did not change the outbox: an edit's own save may still be
+        // waiting on another task, and a send must never overtake it.
+        let (bytes, seq) = (local::encode(&self.store.outbox()), local::next_seq());
+        let (disk, client, tx) = (self.disk.clone(), self.client.clone(), self.tx.clone());
         cx.background_executor()
             .spawn(async move {
-                if let Some((bytes, seq)) = outbox {
-                    local::write(local::OUTBOX, &bytes, seq);
-                }
-                for write in sends {
-                    let _ = tx.unbounded_send(run_send(&client, write));
-                }
+                save_then_send(&disk, &client, &bytes, seq, sends, |event| {
+                    let _ = tx.unbounded_send(event);
+                })
             })
             .detach();
     }
@@ -181,18 +181,23 @@ impl Shell {
         }
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let Ok(bytes) = this.update(cx, |s, _| {
+            let Ok((bytes, disk)) = this.update(cx, |s, _| {
                 s.saves.remove(name);
-                match name {
+                let bytes = match name {
                     local::PREFS => local::encode(&s.store.prefs),
                     _ => local::encode(&s.store.snapshot()),
-                }
+                };
+                (bytes, s.disk.clone())
             }) else {
                 return;
             };
             let seq = local::next_seq();
             cx.background_executor()
-                .spawn(async move { local::write(name, &bytes, seq) })
+                .spawn(async move {
+                    if let Err(e) = disk.write(name, &bytes, seq) {
+                        eprintln!("local: could not save {name}: {e}");
+                    }
+                })
                 .await;
         })
         .detach();
@@ -201,32 +206,49 @@ impl Shell {
 
 fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     match fetch {
-        Fetch::Viewer => Event::Viewer(client.viewer().ok().map(|v| v.viewer)),
-        Fetch::State { ns, since } => match client.state(ns.name(), since) {
-            Ok(rows) => Event::Pulled { ns, rows },
-            Err(e) => {
-                eprintln!("state {}: {e}", ns.name());
-                Event::PullFailed {
-                    ns,
-                    status: e.status(),
+        Fetch::Viewer => Event::Viewer(client.viewer().map(|v| v.viewer).map_err(|e| {
+            eprintln!("viewer: {e}");
+            e.status()
+        })),
+        Fetch::State { ns, since } => {
+            let step = match client.state(ns.name(), since) {
+                Ok(rows) => Step::Pulled(rows),
+                Err(e) => {
+                    eprintln!("state {}: {e}", ns.name());
+                    Step::PullFailed(e.status())
                 }
-            }
-        },
+            };
+            Event::Sync { ns, step }
+        }
     }
 }
 
-fn run_send(client: &Client, write: Write) -> Event {
-    match write {
-        Write::State { ns, rows } => match client.post_state(ns.name(), &rows) {
-            Ok(_) => Event::Posted { ns },
-            Err(e) => {
-                eprintln!("state {} post: {e}", ns.name());
-                Event::PostFailed {
-                    ns,
-                    status: e.status(),
+/// Save the outbox, then post each write and report its answer. A failed save posts nothing: every
+/// write comes back as a transport-style failure, which backs off and tries again (saving first again).
+pub fn save_then_send(
+    disk: &Disk,
+    client: &Client,
+    outbox: &[u8],
+    seq: u64,
+    sends: Vec<Write>,
+    mut on: impl FnMut(Event),
+) {
+    let saved = disk.write(local::OUTBOX, outbox, seq);
+    if let Err(e) = &saved {
+        eprintln!("local: could not save outbox.json, not sending: {e}");
+    }
+    for Write::State { ns, rows } in sends {
+        let step = match &saved {
+            Err(_) => Step::PostFailed(None),
+            Ok(()) => match client.post_state(ns.name(), &rows) {
+                Ok(_) => Step::Posted,
+                Err(e) => {
+                    eprintln!("state {} post: {e}", ns.name());
+                    Step::PostFailed(e.status())
                 }
-            }
-        },
+            },
+        };
+        on(Event::Sync { ns, step });
     }
 }
 
@@ -260,42 +282,21 @@ impl Render for Shell {
             .size_full()
             .bg(colors.background)
             .text_color(colors.foreground)
-            .font_family(FONT)
+            .font_family(theme::FONT)
             .text_size(t.body)
             .line_height(t.line)
             .child(debug::render(&self.store, t, colors.muted_foreground))
     }
 }
 
-fn with_fonts(c: &ThemeConfig) -> std::rc::Rc<ThemeConfig> {
-    let mut c = c.clone();
-    c.font_family = Some(FONT.into());
-    c.mono_font_family = Some(MONO.into());
-    std::rc::Rc::new(c)
-}
-
-/// Seed explicit font families before `gpui_kit::init` so it never enumerates installed fonts.
-fn seed_theme(cx: &mut App) {
-    let mut theme = Theme::default();
-    theme.light_theme = with_fonts(&ThemeConfig::default());
-    theme.dark_theme = theme.light_theme.clone();
-    theme.font_family = FONT.into();
-    theme.mono_font_family = MONO.into();
-    cx.set_global(theme);
-}
-
 pub fn run() {
     harness::start_clock();
     let script = harness::script();
     gpui_kit::application().run(move |cx| {
-        seed_theme(cx);
+        theme::seed(cx);
         gpui_kit::init(cx);
         cx.set_app_identity(APP_ID, APP_NAME);
-        // v0 is dark only: the kit's default dark theme, with our fonts.
-        let dark = with_fonts(ThemeRegistry::global(cx).default_dark_theme());
-        Theme::global_mut(cx).dark_theme = dark;
-        Theme::change(ThemeMode::Dark, None, cx);
-        Theme::sync_base(cx);
+        theme::dark(cx);
         // App-wide chords bind on `Lens` alone; navigation letters (U2+) must use
         // `Lens && !Input && !Terminal`, because a predicate sees the whole focus stack.
         cx.bind_keys([

@@ -4,11 +4,14 @@
 use herder_native::api::client::{Client, Page};
 use herder_native::api::sse::Reader;
 use herder_native::api::{StateRow, Wire};
-use herder_native::store::sync::{Hold, Ns};
-use herder_native::store::{Effect, Event, Fetch, Store, StreamEvent, Write};
+use herder_native::local::{self, Disk};
+use herder_native::shell::save_then_send;
+use herder_native::store::sync::{Hold, Ns, Step};
+use herder_native::store::{Effect, Event, Fetch, Store, StreamEvent};
 use serde_json::json;
 use std::io::{BufRead, BufReader, Read, Write as _};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
@@ -86,46 +89,53 @@ fn rows_json(rev: u64) -> String {
         .to_string()
 }
 
-/// Run the store's network effects synchronously against the fake until nothing is left to do.
-fn drive(store: &mut Store, client: &Client, first: Event) {
+/// Run the store's effects the way the shell does, synchronously against the fake, until nothing is
+/// left to do. A batch with sends goes through the shell's own `save_then_send`. A batch that only
+/// persists is left unsaved, as if its task were still waiting, so every test also shows that a send
+/// never depends on an earlier save having landed.
+fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
     let mut events = vec![first];
     while let Some(event) = events.pop() {
+        let mut sends = Vec::new();
         for effect in store.apply(event) {
             match effect {
                 Effect::Fetch(Fetch::State { ns, since }) => {
-                    events.push(match client.state(ns.name(), since) {
-                        Ok(rows) => Event::Pulled { ns, rows },
-                        Err(e) => Event::PullFailed {
-                            ns,
-                            status: e.status(),
-                        },
-                    })
+                    let step = match client.state(ns.name(), since) {
+                        Ok(rows) => Step::Pulled(rows),
+                        Err(e) => Step::PullFailed(e.status()),
+                    };
+                    events.push(Event::Sync { ns, step });
                 }
-                Effect::Send(Write::State { ns, rows }) => {
-                    events.push(match client.post_state(ns.name(), &rows) {
-                        Ok(_) => Event::Posted { ns },
-                        Err(e) => Event::PostFailed {
-                            ns,
-                            status: e.status(),
-                        },
-                    })
-                }
+                Effect::Send(write) => sends.push(write),
                 _ => {}
             }
+        }
+        if !sends.is_empty() {
+            let bytes = local::encode(&store.outbox());
+            save_then_send(disk, client, &bytes, local::next_seq(), sends, |e| {
+                events.push(e)
+            });
         }
     }
 }
 
+/// A fresh local state directory for one test.
+fn scratch(tag: &str) -> (Disk, PathBuf) {
+    let dir = std::env::temp_dir().join(format!("herder-native-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    (Disk::at(dir.clone()), dir)
+}
+
 fn edit(key: &str, updated: i64) -> Event {
-    Event::Edit {
+    Event::Sync {
         ns: Ns::Spaces,
-        rows: vec![StateRow {
+        step: Step::Edit(vec![StateRow {
             key: key.into(),
             value: json!({"id": key, "name": key, "order": 2}),
             updated,
             write_id: "native".into(),
             deleted: false,
-        }],
+        }]),
     }
 }
 
@@ -139,8 +149,10 @@ fn an_edit_is_posted_then_pulled_and_retired() {
         _ => Reply::Json(404, r#"{"error":"nope","detail":""}"#.into()),
     });
     let client = Client::new(base);
+    let (disk, dir) = scratch("posted");
     let mut store = Store::default();
-    drive(&mut store, &client, edit("s2", 7));
+    drive(&mut store, &client, &disk, edit("s2", 7));
+    std::fs::remove_dir_all(dir).unwrap();
 
     let log = log.lock().unwrap().clone();
     assert_eq!(log.len(), 2, "{log:?}");
@@ -173,13 +185,15 @@ fn refusals_map_to_holds_and_a_missing_namespace_is_empty() {
     let client = Client::new(base);
     assert!(client.state("notes", 0).unwrap().rows.is_empty());
 
+    let (disk, dir) = scratch("refusals");
     let mut store = Store::default();
-    drive(&mut store, &client, edit("s2", 7));
+    drive(&mut store, &client, &disk, edit("s2", 7));
     assert_eq!(store.sync[&Ns::Spaces].hold, Some(Hold::LocalOnly));
 
     *status.lock().unwrap() = 413;
     let mut store = Store::default();
-    drive(&mut store, &client, edit("s2", 7));
+    drive(&mut store, &client, &disk, edit("s2", 7));
+    std::fs::remove_dir_all(dir).unwrap();
     assert_eq!(store.sync[&Ns::Spaces].hold, Some(Hold::TooLarge));
     assert_eq!(
         store.sync[&Ns::Spaces].outbox.len(),
@@ -237,6 +251,7 @@ fn a_dropped_stream_reconnects_and_repulls() {
         }
     });
     let client = Client::new(base.clone());
+    let (disk, _) = scratch("reconnect"); // Nothing is edited, so nothing is saved.
     let mut store = Store::default();
     let (tx, rx) = mpsc::channel();
     let mut reader = None;
@@ -252,18 +267,14 @@ fn a_dropped_stream_reconnects_and_repulls() {
             }
             Effect::Fetch(Fetch::State { ns, since }) => {
                 let rows = client.state(ns.name(), since).unwrap();
-                store.apply(Event::Pulled { ns, rows });
+                let step = Step::Pulled(rows);
+                store.apply(Event::Sync { ns, step });
             }
             _ => {}
         }
     }
     let mut seen = Vec::new();
-    while seen
-        .iter()
-        .filter(|e| matches!(e, Wire::Hello { .. }))
-        .count()
-        < 2
-    {
+    while seen.iter().filter(|e| matches!(e, Wire::Hello(_))).count() < 2 {
         let event = rx
             .recv_timeout(Duration::from_secs(5))
             .expect("the stream reconnects");
@@ -273,7 +284,7 @@ fn a_dropped_stream_reconnects_and_repulls() {
                 StreamEvent::Dropped => seen.push(Wire::Other("dropped".into())),
             }
         }
-        drive(&mut store, &client, event);
+        drive(&mut store, &client, &disk, event);
     }
     reader.unwrap().close();
 
@@ -290,8 +301,113 @@ fn a_dropped_stream_reconnects_and_repulls() {
     let repulls: Vec<&String> = log.iter().filter(|l| l.contains("since=6")).collect();
     assert_eq!(
         repulls.len(),
-        3,
-        "every namespace re-pulled from its cursor: {log:?}"
+        6,
+        "each hello (the first too) re-pulls every namespace from its cursor: {log:?}"
     );
     assert_eq!(store.spaces.len(), 1);
+}
+
+/// Which version of row `s1` a JSON text holds (`updated`, compact or pretty), 0 for none.
+fn version(text: &str) -> i64 {
+    let rows: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+    let rows = rows
+        .get("rows")
+        .cloned()
+        .or_else(|| rows.get("spaces").cloned());
+    rows.and_then(|r| r.as_array()?.first()?.get("updated")?.as_i64())
+        .unwrap_or(0)
+}
+
+/// The race behind the durability rule: v2 is edited while v1's POST is in flight, and v2's own save
+/// never runs. v1's answer leads to a pull, whose answer sends v2; that send must save v2 first.
+#[test]
+fn every_send_saves_the_outbox_it_is_sending_first() {
+    let (disk, dir) = scratch("barrier");
+    let outbox = dir.join(local::OUTBOX);
+    let posts: Arc<Mutex<Vec<(i64, i64)>>> = Arc::default();
+    let p2 = posts.clone();
+    let (base, _) = serve(move |target, body| {
+        if target.starts_with("POST /api/state/spaces") {
+            let on_disk = std::fs::read_to_string(&outbox).unwrap_or_default();
+            p2.lock().unwrap().push((version(body), version(&on_disk)));
+            Reply::Json(200, json!({"accepted": [], "rev": 1}).to_string())
+        } else {
+            Reply::Json(200, json!({"rows": [], "rev": 1}).to_string())
+        }
+    });
+    let client = Client::new(base);
+    let mut store = Store::default();
+
+    // v1: the shell encodes the outbox as it is now, then saves and posts on a background task.
+    let sends: Vec<_> = store
+        .apply(edit("s1", 1))
+        .into_iter()
+        .filter_map(|e| match e {
+            Effect::Send(w) => Some(w),
+            _ => None,
+        })
+        .collect();
+    let (bytes, seq) = (local::encode(&store.outbox()), local::next_seq());
+    // v2 arrives before that task runs. It cannot send yet, and its own save never lands.
+    let v2 = store.apply(edit("s1", 2));
+    assert!(v2.iter().all(|e| !matches!(e, Effect::Send(_))), "{v2:?}");
+
+    let mut events = Vec::new();
+    save_then_send(&disk, &client, &bytes, seq, sends, |e| events.push(e));
+    for e in events {
+        drive(&mut store, &client, &disk, e);
+    }
+    assert_eq!(
+        *posts.lock().unwrap(),
+        [(1, 1), (2, 2)],
+        "(posted, on disk)"
+    );
+    assert!(store.sync[&Ns::Spaces].outbox.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// A save the disk refuses posts nothing, and the send backs off to try again (saving first again).
+#[test]
+fn a_failed_save_posts_nothing_and_retries() {
+    let (_, dir) = scratch("refused-save");
+    std::fs::write(&dir, "a file where the directory should be").unwrap();
+    let disk = Disk::at(dir.join("state"));
+    let (base, log) = serve(|_, _| Reply::Json(200, json!({"rows": [], "rev": 1}).to_string()));
+    let client = Client::new(base);
+    let mut store = Store::default();
+    let sends: Vec<_> = store
+        .apply(edit("s1", 1))
+        .into_iter()
+        .filter_map(|e| match e {
+            Effect::Send(w) => Some(w),
+            _ => None,
+        })
+        .collect();
+    let bytes = local::encode(&store.outbox());
+    let mut events = Vec::new();
+    save_then_send(&disk, &client, &bytes, local::next_seq(), sends, |e| {
+        events.push(e)
+    });
+
+    assert!(log.lock().unwrap().is_empty(), "nothing reached the server");
+    let [
+        Event::Sync {
+            ns: Ns::Spaces,
+            step: Step::PostFailed(None),
+        },
+    ] = &events[..]
+    else {
+        panic!("{events:?}")
+    };
+    let effects = store.apply(events.pop().unwrap());
+    assert!(
+        matches!(effects[..], [Effect::Retry { after_ms: 500, .. }]),
+        "{effects:?}"
+    );
+    assert_eq!(
+        store.sync[&Ns::Spaces].outbox.len(),
+        1,
+        "the edit stays queued"
+    );
+    std::fs::remove_file(dir).unwrap();
 }

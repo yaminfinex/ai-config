@@ -2,7 +2,7 @@
 //! members and each agent's status. Plain text, theme tokens only. U2's lens replaces it.
 
 use crate::api::Member;
-use crate::store::{Conn, Store};
+use crate::store::{Attribution, Conn, Store};
 use crate::views::theme::TypeScale;
 use gpui_kit::{Hsla, IntoElement, ParentElement, Styled, div, prelude::*};
 
@@ -16,7 +16,11 @@ pub fn render(store: &Store, t: TypeScale, muted: Hsla) -> impl IntoElement {
     } else {
         ""
     };
-    let viewer = store.viewer.as_deref().unwrap_or("unattributed");
+    let viewer = match &store.viewer {
+        Attribution::Unknown => "viewer unknown",
+        Attribution::Attributed(v) => v.as_str(),
+        Attribution::Refused => "unattributed",
+    };
     let header = format!(
         "{conn}{updated} · {viewer} · {} agents · {} spaces · {} notes",
         store.fleet.agents.len(),

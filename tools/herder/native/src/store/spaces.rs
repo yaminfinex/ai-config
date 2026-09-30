@@ -7,6 +7,7 @@
 //! turn against.
 
 use crate::api::{Member, MembersValue, SpaceValue, StateRow};
+use crate::store::fleet::Fleet;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -70,4 +71,43 @@ pub fn derive(
         .collect();
     out.sort_by(|a, b| a.order.total_cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
     out
+}
+
+/// Agents in this space whose latest turn the owner has not seen.
+pub fn needs_you(space: &Space, fleet: &Fleet, seen: &BTreeMap<String, u64>) -> usize {
+    space
+        .agents()
+        .filter(|name| {
+            let mark = seen.get(*name).copied();
+            fleet.agents.get(*name).is_some_and(|a| a.needs_you(mark))
+        })
+        .count()
+}
+
+/// After a new board: an agent seen for the first time gets its current turn as the baseline (an
+/// unknown baseline is not a new turn); marks for agents neither on the board nor in a space are
+/// dropped. True when the marks changed.
+pub fn baseline_seen(seen: &mut BTreeMap<String, u64>, fleet: &Fleet, spaces: &[Space]) -> bool {
+    let before = seen.clone();
+    for a in fleet.agents.values() {
+        if let Some(turn) = a.turn_end {
+            seen.entry(a.name.clone()).or_insert(turn);
+        }
+    }
+    let members: Vec<&str> = spaces.iter().flat_map(|s| s.agents()).collect();
+    seen.retain(|name, _| fleet.agents.contains_key(name) || members.contains(&name.as_str()));
+    *seen != before
+}
+
+/// The owner has looked at `name`'s latest turn. True when its mark moved.
+pub fn mark_seen(seen: &mut BTreeMap<String, u64>, fleet: &Fleet, name: String) -> bool {
+    let turn = fleet.agents.get(&name).and_then(|a| a.turn_end);
+    let mark = seen.entry(name).or_default();
+    match turn.filter(|t| t > mark) {
+        Some(turn) => {
+            *mark = turn;
+            true
+        }
+        None => false,
+    }
 }
