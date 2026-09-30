@@ -882,6 +882,34 @@ fn a_block_needs_you_until_viewed_and_again_when_it_recurs() {
 }
 
 #[test]
+fn a_block_before_any_turn_alerts_again_when_it_recurs() {
+    let mut store = loaded();
+    let mut b = board();
+    let panes = b.workspaces.iter_mut().flat_map(|w| &mut w.tabs);
+    for pane in panes
+        .flat_map(|t| &mut t.panes)
+        .filter(|p| p.agent == "mupu")
+    {
+        pane.turn_end_id = None;
+    }
+    let slack = space_of(&store, "mupu").id.clone();
+    let view = lens(spaces::Move::View {
+        space: slack,
+        agent: Some("mupu".into()),
+    });
+    block(&mut b, "mupu", true);
+    store.apply(fleet_frame(b.clone()));
+    assert!(store.agent_needs_you("mupu"), "blocked with no turn yet");
+    store.apply(view);
+    assert!(!store.agent_needs_you("mupu"), "viewed");
+    block(&mut b, "mupu", false);
+    store.apply(fleet_frame(b.clone()));
+    block(&mut b, "mupu", true);
+    store.apply(fleet_frame(b));
+    assert!(store.agent_needs_you("mupu"), "blocked again");
+}
+
+#[test]
 fn seen_marks_read_the_old_bare_turn_form() {
     let old: Prefs = serde_json::from_str(r#"{"seen": {"mupu": 42}}"#).unwrap();
     let mark = spaces::Seen {

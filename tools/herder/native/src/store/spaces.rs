@@ -1,9 +1,8 @@
 //! Spaces and what is in them (U1), plus the owner's lens choices (U2).
 //!
-//! Spaces come from the `spaces` namespace and members from `spaces.members` (server rows shared with
-//! web, tombstones dropped, ordered by `order` then id as web does; members in dock order). Local, never
-//! on the server (`Prefs`): each space's row, its visible agent, the spaces marked unread, and the seen
-//! mark per agent, which "needs you" compares the agent's latest turn and block against.
+//! Spaces come from `spaces` and members from `spaces.members` (server rows shared with web,
+//! tombstones dropped, ordered by `order` then id as web does; members in dock order). Local only
+//! (`Prefs`): each space's row, visible agent and unread mark, and each agent's seen mark.
 
 use crate::api::{Member, MembersValue, SpaceValue, StateRow};
 use crate::store::fleet::{Fleet, Status};
@@ -112,7 +111,9 @@ pub fn baseline_seen(seen: &mut BTreeMap<String, Seen>, fleet: &Fleet, spaces: &
     for a in fleet.agents.values() {
         if let Some(turn_end) = a.turn_end {
             let fresh = SeenWire::Turn(turn_end).into();
-            let mark = seen.entry(a.name.clone()).or_insert(fresh);
+            seen.entry(a.name.clone()).or_insert(fresh);
+        }
+        if let Some(mark) = seen.get_mut(&a.name) {
             mark.blocked &= a.status() == Status::Blocked;
         }
     }
@@ -200,9 +201,8 @@ impl Store {
     /// last. With no `from`, the search starts at the top.
     pub fn next_needing(&self, from: Option<&str>) -> Option<&Space> {
         let order = self.lens();
-        let start = from
-            .and_then(|id| order.iter().position(|s| s.id == id))
-            .map_or(0, |i| i + 1);
+        let at = from.and_then(|id| order.iter().position(|s| s.id == id));
+        let start = at.map_or(0, |i| i + 1);
         (0..order.len())
             .map(|k| order[(start + k) % order.len()])
             .find(|s| self.needs_you(s) > 0)

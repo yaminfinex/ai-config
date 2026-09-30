@@ -221,16 +221,27 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   No network, no clock, milliseconds to run.
 - **Layering** (`tests/layering.rs`), see §1.
 - **UI harness** (`harness`, `just harness "<steps>"`): a scripted run opens its window with `focus: false`,
-  orders it behind every other app's windows (`platform_mac::order_windows_back`) and never calls
+  orders it behind every other app's windows (`platform_mac::order_windows`) and never calls
   `activate`, so the owner keeps focus. It always quits when the script ends, and any failed step (a bad
   keystroke, a failed screenshot, an unknown step) exits non-zero. Steps: `wait:`, `key:` (through
   `Window::dispatch_keystroke`, the real input path), `shot:` (draws a fresh frame first, then
-  `render_to_image`; needs the `shots` feature = GPUI `test-support`), `rss`, `quit`; units add `type:`,
+  `render_to_image`; needs the `shots` feature = GPUI `test-support`), `rss`, `cpu:<ms>` (CPU share with
+  pulse paints, shell renders, pointer moves and whether the window was on screen), `move:<ms>` (the same
+  while a synthetic pointer sweeps the window), `quit`; `HERDER_NATIVE_WINDOW=WxH` sizes the window and
+  `HERDER_NATIVE_VISIBLE=1` orders it in front, still unfocused, for CPU runs, only when the owner asks
+  for one (the window pops up over their work); units add `type:`,
   `cpuscroll:`, `keycpu:` from the spike as they need them. Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
   the 88 MB transcript. `harness::metric` lines on stderr carry the numbers.
+- **Idle CPU exception (Rung 1, agreed at U2 review).** A window on screen costs about 1 % of one core
+  with nothing to draw: GPUI 0.3.7 runs a CVDisplayLink while the window is visible and calls its frame
+  step every vsync (`stop_display_link` is private), so the app renders nothing and still pays the tick.
+  Occluded, the same run is 0.1 %. No fork. Working dots add their pulse: a separate `Pulse` view over the
+  cached shell repaints only the dots on screen, in 4 steps over 1.6 s (2.5 Hz). At 5 Hz, three working
+  dots measured about 0.9–1.0 points above the floor; 2.5 Hz was ratified at U2 on that estimate, without
+  a fresh visible run.
 - **Live smoke** once per unit against the tailnet serve, by hand.
 
 ## 8. Line budgets (Rung 1)

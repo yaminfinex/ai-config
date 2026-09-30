@@ -226,10 +226,13 @@ impl Dots {
     }
 }
 
-/// Paints of the working dots, for the harness's `cpu:` step.
+/// Paints of the working dots and pointer moves over the window, for the harness's `cpu:` step.
 pub static PULSE_PAINTS: AtomicU32 = AtomicU32::new(0);
-/// The working dot's pulse: 8 steps over 1.6 s, while any dot is on screen.
-const PULSE_STEP: Duration = Duration::from_millis(200);
+pub static POINTER_MOVES: AtomicU32 = AtomicU32::new(0);
+/// The working dot's pulse: 4 steps over 1.6 s (bright, half, dim, half), while any dot is on screen.
+/// Each step repaints the window, so fewer steps cost less (ARCHITECTURE §Performance).
+const PULSE_STEP: Duration = Duration::from_millis(400);
+const PULSE_PHASES: u32 = 4;
 
 /// The window's root: the shell, cached so it only re-renders when it notifies, with the pulse layer
 /// over it. The pulse notifies only itself, so its steps repaint the dots and reuse everything else.
@@ -252,7 +255,11 @@ impl Render for Frame {
             .clone()
             .cached(StyleRefinement::default().size_full());
         let pulse = div().absolute().inset_0().child(self.pulse.clone());
-        div().size_full().relative().child(main).child(pulse)
+        let moved = |_: &MouseMoveEvent, _: &mut Window, _: &mut App| {
+            POINTER_MOVES.fetch_add(1, Ordering::Relaxed);
+        };
+        let frame = div().size_full().relative().on_mouse_move(moved);
+        frame.child(main).child(pulse)
     }
 }
 
@@ -264,7 +271,7 @@ pub struct Pulse {
 impl Render for Pulse {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (dots, pulse) = (self.dots.clone(), cx.weak_entity());
-        let p = (self.phase % 8) as f32 / 8.0;
+        let p = (self.phase % PULSE_PHASES) as f32 / PULSE_PHASES as f32;
         let color = Hsla::from(rgb(pal::GREEN)).opacity(0.3 + 0.7 * (2.0 * p - 1.0).abs());
         let paint = move |_, _, window: &mut Window, cx: &mut App| {
             let mut s = dots.0.borrow_mut();

@@ -12,10 +12,14 @@
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
 //! what a visible window costs needs one that is.
 
-use crate::views::PULSE_PAINTS;
-use gpui_kit::{AsyncWindowContext, Keystroke, Pixels, Size, px, size};
+use crate::views::{POINTER_MOVES, PULSE_PAINTS};
+use gpui_kit::{
+    AsyncWindowContext, Keystroke, Modifiers, MouseMoveEvent, Pixels, PlatformInput, Size, point,
+    px, size,
+};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering::Relaxed;
 use std::time::{Duration, Instant};
 
 static T0: OnceLock<Instant> = OnceLock::new();
@@ -114,26 +118,39 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
                 Err(e) => fail(format!("key {arg}: {e}")),
             },
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
-            "cpu" => {
+            // `cpu:` idles; `move:` sweeps a synthetic pointer across the window every 16 ms (the
+            // owner's real pointer stays put). Both count pointer events, real ones included.
+            "cpu" | "move" => {
                 let ms = arg.parse().unwrap_or(10_000u64);
-                let count = || {
-                    (
-                        PULSE_PAINTS.load(Ordering::Relaxed),
-                        RENDERS.load(Ordering::Relaxed),
-                    )
-                };
-                let (before, (paints, renders)) = (cpu_s(), count());
-                cx.background_executor()
-                    .timer(Duration::from_millis(ms))
-                    .await;
+                let count = || [&PULSE_PAINTS, &RENDERS, &POINTER_MOVES].map(|c| c.load(Relaxed));
+                let (before, start) = (cpu_s(), count());
+                let (moves, tick) = (if op == "move" { ms / 16 } else { 0 }, 16);
+                for i in 0..moves {
+                    let position = point(px(40. + (i % 90) as f32 * 10.), px(120.));
+                    let (pressed_button, modifiers) = (None, Modifiers::default());
+                    let event = PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button,
+                        modifiers,
+                    });
+                    let _ = cx.update(|w, cx| w.dispatch_event(event, cx));
+                    cx.background_executor()
+                        .timer(Duration::from_millis(tick))
+                        .await;
+                }
+                let rest = Duration::from_millis(ms - moves * tick);
+                cx.background_executor().timer(rest).await;
                 let pct = (cpu_s() - before) / (ms as f64 / 1000.0) * 100.0;
-                let (p, r) = (count().0 - paints, count().1 - renders);
-                let seen = cx
-                    .update(|_, _| crate::platform_mac::on_screen())
-                    .unwrap_or(false);
-                let on = if seen { "on screen" } else { "occluded" };
+                let now = count();
+                let [p, r, m] = [0, 1, 2].map(|i| now[i] - start[i]);
+                let seen = cx.update(|_, _| crate::platform_mac::on_screen());
+                let on = if seen.unwrap_or(false) {
+                    "on screen"
+                } else {
+                    "occluded"
+                };
                 metric(format!(
-                    "cpu {pct:.2}% of one core over {ms} ms ({on}): {p} pulse paints, {r} shell renders"
+                    "cpu {pct:.2}% of one core over {ms} ms ({on}): {m} pointer moves, {p} pulse paints, {r} shell renders"
                 ));
             }
             "shot" => {

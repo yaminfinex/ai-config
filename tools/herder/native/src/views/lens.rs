@@ -61,6 +61,8 @@ pub struct State {
     scroll: ScrollHandle,
     /// The selection moved: scroll its card into view once it is laid out.
     pub(super) reveal: Rc<Cell<bool>>,
+    /// The window size and text size last laid out; a change reflows the rows, so reveal again.
+    layout: Cell<(Size<Pixels>, Pixels)>,
     /// Each card's last laid-out bounds, where the zoom morphs from and back to.
     pub(super) cards: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
     pub dots: Dots,
@@ -124,10 +126,13 @@ pub fn act(store: &Store, ui: &mut State, nav: Nav) -> Vec<Event> {
     };
     let order = store.lens();
     let at = order.iter().position(|s| s.id == space.id).unwrap_or(0);
+    // Every key keeps the selection in view: placing, card size and text all reflow the rows.
+    ui.reveal.set(true);
     match nav {
         Nav::Step(by) => ui.select(&order.get(at.saturating_add_signed(by)).unwrap_or(&space).id),
         Nav::StepRow(by) => step_row(store, ui, space, by),
-        Nav::Place(_) => ui.reveal.set(true),
+        // Pin the implicit first-card selection, which would otherwise move with the space.
+        Nav::Place(_) => ui.select(&space.id),
         Nav::CardText => ui.cwd ^= true,
         Nav::CardSize => ui.size = (ui.size + 1) % SIZES.len(),
         Nav::Help => ui.help ^= true,
@@ -163,10 +168,8 @@ fn step_row(store: &Store, ui: &mut State, from: &Space, by: isize) {
 /// `n` / `N`: select the next space needing you after the current one; zoom into it for `N` or when
 /// already zoomed (a sideways swipe there).
 pub(super) fn next_needing(store: &Store, ui: &mut State, zoom: bool) -> Vec<Event> {
-    let from = match &ui.zoom {
-        Some(z) => Some(z.space.clone()),
-        None => ui.selected(store).map(|s| s.id.clone()),
-    };
+    let zoomed = ui.zoom.as_ref().map(|z| z.space.clone());
+    let from = zoomed.or_else(|| ui.selected(store).map(|s| s.id.clone()));
     let Some(next) = store.next_needing(from.as_deref()) else {
         return Vec::new();
     };
@@ -187,6 +190,8 @@ pub fn render<H: Host>(
     cx: &mut Context<H>,
 ) -> AnyElement {
     ui.dots.clear(ui.anim.is_some() || ui.help);
+    let reflowed = ui.layout.replace((window, t.body)) != (window, t.body);
+    ui.reveal.set(ui.reveal.get() || reflowed);
     match (&ui.zoom, &ui.anim) {
         (Some(zoom), None) => space::render(store, ui, zoom, t, cx),
         (Some(zoom), Some(anim)) if anim.leaving().is_none() => {
@@ -334,8 +339,7 @@ fn recorder(ui: &Ui, id: &str, selected: bool) -> impl IntoElement {
             return;
         };
         let y = y.clamp(-scroll.max_offset().y, px(0.));
-        // After this frame, and re-rendering the shell: it is a cached view, so a refresh alone
-        // would reuse this frame.
+        // After this frame, notifying the shell: it is a cached view, which a refresh would reuse.
         let shell = window.current_view();
         cx.defer(move |cx| {
             scroll.set_offset(point(offset.x, y));
