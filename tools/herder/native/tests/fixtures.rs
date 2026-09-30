@@ -3,8 +3,10 @@
 
 use herder_native::api::sse::{Frame, read_frames};
 use herder_native::api::{
-    Board, Entries, Kind, Member, MembersValue, NoteValue, Refusal, SpaceValue, StateRows,
+    AgentDetail, Board, Entries, Kind, Member, MembersValue, NoteValue, Refusal, SpaceValue,
+    StateRows, Viewer, Wire,
 };
+use herder_native::store::fleet::agent_rows;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -18,7 +20,10 @@ fn fixture(rel: &str) -> String {
 #[test]
 fn fleet_board_decodes_with_agents() {
     let board: Board = serde_json::from_str(&fixture("fleet.json")).unwrap();
-    let names: Vec<&str> = board.agent_rows().map(|(_, p)| p.agent.as_str()).collect();
+    let names: Vec<&str> = agent_rows(&board)
+        .into_iter()
+        .map(|(_, p)| p.agent.as_str())
+        .collect();
     assert!(names.contains(&"mupu"), "{names:?}");
     assert!(names.len() > 10);
 }
@@ -31,9 +36,25 @@ fn sse_fixture_yields_hello_then_fleet() {
         frames.iter().map(|f| f.event.as_str()).collect::<Vec<_>>(),
         ["hello", "fleet"]
     );
-    assert!(frames[0].data.contains("buildIdentity"));
-    let board: Board = serde_json::from_str(&frames[1].data).unwrap();
-    assert!(board.agent_rows().count() > 0);
+    assert!(
+        matches!(Wire::decode(&frames[0].event, &frames[0].data), Wire::Hello(h) if !h.build_identity.is_empty())
+    );
+    let Wire::Fleet(board) = Wire::decode(&frames[1].event, &frames[1].data) else {
+        panic!("the second frame is the board")
+    };
+    assert!(!agent_rows(&board).is_empty());
+}
+
+#[test]
+fn viewer_and_agent_details_decode() {
+    let viewer: Viewer = serde_json::from_str(&fixture("viewer.json")).unwrap();
+    assert!(!viewer.viewer.is_empty());
+    for agent in ["mupu", "conductor-line", "grill-confirm-lubo"] {
+        let d: AgentDetail =
+            serde_json::from_str(&fixture(&format!("agents/{agent}/detail.json"))).unwrap();
+        assert_eq!(d.name, agent);
+        assert!(d.session_id.is_some());
+    }
 }
 
 #[test]

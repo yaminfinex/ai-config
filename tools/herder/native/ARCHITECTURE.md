@@ -25,7 +25,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 | Module | Responsibility (one sentence) | Depends on |
 |---|---|---|
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
-| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. | `api::types` |
+| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. | `api::types` |
 | `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects. | everything |
 | `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
@@ -55,17 +55,26 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   **synchronously before** the SSE thread or any REST call starts, so nothing stale can land on top of live
   data (`Event::Snapshot` is also refused by the store once anything live has arrived). Then in parallel:
   the SSE thread (`hello` + `fleet`), `GET /api/viewer`, and `GET /api/state/{spaces,spaces.members,notes}?since=0`.
-- **Stopping and reconfiguring the stream.** `api::sse::open` speaks plain HTTP/1.0 over a `TcpStream` and
-  returns a `Stop` handle (a cloned socket); `stop()` shuts the socket down and the blocked read returns at
-  once. The shell holds the current `Stop`; changing the `agents=` subscription means `stop()`, then a new
-  `open` with a new **generation** number. Reading never relies on the 45 s timeout to notice anything:
-  a healthy stream pings every 15 s and would never time out.
+  The viewer is `Unknown` until the server answers. Only a 409 is `Refused` (never asked again); a
+  transport failure or a 5xx stays `Unknown` and is asked again on a coalesced timer (500 ms doubling to
+  10 s, one timer and one request at a time) and on every `hello`, so a healthy stream that never sends
+  another `hello` still recovers.
+- **Stopping and reconfiguring the stream.** `api::sse::Reader` is the stream's thread: plain HTTP/1.0
+  over a `TcpStream`, reconnecting with backoff and the watchdog below, reporting each frame and each drop.
+  `close()` (or dropping the `Reader`) ends it promptly wherever it is: the socket is published as soon as it
+  connects, so shutting it down interrupts the header read as well as a frame read, and the backoff sleep
+  waits on a condvar. Not interruptible: DNS resolution of the host, which sits outside the 5 s connect
+  timeout (as long as the system resolver takes), and the connect itself (5 s). The shell holds the
+  current `Reader`; changing the `agents=` subscription drops it and spawns a new one under a new
+  **generation** number, and the store drops anything from an older generation. Reading never relies on
+  the 45 s timeout to notice anything: a healthy stream pings every 15 s and would never time out.
 - **Stale results.** Every transcript request carries the transcript's `(session_id, generation)`;
   `generation` bumps on `rewindow`, on a `reset`, and when the window is thrown away. A response whose tag no
   longer matches is dropped by the store.
-- **Reconnect.** Backoff 500 ms → 10 s, watchdog 45 s. After every reopen: re-read each open transcript
-  forward from its `next_offset`, re-pull the state namespaces from their in-memory cursors, and expect a
-  fresh `fleet`. A changed `hello.buildIdentity` shows "server updated" and never reloads by itself.
+- **Reconnect.** Backoff 500 ms → 10 s, watchdog 45 s. On every `hello`, the first included (a change made
+  between a boot pull and the stream's subscription sends no nudge this client can see): re-read each open
+  transcript forward from its `next_offset`, re-pull the state namespaces from their in-memory cursors
+  (pulls in flight coalesce), ask for the viewer again while it is `Unknown`, and expect a fresh `fleet`. A changed `hello.buildIdentity` shows "server updated" and never reloads by itself.
 - **Transcript wakes.** One stream, subscribed with `agents=` to the agents of the zoomed space. An `entry:`
   frame only means "read forward from `next_offset`", coalesced over 25 ms.
 - **Server cost.** Debounce detail refetches; skip the web client's habit of invalidating every open
@@ -82,9 +91,13 @@ Derived shapes are in `store`:
   An agent absent from the board is gone; retired detail (`bus_status: retired`) makes a transcript read-only.
 - **`spaces::Space`** — `{id, name, order}` from the `spaces` namespace, tombstones dropped. **`Member`** is
   `Agent{name}` or `File{root, path}` from `spaces.members`, in dock order. Local: **`Row`** (`Focus`,
-  `Watch`, `Background`) per space, the **visible agent** per space, and **seen** per agent (a timestamp).
-  **Needs you** = the agent is not `Working` and its last activity is after its seen mark; the card count is
-  the number of such agents in the space.
+  `Watch`, `Background`) per space, the **visible agent** per space, and **seen** per agent: the board's
+  `turn_end_id` (the hcom event id of the agent's latest completed turn, monotonic) the owner has seen; the
+  board carries no activity timestamp. An agent seen for the first time takes its current turn as the
+  baseline (web's policy: an unknown baseline is not a new turn), and marks are pruned to agents on the
+  board or in a space. **Needs you** = the agent is not `Working`, not `retired` or `stopped`, and its
+  `turn_end_id` is above its seen mark; `Blocked` without a new turn does not count (making it always count
+  is an owner policy call for U2). The card count is the number of such agents in the space.
 - **`transcript::Item`** — what compact mode renders: `Prompt`, `Delivery{sender, text, operator}`,
   `TaskNotification`, `SystemChip` (`injected_system`, `command_stdout`, `system_chip`, `turn_duration` fold
   here or are dropped), `CompactDivider`, `Assistant{markdown}`, `Thinking` (a collapsed pill),
@@ -164,7 +177,7 @@ Monaco) so the kit never enumerates installed fonts.
 | `outbox.json` | unsent state rows (notes, spaces, members), written before each send attempt | this Mac |
 | `snapshot.json` | the last board, spaces, members and notes, for the first paint | this Mac |
 
-State sync is simpler than web's in one way: **no persisted revision cursor.** Every boot pulls each
+`store::sync` holds it, one `Sync` per namespace. State sync is simpler than web's in one way: **no persisted revision cursor.** Every boot pulls each
 namespace with `since=0` (tens of kilobytes, one round trip each) into the store; the pull cursor lives in
 memory for the session and a `state-changed` frame above it pulls again. Rows resolve last-write-wins on
 `(updated, writeID)`.
@@ -172,7 +185,10 @@ memory for the session and a `state-changed` frame above it pulls again. Rows re
 The outbox is durable and its cleanup is **version-aware**, copied from web's `stateSync.ts`, because the
 server's `accepted` list omits idempotent and losing rows and so cannot be used as the acknowledgement:
 
-1. A local edit writes its row (a full version, `(updated, writeID)` set) to `outbox.json` before any send.
+1. A local edit queues its row (a full version, `(updated, writeID)` set) and saves `outbox.json`. Every
+   POST waits for a successful save of the outbox as it stood when the send was decided, whether or not
+   that step changed it, so a send can never overtake an edit's own save still pending on another task. A
+   failed save posts nothing and comes back as a transport failure, which backs off and tries again.
 2. A POST sends a copy of the whole outbox. When the POST returns any 2xx, every queued row whose version is
    **equal to or older than** the version that was sent is retired; a newer edit of the same key made while
    the POST was in flight stays queued. `accepted` is not consulted, so a lost-then-retried write and a
@@ -198,7 +214,9 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   pages the whole thing into `testdata/big/` (gitignored) for perf runs.
 - **`api` tests** (`tests/fixtures.rs`, `api::sse` unit tests) decode every fixture into the types, check the
   paging invariants (`prevOffset` is the first entry's offset; a `before=` page ends before the tail's
-  `from`), and open a loopback SSE stream to prove `stop()` interrupts a blocked read.
+  `from`), and run the `Reader` against loopback servers: `close` interrupts a frame read, a stalled header
+  read and the backoff, and a silent stream trips the watchdog and reconnects. `tests/fake_server.rs` runs
+  the write path, refusals, the reconnect and the outbox save-before-send rule against an in-process fake.
 - **`store` tests** (in-module) feed fixture-built events to `Store::apply` and assert state and effects.
   No network, no clock, milliseconds to run.
 - **Layering** (`tests/layering.rs`), see §1.
@@ -223,6 +241,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 | `api/client.rs` | 200 | `views/space.rs` | 300 |
 | `api/sse.rs` | 150 | `views/transcript.rs` | 400 |
 | `store/mod.rs` | 250 | `views/composer.rs` | 150 |
+| `store/sync.rs` | 320 | | |
 | `store/fleet.rs` | 120 | `views/notes.rs` | 200 |
 | `store/spaces.rs` | 250 | `views/theme.rs` | 100 |
 | `store/transcript.rs` | 400 | `shell.rs` | 300 |
@@ -231,6 +250,10 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
+
+Documented U1 exceptions (agreed at U1 review): `store/mod.rs` 349 (the Event/Effect vocabulary,
+`Prefs`, the reducer), `shell.rs` 347 (the effect runner with the save-before-send barrier), `api/sse.rs`
+195 (the reconnecting `Reader` with its cancellation).
 
 ## 9. From the spike: lifted, rewritten, dropped
 

@@ -55,3 +55,21 @@ fetch-big agent:
 # Lines per source file, for the DONE report and the line budgets.
 lines:
     @wc -l src/*.rs src/*/*.rs tests/*.rs | sort -n
+
+# Cold start (U1): builds a fresh release (no `shots`, which adds GPUI test-support), then the first launch
+# records snapshot.json and the second paints from it; fails unless the snapshot holds agents and the second
+# launch painted from it. Read `first paint`, `live board applied` and `rss` in the metrics. A throwaway HOME
+# under target/ keeps the owner's local state untouched; the app only reads the serve (no local edits, so
+# nothing is posted). Screenshots: `just harness`.
+coldstart script="wait:2500 rss quit": build
+    #!/usr/bin/env sh
+    set -eu
+    home="$PWD/target/coldstart-home"
+    state="$home/Library/Application Support/herder-native"
+    mkdir -p "$state"
+    rm -f "$state/prefs.json" "$state/outbox.json" "$state/snapshot.json"
+    HOME="$home" HERDER_NATIVE_SCRIPT="wait:2500 quit" ./target/release/herder-native 2>/dev/null
+    grep -q '"agent": "[^-"]' "$state/snapshot.json" || { echo "coldstart: the warm-up saved no board"; exit 1; }
+    out=$(HOME="$home" HERDER_NATIVE_SCRIPT="{{script}}" ./target/release/herder-native 2>&1)
+    echo "$out"
+    echo "$out" | grep -q "first paint (snapshot)" || { echo "coldstart: did not paint from the snapshot"; exit 1; }
