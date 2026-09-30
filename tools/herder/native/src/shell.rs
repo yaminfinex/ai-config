@@ -4,14 +4,24 @@
 //!
 //! Boot order matters for the 300 ms budget: theme fonts are seeded before `gpui_kit::init` (the
 //! kit otherwise enumerates every installed font to resolve `.SystemUIFont`, ~150 ms), then the window
-//! opens and paints from the disk snapshot while the network catches up.
+//! opens and paints from the disk snapshot, which is applied synchronously before the stream thread or
+//! any REST call starts. `Event::Boot` then opens the stream and pulls in parallel.
+//!
+//! Threads: the SSE read blocks on its own `std::thread` (`sse::Reader`); REST calls and disk writes run on GPUI's
+//! background executor. All of them report back as `Event`s on the one channel, which one foreground
+//! task drains into `dispatch`.
 
-use crate::store::{Effect, Event, Store, TextScale};
-use crate::views::theme;
+use crate::api::client::{Client, base_url};
+use crate::api::{Wire, sse};
+use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
+use crate::views::{debug, theme};
 use crate::{harness, local, platform_mac};
+use futures::StreamExt as _;
+use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::component::theme::{ThemeConfig, ThemeRegistry};
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::*;
+use std::collections::HashSet;
 use std::time::Duration;
 
 /// Window title and app name.
@@ -20,16 +30,22 @@ const APP_ID: &str = "dev.herder.native";
 /// The families are explicit so the kit never enumerates fonts (see the module doc). U2 owns the choice.
 const FONT: &str = "Menlo";
 const MONO: &str = "Monaco";
-/// A held ⌘+ produces a burst of saves; only the last one is written.
-const PERSIST_DEBOUNCE: Duration = Duration::from_millis(150);
+/// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
+const PREFS_COALESCE: Duration = Duration::from_millis(150);
+const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
 
 actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 pub struct Shell {
     pub store: Store,
     focus: FocusHandle,
-    /// The pending prefs write; replacing it cancels the one still waiting out the debounce.
-    persist: Option<Task<()>>,
+    client: Client,
+    tx: UnboundedSender<Event>,
+    stream: Option<sse::Reader>,
+    /// Files with a write waiting out its coalescing window; it reads the store when it fires.
+    saves: HashSet<&'static str>,
+    painted: bool,
+    live_painted: bool,
 }
 
 impl Shell {
@@ -38,40 +54,195 @@ impl Shell {
         if let Some(prefs) = local::load_prefs() {
             store.apply(Event::PrefsLoaded(prefs));
         }
+        // Local state first, synchronously: nothing live has started yet, so nothing can be overwritten.
+        if let Some(snapshot) = local::load_snapshot() {
+            store.apply(Event::Snapshot(snapshot));
+        }
+        if let Some(outbox) = local::load_outbox() {
+            store.apply(Event::OutboxLoaded(outbox));
+        }
+        harness::metric("local state applied");
         theme::apply(store.prefs.text_scale, cx);
+        let (tx, mut rx) = unbounded();
+        cx.spawn(async move |this, cx| {
+            while let Some(event) = rx.next().await {
+                if this.update(cx, |s, cx| s.dispatch(event, cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         Shell {
             store,
             focus: cx.focus_handle(),
-            persist: None,
+            client: Client::new(base_url()),
+            tx,
+            stream: None,
+            saves: HashSet::new(),
+            painted: false,
+            live_painted: false,
         }
     }
 
     /// The only path to a state change: reduce, then run the effects.
     pub fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
-        for effect in self.store.apply(event) {
+        let is_live_board = matches!(
+            event,
+            Event::Stream {
+                event: StreamEvent::Frame(Wire::Fleet(_)),
+                ..
+            }
+        );
+        let scale = self.store.prefs.text_scale;
+        let effects = self.store.apply(event);
+        if self.store.prefs.text_scale != scale {
+            theme::apply(self.store.prefs.text_scale, cx);
+        }
+        if is_live_board && !self.live_painted {
+            self.live_painted = true;
+            harness::metric("live board applied");
+        }
+        self.run(effects, cx);
+        cx.notify();
+    }
+
+    fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
+        // The outbox is written before any send in the same batch, on the same background task.
+        let mut outbox = None;
+        let mut sends = Vec::new();
+        for effect in effects {
             match effect {
-                Effect::Persist(prefs) => {
-                    theme::apply(prefs.text_scale, cx);
-                    let seq = local::next_seq();
-                    self.persist = Some(cx.spawn(async move |_, cx| {
-                        cx.background_executor().timer(PERSIST_DEBOUNCE).await;
-                        cx.background_executor()
-                            .spawn(async move { local::save_prefs(&prefs, seq) })
-                            .await;
-                    }));
+                Effect::Stream { generation, agents } => {
+                    if let Some(old) = self.stream.take() {
+                        old.close();
+                    }
+                    let query = format!("agents={}", agents.join(","));
+                    let tx = self.tx.clone();
+                    let reader =
+                        sse::Reader::spawn(self.client.base().into(), query, move |wire| {
+                            let event = wire.map_or(StreamEvent::Dropped, StreamEvent::Frame);
+                            let _ = tx.unbounded_send(Event::Stream { generation, event });
+                        });
+                    self.stream = Some(reader);
+                }
+                Effect::Fetch(fetch) => {
+                    let (client, tx) = (self.client.clone(), self.tx.clone());
+                    cx.background_executor()
+                        .spawn(async move {
+                            let _ = tx.unbounded_send(run_fetch(&client, fetch));
+                        })
+                        .detach();
+                }
+                Effect::Send(write) => sends.push(write),
+                Effect::Retry { ns, after_ms } => {
+                    let tx = self.tx.clone();
+                    let timer = cx
+                        .background_executor()
+                        .timer(Duration::from_millis(after_ms));
+                    cx.background_executor()
+                        .spawn(async move {
+                            timer.await;
+                            let _ = tx.unbounded_send(Event::Retry(ns));
+                        })
+                        .detach();
+                }
+                Effect::Persist(Persist::Outbox) => {
+                    outbox = Some((local::encode(&self.store.outbox()), local::next_seq()));
+                }
+                Effect::Persist(Persist::Prefs) => {
+                    self.save_later(local::PREFS, PREFS_COALESCE, cx)
+                }
+                Effect::Persist(Persist::Snapshot) => {
+                    self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
                 }
             }
         }
-        cx.notify();
+        if outbox.is_none() && sends.is_empty() {
+            return;
+        }
+        let (client, tx) = (self.client.clone(), self.tx.clone());
+        cx.background_executor()
+            .spawn(async move {
+                if let Some((bytes, seq)) = outbox {
+                    local::write(local::OUTBOX, &bytes, seq);
+                }
+                for write in sends {
+                    let _ = tx.unbounded_send(run_send(&client, write));
+                }
+            })
+            .detach();
+    }
+
+    /// Write `name` once `delay` has passed, from the store as it is then. A write already waiting
+    /// covers this change too.
+    fn save_later(&mut self, name: &'static str, delay: Duration, cx: &mut Context<Self>) {
+        if !self.saves.insert(name) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            let Ok(bytes) = this.update(cx, |s, _| {
+                s.saves.remove(name);
+                match name {
+                    local::PREFS => local::encode(&s.store.prefs),
+                    _ => local::encode(&s.store.snapshot()),
+                }
+            }) else {
+                return;
+            };
+            let seq = local::next_seq();
+            cx.background_executor()
+                .spawn(async move { local::write(name, &bytes, seq) })
+                .await;
+        })
+        .detach();
+    }
+}
+
+fn run_fetch(client: &Client, fetch: Fetch) -> Event {
+    match fetch {
+        Fetch::Viewer => Event::Viewer(client.viewer().ok().map(|v| v.viewer)),
+        Fetch::State { ns, since } => match client.state(ns.name(), since) {
+            Ok(rows) => Event::Pulled { ns, rows },
+            Err(e) => {
+                eprintln!("state {}: {e}", ns.name());
+                Event::PullFailed {
+                    ns,
+                    status: e.status(),
+                }
+            }
+        },
+    }
+}
+
+fn run_send(client: &Client, write: Write) -> Event {
+    match write {
+        Write::State { ns, rows } => match client.post_state(ns.name(), &rows) {
+            Ok(_) => Event::Posted { ns },
+            Err(e) => {
+                eprintln!("state {} post: {e}", ns.name());
+                Event::PostFailed {
+                    ns,
+                    status: e.status(),
+                }
+            }
+        },
     }
 }
 
 impl Render for Shell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.painted {
+            self.painted = true;
+            let from = if self.store.spaces.is_empty() {
+                "empty"
+            } else {
+                "snapshot"
+            };
+            window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
+        }
         let colors = cx.theme();
-        let (bg, fg) = (colors.background, colors.muted_foreground);
-        let scale = self.store.prefs.text_scale;
-        let t = theme::type_scale(scale);
+        let t = theme::type_scale(self.store.prefs.text_scale);
         div()
             .id("root")
             .track_focus(&self.focus)
@@ -87,26 +258,12 @@ impl Render for Shell {
                 s.dispatch(Event::TextScale(TextScale::Reset), cx)
             }))
             .size_full()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(t.body)
-            .bg(bg)
-            .text_color(fg)
+            .bg(colors.background)
+            .text_color(colors.foreground)
             .font_family(FONT)
             .text_size(t.body)
             .line_height(t.line)
-            .child(
-                div()
-                    .text_size(t.title)
-                    .child(format!("{APP_NAME} · skeleton (A0)")),
-            )
-            .child(
-                div()
-                    .text_size(t.small)
-                    .child(format!("text ×{scale:.2} · ⌘+ ⌘- ⌘0")),
-            )
+            .child(debug::render(&self.store, t, colors.muted_foreground))
     }
 }
 
@@ -178,5 +335,6 @@ pub fn run() {
             }
         });
         harness::metric("window opened");
+        shell.update(cx, |s, cx| s.dispatch(Event::Boot, cx));
     });
 }

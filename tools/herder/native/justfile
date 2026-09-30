@@ -55,3 +55,17 @@ fetch-big agent:
 # Lines per source file, for the DONE report and the line budgets.
 lines:
     @wc -l src/*.rs src/*/*.rs tests/*.rs | sort -n
+
+# Cold start (U1): the first launch records snapshot.json, the second paints from it. Read `first paint`,
+# `live board applied` and `rss` in the metrics. A throwaway HOME under target/ keeps the owner's local state
+# untouched; the app only reads the serve (no local edits, so nothing is posted). For a screenshot, build
+# with `--features shots` and pass a script with `shot:debug`.
+coldstart script="wait:2500 rss quit":
+    #!/usr/bin/env sh
+    set -eu
+    home="$PWD/target/coldstart-home"
+    state="$home/Library/Application Support/herder-native"
+    mkdir -p "$state" shots
+    rm -f "$state/prefs.json" "$state/outbox.json" "$state/snapshot.json"
+    HOME="$home" HERDER_NATIVE_SCRIPT="wait:2500 quit" ./target/release/herder-native 2>/dev/null
+    HOME="$home" HERDER_NATIVE_SHOT_DIR=shots HERDER_NATIVE_SCRIPT="{{script}}" ./target/release/herder-native 2>&1

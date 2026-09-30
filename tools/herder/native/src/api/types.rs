@@ -40,6 +40,8 @@ pub struct Pane {
     pub group: Option<String>,
     pub parent_agent: Option<String>,
     pub context_used: Option<u64>,
+    /// The hcom event id of the latest completed turn: monotonic, so it doubles as a read marker.
+    pub turn_end_id: Option<u64>,
     pub subagents: Vec<Pane>,
 }
 
@@ -73,6 +75,35 @@ impl Board {
         }
         out.into_iter()
     }
+}
+
+/// One `/api/events` frame decoded into what it means (`sse::Wire::decode`).
+#[derive(Clone, Debug)]
+pub enum Wire {
+    /// The first frame of every connection; a changed identity means the server was updated.
+    Hello {
+        build_identity: String,
+    },
+    /// A full board snapshot.
+    Fleet(Board),
+    /// A pull nudge: `namespace` changed and now stands at `rev`.
+    StateChanged {
+        namespace: String,
+        rev: u64,
+    },
+    /// One new entry for a subscribed agent; it only means "read forward from `next_offset`".
+    Entry {
+        agent: String,
+        entry: Entry,
+    },
+    /// A subscribed agent's session or transcript position reset.
+    Rewindow {
+        agent: String,
+    },
+    Ping,
+    /// A type this client does not use (`message`, `substrate`, `file-change`, newer ones), or a frame
+    /// whose data did not decode.
+    Other(String),
 }
 
 /// `GET /api/agents/{name}`: the detail the transcript header needs.
@@ -180,7 +211,7 @@ pub struct StateRows {
 }
 
 /// One row of a state namespace. `value` is opaque to the server; last write wins on `(updated, write_id)`.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct StateRow {
     pub key: String,
@@ -189,6 +220,29 @@ pub struct StateRow {
     #[serde(rename = "writeID")]
     pub write_id: String,
     pub deleted: bool,
+}
+
+impl StateRow {
+    /// The last-write-wins order: `updated`, then `writeID` (web's `compareStateVersions`).
+    pub fn version_cmp(&self, other: &StateRow) -> std::cmp::Ordering {
+        (self.updated, &self.write_id).cmp(&(other.updated, &other.write_id))
+    }
+}
+
+/// The reply to `POST /api/state/{ns}`. `accepted` omits idempotent and losing rows, so it is never
+/// used as the acknowledgement (ARCHITECTURE §6).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Accepted {
+    pub accepted: Vec<String>,
+    pub rev: u64,
+}
+
+/// `GET /api/viewer`: the web sender this connection is attributed to.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Viewer {
+    pub viewer: String,
 }
 
 /// The `spaces` namespace value, shared with herder web.

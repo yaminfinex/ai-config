@@ -5,6 +5,8 @@
 //!
 //! Planned files, one per surface, added by the unit that needs them:
 //! `lens` (U2, the home rows and cards), `space` (U2, the zoom shell and tabs), `transcript` (U3),
-//! `composer` (U4), `notes` (U5). `theme` (palette and type scale) is here from A0.
+//! `composer` (U4), `notes` (U5). `theme` (palette and type scale) is here from A0; `debug` (U1) is a
+//! throwaway that U2 deletes.
 
+pub mod debug;
 pub mod theme;

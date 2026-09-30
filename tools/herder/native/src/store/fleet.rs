@@ -17,6 +17,8 @@ pub struct Agent {
     pub workspace: String,
     pub pane_id: Option<String>,
     pub context_used: Option<u64>,
+    /// The id of the latest completed turn (monotonic); what seen marks compare against.
+    pub turn_end: Option<u64>,
 }
 
 /// What the cards and notifications key on. Derived, never stored.
@@ -51,21 +53,35 @@ impl Agent {
             workspace: ws.label.clone(),
             pane_id: (p.pane_id != "-" && !p.pane_id.is_empty()).then(|| p.pane_id.clone()),
             context_used: p.context_used,
+            turn_end: p.turn_end_id,
+        }
+    }
+
+    /// A finished turn the owner has not seen: not working, not retired or stopped, and its latest
+    /// turn ended after `seen`. No mark means no baseline yet, so nothing is unread.
+    pub fn needs_you(&self, seen: Option<u64>) -> bool {
+        let gone = matches!(self.bus_status.as_str(), "retired" | "stopped");
+        match (self.turn_end, seen) {
+            (Some(turn), Some(seen)) => !gone && self.status() != Status::Working && turn > seen,
+            _ => false,
         }
     }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Fleet {
+    /// The last board as received; the disk snapshot keeps it for the next cold start.
+    pub board: Board,
     pub agents: BTreeMap<String, Agent>,
 }
 
 impl Fleet {
     /// Replace the fleet with a board. Agents missing from the board are gone (retired or culled).
-    pub fn ingest(&mut self, board: &Board) {
+    pub fn ingest(&mut self, board: Board) {
         self.agents = board
             .agent_rows()
             .map(|(ws, p)| (p.agent.clone(), Agent::from_row(ws, p)))
             .collect();
+        self.board = board;
     }
 }

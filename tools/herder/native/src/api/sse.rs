@@ -4,19 +4,70 @@
 //! The connection is a plain `TcpStream` speaking HTTP/1.0 (the server is plain HTTP, and 1.0 keeps the
 //! body unchunked). The read blocks on its own thread, so an idle stream costs no CPU, and `Stop`
 //! (a clone of the socket) shuts it down from any thread so a subscription change never waits for the
-//! read timeout. Backoff 500 ms doubling to 10 s is the caller's; the 45 s read timeout is the watchdog
-//! (the server pings every 15 s).
+//! read timeout. `Reader` is that thread: it reopens with backoff 500 ms doubling to 10 s, and the 45 s
+//! read timeout is the watchdog (the server pings every 15 s).
 
+use crate::api::types::Wire;
+use serde::Deserialize;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+const BACKOFF: Duration = Duration::from_millis(500);
+const BACKOFF_MAX: Duration = Duration::from_secs(10);
 
 /// One server-sent event. `event` is `message` when the frame had no `event:` line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Frame {
     pub event: String,
     pub data: String,
+}
+
+impl Wire {
+    /// Decode a frame on the stream's thread, so the board's JSON never costs the foreground anything.
+    pub fn decode(frame: &Frame) -> Wire {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Hello {
+            build_identity: String,
+        }
+        #[derive(Deserialize)]
+        struct StateChanged {
+            namespace: String,
+            rev: u64,
+        }
+        #[derive(Deserialize)]
+        struct Rewindow {
+            agent: String,
+        }
+        let data = frame.data.as_str();
+        let decoded = match frame.event.as_str() {
+            "hello" => serde_json::from_str(data).map(|h: Hello| Wire::Hello {
+                build_identity: h.build_identity,
+            }),
+            "fleet" => serde_json::from_str(data).map(Wire::Fleet),
+            "state-changed" => {
+                serde_json::from_str(data).map(|s: StateChanged| Wire::StateChanged {
+                    namespace: s.namespace,
+                    rev: s.rev,
+                })
+            }
+            "rewindow" => {
+                serde_json::from_str(data).map(|r: Rewindow| Wire::Rewindow { agent: r.agent })
+            }
+            "ping" => Ok(Wire::Ping),
+            event => match event.strip_prefix("entry:") {
+                Some(agent) => serde_json::from_str(data).map(|entry| Wire::Entry {
+                    agent: agent.to_string(),
+                    entry,
+                }),
+                None => return Wire::Other(event.to_string()),
+            },
+        };
+        decoded.unwrap_or_else(|_| Wire::Other(frame.event.clone()))
+    }
 }
 
 /// Shuts the stream's socket down; the blocked reader returns at once. Cheap to clone and send.
@@ -98,6 +149,60 @@ pub fn read_frames<R: BufRead>(mut reader: R, mut on: impl FnMut(Frame)) -> io::
     }
 }
 
+/// The stream's thread: open, read frames until the connection ends, report the drop, back off, reopen.
+/// `close` ends it at once, and nothing is reported after that.
+pub struct Reader {
+    stop: Arc<Mutex<Option<Stop>>>,
+    closed: Arc<AtomicBool>,
+}
+
+impl Reader {
+    /// `on(Some(wire))` for each frame, `on(None)` each time a connection ends or fails to open.
+    pub fn spawn(
+        base: String,
+        query: String,
+        mut on: impl FnMut(Option<Wire>) + Send + 'static,
+    ) -> Reader {
+        let reader = Reader {
+            stop: Arc::default(),
+            closed: Arc::default(),
+        };
+        let (stop, closed) = (reader.stop.clone(), reader.closed.clone());
+        std::thread::spawn(move || {
+            let mut backoff = BACKOFF;
+            while !closed.load(Ordering::SeqCst) {
+                match open(&base, &query) {
+                    Ok(conn) => {
+                        *stop.lock().unwrap_or_else(|e| e.into_inner()) = Some(conn.stop.clone());
+                        if closed.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        let _ = read_frames(conn.reader, |frame| {
+                            backoff = BACKOFF;
+                            on(Some(Wire::decode(&frame)));
+                        });
+                    }
+                    Err(e) => eprintln!("events: {e}"),
+                }
+                if closed.load(Ordering::SeqCst) {
+                    break;
+                }
+                on(None);
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(BACKOFF_MAX);
+            }
+        });
+        reader
+    }
+
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::SeqCst);
+        if let Some(stop) = self.stop.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            stop.stop();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +249,37 @@ mod tests {
         let ended = done_rx.recv_timeout(Duration::from_secs(2));
         assert!(ended.is_ok(), "reader did not return within 2 s of stop()");
         let _ = release.send(());
+    }
+
+    fn wire(event: &str, data: &str) -> Wire {
+        Wire::decode(&Frame {
+            event: event.into(),
+            data: data.into(),
+        })
+    }
+
+    #[test]
+    fn every_used_event_type_decodes() {
+        assert!(
+            matches!(wire("hello", r#"{"buildIdentity":"b1"}"#), Wire::Hello { build_identity } if build_identity == "b1")
+        );
+        assert!(matches!(
+            wire("fleet", r#"{"workspaces":[],"unplaced":[]}"#),
+            Wire::Fleet(_)
+        ));
+        assert!(matches!(wire("ping", ""), Wire::Ping));
+        assert!(matches!(
+            wire("state-changed", r#"{"namespace":"spaces.members","rev":7}"#),
+            Wire::StateChanged { namespace, rev: 7 } if namespace == "spaces.members"
+        ));
+        assert!(matches!(
+            wire("entry:mupu", r#"{"byteOffset":42,"kind":"assistant_text","payload":{}}"#),
+            Wire::Entry { agent, entry } if agent == "mupu" && entry.byte_offset == 42
+        ));
+        assert!(
+            matches!(wire("rewindow", r#"{"agent":"mupu"}"#), Wire::Rewindow { agent } if agent == "mupu")
+        );
+        assert!(matches!(wire("substrate", "{}"), Wire::Other(e) if e == "substrate"));
+        assert!(matches!(wire("hello", "not json"), Wire::Other(e) if e == "hello"));
     }
 }
