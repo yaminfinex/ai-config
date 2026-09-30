@@ -708,3 +708,92 @@ func TestObserverRosterPollRefreshesRosterCache(t *testing.T) {
 		t.Fatal("a failed poll marked the cache fresh")
 	}
 }
+
+// Every roster writer stamps the time its `hcom list` began, so a slow fetch
+// that returns after a newer snapshot was cached cannot resurrect the
+// replaced session or restart the freshness clock.
+func TestDelayedOlderRosterNeverOverwritesNewerSnapshot(t *testing.T) {
+	oldRow := hcomidentity.Row{Name: "dore", Tool: "claude", Status: "active", SessionID: "old", Directory: "/invented/violet"}
+	newRow := oldRow
+	newRow.SessionID = "new"
+	writers := map[string]func(dependencies) error{
+		"observer poll": func(deps dependencies) error {
+			_, err := cachingRoster(deps)()
+			return err
+		},
+		"per-agent fallback": func(deps dependencies) error {
+			_, _, _, err := resolveAgentEvidence(deps, "dore")
+			return err
+		},
+		"fleet read": func(deps dependencies) error {
+			_, _, err := readFleetInputs(deps)
+			return err
+		},
+	}
+	for name, write := range writers {
+		t.Run(name, func(t *testing.T) {
+			clock := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+			deps := fixtureDeps()
+			deps.rosterCache = &rosterCache{now: func() time.Time { return clock }}
+			deps.roster = func() ([]hcomidentity.Row, error) {
+				// While this fetch is in flight another reader caches the
+				// new incarnation at t1; this answer lands at t4.
+				clock = clock.Add(time.Second)
+				deps.rosterCache.set([]hcomidentity.Row{newRow})
+				clock = clock.Add(3 * time.Second)
+				return []hcomidentity.Row{oldRow}, nil
+			}
+			if err := write(deps); err != nil {
+				t.Fatal(err)
+			}
+			rows, ok := deps.rosterCache.get()
+			if !ok || len(rows) != 1 || rows[0].SessionID != "new" {
+				t.Fatalf("cache after delayed older answer = %#v", rows)
+			}
+			// The kept snapshot is aged from t1, not restamped at t4.
+			if _, ok := deps.rosterCache.fresh(3*time.Second - time.Nanosecond); ok {
+				t.Fatal("delayed answer restarted the freshness clock")
+			}
+		})
+	}
+}
+
+// A slow fetch is aged from when it began: rows observed longer ago than
+// RosterFreshness are never served from the cache, however recently they
+// arrived.
+func TestSlowRosterFetchIsAgedFromItsStart(t *testing.T) {
+	clock := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	deps := fixtureDeps()
+	deps.rosterCache = &rosterCache{now: func() time.Time { return clock }}
+	row := hcomidentity.Row{Name: "dore", Tool: "claude", SessionID: fixtureSessionID}
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		clock = clock.Add(RosterFreshness + time.Second)
+		return []hcomidentity.Row{row}, nil
+	}
+	if _, err := cachingRoster(deps)(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := deps.rosterCache.fresh(RosterFreshness); ok {
+		t.Fatal("a slow fetch was served as fresh past RosterFreshness from its start")
+	}
+	if rows, ok := deps.rosterCache.get(); !ok || len(rows) != 1 {
+		t.Fatalf("slow fetch was not cached for name resolution: %#v", rows)
+	}
+	quick := time.Date(2026, 9, 30, 13, 0, 0, 0, time.UTC)
+	clock = quick
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		clock = clock.Add(time.Second)
+		return []hcomidentity.Row{row}, nil
+	}
+	if _, err := cachingRoster(deps)(); err != nil {
+		t.Fatal(err)
+	}
+	clock = quick.Add(RosterFreshness)
+	if _, ok := deps.rosterCache.fresh(RosterFreshness); !ok {
+		t.Fatal("a fetch begun exactly RosterFreshness ago was refused")
+	}
+	clock = clock.Add(time.Nanosecond)
+	if _, ok := deps.rosterCache.fresh(RosterFreshness); ok {
+		t.Fatal("a fetch begun past RosterFreshness was served")
+	}
+}

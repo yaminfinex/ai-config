@@ -51,9 +51,10 @@ func startObserver(ctx context.Context, deps dependencies) *observer.Observer {
 
 func cachingRoster(deps dependencies) func() ([]hcomidentity.Row, error) {
 	return func() ([]hcomidentity.Row, error) {
+		observed := deps.rosterCache.clock()
 		rows, err := deps.roster()
 		if err == nil {
-			deps.rosterCache.set(rows)
+			deps.rosterCache.setObserved(rows, observed)
 		}
 		return rows, err
 	}

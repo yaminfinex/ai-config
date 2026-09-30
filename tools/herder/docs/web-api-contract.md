@@ -487,9 +487,12 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   before. Tail and backward reads never parse records outside their window.
 
   Per-agent reads (`GET /api/agents/{bus-name}` and its `/entries`) resolve
-  the name from the serve's cached hcom roster when it is younger than 3 s
-  (the observer's 2 s poll plus one second of slack; the observer poll and
-  every live fallback refresh it). A stale or absent cache, a failed
+  the name from the serve's cached hcom roster when the `hcom list` that
+  produced it began less than 3 s ago (the observer's 2 s poll plus one
+  second of slack; the observer poll, fleet reads, the life mirror, and every
+  live fallback refresh it). A roster fetch that began before the cached one
+  is refused, so a slow answer never replaces a newer snapshot or restarts
+  its age. A stale or absent cache, a failed
   roster validation, or a name absent from the cached roster falls back to
   one live `hcom list`, then to retained stopped evidence as above. A new
   incarnation that reuses a name is therefore served within at most 3 s;

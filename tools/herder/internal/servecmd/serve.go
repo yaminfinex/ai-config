@@ -58,8 +58,8 @@ const (
 	// poll always keeps the cache inside this bound; past it (poll stalled,
 	// no observer) every per-agent read asks hcom live again.
 	RosterFreshness = PollCadence + time.Second
-	webNoteStart            = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
-	webNoteEnd              = "[HERDER_WEB_OPERATOR_NOTE_END]"
+	webNoteStart    = "[HERDER_WEB_OPERATOR_NOTE_BEGIN]"
+	webNoteEnd      = "[HERDER_WEB_OPERATOR_NOTE_END]"
 )
 
 var errRosterPending = errors.New("roster not polled yet")
@@ -121,20 +121,34 @@ type rosterCache struct {
 	mu          sync.RWMutex
 	rows        []hcomidentity.Row
 	initialized bool
-	now         func() time.Time // Stamps set; nil means time.Now.
-	at          time.Time
+	now         func() time.Time // Observation clock; nil means time.Now.
+	at          time.Time        // When the cached rows' `hcom list` began.
 	remembered  map[string]string
 	ambiguous   map[string]bool
 }
 
+// set caches rows observed now. Serve code that fetched them uses
+// setObserved with the time its fetch began.
 func (c *rosterCache) set(rows []hcomidentity.Row) {
+	c.setObserved(rows, c.clock())
+}
+
+// setObserved caches rows whose `hcom list` began at observed and reports
+// whether it did. A slow fetch that began before the cached rows were
+// observed is refused: it would otherwise resurrect a replaced session and
+// restart the freshness clock on rows older than those it overwrote.
+func (c *rosterCache) setObserved(rows []hcomidentity.Row, observed time.Time) bool {
 	if c == nil {
-		return
+		return false
 	}
 	c.mu.Lock()
+	if c.initialized && observed.Before(c.at) {
+		c.mu.Unlock()
+		return false
+	}
 	c.rows = append([]hcomidentity.Row(nil), rows...)
 	c.initialized = true
-	c.at = c.clock()
+	c.at = observed
 	if c.remembered == nil {
 		c.remembered = map[string]string{}
 		c.ambiguous = map[string]bool{}
@@ -151,6 +165,7 @@ func (c *rosterCache) set(rows []hcomidentity.Row) {
 		c.remembered[row.BaseName] = row.Name
 	}
 	c.mu.Unlock()
+	return true
 }
 
 func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
@@ -163,15 +178,15 @@ func (c *rosterCache) get() ([]hcomidentity.Row, bool) {
 }
 
 func (c *rosterCache) clock() time.Time {
-	if c.now != nil {
+	if c != nil && c.now != nil {
 		return c.now()
 	}
 	return time.Now()
 }
 
-// fresh returns the cached roster only while it was set within bound of now.
-// The stamp is when the `hcom list` answer arrived, so the rows can be at
-// most one list call older than bound.
+// fresh returns the cached roster only while its observation began within
+// bound of now. The stamp is when that `hcom list` started, so rows served
+// are never older than bound, however slow the fetch was.
 func (c *rosterCache) fresh(bound time.Duration) ([]hcomidentity.Row, bool) {
 	if c == nil {
 		return nil, false
@@ -533,11 +548,12 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 				}
 				roster, rosterReady := deps.rosterCache.get()
 				if !rosterReady {
+					observed := deps.rosterCache.clock()
 					roster, err = deps.roster()
 					if err != nil {
 						return errRosterPending
 					}
-					deps.rosterCache.set(roster)
+					deps.rosterCache.setObserved(roster, observed)
 				}
 				resolve := func(raw string) string {
 					return deps.rosterCache.resolve(raw)
@@ -562,9 +578,10 @@ func startLifeMirror(ctx context.Context, deps dependencies) {
 					// refresh writes the event unstamped whatever the cache holds.
 					fresh, err := roster, error(nil)
 					if rosterReady {
+						observed := deps.rosterCache.clock()
 						fresh, err = deps.roster()
 						if err == nil {
-							deps.rosterCache.set(fresh)
+							deps.rosterCache.setObserved(fresh, observed)
 						}
 					}
 					name = resolve(life.Instance)
@@ -1254,6 +1271,7 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 	if err := fleetview.ValidateSnapshot(snapshot); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
 	}
+	observed := deps.rosterCache.clock()
 	roster, err := deps.roster()
 	if err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", err}
@@ -1261,7 +1279,7 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
-	deps.rosterCache.set(roster)
+	deps.rosterCache.setObserved(roster, observed)
 	return snapshot, hcomidentity.WithParents(roster), nil
 }
 
@@ -1384,6 +1402,7 @@ func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, boo
 			}
 		}
 	}
+	observed := deps.rosterCache.clock()
 	roster, err := deps.roster()
 	if err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", err}
@@ -1391,7 +1410,9 @@ func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, boo
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
-	deps.rosterCache.set(roster)
+	// A newer cached observation keeps the cache; this read still answers
+	// from the rows it fetched.
+	deps.rosterCache.setObserved(roster, observed)
 	roster = hcomidentity.WithParents(roster)
 	for _, row := range roster {
 		if row.Name == name {
