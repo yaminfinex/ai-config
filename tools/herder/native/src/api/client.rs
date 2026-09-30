@@ -5,7 +5,7 @@
 //! `POST …/message` has no idempotency key, so a blind retry can send twice.
 
 use crate::api::types::{
-    Accepted, AgentDetail, Board, Entries, Refusal, StateRow, StateRows, Viewer,
+    Accepted, AgentDetail, Board, Entries, Refusal, Resolved, StateRow, StateRows, Viewer,
 };
 use serde::Serialize;
 use std::time::Duration;
@@ -160,6 +160,12 @@ impl Client {
                 .query("sessionId", session)
                 .query("limit", &limit.to_string()),
         };
+        Ok(req.call()?.into_json()?)
+    }
+
+    /// `GET /api/resolve?q=&agent=`: where a path mentioned in `agent`'s transcript lives.
+    pub fn resolve(&self, q: &str, agent: &str) -> Result<Resolved, Error> {
+        let req = self.get("/api/resolve").query("q", q).query("agent", agent);
         Ok(req.call()?.into_json()?)
     }
 

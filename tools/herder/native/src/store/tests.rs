@@ -921,3 +921,589 @@ fn seen_marks_read_the_old_bare_turn_form() {
     let back: Prefs = serde_json::from_str(&new).unwrap();
     assert_eq!(back.seen["mupu"], mark);
 }
+
+// Transcript (U3): paging, catch-up, resets and condensing, against the recorded pages.
+
+mod transcript_pages {
+    use super::*;
+    use crate::api::client::Page;
+    use crate::api::{Candidate, Entries, EntriesWindow, Entry, Reset, ResolveRoot, Resolved};
+    use crate::store::transcript::{Got, Item, PAGE, Read, Step as T, What, condense};
+    use std::collections::VecDeque;
+
+    fn fixture(agent: &str, page: &str) -> Entries {
+        let text = match (agent, page) {
+            ("mupu", "tail") => include_str!("../../testdata/agents/mupu/tail.json"),
+            ("mupu", _) => include_str!("../../testdata/agents/mupu/before.json"),
+            ("conductor-line", "tail") => {
+                include_str!("../../testdata/agents/conductor-line/tail.json")
+            }
+            ("conductor-line", _) => {
+                include_str!("../../testdata/agents/conductor-line/before.json")
+            }
+            ("grill-confirm-lubo", "tail") => {
+                include_str!("../../testdata/agents/grill-confirm-lubo/tail.json")
+            }
+            ("grill-confirm-lubo", _) => {
+                include_str!("../../testdata/agents/grill-confirm-lubo/before.json")
+            }
+            ("riko", "tail") => include_str!("../../testdata/agents/riko/tail.json"),
+            _ => include_str!("../../testdata/agents/riko/before.json"),
+        };
+        serde_json::from_str(text).expect("entries fixture decodes")
+    }
+
+    const AGENTS: [&str; 4] = ["mupu", "conductor-line", "grill-confirm-lubo", "riko"];
+
+    /// Both recorded pages of `agent`, oldest first: one stretch of its transcript.
+    fn history(agent: &str) -> Vec<Entry> {
+        let mut all = fixture(agent, "before").entries;
+        all.extend(fixture(agent, "tail").entries);
+        all
+    }
+
+    /// A server over `all` (the whole file), paging by `limit` as the contract says.
+    fn serve(all: &[Entry], page: &Page, limit: usize, session: &str) -> Entries {
+        let at = |offset: u64| all.partition_point(|e| e.byte_offset < offset);
+        let (a, b, mode) = match page {
+            Page::Tail { .. } => (all.len().saturating_sub(limit), all.len(), "tail"),
+            Page::From { offset, .. } => {
+                (at(*offset), (at(*offset) + limit).min(all.len()), "from")
+            }
+            Page::Before { offset, .. } => {
+                (at(*offset).saturating_sub(limit), at(*offset), "before")
+            }
+        };
+        let offset = |i: usize| {
+            all.get(i)
+                .map_or(all.last().map_or(0, |e| e.byte_offset + 1), |e| {
+                    e.byte_offset
+                })
+        };
+        let first = if a == 0 { 0 } else { offset(a) };
+        Entries {
+            session_id: session.into(),
+            window: EntriesWindow {
+                mode: mode.into(),
+                from: first,
+                limit: limit as u64,
+            },
+            entries: all[a..b].to_vec(),
+            next_offset: (mode != "before").then(|| offset(b)),
+            prev_offset: (mode == "before").then_some(first),
+            reset: None,
+        }
+    }
+
+    /// Answer every transcript read among `effects` (and the reads they lead to) from `all`; returns
+    /// the pages read.
+    fn drive(store: &mut Store, effects: Vec<Effect>, all: &[Entry], limit: usize) -> Vec<Page> {
+        let mut queue: VecDeque<Effect> = effects.into();
+        let mut pages = Vec::new();
+        while let Some(effect) = queue.pop_front() {
+            let Effect::Fetch(Fetch::Transcript(read)) = effect else {
+                continue;
+            };
+            let got = match &read.what {
+                What::Page(page) => {
+                    pages.push(page.clone());
+                    Got::Page(Box::new(serve(all, page, limit, "s1")))
+                }
+                What::Detail => Got::Detail(Box::default()),
+                What::Resolve(..) => continue,
+            };
+            queue.extend(store.apply(Event::Transcript(T::Read(read, Ok(got)))));
+        }
+        pages
+    }
+
+    fn open(store: &mut Store, agent: &str) -> Vec<Effect> {
+        let (space, agent) = ("none".into(), agent.to_string());
+        store.apply(Event::Transcript(T::Show { space, agent }))
+    }
+
+    fn items(store: &Store) -> &BTreeMap<(u64, u16), Item> {
+        &store.transcript.open.as_ref().unwrap().items
+    }
+
+    /// The rows a single read of the whole history gives.
+    fn reference(agent: &str, all: &[Entry]) -> BTreeMap<(u64, u16), Item> {
+        let mut store = loaded();
+        let effects = open(&mut store, agent);
+        drive(&mut store, effects, all, usize::MAX);
+        items(&store).clone()
+    }
+
+    #[test]
+    fn the_tail_then_before_pages_reach_the_start_with_every_entry_once() {
+        for agent in AGENTS {
+            // Stretch each history past two pages by repeating it at higher offsets.
+            let base = history(agent);
+            let span = base.last().unwrap().byte_offset + 1;
+            let copy = |i: u64, e: &Entry| {
+                let mut e = e.clone();
+                e.byte_offset += i * span;
+                if let Some(id) = e.payload["tool_use_id"].as_str() {
+                    e.payload["tool_use_id"] = json!(format!("{id}-{i}"));
+                }
+                e
+            };
+            let all: Vec<Entry> = (0..3u64)
+                .flat_map(|i| base.iter().map(move |e| copy(i, e)))
+                .collect();
+            let mut store = loaded();
+            let effects = open(&mut store, agent);
+            let mut pages = drive(&mut store, effects, &all, PAGE as usize);
+            assert!(
+                matches!(pages[..], [Page::Tail { .. }]),
+                "{agent}: the tail first"
+            );
+            for _ in 0..100 {
+                let effects = store.apply(Event::Transcript(T::Older));
+                if effects.is_empty() {
+                    break;
+                }
+                pages.extend(drive(&mut store, effects, &all, PAGE as usize));
+            }
+            let t = store.transcript.open.as_ref().unwrap();
+            assert!(t.at_start(), "{agent}: paged to the start");
+            let backs = pages
+                .iter()
+                .filter(|p| matches!(p, Page::Before { .. }))
+                .count();
+            assert_eq!(
+                backs,
+                all.len().div_ceil(PAGE as usize) - 1,
+                "{agent}: one read per page"
+            );
+            assert_eq!(
+                items(&store),
+                &reference(agent, &all),
+                "{agent}: every entry once"
+            );
+            assert!(
+                store.apply(Event::Transcript(T::Older)).is_empty(),
+                "nothing before the start"
+            );
+        }
+    }
+
+    #[test]
+    fn wakes_read_forward_one_at_a_time_and_catch_up() {
+        let all = history("conductor-line");
+        let (early, _) = all.split_at(all.len() - 30);
+        let mut store = loaded();
+        let effects = open(&mut store, "conductor-line");
+        drive(&mut store, effects, early, PAGE as usize);
+        let entry = |agent: &str| Event::Stream {
+            generation: store.stream,
+            event: StreamEvent::Frame(Wire::Entry {
+                agent: agent.into(),
+                entry: Entry::default(),
+            }),
+        };
+        let (other, first, second) = (
+            entry("mupu"),
+            entry("conductor-line"),
+            entry("conductor-line"),
+        );
+        assert!(
+            store.apply(other).is_empty(),
+            "another agent's wake reads nothing"
+        );
+        let effects = store.apply(first);
+        let reads: Vec<&Read> = effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Fetch(Fetch::Transcript(r)) => Some(r),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            matches!(reads[0].what, What::Page(Page::From { .. })),
+            "{reads:?}"
+        );
+        let again = store.apply(second);
+        assert!(
+            !again.iter().any(|e| matches!(
+                e,
+                Effect::Fetch(Fetch::Transcript(Read {
+                    what: What::Page(_),
+                    ..
+                }))
+            )),
+            "a wake while reading waits for the read"
+        );
+        let pages = drive(&mut store, effects, &all, PAGE as usize);
+        assert_eq!(
+            pages.len(),
+            2,
+            "the waiting wake reads once more: {pages:?}"
+        );
+        let tail = &all[early.len() - PAGE as usize..];
+        assert_eq!(items(&store), &reference("conductor-line", tail));
+    }
+
+    #[test]
+    fn a_reset_rereads_the_tail_and_stale_answers_are_dropped() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, PAGE as usize);
+        let old = store.transcript.open.as_ref().unwrap().generation;
+        let wake = store.apply(Event::Stream {
+            generation: store.stream,
+            event: StreamEvent::Frame(Wire::Entry {
+                agent: "mupu".into(),
+                entry: Entry::default(),
+            }),
+        });
+        let Some(Effect::Fetch(Fetch::Transcript(read))) = wake.into_iter().next() else {
+            panic!()
+        };
+        let reset = Entries {
+            session_id: "s2".into(),
+            reset: Some(Reset {
+                reason: "session_changed".into(),
+                session_id: Some("s2".into()),
+            }),
+            ..Entries::default()
+        };
+        let effects = store.apply(Event::Transcript(T::Read(
+            read.clone(),
+            Ok(Got::Page(Box::new(reset))),
+        )));
+        let t = store.transcript.open.as_ref().unwrap();
+        assert!(t.items.is_empty() && !t.loaded() && t.generation > old);
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::Fetch(Fetch::Transcript(Read {
+                what: What::Page(Page::Tail { .. }),
+                ..
+            }))
+        )));
+        // The old generation's answer lands late: dropped.
+        let late = serve(&all, &Page::Tail { limit: PAGE }, PAGE as usize, "s1");
+        assert!(
+            store
+                .apply(Event::Transcript(T::Read(
+                    read,
+                    Ok(Got::Page(Box::new(late)))
+                )))
+                .is_empty()
+        );
+        assert!(items(&store).is_empty());
+        drive(&mut store, effects, &all, PAGE as usize);
+        let tail = &all[all.len() - PAGE as usize..];
+        assert_eq!(items(&store), &reference("mupu", tail));
+        // A rewindow frame does the same.
+        let effects = store.apply(Event::Stream {
+            generation: store.stream,
+            event: StreamEvent::Frame(Wire::Rewindow(crate::api::Rewindow {
+                agent: "mupu".into(),
+            })),
+        });
+        assert!(items(&store).is_empty() && !effects.is_empty());
+    }
+
+    #[test]
+    fn showing_subscribes_the_stream_to_the_space_and_a_preview() {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        let space = space_of(&store, "mupu").clone();
+        let view = |agent: &str| {
+            Event::Transcript(T::Show {
+                space: space.id.clone(),
+                agent: agent.into(),
+            })
+        };
+        let streams = |effects: &[Effect]| -> Vec<Vec<String>> {
+            let agents = effects.iter().filter_map(|e| match e {
+                Effect::Stream { agents, .. } => Some(agents.clone()),
+                _ => None,
+            });
+            agents.collect()
+        };
+        let mut members: Vec<String> = space.agents().map(String::from).collect();
+        members.sort();
+        assert_eq!(streams(&store.apply(view("mupu"))), vec![members.clone()]);
+        let other = members.iter().find(|m| *m != "mupu").cloned();
+        if let Some(other) = other {
+            assert!(
+                streams(&store.apply(view(&other))).is_empty(),
+                "same space, same stream"
+            );
+        }
+        let outsider = store
+            .fleet
+            .agents
+            .keys()
+            .find(|a| !members.contains(a))
+            .unwrap()
+            .clone();
+        let effects = store.apply(view(&outsider));
+        assert!(
+            streams(&effects)[0].contains(&outsider),
+            "a preview joins the stream"
+        );
+        assert_eq!(store.transcript.open.as_ref().unwrap().agent, outsider);
+        assert_eq!(
+            store.spaces,
+            loaded_spaces(),
+            "a preview never becomes a member"
+        );
+    }
+
+    fn loaded_spaces() -> Vec<spaces::Space> {
+        loaded().spaces
+    }
+
+    #[test]
+    fn a_path_resolves_and_opens_only_when_confident() {
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &history("mupu"), PAGE as usize);
+        let effects = store.apply(Event::Transcript(T::OpenPath("src/x.rs:12".into())));
+        let Some(Effect::Fetch(Fetch::Transcript(read))) = effects.into_iter().next() else {
+            panic!()
+        };
+        assert_eq!(read.what, What::Resolve("src/x.rs".into(), Some(12)));
+        let candidate = |tier: &str, score: f64| Candidate {
+            root: "/home/u/repo/".into(),
+            path: "src/x.rs".into(),
+            kind: "file".into(),
+            tier: tier.into(),
+            score,
+        };
+        let root = |status: &str| ResolveRoot {
+            root: "/home/u/repo".into(),
+            status: status.into(),
+        };
+        let answer = |store: &mut Store, candidates, roots| {
+            let got = Got::Resolved(Resolved { candidates, roots });
+            store.apply(Event::Transcript(T::Read(read.clone(), Ok(got))))
+        };
+        let opened = Effect::OpenFile {
+            path: "/home/u/repo/src/x.rs".into(),
+            line: Some(12),
+        };
+        assert_eq!(
+            answer(
+                &mut store,
+                vec![candidate("exact", 900.)],
+                vec![root("complete")]
+            ),
+            vec![opened.clone()]
+        );
+        let two = vec![candidate("suffix", 400.), candidate("suffix", 300.)];
+        assert_eq!(
+            answer(&mut store, two, vec![root("complete")]),
+            vec![opened],
+            "a confident top"
+        );
+        let weak = vec![candidate("fuzzy", 20.)];
+        assert!(answer(&mut store, weak, vec![root("failed")]).is_empty());
+        let t = store.transcript.open.as_ref().unwrap();
+        assert_eq!(t.notice.as_deref(), Some("no single file matches src/x.rs"));
+    }
+
+    fn all_items() -> Vec<(Kind, Item)> {
+        let entries = AGENTS.iter().flat_map(|a| history(a));
+        entries
+            .flat_map(|e| condense(&e).into_iter().map(move |i| (e.kind, i)))
+            .collect()
+    }
+
+    use crate::api::Kind;
+
+    #[test]
+    fn every_fixture_kind_condenses_as_web_compact_does() {
+        let items = all_items();
+        let has = |f: &dyn Fn(&Item) -> bool| items.iter().any(|(_, i)| f(i));
+        let text = |f: &dyn Fn(&Item) -> Option<String>| {
+            items.iter().filter_map(|(_, i)| f(i)).collect::<Vec<_>>()
+        };
+        let prompts = text(&|i| {
+            if let Item::Prompt(t) = i {
+                Some(t.clone())
+            } else {
+                None
+            }
+        });
+        assert!(prompts.contains(
+            &"Read ~/slack-eyes/PLAYBOOK.md REHYDRATE section and resume Slack watch.".into()
+        ));
+        let dividers = text(&|i| {
+            if let Item::CompactDivider(t) = i {
+                Some(t.clone())
+            } else {
+                None
+            }
+        });
+        assert!(
+            dividers.contains(&"context compacted (manual, 219k → 5k tokens)".into()),
+            "{dividers:?}"
+        );
+        assert!(dividers.contains(&"compaction summary".into()));
+        let chips = text(&|i| {
+            if let Item::SystemChip(t) = i {
+                Some(t.clone())
+            } else {
+                None
+            }
+        });
+        assert!(
+            chips.iter().any(|c| c.starts_with("/compact Keep:")),
+            "slash command: {chips:?}"
+        );
+        assert!(
+            chips
+                .iter()
+                .any(|c| c.starts_with("Running scheduled task ("))
+        );
+        assert!(
+            !chips
+                .iter()
+                .any(|c| c.contains("Compacted") || c.contains('\u{1b}')),
+            "command output joins its command"
+        );
+        let notes = text(&|i| {
+            if let Item::TaskNotification(t) = i {
+                Some(t.clone())
+            } else {
+                None
+            }
+        });
+        assert!(
+            notes.len() == 3 && notes.iter().all(|n| n.starts_with("Monitor event:")),
+            "{notes:?}"
+        );
+        let operator = items.iter().find_map(|(_, i)| match i {
+            Item::Delivery {
+                operator: true,
+                text,
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        });
+        let operator = operator.expect("an operator delivery");
+        assert!(!operator.contains("HERDER_WEB_OPERATOR") && !operator.starts_with('\n'));
+        assert!(has(&|i| matches!(
+            i,
+            Item::Delivery {
+                operator: false,
+                quiet: false,
+                ..
+            }
+        )));
+        assert!(has(&|i| matches!(i, Item::Thinking(_))));
+        assert!(has(&|i| matches!(i, Item::Assistant { .. })));
+        for (kind, item) in &items {
+            assert!(
+                !matches!(
+                    kind,
+                    Kind::TurnDuration | Kind::InjectedSystem | Kind::HcomDeliveryStub
+                ),
+                "{kind:?} is hidden"
+            );
+            if let Item::Assistant { markdown } = item {
+                assert!(
+                    !markdown.contains("<internal>") && !markdown.contains("<status>"),
+                    "{markdown}"
+                );
+            }
+        }
+        // The one delivery entry with three deliveries yields three rows at one offset.
+        let lubo = history("grill-confirm-lubo");
+        let many = lubo.iter().find(|e| condense(e).len() == 3);
+        assert!(many.is_some(), "several deliveries share an entry");
+        assert_eq!(
+            transcript::clean("a <internal>x</internal>b <status>ok</status>"),
+            "a b ok"
+        );
+        assert_eq!(
+            transcript::clean("shown<internal>hidden to the end"),
+            "shown"
+        );
+    }
+
+    #[test]
+    fn tool_results_pair_with_their_calls_across_pages() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, PAGE as usize);
+        let before = items(&store).clone();
+        let effects = store.apply(Event::Transcript(T::Older));
+        drive(&mut store, effects, &all, PAGE as usize);
+        let tools = |m: &BTreeMap<(u64, u16), Item>| {
+            let paired = m.values().filter(|i| {
+                matches!(
+                    i,
+                    Item::Tool {
+                        result: Some(_),
+                        ..
+                    }
+                )
+            });
+            paired.count()
+        };
+        let ids = |kind| all.iter().filter(|e| e.kind == kind).count();
+        assert!(tools(items(&store)) >= tools(&before));
+        assert_eq!(
+            tools(items(&store)),
+            ids(Kind::ToolUse).min(ids(Kind::ToolResult))
+        );
+        let error = Entry {
+            byte_offset: u64::MAX - 1,
+            kind: Kind::ToolResult,
+            payload: json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
+            ..Entry::default()
+        };
+        let call = Entry {
+            byte_offset: u64::MAX - 2,
+            kind: Kind::ToolUse,
+            payload: json!({"tool_use_id": "x", "name": "Bash", "input": {"command": "false  &&\n true"}}),
+            ..Entry::default()
+        };
+        let page = |entries| Entries {
+            session_id: "s1".into(),
+            entries,
+            ..Entries::default()
+        };
+        let t = store.transcript.open.as_ref().unwrap();
+        let (agent, generation) = (t.agent.clone(), t.generation);
+        let session = "s1".to_string();
+        for entry in [error, call] {
+            let what = What::Page(Page::From {
+                offset: 0,
+                session: session.clone(),
+                limit: PAGE,
+            });
+            let read = Read {
+                agent: agent.clone(),
+                generation,
+                what,
+            };
+            store.apply(Event::Transcript(T::Read(
+                read,
+                Ok(Got::Page(Box::new(page(vec![entry])))),
+            )));
+        }
+        let tool = items(&store).get(&(u64::MAX - 2, 0)).cloned();
+        let result = Some(transcript::ToolResult {
+            error: true,
+            text: "boom".into(),
+        });
+        let summary = "false && true".to_string();
+        assert_eq!(
+            tool,
+            Some(Item::Tool {
+                name: "Bash".into(),
+                summary,
+                result
+            }),
+            "a result before its call"
+        );
+    }
+}

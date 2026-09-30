@@ -288,3 +288,30 @@ pub struct Refusal {
     pub error: String,
     pub detail: String,
 }
+
+/// `GET /api/resolve?q=&agent=`: ranked candidates for a path-like mention, and each root's outcome.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Resolved {
+    pub candidates: Vec<Candidate>,
+    pub roots: Vec<ResolveRoot>,
+}
+
+/// `root` is absolute; `kind` is `file` or `dir`; `tier` is `exact`, `prefix`, `suffix` or `fuzzy`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Candidate {
+    pub root: String,
+    pub path: String,
+    pub kind: String,
+    pub tier: String,
+    pub score: f64,
+}
+
+/// `status` is `complete`, `degraded` or `failed`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct ResolveRoot {
+    pub root: String,
+    pub status: String,
+}

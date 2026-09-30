@@ -5,8 +5,10 @@
 //! Steps: `wait:<ms>` · `key:<keystroke>` (GPUI syntax such as `cmd-=`, through
 //! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
-//! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile). Units add
-//! `type:`, `cpuscroll:` and `keycpu:` as they need them.
+//! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) ·
+//! `link:<url>` (what clicking a transcript link dispatches) · `expect:<agent>` (the zoom shows it; a
+//! preview tab is `expect:<agent>+preview`) · `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed
+//! by a timed `Window::draw`: the frame's CPU cost, occluded or not). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
@@ -151,6 +153,43 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
                 };
                 metric(format!(
                     "cpu {pct:.2}% of one core over {ms} ms ({on}): {m} pointer moves, {p} pulse paints, {r} shell renders"
+                ));
+            }
+            "link" => {
+                let link = crate::views::transcript::OpenLink(arg.to_string().into());
+                let _ = cx.update(|window, cx| window.dispatch_action(Box::new(link), cx));
+                metric(format!("link {arg}"));
+            }
+            "expect" => {
+                let shown = crate::views::transcript::SHOWN.lock().unwrap().clone();
+                match shown == arg.replace('+', " ") {
+                    true => metric(format!("expect {arg}: ok")),
+                    false => fail(format!("expect {arg}: the zoom shows `{shown}`")),
+                }
+            }
+            "cpuscroll" => {
+                let (key, n) = arg.split_once('x').unwrap_or((arg, "60"));
+                let (key, n) = (Keystroke::parse(key).ok(), n.parse().unwrap_or(60usize));
+                let mut ms = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let Some(key) = key.clone() else { break };
+                    let drawn = cx.update(|window, cx| {
+                        window.dispatch_keystroke(key, cx);
+                        let t = Instant::now();
+                        window.draw(cx).clear(cx);
+                        t.elapsed().as_secs_f64() * 1e3
+                    });
+                    ms.extend(drawn.ok());
+                }
+                ms.sort_by(f64::total_cmp);
+                let at = |q: f64| {
+                    ms.get(((ms.len() as f64 - 1.0) * q) as usize)
+                        .copied()
+                        .unwrap_or(0.0)
+                };
+                let (p50, p95, max) = (at(0.5), at(0.95), at(1.0));
+                metric(format!(
+                    "cpuscroll {arg}: draw p50 {p50:.2} ms, p95 {p95:.2} ms, max {max:.2} ms"
                 ));
             }
             "shot" => {

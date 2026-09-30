@@ -66,6 +66,7 @@ pub struct State {
     /// Each card's last laid-out bounds, where the zoom morphs from and back to.
     pub(super) cards: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
     pub dots: Dots,
+    pub(super) transcript: crate::views::transcript::View,
 }
 
 impl Deref for Ui {

@@ -18,8 +18,9 @@ use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
+use crate::store::transcript::{self, Got, What};
 use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
-use crate::views::{Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, theme};
+use crate::views::{Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, markdown, theme};
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
@@ -91,6 +92,10 @@ impl Host for Shell {
         (&self.store, &mut self.ui)
     }
 
+    fn view(&self) -> (&Store, &lens::Ui) {
+        (&self.store, &self.ui)
+    }
+
     /// The only path to a state change: reduce, then run the effects.
     fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
         let is_live_board = matches!(
@@ -151,6 +156,12 @@ impl Shell {
                 }
                 Effect::Persist(Persist::Snapshot) => {
                     self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
+                }
+                Effect::OpenFile { path, line } => {
+                    match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
+                        Some(url) => cx.open_url(&url),
+                        None => eprintln!("open: no VS Code URL for {path}"),
+                    }
                 }
             }
         }
@@ -230,6 +241,21 @@ fn run_fetch(client: &Client, fetch: Fetch) -> Event {
                 }
             };
             Event::Sync { ns, step }
+        }
+        Fetch::Transcript(read) => {
+            let (started, agent) = (std::time::Instant::now(), read.agent.as_str());
+            let result = match &read.what {
+                What::Page(page) => client.entries(agent, page).map(|e| Got::Page(Box::new(e))),
+                What::Detail => client.agent(agent).map(|d| Got::Detail(Box::new(d))),
+                What::Resolve(query, _) => client.resolve(query, agent).map(Got::Resolved),
+            };
+            if let (What::Page(page), Ok(Got::Page(e))) = (&read.what, &result) {
+                let ms = started.elapsed().as_secs_f64() * 1e3;
+                let n = e.entries.len();
+                harness::metric(format!("read {agent} {page:?}: {n} entries in {ms:.1} ms"));
+            }
+            let result = result.map_err(|e| e.to_string());
+            Event::Transcript(transcript::Step::Read(read, result))
         }
     }
 }

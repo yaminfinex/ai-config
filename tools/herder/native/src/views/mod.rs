@@ -9,10 +9,12 @@
 //! agent chrome (glyph, label, pill), and the window's `Frame` with the working-dot `Pulse`.
 
 pub mod lens;
+pub mod markdown;
 pub mod space;
 #[cfg(test)]
 mod tests;
 pub mod theme;
+pub mod transcript;
 
 use crate::store::fleet::{Agent, Status};
 use crate::store::{Event, Store};
@@ -57,6 +59,15 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("enter", ZoomIn),
     ];
     let next = [("n", NextNeeding(false)), ("shift-n", NextNeeding(true))];
+    use transcript::Scroll;
+    let scroll = [
+        ("j", Scroll::Lines(1)),
+        ("k", Scroll::Lines(-1)),
+        ("space", Scroll::Pages(1)),
+        ("shift-space", Scroll::Pages(-1)),
+        ("g", Scroll::Top),
+        ("shift-g", Scroll::Bottom),
+    ];
     let zoom = [
         ("escape", Zoomed::Out),
         ("[", Zoomed::Space(-1)),
@@ -75,6 +86,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     keys.extend(home.map(|(k, a)| KeyBinding::new(k, a, Some(HOME))));
     keys.extend(next.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     keys.extend(zoom.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
+    keys.extend(scroll.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     keys
 }
 
@@ -95,7 +107,10 @@ zoomed in
 esc           back to the lens
 [ ]           previous / next space
 tab ⇧tab      next / previous agent
-n / N         next space needing you";
+n / N         next space needing you
+j k           scroll
+space ⇧space  page down / up
+g G           start / end";
 
 pub(super) fn help(t: TypeScale) -> Div {
     let lines = HELP.lines().map(|l| div().min_h(t.line).child(l));
@@ -114,6 +129,7 @@ pub(super) fn help(t: TypeScale) -> Div {
 /// the store to read beside the lens's view state, and the one path to a state change.
 pub trait Host: Sized + 'static {
     fn parts(&mut self) -> (&Store, &mut lens::Ui);
+    fn view(&self) -> (&Store, &lens::Ui);
     fn dispatch(&mut self, event: Event, cx: &mut Context<Self>);
 }
 
