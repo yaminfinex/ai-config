@@ -1,0 +1,46 @@
+# herder native — build, gates, harness, bundle. See ARCHITECTURE.md.
+
+# rustup's toolchain (rust-toolchain.toml), not Homebrew's cargo, which can't build gpui-pre.
+export PATH := env_var("HOME") + "/.cargo/bin:" + env_var("PATH")
+
+_default:
+    @just --list
+
+# The three code gates, uncached where it matters.
+check:
+    cargo fmt --check
+    cargo clippy --all-targets -- -D warnings
+    cargo test
+
+fmt:
+    cargo fmt
+
+build:
+    cargo build --release
+
+# Run the app from the terminal (HERDER_URL overrides the server).
+run *args: build
+    ./target/release/herder-native {{args}}
+
+# Scripted run that never takes focus: `just harness "wait:800 shot:lens rss quit"`.
+# Screenshots land in shots/ and need the `shots` feature (GPUI test-support).
+harness script:
+    cargo build --release --features shots
+    mkdir -p shots
+    HERDER_NATIVE_SCRIPT="{{script}}" HERDER_NATIVE_SHOT_DIR=shots ./target/release/herder-native
+
+# Build target/herder native.app (ad-hoc signed; notifications need a bundle id).
+bundle *args:
+    scripts/bundle.sh {{args}}
+
+# Re-record testdata/ from the live serve (read-only GETs).
+record:
+    testdata/record.sh
+
+# Page one whole transcript into testdata/big/ (gitignored) for perf runs, e.g. `just fetch-big riko`.
+fetch-big agent:
+    testdata/record.sh --full {{agent}}
+
+# Lines per source file, for the DONE report and the line budgets.
+lines:
+    @wc -l src/*.rs src/*/*.rs tests/*.rs | sort -n

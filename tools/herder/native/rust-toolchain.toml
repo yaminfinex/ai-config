@@ -1,0 +1,5 @@
+# gpui-pre needs Rust >= 1.95 (std::hint::cold_path). Homebrew's cargo shadows rustup on PATH;
+# the justfile and scripts/ put ~/.cargo/bin first.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
