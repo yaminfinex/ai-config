@@ -33,7 +33,7 @@ herder_mutation() {
     return 0
   fi
   set +e
-  HERDER_OUTPUT=$(timeout --foreground 10s "$herder_bin" "$@" "${attrib[@]}" 2>&1)
+  HERDER_OUTPUT=$(timeout --foreground 10s "$herder_bin" "$@" ${attrib[@]+"${attrib[@]}"} 2>&1)
   rc=$?
   set -e
   if ((rc != 0)); then
@@ -258,7 +258,7 @@ elif [[ -n $pane ]]; then
 else
   requested_args+=(--split-from "$split_from")
 fi
-requested_args+=("${launcher_attrib[@]}")
+requested_args+=(${launcher_attrib[@]+"${launcher_attrib[@]}"})
 register_event launch-requested "${requested_args[@]}"
 request=$(sed -n 's/^request=//p' <<<"$HERDER_OUTPUT" | head -n 1)
 
@@ -419,7 +419,7 @@ fi
 ready_args=(--request "$request" --name "$full_name" --batch "$batch_id" --pane "$pane_id" --cwd "$cwd")
 session_id=$(jq -r '.session_id // empty' <<<"$roster_entry")
 [[ -z $session_id ]] || ready_args+=(--session "$session_id")
-ready_args+=("${launcher_attrib[@]}")
+ready_args+=(${launcher_attrib[@]+"${launcher_attrib[@]}"})
 register_event launch-ready "${ready_args[@]}"
 
 printf 'name=%s\n' "$full_name"
