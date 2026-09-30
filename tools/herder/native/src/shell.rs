@@ -136,18 +136,10 @@ impl Shell {
                 }
                 Effect::Send(write) => sends.push(write),
                 Effect::Retry { ns, after_ms } => {
-                    let tx = self.tx.clone();
-                    let timer = cx
-                        .background_executor()
-                        .timer(Duration::from_millis(after_ms));
-                    cx.background_executor()
-                        .spawn(async move {
-                            timer.await;
-                            let step = Step::Retry;
-                            let _ = tx.unbounded_send(Event::Sync { ns, step });
-                        })
-                        .detach();
+                    let step = Step::Retry;
+                    self.later(after_ms, Event::Sync { ns, step }, cx)
                 }
+                Effect::RetryViewer { after_ms } => self.later(after_ms, Event::ViewerRetry, cx),
                 Effect::Persist(Persist::Outbox) => save_outbox = true,
                 Effect::Persist(Persist::Prefs) => {
                     self.save_later(local::PREFS, PREFS_COALESCE, cx)
@@ -169,6 +161,20 @@ impl Shell {
                 save_then_send(&disk, &client, &bytes, seq, sends, |event| {
                     let _ = tx.unbounded_send(event);
                 })
+            })
+            .detach();
+    }
+
+    /// Dispatch `event` after `after_ms`.
+    fn later(&self, after_ms: u64, event: Event, cx: &mut Context<Self>) {
+        let tx = self.tx.clone();
+        let timer = cx
+            .background_executor()
+            .timer(Duration::from_millis(after_ms));
+        cx.background_executor()
+            .spawn(async move {
+                timer.await;
+                let _ = tx.unbounded_send(event);
             })
             .detach();
     }

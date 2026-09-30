@@ -530,28 +530,51 @@ fn every_hello_catches_up_and_a_new_build_is_flagged() {
 }
 
 #[test]
-fn the_viewer_is_asked_again_on_each_hello_until_the_server_answers() {
-    let asks = |effects: Vec<Effect>| {
+fn an_unknown_viewer_is_retried_on_a_timer_and_only_409_is_a_refusal() {
+    let asks = |effects: &[Effect]| {
         effects
             .iter()
             .filter(|e| **e == Effect::Fetch(Fetch::Viewer))
             .count()
     };
+    let retry = |effects: &[Effect]| {
+        effects.iter().find_map(|e| match e {
+            Effect::RetryViewer { after_ms } => Some(*after_ms),
+            _ => None,
+        })
+    };
     let mut store = Store::default();
-    assert_eq!(asks(store.apply(Event::Boot)), 1);
-    assert_eq!(asks(store.apply(hello("b1"))), 0, "one ask at a time");
-    // The boot ask failed in transport (offline launch): unknown, not unattributed.
-    store.apply(Event::Viewer(Err(None)));
-    assert_eq!(asks(store.apply(hello("b1"))), 1, "a reconnect asks again");
-    store.apply(Event::Viewer(Ok("web-me".into())));
+    assert_eq!(asks(&store.apply(Event::Boot)), 1);
+    // The stream's hello arrives while boot's ask is still in flight: no second ask.
+    assert_eq!(asks(&store.apply(hello("b1"))), 0, "one ask at a time");
+    // Then that ask fails in transport (offline launch): unknown, not unattributed, and retried on a
+    // timer, because a healthy stream may never send another hello.
+    let effects = store.apply(Event::Viewer(Err(None)));
+    assert_eq!(store.viewer, Attribution::Unknown);
+    assert_eq!(retry(&effects), Some(500));
+    assert_eq!(asks(&store.apply(Event::ViewerRetry)), 1);
+    // A server fault is not a refusal either; the backoff grows.
+    let effects = store.apply(Event::Viewer(Err(Some(502))));
+    assert_eq!(store.viewer, Attribution::Unknown);
+    assert_eq!(retry(&effects), Some(1000));
+    // A hello while that timer waits asks at once; the failure it meets schedules no second timer.
+    assert_eq!(asks(&store.apply(hello("b1"))), 1);
+    assert_eq!(retry(&store.apply(Event::Viewer(Err(Some(503))))), None);
+    // The timer fires and the server answers, with no further hello.
+    assert_eq!(asks(&store.apply(Event::ViewerRetry)), 1);
+    let effects = store.apply(Event::Viewer(Ok("web-me".into())));
+    assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(store.viewer, Attribution::Attributed("web-me".into()));
-    assert_eq!(asks(store.apply(hello("b1"))), 0);
+    assert_eq!(asks(&store.apply(hello("b1"))), 0);
+    assert_eq!(asks(&store.apply(Event::ViewerRetry)), 0);
 
+    // 409 is the one refusal: never retried, by timer or by hello.
     let mut store = Store::default();
     store.apply(Event::Boot);
-    store.apply(Event::Viewer(Err(Some(409))));
+    let effects = store.apply(Event::Viewer(Err(Some(409))));
     assert_eq!(store.viewer, Attribution::Refused);
-    assert_eq!(asks(store.apply(hello("b1"))), 0, "a refusal is an answer");
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(asks(&store.apply(hello("b1"))), 0, "a refusal is an answer");
 }
 
 #[test]

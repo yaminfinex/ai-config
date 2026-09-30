@@ -6,7 +6,8 @@
 //! 500 ms doubling to 10 s, and the 45 s read timeout is the watchdog (the server pings every 15 s).
 //! `close` (or dropping the `Reader`) ends it promptly wherever it is: the socket is published as soon
 //! as it connects, so shutting it down interrupts the header read as well as a blocked frame read, and
-//! the backoff sleep waits on a condvar. Only the connect itself (bounded at 5 s) is not interruptible.
+//! the backoff sleep waits on a condvar. Not interruptible: the host's DNS resolution, which sits outside
+//! the 5 s connect timeout and takes as long as the system resolver does, and the connect itself (5 s).
 
 use crate::api::types::Wire;
 use std::io::{self, BufRead, BufReader, Write};

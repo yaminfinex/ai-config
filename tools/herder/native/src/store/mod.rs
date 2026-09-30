@@ -106,6 +106,8 @@ pub enum Event {
     },
     /// `GET /api/viewer`: the attributed name, or the failure's HTTP status (`None`: transport).
     Viewer(Result<String, Option<u16>>),
+    /// The viewer's backoff elapsed.
+    ViewerRetry,
     /// A state namespace's network answer, backoff or local edit.
     Sync {
         ns: Ns,
@@ -152,13 +154,18 @@ pub enum Effect {
         ns: Ns,
         after_ms: u64,
     },
+    /// Dispatch `Event::ViewerRetry` after this long.
+    RetryViewer {
+        after_ms: u64,
+    },
     Persist(Persist),
 }
 
 /// Who this Mac's writes are attributed to (`GET /api/viewer`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Attribution {
-    /// Not asked yet, or the request failed in transport; asked again on every `hello`.
+    /// Not asked yet, or the request failed in transport or with a server fault (5xx); asked again
+    /// after a backoff (500 ms doubling to 10 s) and on every `hello`.
     #[default]
     Unknown,
     Attributed(String),
@@ -182,6 +189,9 @@ pub struct Store {
     live: bool,
     stream: u64,
     viewer_asked: bool,
+    viewer_retry: bool,
+    /// The next viewer backoff; 0 until the first failure.
+    viewer_backoff_ms: u64,
 }
 
 impl Store {
@@ -218,9 +228,22 @@ impl Store {
                 self.viewer_asked = false;
                 self.viewer = match v {
                     Ok(name) => Attribution::Attributed(name),
-                    Err(Some(_)) => Attribution::Refused,
-                    Err(None) => Attribution::Unknown,
+                    Err(Some(409)) => Attribution::Refused,
+                    // Transport or a server fault: ask again after a backoff (one timer at a time); a
+                    // healthy stream may never send another `hello`.
+                    Err(_) => {
+                        if !std::mem::replace(&mut self.viewer_retry, true) {
+                            let after_ms = self.viewer_backoff_ms.max(500);
+                            self.viewer_backoff_ms = (after_ms * 2).min(10_000);
+                            out.push(Effect::RetryViewer { after_ms });
+                        }
+                        Attribution::Unknown
+                    }
                 };
+            }
+            Event::ViewerRetry => {
+                self.viewer_retry = false;
+                self.ask_viewer(&mut out);
             }
             Event::Sync { ns, step } => {
                 self.live |= matches!(step, Step::Pulled(_));
@@ -273,12 +296,16 @@ impl Store {
     /// and on every `hello`, the first included: a change made between a boot pull and the stream's
     /// subscription sends no nudge this client can see. Pulls already in flight coalesce.
     fn catch_up(&mut self, out: &mut Vec<Effect>) {
-        if matches!(self.viewer, Attribution::Unknown) && !self.viewer_asked {
-            self.viewer_asked = true;
-            out.push(Effect::Fetch(Fetch::Viewer));
-        }
+        self.ask_viewer(out);
         for ns in Ns::ALL {
             self.sync.get_mut(ns).pull(out);
+        }
+    }
+
+    /// Ask `GET /api/viewer` while the answer is unknown, one request at a time.
+    fn ask_viewer(&mut self, out: &mut Vec<Effect>) {
+        if self.viewer == Attribution::Unknown && !std::mem::replace(&mut self.viewer_asked, true) {
+            out.push(Effect::Fetch(Fetch::Viewer));
         }
     }
 

@@ -55,13 +55,16 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   **synchronously before** the SSE thread or any REST call starts, so nothing stale can land on top of live
   data (`Event::Snapshot` is also refused by the store once anything live has arrived). Then in parallel:
   the SSE thread (`hello` + `fleet`), `GET /api/viewer`, and `GET /api/state/{spaces,spaces.members,notes}?since=0`.
-  The viewer is `Unknown` until the server answers: a transport failure stays `Unknown` (asked again on
-  every `hello`), a refusal is `Refused`, and neither is confused with the other.
+  The viewer is `Unknown` until the server answers. Only a 409 is `Refused` (never asked again); a
+  transport failure or a 5xx stays `Unknown` and is asked again on a coalesced timer (500 ms doubling to
+  10 s, one timer and one request at a time) and on every `hello`, so a healthy stream that never sends
+  another `hello` still recovers.
 - **Stopping and reconfiguring the stream.** `api::sse::Reader` is the stream's thread: plain HTTP/1.0
   over a `TcpStream`, reconnecting with backoff and the watchdog below, reporting each frame and each drop.
   `close()` (or dropping the `Reader`) ends it promptly wherever it is: the socket is published as soon as it
   connects, so shutting it down interrupts the header read as well as a frame read, and the backoff sleep
-  waits on a condvar (only the connect itself, bounded at 5 s, cannot be interrupted). The shell holds the
+  waits on a condvar. Not interruptible: DNS resolution of the host, which sits outside the 5 s connect
+  timeout (as long as the system resolver takes), and the connect itself (5 s). The shell holds the
   current `Reader`; changing the `agents=` subscription drops it and spawns a new one under a new
   **generation** number, and the store drops anything from an older generation. Reading never relies on
   the 45 s timeout to notice anything: a healthy stream pings every 15 s and would never time out.
@@ -247,6 +250,10 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held ‚å
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
+
+Documented U1 exceptions (agreed at U1 review): `store/mod.rs` 349 (the Event/Effect vocabulary,
+`Prefs`, the reducer), `shell.rs` 347 (the effect runner with the save-before-send barrier), `api/sse.rs`
+195 (the reconnecting `Reader` with its cancellation).
 
 ## 9. From the spike: lifted, rewritten, dropped
 
