@@ -3,10 +3,11 @@
 use super::*;
 use crate::api::{Hello, Member, StateChanged, StateRows};
 use crate::store::fleet::Status;
+use crate::store::spaces::Row;
 use crate::store::sync::Hold;
 use serde_json::json;
 
-fn board() -> Board {
+pub(crate) fn board() -> Board {
     serde_json::from_str(include_str!("../../testdata/fleet.json")).expect("fleet.json decodes")
 }
 
@@ -19,7 +20,7 @@ fn fixture_rows(ns: Ns) -> StateRows {
     serde_json::from_str(text).expect("state fixture decodes")
 }
 
-fn fleet_frame(board: Board) -> Event {
+pub(crate) fn fleet_frame(board: Board) -> Event {
     Event::Stream {
         generation: 1,
         event: StreamEvent::Frame(Wire::Fleet(board)),
@@ -36,7 +37,7 @@ fn hello(build: &str) -> Event {
 }
 
 /// A store that has booted (stream generation 1) and pulled every namespace from the fixtures.
-fn loaded() -> Store {
+pub(crate) fn loaded() -> Store {
     let mut store = Store::default();
     store.apply(Event::Boot);
     for ns in Ns::ALL {
@@ -226,7 +227,7 @@ fn needs_you_follows_seen_marks() {
         .turn_end
         .expect("mupu has finished a turn");
     assert_eq!(
-        store.prefs.seen["mupu"], turn,
+        store.prefs.seen["mupu"].turn_end, turn,
         "first sight seeds the baseline"
     );
     assert_eq!(store.needs_you(&space), 0);
@@ -241,7 +242,11 @@ fn needs_you_follows_seen_marks() {
     store.apply(fleet_frame(b.clone()));
     assert_eq!(store.needs_you(&space), 1);
 
-    let effects = store.apply(Event::Seen("mupu".into()));
+    let view = spaces::Move::View {
+        space: space.id.clone(),
+        agent: Some("mupu".into()),
+    };
+    let effects = store.apply(Event::Lens(view));
     assert_eq!(effects, [Effect::Persist(Persist::Prefs)]);
     assert_eq!(store.needs_you(&space), 0);
 
@@ -606,4 +611,313 @@ fn text_scale_steps_clamps_and_persists() {
     assert_eq!(store.prefs.text_scale, 0.7);
     store.apply(Event::TextScale(TextScale::Reset));
     assert_eq!(store.prefs, Prefs::default());
+}
+
+/// The board with `name`'s latest turn moved on by `by`.
+pub(crate) fn bump(b: &mut Board, name: &str, by: u64) {
+    let panes = b
+        .workspaces
+        .iter_mut()
+        .flat_map(|w| &mut w.tabs)
+        .flat_map(|t| &mut t.panes);
+    for pane in panes.filter(|p| p.agent == name) {
+        pane.turn_end_id = pane.turn_end_id.map(|t| t + by);
+    }
+}
+
+pub(crate) fn space_of<'a>(store: &'a Store, agent: &str) -> &'a spaces::Space {
+    store
+        .spaces
+        .iter()
+        .find(|s| s.agents().any(|a| a == agent))
+        .unwrap()
+}
+
+fn lens(m: spaces::Move) -> Event {
+    Event::Lens(m)
+}
+
+#[test]
+fn spaces_sit_in_watch_until_placed() {
+    let mut store = loaded();
+    store.apply(fleet_frame(board()));
+    let [focus, watch, background] = store.rows();
+    assert!(focus.is_empty() && background.is_empty());
+    assert_eq!(watch.len(), store.spaces.len());
+
+    let slack = space_of(&store, "mupu").id.clone();
+    let chief = space_of(&store, "chief-mihe").id.clone();
+    let place = |row| {
+        lens(spaces::Move::SetRow {
+            space: slack.clone(),
+            row,
+        })
+    };
+    assert_eq!(
+        store.apply(place(Row::Focus)),
+        [Effect::Persist(Persist::Prefs)]
+    );
+    assert!(
+        store.apply(place(Row::Focus)).is_empty(),
+        "no change, no write"
+    );
+    assert_eq!(store.prefs.rows[&slack], Row::Focus);
+    let ids = |row: &[&spaces::Space]| row.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&store.rows()[0]), std::slice::from_ref(&slack));
+
+    // Within a row the store's order holds: chief (order 0) before slack (order 1).
+    store.apply(lens(spaces::Move::SetRow {
+        space: chief.clone(),
+        row: Row::Background,
+    }));
+    store.apply(place(Row::Background));
+    assert_eq!(ids(&store.rows()[2]), [chief.clone(), slack.clone()]);
+    let order = ids(&store.lens());
+    assert_eq!(
+        order[order.len() - 2..],
+        [chief, slack],
+        "background comes last"
+    );
+}
+
+#[test]
+fn the_visible_agent_cycles_over_members_on_the_board() {
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    let slack = space_of(&store, "mupu").clone();
+    assert_eq!(
+        store.visible(&slack),
+        Some("mupu"),
+        "the first member by default"
+    );
+
+    let cycle = || lens(spaces::Move::CycleVisible(slack.id.clone()));
+    assert_eq!(store.apply(cycle()), [Effect::Persist(Persist::Prefs)]);
+    assert_eq!(store.visible(&slack), Some("support-mifa"));
+    store.apply(cycle());
+    assert_eq!(store.visible(&slack), Some("mupu"), "wraps");
+    store.apply(cycle());
+
+    // support-mifa leaves the board: the card falls back to the first member still there, and
+    // cycling skips the gone one.
+    for w in &mut b.workspaces {
+        for t in &mut w.tabs {
+            t.panes.retain(|p| p.agent != "support-mifa");
+        }
+    }
+    store.apply(fleet_frame(b));
+    assert_eq!(store.prefs.visible[&slack.id], "support-mifa");
+    assert_eq!(store.visible(&slack), Some("mupu"));
+    store.apply(cycle());
+    assert_eq!(store.visible(&slack), Some("mupu"));
+}
+
+#[test]
+fn next_needing_walks_the_rows_in_order_and_wraps() {
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    assert_eq!(
+        store.next_needing(None),
+        None,
+        "nothing unread on first sight"
+    );
+
+    bump(&mut b, "mupu", 1);
+    bump(&mut b, "chief-mihe", 1);
+    bump(&mut b, "orch-lega", 1);
+    store.apply(fleet_frame(b));
+    let id = |store: &Store, agent| space_of(store, agent).id.clone();
+    let (slack, chief, herder) = (
+        id(&store, "mupu"),
+        id(&store, "chief-mihe"),
+        id(&store, "orch-lega"),
+    );
+    // chief to focus and slack to background: focus, then watch (herder), then background.
+    store.apply(lens(spaces::Move::SetRow {
+        space: chief.clone(),
+        row: Row::Focus,
+    }));
+    store.apply(lens(spaces::Move::SetRow {
+        space: slack.clone(),
+        row: Row::Background,
+    }));
+    let next = |store: &Store, from: Option<&str>| store.next_needing(from).map(|s| s.id.clone());
+    assert_eq!(next(&store, None), Some(chief.clone()));
+    assert_eq!(next(&store, Some(&chief)), Some(herder.clone()));
+    assert_eq!(next(&store, Some(&herder)), Some(slack.clone()));
+    assert_eq!(
+        next(&store, Some(&slack)),
+        Some(chief.clone()),
+        "wraps to the top"
+    );
+
+    // From a space that does not need you, the next one after it.
+    let quiet = id(&store, "swap-bench-mora");
+    assert_eq!(next(&store, Some(&quiet)), Some(herder.clone()));
+
+    // Only one left: it is its own next.
+    store.apply(lens(spaces::Move::Read(chief.clone())));
+    store.apply(lens(spaces::Move::Read(herder.clone())));
+    assert_eq!(next(&store, Some(&slack)), Some(slack));
+}
+
+#[test]
+fn read_and_unread_mark_the_whole_space() {
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    let slack = space_of(&store, "mupu").clone();
+    assert_eq!(store.needs_you(&slack), 0);
+
+    // `u`: the space needs you, sticky across new boards, until a zoom-in.
+    let unread = || lens(spaces::Move::Unread(slack.id.clone()));
+    assert_eq!(store.apply(unread()), [Effect::Persist(Persist::Prefs)]);
+    assert!(store.apply(unread()).is_empty(), "already unread");
+    store.apply(fleet_frame(b.clone()));
+    assert_eq!(store.needs_you(&slack), 1);
+    assert_eq!(store.next_needing(None).map(|s| &s.id), Some(&slack.id));
+    let view = |agent: &str| {
+        let agent = Some(agent.to_string());
+        lens(spaces::Move::View {
+            space: slack.id.clone(),
+            agent,
+        })
+    };
+    assert_eq!(
+        store.apply(view("support-mifa")),
+        [Effect::Persist(Persist::Prefs)]
+    );
+    assert_eq!(store.needs_you(&slack), 0, "a zoom-in clears it");
+    assert!(
+        store
+            .apply(lens(spaces::Move::Unread("no-such-space".into())))
+            .is_empty()
+    );
+
+    // `m`: every agent in the space is read, and the unread mark goes too.
+    bump(&mut b, "mupu", 2);
+    bump(&mut b, "support-mifa", 2);
+    store.apply(fleet_frame(b));
+    store.apply(unread());
+    assert_eq!(store.needs_you(&slack), 2);
+    assert_eq!(
+        store
+            .apply(lens(spaces::Move::Read(slack.id.clone())))
+            .len(),
+        1
+    );
+    assert_eq!(store.needs_you(&slack), 0);
+    assert!(store.prefs.unread.is_empty());
+}
+
+#[test]
+fn viewing_an_absent_agent_leaves_prefs_alone() {
+    let mut store = loaded();
+    store.apply(fleet_frame(board()));
+    let before = store.prefs.clone();
+    let slack = space_of(&store, "mupu").id.clone();
+    let view = spaces::Move::View {
+        space: slack.clone(),
+        agent: Some("nobody".into()),
+    };
+    assert!(store.apply(lens(view)).is_empty());
+    assert!(
+        store
+            .apply(lens(spaces::Move::Read("no-such-space".into())))
+            .is_empty()
+    );
+    assert_eq!(store.prefs, before);
+}
+
+/// The board with `name` Blocked (or not).
+fn block(b: &mut Board, name: &str, blocked: bool) {
+    let panes = b
+        .workspaces
+        .iter_mut()
+        .flat_map(|w| &mut w.tabs)
+        .flat_map(|t| &mut t.panes);
+    for pane in panes.filter(|p| p.agent == name) {
+        pane.bus_status = if blocked { "blocked" } else { "listening" }.into();
+    }
+}
+
+#[test]
+fn a_block_needs_you_until_viewed_and_again_when_it_recurs() {
+    const { assert!(fleet::BLOCKED_ALWAYS_NEEDS_YOU) };
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    let slack = space_of(&store, "mupu").id.clone();
+    let view = || {
+        let agent = Some("mupu".to_string());
+        lens(spaces::Move::View {
+            space: slack.clone(),
+            agent,
+        })
+    };
+
+    block(&mut b, "mupu", true);
+    store.apply(fleet_frame(b.clone()));
+    assert!(store.agent_needs_you("mupu"), "blocked, no new turn");
+    assert_eq!(store.apply(view()), [Effect::Persist(Persist::Prefs)]);
+    assert!(
+        !store.agent_needs_you("mupu"),
+        "viewing acknowledges this block"
+    );
+    store.apply(fleet_frame(b.clone()));
+    assert!(!store.agent_needs_you("mupu"), "still the same block");
+
+    // It leaves Blocked and blocks again within the same turn: that alerts again.
+    block(&mut b, "mupu", false);
+    let effects = store.apply(fleet_frame(b.clone()));
+    assert!(
+        effects.contains(&Effect::Persist(Persist::Prefs)),
+        "the block mark clears"
+    );
+    block(&mut b, "mupu", true);
+    store.apply(fleet_frame(b));
+    assert!(store.agent_needs_you("mupu"));
+}
+
+#[test]
+fn a_block_before_any_turn_alerts_again_when_it_recurs() {
+    let mut store = loaded();
+    let mut b = board();
+    let panes = b.workspaces.iter_mut().flat_map(|w| &mut w.tabs);
+    for pane in panes
+        .flat_map(|t| &mut t.panes)
+        .filter(|p| p.agent == "mupu")
+    {
+        pane.turn_end_id = None;
+    }
+    let slack = space_of(&store, "mupu").id.clone();
+    let view = lens(spaces::Move::View {
+        space: slack,
+        agent: Some("mupu".into()),
+    });
+    block(&mut b, "mupu", true);
+    store.apply(fleet_frame(b.clone()));
+    assert!(store.agent_needs_you("mupu"), "blocked with no turn yet");
+    store.apply(view);
+    assert!(!store.agent_needs_you("mupu"), "viewed");
+    block(&mut b, "mupu", false);
+    store.apply(fleet_frame(b.clone()));
+    block(&mut b, "mupu", true);
+    store.apply(fleet_frame(b));
+    assert!(store.agent_needs_you("mupu"), "blocked again");
+}
+
+#[test]
+fn seen_marks_read_the_old_bare_turn_form() {
+    let old: Prefs = serde_json::from_str(r#"{"seen": {"mupu": 42}}"#).unwrap();
+    let mark = spaces::Seen {
+        turn_end: 42,
+        blocked: false,
+    };
+    assert_eq!(old.seen["mupu"], mark);
+    let new = serde_json::to_string(&old).unwrap();
+    let back: Prefs = serde_json::from_str(&new).unwrap();
+    assert_eq!(back.seen["mupu"], mark);
 }

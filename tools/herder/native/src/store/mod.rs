@@ -17,11 +17,11 @@ pub mod sync;
 pub mod transcript;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use crate::api::{Board, StateRow, Wire};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use sync::{Ns, Step, Syncs};
 
 /// Connection state, for the status line and read-only decisions.
@@ -43,8 +43,10 @@ pub struct Prefs {
     pub rows: BTreeMap<String, spaces::Row>,
     /// The visible agent per space id (U2).
     pub visible: BTreeMap<String, String>,
-    /// Per agent, the latest turn end (`turn_end_id`) the owner has seen.
-    pub seen: BTreeMap<String, u64>,
+    /// Per agent, the latest turn end (`turn_end_id`) the owner has seen, and whether this block was.
+    pub seen: BTreeMap<String, spaces::Seen>,
+    /// Spaces the owner marked unread (`u`): they need you until the next zoom-in.
+    pub unread: BTreeSet<String>,
     /// The unsent composer text per agent (U4).
     pub drafts: BTreeMap<String, String>,
 }
@@ -56,6 +58,7 @@ impl Default for Prefs {
             rows: BTreeMap::new(),
             visible: BTreeMap::new(),
             seen: BTreeMap::new(),
+            unread: BTreeSet::new(),
             drafts: BTreeMap::new(),
         }
     }
@@ -113,8 +116,8 @@ pub enum Event {
         ns: Ns,
         step: Step,
     },
-    /// The owner has looked at this agent's latest turn.
-    Seen(String),
+    /// An owner move on the lens (`spaces::Move`).
+    Lens(spaces::Move),
     TextScale(TextScale),
 }
 
@@ -256,11 +259,7 @@ impl Store {
                     out.push(Effect::Persist(Persist::Snapshot));
                 }
             }
-            Event::Seen(name) => {
-                if spaces::mark_seen(&mut self.prefs.seen, &self.fleet, name) {
-                    out.push(Effect::Persist(Persist::Prefs));
-                }
-            }
+            Event::Lens(m) => self.lens_move(m, &mut out),
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
                 let next = match step {
@@ -274,11 +273,6 @@ impl Store {
             }
         }
         out
-    }
-
-    /// Agents in this space whose latest turn the owner has not seen.
-    pub fn needs_you(&self, space: &spaces::Space) -> usize {
-        spaces::needs_you(space, &self.fleet, &self.prefs.seen)
     }
 
     pub fn snapshot(&self) -> Snapshot {

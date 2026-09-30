@@ -1,7 +1,6 @@
-//! The type scale: one app-wide factor (`Prefs::text_scale`, ⌘+ ⌘- ⌘0) that every view reads sizes
-//! from. Nothing renders text with a hard-coded pixel size; code and terminal fonts scale with it.
-//! Owner ruling (A0): the spike's sizes at 0.9× feel right, so scale 1.0 is exactly that: body
-//! 12 × 0.9, code 13 × 0.9, meta 11 × 0.9. Fractional pixels are fine; GPUI does not round text.
+//! The palette and the type scale: one app-wide factor (`Prefs::text_scale`, ⌘+ ⌘- ⌘0) every size
+//! comes from, text and layout alike. Owner ruling (A0): scale 1.0 is the spike's sizes at 0.9× (body
+//! 12 × 0.9, code 13 × 0.9, meta 11 × 0.9). Fractional pixels are fine; GPUI does not round text.
 
 use gpui_kit::component::theme::{ThemeConfig, ThemeRegistry};
 use gpui_kit::component::{Theme, ThemeMode};
@@ -26,10 +25,32 @@ pub struct TypeScale {
     pub title: Pixels,
     pub code: Pixels,
     pub line: Pixels,
+    scale: f32,
+}
+
+impl TypeScale {
+    /// A layout length (padding, card width) given in the spike's design pixels, so layout follows ⌘+.
+    pub fn px(&self, design: f32) -> Pixels {
+        px(design * OWNER * self.scale)
+    }
+}
+
+/// The lens palette as `rgb()` hex (the prototype's); status colours are navigation lights.
+pub mod pal {
+    pub const GROUND: u32 = 0x0C121C;
+    pub const PANEL: u32 = 0x121A26;
+    pub const INK: u32 = 0xE4E8EF;
+    pub const SLATE: u32 = 0x8C97A8;
+    pub const RULE: u32 = 0x1F2A3A;
+    pub const WASH: u32 = 0x18222F;
+    pub const ACC: u32 = 0x86A8FF;
+    pub const ACCW: u32 = 0x1A2745;
+    pub const GREEN: u32 = 0x3CC486;
+    pub const AMBER: u32 = 0xF2B51C;
+    pub const PORT: u32 = 0xF0685C;
 }
 
 pub fn type_scale(scale: f32) -> TypeScale {
-    // Spike pixel sizes, then the owner's factor and the live scale.
     let s = |spike_px: f32| px(spike_px * OWNER * scale);
     TypeScale {
         small: s(11.0),
@@ -37,6 +58,7 @@ pub fn type_scale(scale: f32) -> TypeScale {
         title: s(15.0),
         code: s(13.0),
         line: s(18.0),
+        scale,
     }
 }
 
@@ -45,11 +67,9 @@ pub fn type_scale(scale: f32) -> TypeScale {
 /// `sync_base`, and open windows only pick the change up when refreshed.
 pub fn apply(scale: f32, cx: &mut App) {
     let t = type_scale(scale);
-    {
-        let theme = Theme::global_mut(cx);
-        theme.font_size = t.body;
-        theme.mono_font_size = t.code;
-    }
+    let theme = Theme::global_mut(cx);
+    theme.font_size = t.body;
+    theme.mono_font_size = t.code;
     Theme::sync_base(cx);
     cx.refresh_windows();
 }

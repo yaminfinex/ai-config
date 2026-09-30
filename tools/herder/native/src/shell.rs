@@ -19,11 +19,10 @@ use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
 use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
-use crate::views::{debug, theme};
+use crate::views::{Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, theme};
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -36,11 +35,9 @@ const APP_ID: &str = "dev.herder.native";
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
 
-actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
-
 pub struct Shell {
     pub store: Store,
-    focus: FocusHandle,
+    ui: lens::Ui,
     client: Client,
     disk: Arc<Disk>,
     tx: UnboundedSender<Event>,
@@ -77,7 +74,7 @@ impl Shell {
         .detach();
         Shell {
             store,
-            focus: cx.focus_handle(),
+            ui: lens::Ui::new(cx),
             client: Client::new(base_url()),
             disk: Arc::new(disk),
             tx,
@@ -87,9 +84,15 @@ impl Shell {
             live_painted: false,
         }
     }
+}
+
+impl Host for Shell {
+    fn parts(&mut self) -> (&Store, &mut lens::Ui) {
+        (&self.store, &mut self.ui)
+    }
 
     /// The only path to a state change: reduce, then run the effects.
-    pub fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+    fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
         let is_live_board = matches!(
             event,
             Event::Stream {
@@ -109,7 +112,9 @@ impl Shell {
         self.run(effects, cx);
         cx.notify();
     }
+}
 
+impl Shell {
     fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
         let mut save_outbox = false;
         let mut sends = Vec::new();
@@ -260,20 +265,16 @@ pub fn save_then_send(
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.painted {
-            self.painted = true;
-            let from = if self.store.spaces.is_empty() {
-                "empty"
-            } else {
-                "snapshot"
-            };
+        if !std::mem::replace(&mut self.painted, true) {
+            let empty = self.store.spaces.is_empty();
+            let from = if empty { "empty" } else { "snapshot" };
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
-        let colors = cx.theme();
+        harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let t = theme::type_scale(self.store.prefs.text_scale);
+        let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()
             .id("root")
-            .track_focus(&self.focus)
             .key_context("Lens")
             .on_action(|_: &Quit, _, cx| cx.quit())
             .on_action(cx.listener(|s, _: &TextBigger, _, cx| {
@@ -286,12 +287,12 @@ impl Render for Shell {
                 s.dispatch(Event::TextScale(TextScale::Reset), cx)
             }))
             .size_full()
-            .bg(colors.background)
-            .text_color(colors.foreground)
+            .bg(rgb(theme::pal::GROUND))
+            .text_color(rgb(theme::pal::INK))
             .font_family(theme::FONT)
             .text_size(t.body)
             .line_height(t.line)
-            .child(debug::render(&self.store, t, colors.muted_foreground))
+            .child(lens)
     }
 }
 
@@ -303,20 +304,12 @@ pub fn run() {
         gpui_kit::init(cx);
         cx.set_app_identity(APP_ID, APP_NAME);
         theme::dark(cx);
-        // App-wide chords bind on `Lens` alone; navigation letters (U2+) must use
-        // `Lens && !Input && !Terminal`, because a predicate sees the whole focus stack.
-        cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, Some("Lens")),
-            KeyBinding::new("cmd-=", TextBigger, Some("Lens")),
-            KeyBinding::new("cmd-shift-=", TextBigger, Some("Lens")),
-            KeyBinding::new("cmd--", TextSmaller, Some("Lens")),
-            KeyBinding::new("cmd-0", TextReset, Some("Lens")),
-        ]);
+        crate::views::bind(cx);
         harness::metric("init done");
 
         let automated = script.is_some();
         let opts = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(1400.), px(900.)), cx)),
+            window_bounds: Some(WindowBounds::centered(harness::window_size(), cx)),
             titlebar: Some(TitlebarOptions {
                 title: Some(APP_NAME.into()),
                 ..Default::default()
@@ -325,15 +318,22 @@ pub fn run() {
             focus: !automated,
             ..Default::default()
         };
-        let (handle, shell) =
-            gpui_kit::open_window(opts, cx, |_, cx| cx.new(Shell::new)).expect("window");
+        let mut shell = None;
+        let frame = |_: &mut Window, cx: &mut App| {
+            let s = cx.new(Shell::new);
+            let dots = s.read(cx).ui.dots.clone();
+            shell = Some(s.clone());
+            cx.new(|cx| Frame::new(s.into(), dots, cx))
+        };
+        let (handle, _) = gpui_kit::open_window(opts, cx, frame).expect("window");
+        let shell = shell.expect("the window built the shell");
         if automated {
-            platform_mac::order_windows_back();
+            platform_mac::order_windows(harness::visible());
         } else {
             cx.activate(true);
         }
         let _ = handle.update(cx, |_, window, cx| {
-            let focus = shell.read(cx).focus.clone();
+            let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
                 window
