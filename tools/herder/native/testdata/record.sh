@@ -35,6 +35,7 @@ PY
   exit 0
 fi
 
+python3 scrub.py --check   # the scrubber must pass its synthetic cases before anything is recorded
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/herder-fixtures.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT INT TERM
 

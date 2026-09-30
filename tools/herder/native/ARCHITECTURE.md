@@ -91,9 +91,12 @@ Derived shapes are in `store`:
   `Tool{name, summary, result}`, `Error`. Assistant text has `<internal>…</internal>` removed and `<status>`
   unwrapped; the operator envelope (`[HERDER_WEB_OPERATOR_NOTE_BEGIN]…END]`) is stripped from deliveries.
 - **`transcript::Transcript`** — pages arrive in both directions, so nothing is an append-only fold:
-  - `items: BTreeMap<u64 /* byte_offset */, Item>`; row order is key order, so a `before=` page is an
-    insertion, not a prepend, and no stored index ever moves. Rows are keyed `(session_id, byte_offset)`.
-  - `calls: HashMap<tool_use_id, byte_offset>` and `orphans: HashMap<tool_use_id, ToolResult>`. A
+  - One wire entry can yield several items (an `hcom_delivery` entry carries every delivery of that
+    injection; `grill-confirm-lubo` has three at one offset), so the row key is `(byte_offset, sub)` with
+    `sub` the item's index within its entry. `items: BTreeMap<(u64, u16), Item>`; row order is key order,
+    so a `before=` page is an insertion, not a prepend, and no stored index ever moves. Across sessions
+    rows are `(session_id, byte_offset, sub)`.
+  - `calls: HashMap<tool_use_id, (u64, u16)>` and `orphans: HashMap<tool_use_id, ToolResult>`. A
     `tool_result` whose call is already known fills that `Tool`; otherwise it waits in `orphans`, and a
     `tool_use` arriving later (from an older page) claims it. An `is_error` result marks the line ✗.
   - Cursors: `next_offset` (forward) is set only by tail and `from=` responses. `prev_offset` (backward) is
@@ -161,12 +164,25 @@ Monaco) so the kit never enumerates installed fonts.
 | `outbox.json` | unsent state rows (notes, spaces, members), written before each send attempt | this Mac |
 | `snapshot.json` | the last board, spaces, members and notes, for the first paint | this Mac |
 
-State sync is simpler than web's: **no persisted revision cursor.** Every boot pulls each namespace with
-`since=0` (tens of kilobytes, one round trip each) into the store; the pull cursor lives in memory for the
-session and a `state-changed` frame above it pulls again. The outbox is durable: a local edit appends the row
-to `outbox.json` before the send is attempted, and the row is removed only when the server accepts it. 409
-means local-only; 413 holds the outbox until the next edit; else backoff 500 ms → 10 s. Rows resolve
-last-write-wins on `(updated, writeID)`. The snapshot is written on every change of what it holds, coalesced.
+State sync is simpler than web's in one way: **no persisted revision cursor.** Every boot pulls each
+namespace with `since=0` (tens of kilobytes, one round trip each) into the store; the pull cursor lives in
+memory for the session and a `state-changed` frame above it pulls again. Rows resolve last-write-wins on
+`(updated, writeID)`.
+
+The outbox is durable and its cleanup is **version-aware**, copied from web's `stateSync.ts`, because the
+server's `accepted` list omits idempotent and losing rows and so cannot be used as the acknowledgement:
+
+1. A local edit writes its row (a full version, `(updated, writeID)` set) to `outbox.json` before any send.
+2. A POST sends a copy of the whole outbox. When the POST returns any 2xx, every queued row whose version is
+   **equal to or older than** the version that was sent is retired; a newer edit of the same key made while
+   the POST was in flight stays queued. `accepted` is not consulted, so a lost-then-retried write and a
+   write that web beat both settle.
+3. Then pull. After every pull, a queued row is discarded when the pulled row for its key compares equal or
+   newer; the store keeps the winner.
+4. 409 means local-only; 413 holds the outbox until the next edit; anything else retries with backoff
+   500 ms → 10 s.
+
+The snapshot is written on every change of what it holds, coalesced.
 
 Local writes go through one writer in `local`: each save carries a sequence number, an older save never
 overwrites a newer one, and every file is written to a temporary name and renamed into place, so a crash
