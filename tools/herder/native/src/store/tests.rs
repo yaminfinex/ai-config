@@ -3,6 +3,7 @@
 use super::*;
 use crate::api::{Hello, Member, StateChanged, StateRows};
 use crate::store::fleet::Status;
+use crate::store::spaces::Row;
 use crate::store::sync::Hold;
 use serde_json::json;
 
@@ -241,7 +242,7 @@ fn needs_you_follows_seen_marks() {
     store.apply(fleet_frame(b.clone()));
     assert_eq!(store.needs_you(&space), 1);
 
-    let effects = store.apply(Event::Seen("mupu".into()));
+    let effects = store.apply(Event::Lens(spaces::Move::Seen("mupu".into())));
     assert_eq!(effects, [Effect::Persist(Persist::Prefs)]);
     assert_eq!(store.needs_you(&space), 0);
 
@@ -606,4 +607,264 @@ fn text_scale_steps_clamps_and_persists() {
     assert_eq!(store.prefs.text_scale, 0.7);
     store.apply(Event::TextScale(TextScale::Reset));
     assert_eq!(store.prefs, Prefs::default());
+}
+
+/// The board with `name`'s latest turn moved on by `by`.
+fn bump(b: &mut Board, name: &str, by: u64) {
+    let panes = b
+        .workspaces
+        .iter_mut()
+        .flat_map(|w| &mut w.tabs)
+        .flat_map(|t| &mut t.panes);
+    for pane in panes.filter(|p| p.agent == name) {
+        pane.turn_end_id = pane.turn_end_id.map(|t| t + by);
+    }
+}
+
+fn space_of<'a>(store: &'a Store, agent: &str) -> &'a spaces::Space {
+    store
+        .spaces
+        .iter()
+        .find(|s| s.agents().any(|a| a == agent))
+        .unwrap()
+}
+
+fn lens(m: spaces::Move) -> Event {
+    Event::Lens(m)
+}
+
+#[test]
+fn spaces_sit_in_watch_until_placed() {
+    let mut store = loaded();
+    store.apply(fleet_frame(board()));
+    let [focus, watch, background] = store.rows();
+    assert!(focus.is_empty() && background.is_empty());
+    assert_eq!(watch.len(), store.spaces.len());
+
+    let slack = space_of(&store, "mupu").id.clone();
+    let chief = space_of(&store, "chief-mihe").id.clone();
+    let place = |row| {
+        lens(spaces::Move::SetRow {
+            space: slack.clone(),
+            row,
+        })
+    };
+    assert_eq!(
+        store.apply(place(Row::Focus)),
+        [Effect::Persist(Persist::Prefs)]
+    );
+    assert!(
+        store.apply(place(Row::Focus)).is_empty(),
+        "no change, no write"
+    );
+    assert_eq!(store.prefs.rows[&slack], Row::Focus);
+    let ids = |row: &[&spaces::Space]| row.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+    assert_eq!(ids(&store.rows()[0]), std::slice::from_ref(&slack));
+
+    // Within a row the store's order holds: chief (order 0) before slack (order 1).
+    store.apply(lens(spaces::Move::SetRow {
+        space: chief.clone(),
+        row: Row::Background,
+    }));
+    store.apply(place(Row::Background));
+    assert_eq!(ids(&store.rows()[2]), [chief.clone(), slack.clone()]);
+    let order = ids(&store.lens());
+    assert_eq!(
+        order[order.len() - 2..],
+        [chief, slack],
+        "background comes last"
+    );
+}
+
+#[test]
+fn the_visible_agent_cycles_over_members_on_the_board() {
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    let slack = space_of(&store, "mupu").clone();
+    assert_eq!(
+        store.visible(&slack),
+        Some("mupu"),
+        "the first member by default"
+    );
+
+    let cycle = || lens(spaces::Move::CycleVisible(slack.id.clone()));
+    let turn = store.fleet.agents["support-mifa"].turn_end.unwrap();
+    let ask = Fetch::StatusLine {
+        agent: "support-mifa".into(),
+        turn,
+    };
+    let effects = [Effect::Persist(Persist::Prefs), Effect::Fetch(ask)];
+    assert_eq!(
+        store.apply(cycle()),
+        effects,
+        "saved, and the new card's line asked for"
+    );
+    assert_eq!(store.visible(&slack), Some("support-mifa"));
+    store.apply(cycle());
+    assert_eq!(store.visible(&slack), Some("mupu"), "wraps");
+    store.apply(cycle());
+
+    // support-mifa leaves the board: the card falls back to the first member still there, and
+    // cycling skips the gone one.
+    for w in &mut b.workspaces {
+        for t in &mut w.tabs {
+            t.panes.retain(|p| p.agent != "support-mifa");
+        }
+    }
+    store.apply(fleet_frame(b));
+    assert_eq!(store.prefs.visible[&slack.id], "support-mifa");
+    assert_eq!(store.visible(&slack), Some("mupu"));
+    store.apply(cycle());
+    assert_eq!(store.visible(&slack), Some("mupu"));
+}
+
+#[test]
+fn next_needing_walks_the_rows_in_order_and_wraps() {
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    assert_eq!(
+        store.next_needing(None),
+        None,
+        "nothing unread on first sight"
+    );
+
+    bump(&mut b, "mupu", 1);
+    bump(&mut b, "chief-mihe", 1);
+    bump(&mut b, "orch-lega", 1);
+    store.apply(fleet_frame(b));
+    let id = |store: &Store, agent| space_of(store, agent).id.clone();
+    let (slack, chief, herder) = (
+        id(&store, "mupu"),
+        id(&store, "chief-mihe"),
+        id(&store, "orch-lega"),
+    );
+    // chief to focus and slack to background: focus, then watch (herder), then background.
+    store.apply(lens(spaces::Move::SetRow {
+        space: chief.clone(),
+        row: Row::Focus,
+    }));
+    store.apply(lens(spaces::Move::SetRow {
+        space: slack.clone(),
+        row: Row::Background,
+    }));
+    let next = |store: &Store, from: Option<&str>| store.next_needing(from).map(|s| s.id.clone());
+    assert_eq!(next(&store, None), Some(chief.clone()));
+    assert_eq!(next(&store, Some(&chief)), Some(herder.clone()));
+    assert_eq!(next(&store, Some(&herder)), Some(slack.clone()));
+    assert_eq!(
+        next(&store, Some(&slack)),
+        Some(chief.clone()),
+        "wraps to the top"
+    );
+
+    // From a space that does not need you, the next one after it.
+    let quiet = id(&store, "swap-bench-mora");
+    assert_eq!(next(&store, Some(&quiet)), Some(herder.clone()));
+
+    // Only one left: it is its own next.
+    store.apply(lens(spaces::Move::Seen("chief-mihe".into())));
+    store.apply(lens(spaces::Move::Seen("orch-lega".into())));
+    assert_eq!(next(&store, Some(&slack)), Some(slack));
+}
+
+#[test]
+fn seen_and_unseen_move_the_mark() {
+    let mut store = loaded();
+    store.apply(fleet_frame(board()));
+    let slack = space_of(&store, "mupu").clone();
+    let turn = store.fleet.agents["mupu"].turn_end.unwrap();
+    assert_eq!(store.needs_you(&slack), 0);
+
+    let unseen = || lens(spaces::Move::Unseen("mupu".into()));
+    assert_eq!(store.apply(unseen()), [Effect::Persist(Persist::Prefs)]);
+    assert_eq!(store.prefs.seen["mupu"], turn - 1);
+    assert_eq!(store.needs_you(&slack), 1);
+    assert!(store.apply(unseen()).is_empty(), "already unread");
+
+    let seen = || lens(spaces::Move::Seen("mupu".into()));
+    assert_eq!(store.apply(seen()), [Effect::Persist(Persist::Prefs)]);
+    assert_eq!(store.needs_you(&slack), 0);
+    assert!(store.apply(seen()).is_empty(), "already read");
+    assert!(
+        store
+            .apply(lens(spaces::Move::Seen("nobody".into())))
+            .is_empty()
+    );
+}
+
+#[test]
+fn blocked_needs_you_only_with_a_new_turn_by_default() {
+    // The owner has not ruled; U1's behaviour holds.
+    const { assert!(!fleet::BLOCKED_ALWAYS_NEEDS_YOU) };
+    let a = fleet::Agent {
+        herdr_status: "idle".into(),
+        bus_status: "blocked".into(),
+        turn_end: Some(10),
+        ..Default::default()
+    };
+    assert_eq!(a.status(), Status::Blocked);
+    assert!(!a.needs_you(Some(10)));
+    assert!(a.needs_you(Some(9)));
+}
+
+#[test]
+fn status_lines_are_asked_once_per_turn_and_keep_the_latest() {
+    let asked = |effects: &[Effect]| -> Vec<(String, u64)> {
+        let fetches = effects.iter().filter_map(|e| match e {
+            Effect::Fetch(Fetch::StatusLine { agent, turn }) => Some((agent.clone(), *turn)),
+            _ => None,
+        });
+        fetches.collect()
+    };
+    let mut store = loaded();
+    let mut b = board();
+    let first = asked(&store.apply(fleet_frame(b.clone())));
+    let turn = store.fleet.agents["mupu"].turn_end.unwrap();
+    assert!(first.contains(&("mupu".into(), turn)));
+    assert!(
+        !first.iter().any(|(a, _)| a == "support-mifa"),
+        "only visible agents"
+    );
+    assert!(
+        asked(&store.apply(fleet_frame(b.clone()))).is_empty(),
+        "same turns, no asks"
+    );
+
+    let line = |turn, line: Option<&str>| Event::StatusLine {
+        agent: "mupu".into(),
+        turn,
+        line: line.map(str::to_string),
+    };
+    store.apply(line(turn, Some("slack: quiet")));
+    store.apply(line(turn, None));
+    store.apply(line(turn - 1, Some("stale")));
+    assert_eq!(
+        store.status_lines["mupu"].1.as_deref(),
+        Some("slack: quiet")
+    );
+
+    bump(&mut b, "mupu", 3);
+    assert_eq!(
+        asked(&store.apply(fleet_frame(b))),
+        [("mupu".into(), turn + 3)]
+    );
+    store.apply(line(turn, Some("late")));
+    assert_eq!(
+        store.status_lines["mupu"].1.as_deref(),
+        Some("slack: quiet"),
+        "late reply dropped"
+    );
+}
+
+#[test]
+fn the_status_line_is_the_latest_in_assistant_text() {
+    let tail: crate::api::Entries =
+        serde_json::from_str(include_str!("../../testdata/agents/mupu/tail.json")).unwrap();
+    assert_eq!(
+        transcript::status_line(&tail.entries).as_deref(),
+        Some("slack: quiet")
+    );
+    assert_eq!(transcript::status_line(&[]), None);
 }

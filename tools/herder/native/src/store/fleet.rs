@@ -17,6 +17,8 @@ pub struct Agent {
     pub workspace: String,
     pub pane_id: Option<String>,
     pub context_used: Option<u64>,
+    /// The workspace's working directory, for the zoom placeholder.
+    pub cwd: Option<String>,
     /// The id of the latest completed turn (monotonic); what seen marks compare against.
     pub turn_end: Option<u64>,
 }
@@ -53,20 +55,23 @@ impl Agent {
             workspace: ws.label.clone(),
             pane_id: (p.pane_id != "-" && !p.pane_id.is_empty()).then(|| p.pane_id.clone()),
             context_used: p.context_used,
+            cwd: ws.cwd.clone(),
             turn_end: p.turn_end_id,
         }
     }
 
-    /// A finished turn the owner has not seen: not working, not retired or stopped, and its latest
-    /// turn ended after `seen`. No mark means no baseline yet, so nothing is unread.
+    /// The one needs-you predicate: not working, not retired or stopped, and a turn ended after `seen`
+    /// (no mark: no baseline yet, nothing unread), or Blocked if `BLOCKED_ALWAYS_NEEDS_YOU`.
     pub fn needs_you(&self, seen: Option<u64>) -> bool {
         let gone = matches!(self.bus_status.as_str(), "retired" | "stopped");
-        match (self.turn_end, seen) {
-            (Some(turn), Some(seen)) => !gone && self.status() != Status::Working && turn > seen,
-            _ => false,
-        }
+        let new_turn = matches!((self.turn_end, seen), (Some(turn), Some(seen)) if turn > seen);
+        let blocked = BLOCKED_ALWAYS_NEEDS_YOU && self.status() == Status::Blocked;
+        !gone && self.status() != Status::Working && (new_turn || blocked)
     }
 }
+
+/// Owner policy, not yet ruled: does a Blocked agent need you even without a new turn?
+pub const BLOCKED_ALWAYS_NEEDS_YOU: bool = false;
 
 #[derive(Clone, Debug, Default)]
 pub struct Fleet {

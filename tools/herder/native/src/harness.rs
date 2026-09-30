@@ -5,7 +5,8 @@
 //! Steps: `wait:<ms>` · `key:<keystroke>` (GPUI syntax such as `cmd-=`, through
 //! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
-//! Units add `type:`, `cpuscroll:` and `keycpu:` as they need them.
+//! `cpu:<ms>` (CPU over `ms`, drawing a frame every 200 ms as a visible window does while a working dot
+//! pulses; a window behind others is not drawn at all). Units add `type:`, `cpuscroll:`, `keycpu:`.
 
 use gpui_kit::{AsyncWindowContext, Keystroke};
 use std::sync::OnceLock;
@@ -34,20 +35,32 @@ pub fn metric(msg: impl AsRef<str>) {
     eprintln!("[metric +{ms:>8.1}ms] {}", msg.as_ref());
 }
 
+/// One `ps` field for this process, or `None`.
+fn ps(field: &str) -> Option<String> {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("ps")
+        .args(["-o", field, "-p", &pid])
+        .output();
+    Some(
+        String::from_utf8_lossy(&out.ok()?.stdout)
+            .trim()
+            .to_string(),
+    )
+}
+
 /// Resident set size of this process in MB, via `ps`.
 pub fn rss_mb() -> f64 {
-    let out = std::process::Command::new("ps")
-        .args(["-o", "rss=", "-p", &std::process::id().to_string()])
-        .output();
-    out.ok()
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .trim()
-                .parse::<f64>()
-                .ok()
-        })
+    ps("rss=")
+        .and_then(|kb| kb.parse::<f64>().ok())
         .unwrap_or(0.0)
         / 1024.0
+}
+
+/// CPU time this process has used, in seconds (`ps` prints `m:ss.cc`).
+fn cpu_s() -> f64 {
+    let time = ps("time=").unwrap_or_default();
+    let (m, s) = time.split_once(':').unwrap_or(("0", &time));
+    m.parse::<f64>().unwrap_or(0.0) * 60.0 + s.parse::<f64>().unwrap_or(0.0)
 }
 
 pub async fn run(script: String, cx: &mut AsyncWindowContext) {
@@ -77,6 +90,19 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
                 Err(e) => fail(format!("key {arg}: {e}")),
             },
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
+            "cpu" => {
+                let (ms, before) = (arg.parse().unwrap_or(10_000u64), cpu_s());
+                for _ in 0..ms / 200 {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(200))
+                        .await;
+                    let _ = cx.update(|window, cx| window.draw(cx).clear(cx));
+                }
+                let pct = (cpu_s() - before) / (ms as f64 / 1000.0) * 100.0;
+                metric(format!(
+                    "cpu {pct:.1}% of one core over {ms} ms, drawing at the pulse rate"
+                ));
+            }
             "shot" => {
                 if let Err(e) = shot(&shot_dir, arg, cx) {
                     fail(format!("shot {arg}: {e}"));

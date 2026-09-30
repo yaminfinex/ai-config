@@ -14,16 +14,16 @@
 //! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
 //! send was decided (`save_then_send`); a save still pending elsewhere cannot be overtaken.
 
-use crate::api::client::{Client, base_url};
+use crate::api::client::{Client, Page, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
+use crate::store::transcript;
 use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
-use crate::views::{debug, theme};
+use crate::views::{Host, lens, theme};
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
-use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::*;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -35,12 +35,14 @@ const APP_ID: &str = "dev.herder.native";
 /// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
+/// Entries read for a card's `<status>` line: a turn ends with its text, a hook chip and its duration.
+const STATUS_TAIL: u32 = 12;
 
 actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 pub struct Shell {
     pub store: Store,
-    focus: FocusHandle,
+    ui: lens::Ui,
     client: Client,
     disk: Arc<Disk>,
     tx: UnboundedSender<Event>,
@@ -75,9 +77,10 @@ impl Shell {
             }
         })
         .detach();
+        lens::pulse(cx);
         Shell {
             store,
-            focus: cx.focus_handle(),
+            ui: lens::Ui::new(cx),
             client: Client::new(base_url()),
             disk: Arc::new(disk),
             tx,
@@ -87,9 +90,15 @@ impl Shell {
             live_painted: false,
         }
     }
+}
+
+impl Host for Shell {
+    fn parts(&mut self) -> (&Store, &mut lens::Ui) {
+        (&self.store, &mut self.ui)
+    }
 
     /// The only path to a state change: reduce, then run the effects.
-    pub fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+    fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
         let is_live_board = matches!(
             event,
             Event::Stream {
@@ -109,7 +118,9 @@ impl Shell {
         self.run(effects, cx);
         cx.notify();
     }
+}
 
+impl Shell {
     fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
         let mut save_outbox = false;
         let mut sends = Vec::new();
@@ -226,6 +237,11 @@ fn run_fetch(client: &Client, fetch: Fetch) -> Event {
             };
             Event::Sync { ns, step }
         }
+        Fetch::StatusLine { agent, turn } => {
+            let tail = client.entries(&agent, &Page::Tail { limit: STATUS_TAIL });
+            let line = tail.ok().and_then(|t| transcript::status_line(&t.entries));
+            Event::StatusLine { agent, turn, line }
+        }
     }
 }
 
@@ -269,11 +285,10 @@ impl Render for Shell {
             };
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
-        let colors = cx.theme();
         let t = theme::type_scale(self.store.prefs.text_scale);
+        let lens = lens::render(&self.store, &self.ui, t, cx);
         div()
             .id("root")
-            .track_focus(&self.focus)
             .key_context("Lens")
             .on_action(|_: &Quit, _, cx| cx.quit())
             .on_action(cx.listener(|s, _: &TextBigger, _, cx| {
@@ -286,12 +301,12 @@ impl Render for Shell {
                 s.dispatch(Event::TextScale(TextScale::Reset), cx)
             }))
             .size_full()
-            .bg(colors.background)
-            .text_color(colors.foreground)
+            .bg(rgb(theme::pal::GROUND))
+            .text_color(rgb(theme::pal::INK))
             .font_family(theme::FONT)
             .text_size(t.body)
             .line_height(t.line)
-            .child(debug::render(&self.store, t, colors.muted_foreground))
+            .child(lens)
     }
 }
 
@@ -303,7 +318,7 @@ pub fn run() {
         gpui_kit::init(cx);
         cx.set_app_identity(APP_ID, APP_NAME);
         theme::dark(cx);
-        // App-wide chords bind on `Lens` alone; navigation letters (U2+) must use
+        // App-wide chords bind on `Lens` alone; navigation letters (`lens::bind`) use
         // `Lens && !Input && !Terminal`, because a predicate sees the whole focus stack.
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, Some("Lens")),
@@ -312,6 +327,7 @@ pub fn run() {
             KeyBinding::new("cmd--", TextSmaller, Some("Lens")),
             KeyBinding::new("cmd-0", TextReset, Some("Lens")),
         ]);
+        lens::bind(cx);
         harness::metric("init done");
 
         let automated = script.is_some();
@@ -333,7 +349,7 @@ pub fn run() {
             cx.activate(true);
         }
         let _ = handle.update(cx, |_, window, cx| {
-            let focus = shell.read(cx).focus.clone();
+            let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
                 window

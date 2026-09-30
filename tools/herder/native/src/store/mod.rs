@@ -113,15 +113,30 @@ pub enum Event {
         ns: Ns,
         step: Step,
     },
-    /// The owner has looked at this agent's latest turn.
-    Seen(String),
+    /// An owner move on the lens (`spaces::Move`).
+    Lens(spaces::Move),
+    /// The latest `<status>` line in a short tail of `agent`'s transcript as of turn `turn` (`None`: no
+    /// line there, or the fetch failed; the card keeps the line it had).
+    StatusLine {
+        agent: String,
+        turn: u64,
+        line: Option<String>,
+    },
     TextScale(TextScale),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fetch {
     Viewer,
-    State { ns: Ns, since: u64 },
+    State {
+        ns: Ns,
+        since: u64,
+    },
+    /// A short tail of `agent`'s transcript, for its card's `<status>` line as of turn `turn`.
+    StatusLine {
+        agent: String,
+        turn: u64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -183,6 +198,8 @@ pub struct Store {
     pub fleet: fleet::Fleet,
     pub spaces: Vec<spaces::Space>,
     pub notes: Vec<notes::Note>,
+    /// Per visible agent, the turn its card's `<status>` line was last asked for, and the latest line.
+    pub status_lines: BTreeMap<String, (u64, Option<String>)>,
     pub sync: Syncs,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
@@ -253,14 +270,12 @@ impl Store {
                 }
                 if changes.rows {
                     self.derive();
+                    self.ask_status_lines(&mut out);
                     out.push(Effect::Persist(Persist::Snapshot));
                 }
             }
-            Event::Seen(name) => {
-                if spaces::mark_seen(&mut self.prefs.seen, &self.fleet, name) {
-                    out.push(Effect::Persist(Persist::Prefs));
-                }
-            }
+            Event::Lens(m) => self.lens_move(m, &mut out),
+            Event::StatusLine { agent, turn, line } => self.status_line(agent, turn, line),
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
                 let next = match step {
@@ -339,6 +354,7 @@ impl Store {
         if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
             out.push(Effect::Persist(Persist::Prefs));
         }
+        self.ask_status_lines(out);
     }
 
     fn derive(&mut self) {
