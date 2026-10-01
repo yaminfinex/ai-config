@@ -1037,8 +1037,8 @@ mod transcript_pages {
             let copy = |i: u64, e: &Entry| {
                 let mut e = e.clone();
                 e.byte_offset += i * span;
-                if let Some(id) = e.payload["tool_use_id"].as_str() {
-                    e.payload["tool_use_id"] = json!(format!("{id}-{i}"));
+                if let Some(id) = e.payload.tool_use_id.as_str() {
+                    e.payload.tool_use_id = json!(format!("{id}-{i}"));
                 }
                 e
             };
@@ -1779,12 +1779,15 @@ mod transcript_pages {
         let error = Entry {
             byte_offset: u64::MAX - 1,
             kind: Kind::ToolResult,
-            payload: json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
+            payload: serde_json::from_value(
+                json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
+            )
+            .unwrap(),
         };
         let call = Entry {
             byte_offset: u64::MAX - 2,
             kind: Kind::ToolUse,
-            payload: json!({"tool_use_id": "x", "name": "Bash", "input": {"command": "false  &&\n true"}}),
+            payload: serde_json::from_value(json!({"tool_use_id": "x", "name": "Bash", "input": {"command": "false  &&\n true"}})).unwrap(),
         };
         let page = |entries| Entries {
             session_id: "s1".into(),

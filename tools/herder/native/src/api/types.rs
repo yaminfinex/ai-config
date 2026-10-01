@@ -168,38 +168,29 @@ pub struct Reset {}
 pub struct Entry {
     pub byte_offset: u64,
     pub kind: Kind,
-    /// Only the fields the compact view reads (`Slim`).
-    #[serde(deserialize_with = "slim")]
-    pub payload: Value,
+    pub payload: Payload,
 }
 
-/// An entry payload's read fields. The rest (`toolUseResult`, `attachment`, compaction histories: about
-/// half the bytes) is skipped while decoding, never built as a `Value`.
-#[derive(Deserialize, Serialize)]
-struct Slim {
+/// An entry payload's read fields, each still any JSON (`Null` when absent), so an odd leaf never fails
+/// a page. The rest (`toolUseResult`, `attachment`, compaction histories: about half the bytes) is
+/// skipped while decoding, never built as a `Value`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Payload {
     #[serde(rename = "compactMetadata")]
-    compact_metadata: Option<Value>,
+    pub compact_metadata: Value,
     #[serde(rename = "fallbackModel")]
-    fallback_model: Option<Value>,
+    pub fallback_model: Value,
     #[serde(rename = "isApiErrorMessage")]
-    is_api_error_message: Option<Value>,
-    message: Option<Value>,
-    deliveries: Option<Value>,
-    name: Option<Value>,
-    input: Option<Value>,
-    tool_use_id: Option<Value>,
-    content: Option<Value>,
-    is_error: Option<Value>,
-    subtype: Option<Value>,
-}
-
-fn slim<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
-    let Value::Object(mut kept) = serde_json::to_value(Slim::deserialize(d)?).unwrap_or_default()
-    else {
-        return Ok(Value::Null);
-    };
-    kept.retain(|_, v| !v.is_null());
-    Ok(Value::Object(kept))
+    pub is_api_error_message: Value,
+    pub message: Value,
+    pub deliveries: Value,
+    pub name: Value,
+    pub input: Value,
+    pub tool_use_id: Value,
+    pub content: Value,
+    pub is_error: Value,
+    pub subtype: Value,
 }
 
 /// The server's entry kinds. Anything newer decodes as `Unknown` rather than failing the page.

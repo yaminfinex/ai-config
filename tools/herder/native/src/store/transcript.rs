@@ -483,7 +483,7 @@ impl Transcript {
 
     fn ingest(&mut self, entry: Entry) {
         let (offset, p) = (entry.byte_offset, &entry.payload);
-        let id = condense::str_at(p, "tool_use_id").to_string();
+        let id = p.tool_use_id.as_str().unwrap_or("").to_string();
         match entry.kind {
             Kind::ToolUse => {
                 let (name, summary) = condense::tool_call(p);
