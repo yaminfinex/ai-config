@@ -136,8 +136,9 @@ Derived shapes are in `store`:
 - **`cards::Cards`** (F4) — each focus and watch card's visible agent's last assistant answer, cleaned as
   the transcript is (`condense::clean`) with `<status>` stripped too; background cards carry none. One tail
   read (`limit=12`) per agent per turn, keyed on `turn_end_id`; at most four in flight; a result for an
-  agent no longer on a text card, or for an older turn than the one held, is dropped; a failed read keeps
-  its text and is asked again on the next `hello`. Reads start only after `Boot` and are not in the
+  agent no longer on a text card, or for any turn other than the agent's current fleet turn, is dropped
+  (success or failure) and the current turn is asked; a failed read keeps its text and is not asked
+  again for that turn until the next `hello`, while a newer turn reads at once. Reads start only after `Boot` and are not in the
   snapshot, so a cold start paints `status · title` until they land. The answer is kept as one plain
   paragraph (`cards::flat`: no headings, emphasis, ticks, table rules or link targets) for the card's
   line clamp.
@@ -319,7 +320,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
 | `store/transcript.rs` | 552 | `views/theme.rs` | 157 |
 | `store/condense.rs` | 189 | `shell.rs` | 420 |
-| `store/notes.rs` | 424 | `shell/io.rs` | 177 |
+| `store/notes.rs` | 424 | `shell/io.rs` | 180 |
 | `store/composer.rs` | 166 | `harness.rs` | 269 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
 | `store/cards.rs` | 182 | | |
