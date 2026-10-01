@@ -186,7 +186,38 @@ pub struct Entry {
     pub byte_offset: u64,
     pub timestamp: Option<String>,
     pub kind: Kind,
+    /// Only the fields the compact view reads (`Slim`).
+    #[serde(deserialize_with = "slim")]
     pub payload: Value,
+}
+
+/// An entry payload's read fields. The rest (`toolUseResult`, `attachment`, compaction histories: about
+/// half the bytes) is skipped while decoding, never built as a `Value`.
+#[derive(Deserialize, Serialize)]
+struct Slim {
+    #[serde(rename = "compactMetadata")]
+    compact_metadata: Option<Value>,
+    #[serde(rename = "fallbackModel")]
+    fallback_model: Option<Value>,
+    #[serde(rename = "isApiErrorMessage")]
+    is_api_error_message: Option<Value>,
+    message: Option<Value>,
+    deliveries: Option<Value>,
+    name: Option<Value>,
+    input: Option<Value>,
+    tool_use_id: Option<Value>,
+    content: Option<Value>,
+    is_error: Option<Value>,
+    subtype: Option<Value>,
+}
+
+fn slim<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
+    let Value::Object(mut kept) = serde_json::to_value(Slim::deserialize(d)?).unwrap_or_default()
+    else {
+        return Ok(Value::Null);
+    };
+    kept.retain(|_, v| !v.is_null());
+    Ok(Value::Object(kept))
 }
 
 /// The server's entry kinds. Anything newer decodes as `Unknown` rather than failing the page.

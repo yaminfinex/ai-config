@@ -75,8 +75,13 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   between a boot pull and the stream's subscription sends no nudge this client can see): re-read each open
   transcript forward from its `next_offset`, re-pull the state namespaces from their in-memory cursors
   (pulls in flight coalesce), ask for the viewer again while it is `Unknown`, and expect a fresh `fleet`. A changed `hello.buildIdentity` shows "server updated" and never reloads by itself.
-- **Transcript wakes.** One stream, subscribed with `agents=` to the agents of the zoomed space. An `entry:`
-  frame only means "read forward from `next_offset`", coalesced over 25 ms.
+- **Transcript wakes.** One stream, subscribed with `agents=` to the agents of the zoomed space (plus a
+  previewed outsider), and to none on the lens. An `entry:` frame only means "read forward from
+  `next_offset`". Wakes coalesce without a timer: one forward read in flight, and a wake meanwhile sets
+  `again`, which reads once more when it lands. A `message` frame addressed to the open agent refreshes its
+  detail (coalesced the same way), so a queued message shows. A failed tail, forward or detail read retries
+  after 1, 2 and 4 s (it and any queued wake), then waits for a wake or `hello`; a failed `before=` page
+  waits until the notice is dismissed, a `hello` arrives or another page lands.
 - **Server cost.** Debounce detail refetches; skip the web client's habit of invalidating every open
   transcript on each `fleet` frame.
 
@@ -98,10 +103,12 @@ Derived shapes are in `store`:
   board or in a space. **Needs you** = the agent is not `Working`, not `retired` or `stopped`, and its
   `turn_end_id` is above its seen mark; `Blocked` without a new turn does not count (making it always count
   is an owner policy call for U2). The card count is the number of such agents in the space.
-- **`transcript::Item`** — what compact mode renders: `Prompt`, `Delivery{sender, text, operator}`,
+- **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
+  orders and pairs them): `Prompt`, `Delivery{sender, text, operator, quiet}` (`quiet`: an ack or the
+  launcher, a one-line chip),
   `TaskNotification`, `SystemChip` (`injected_system`, `command_stdout`, `system_chip`, `turn_duration` fold
   here or are dropped), `CompactDivider`, `Assistant{markdown}`, `Thinking` (a collapsed pill),
-  `Tool{name, summary, result}`, `Error`. Assistant text has `<internal>…</internal>` removed and `<status>`
+  `Tool{name, summary, result: Option<ToolResult{error, text}>}`, `Error`. Assistant text has `<internal>…</internal>` removed and `<status>`
   unwrapped; the operator envelope (`[HERDER_WEB_OPERATOR_NOTE_BEGIN]…END]`) is stripped from deliveries.
 - **`transcript::Transcript`** — pages arrive in both directions, so nothing is an append-only fold:
   - One wire entry can yield several items (an `hcom_delivery` entry carries every delivery of that
@@ -118,7 +125,8 @@ Derived shapes are in `store`:
   - `generation` (see §2). `rewindow`/`reset` clears everything and re-reads the tail.
 - **`notes::Note`** — the web record: `{id, group (agent or general), text, quote?, source?, created}`,
   `updated` on the row. **`Draft`** is one string per agent, local only.
-- **`Prefs`** — local owner preferences: `text_scale` now; rows, visible, seen, drafts, hotkey next.
+- **`Prefs`** — local owner preferences: `text_scale` now; rows, visible, seen, drafts, hotkey next;
+  `vscode_host`, the Remote-SSH alias file links open on (default `superset`; web asks).
 
 ## 4. Keys
 
@@ -229,12 +237,20 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   pulse paints, shell renders, pointer moves and whether the window was on screen), `move:<ms>` (the same
   while a synthetic pointer sweeps the window), `quit`; `HERDER_NATIVE_WINDOW=WxH` sizes the window and
   `HERDER_NATIVE_VISIBLE=1` orders it in front, still unfocused, for CPU runs, only when the owner asks
-  for one (the window pops up over their work); units add `type:`,
-  `cpuscroll:`, `keycpu:` from the spike as they need them. Screenshots and presented-frame timings need an
+  for one (the window pops up over their work); units add `type:` and `keycpu:` from the spike as they
+  need them. U3 added `draw` (one frame: a window behind others gets none, and transcript paging is
+  driven by render), `link:<url>` (dispatches what a click on a transcript link dispatches),
+  `expect:<agent>` / `expect:<agent>+preview` (what the zoom shows; the shell answers through
+  `harness::Probe`, so the harness knows no views) and `cpuscroll:<key>x<n>` (`n` keystrokes, each with a
+  timed `Window::draw`). Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
   the 88 MB transcript. `harness::metric` lines on stderr carry the numbers.
+- **Transcript page reads (ratified at U3 review).** Pages are 100 entries. The "< 200 ms per request"
+  target is not reachable over the tailnet: a bare GET costs 150–275 ms, and riko's `before=` pages
+  measured p50 210 ms, max 363 ms. Reads stay off the main thread and prefetch ahead of the viewport, so
+  this is a network floor, not a stall; gzip on the serve is a separate ask.
 - **Idle CPU exception (Rung 1, agreed at U2 review).** A window on screen costs about 1 % of one core
   with nothing to draw: GPUI 0.3.7 runs a CVDisplayLink while the window is visible and calls its frame
   step every vsync (`stop_display_link` is private), so the app renders nothing and still pays the tick.
@@ -256,11 +272,16 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 | `store/fleet.rs` | 120 | `views/notes.rs` | 200 |
 | `store/spaces.rs` | 250 | `views/theme.rs` | 100 |
 | `store/transcript.rs` | 400 | `shell.rs` | 300 |
+| `store/condense.rs` | 220 | `views/markdown.rs` | 250 |
 | `store/notes.rs` | 250 | `local.rs`, `platform_mac.rs`, `harness.rs` | 120, 150, 200 |
 
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
+
+Documented U3 exceptions (agreed at U3 review): `api/types.rs` 317, `api/client.rs` 214, `store/mod.rs`
+357, `shell.rs` 373, `harness.rs` 237: the transcript's wire types, resolve call, vocabulary, effect runner
+and harness steps.
 
 Documented U1 exceptions (agreed at U1 review): `store/mod.rs` 349 (the Event/Effect vocabulary,
 `Prefs`, the reducer), `shell.rs` 347 (the effect runner with the save-before-send barrier), `api/sse.rs`

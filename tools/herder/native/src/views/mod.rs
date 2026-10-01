@@ -110,7 +110,7 @@ tab ⇧tab      next / previous agent
 n / N         next space needing you
 j k           scroll
 space ⇧space  page down / up
-g G           start / end";
+g G           top of loaded (reads older) / end";
 
 pub(super) fn help(t: TypeScale) -> Div {
     let lines = HELP.lines().map(|l| div().min_h(t.line).child(l));
