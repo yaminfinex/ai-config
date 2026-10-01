@@ -12,7 +12,7 @@
 //! One transcript is live at a time, the zoomed agent's, and none on the lens. Entry wakes coalesce without a timer: one
 //! forward read in flight, and a wake meanwhile asks for one more when it lands.
 
-use super::{Effect, Fetch, Store, condense};
+use super::{Effect, Fetch, Store, Wake, condense};
 use crate::api::client::Page;
 use crate::api::{AgentDetail, Candidate, Entries, Entry, Kind, Resolved};
 use std::collections::{BTreeMap, HashMap};
@@ -115,11 +115,6 @@ pub enum Got {
 
 #[derive(Clone, Debug)]
 pub enum Step {
-    /// The zoom shows this agent of this space (or previews it there).
-    Show {
-        space: String,
-        agent: String,
-    },
     /// The zoom closed: drop the transcript and stop streaming its agents.
     Hide,
     /// The viewport neared the first rows: read the page before.
@@ -132,6 +127,14 @@ pub enum Step {
     Dismiss,
     /// A failed forward or detail read's backoff ran out: read it again.
     Retry(Timer),
+    /// The view started (or stopped) following the bottom of `agent`'s rows under `generation`: the
+    /// owner is watching the tail. Taken only while that transcript is still the open one, so an
+    /// observation that outlived a zoom switch or a reset is dropped.
+    Tail {
+        agent: String,
+        generation: u64,
+        tail: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -151,6 +154,8 @@ pub struct Transcript {
     detail_reading: bool,
     detail_again: bool,
     pub detail: Option<AgentDetail>,
+    /// The view follows the bottom (`Step::Tail`): what lands is seen as it arrives (`attention`).
+    pub tail: bool,
     /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
     /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
     notice: Option<(Op, String)>,
@@ -179,9 +184,13 @@ pub struct Live {
 }
 
 impl Store {
-    /// The zoom shows `agent` in `space`: subscribe the stream to the space's agents (and a previewed
-    /// outsider), and open the agent's transcript unless it is the open one.
-    fn show(&mut self, space: &str, agent: &str, out: &mut Vec<Effect>) {
+    /// The zoom shows `agent` in `space` (`Move::View`): subscribe the stream to the space's agents (and
+    /// a previewed outsider), and open the agent's transcript unless it is the open one. A zoom with no
+    /// agent (an empty space) shows none: as zoomed out.
+    pub(super) fn show(&mut self, space: &str, agent: Option<&str>, out: &mut Vec<Effect>) {
+        let Some(agent) = agent else {
+            return self.transcript_step(Step::Hide, out);
+        };
         let space = self.spaces.iter().filter(|s| s.id == space);
         let mut agents: Vec<String> = space.flat_map(|s| s.agents().map(String::from)).collect();
         if !agents.iter().any(|a| a == agent) {
@@ -217,9 +226,6 @@ impl Store {
     }
 
     pub(super) fn transcript_step(&mut self, step: Step, out: &mut Vec<Effect>) {
-        if let Step::Show { space, agent } = &step {
-            return self.show(space, agent, out);
-        }
         if let Step::Hide = step {
             self.transcript.open = None;
             return self.subscribe(Vec::new(), out);
@@ -227,7 +233,7 @@ impl Store {
         let (live, agents) = (&mut self.transcript, &self.fleet.agents);
         let Some(t) = live.open.as_mut() else { return };
         match step {
-            Step::Show { .. } | Step::Hide => {}
+            Step::Hide => {}
             Step::Older => t.older(out),
             Step::Read(read, _) if read.agent != t.agent || read.generation != t.generation => {}
             Step::Read(_, Ok(Got::Page(e))) if e.reset.is_some() => {
@@ -247,6 +253,12 @@ impl Store {
             Step::Dismiss => t.notice = None,
             Step::Retry(timer) if timer.generation == t.generation => t.retry(timer, out),
             Step::Retry(_) => {}
+            Step::Tail {
+                agent,
+                generation,
+                tail,
+            } if agent == t.agent && generation == t.generation => t.tail = tail,
+            Step::Tail { .. } => {}
         }
     }
 
@@ -414,7 +426,8 @@ impl Transcript {
                         op,
                         token,
                     };
-                    out.push(Effect::RetryTranscript { timer, after_ms });
+                    let wake = Wake::Transcript(timer);
+                    out.push(Effect::After { after_ms, wake });
                 }
                 self.notice = result.err().map(|e| (op, format!("could not read: {e}")));
             }

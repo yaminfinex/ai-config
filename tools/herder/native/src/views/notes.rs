@@ -12,7 +12,7 @@
 use crate::store::notes::{Note, Stamp, Step};
 use crate::store::sync::{Hold, Ns};
 use crate::store::{Event, Store};
-use crate::views::lens::Ui;
+use crate::views::lens::{Focus, Ui};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
@@ -42,22 +42,20 @@ const SHOWN: usize = 3;
 pub struct View {
     editor: Entity<TextareaState>,
     /// The editor's text, mirrored as it changes so a save needs no window.
-    text: String,
-    editing: Option<Editing>,
+    pub(super) text: String,
+    pub(super) editing: Option<Editing>,
     /// Text for the editor at the next render.
     load: Option<String>,
     /// The transcript selection when the pointer last let go, trimmed, with the agent it was made on;
     /// what `c` captures. Gone once the zoom leaves that agent.
-    selection: Option<(String, String)>,
+    pub(super) selection: Option<(String, String)>,
     /// Why the editor's text was not saved.
     problem: Option<&'static str>,
     armed: Option<SharedString>,
     open: bool,
-    /// The last action's focus request: `Some(true)` into the editor, `Some(false)` out of it.
-    pub(super) want: Option<bool>,
 }
 
-struct Editing {
+pub(super) struct Editing {
     agent: String,
     /// A note being edited, as it was when the editor opened, or a new one (with its captured quote).
     note: Option<Note>,
@@ -85,28 +83,11 @@ impl View {
             problem: None,
             armed: None,
             open: false,
-            want: None,
         }
     }
 
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.read(cx).focus_handle(cx)
-    }
-
-    fn begin(&mut self, agent: &str, note: Option<Note>, quote: Option<String>) {
-        let text = note.as_ref().map_or(String::new(), |n| n.text.clone());
-        let agent = agent.to_string();
-        self.editing = Some(Editing { agent, note, quote });
-        self.load = Some(text);
-        self.armed = None;
-        self.problem = None;
-        self.want = Some(true);
-    }
-
-    fn close(&mut self) {
-        self.editing = None;
-        self.problem = None;
-        self.want = Some(false);
     }
 
     /// The pointer let go on `agent`'s transcript with `text` selected (blank: none). Whether it changed.
@@ -155,47 +136,20 @@ pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
     }
 }
 
-/// `notes:` for the harness: the zoomed agent's note count, then the editor (`closed`, or its focus and
-/// text).
-pub fn probe(store: &Store, ui: &Ui, window: &Window, cx: &App) -> String {
-    let n = store.notes_of(ui.zoomed_agent().unwrap_or("")).count();
-    let editor = match &ui.notes.editing {
-        None => "closed".to_string(),
-        Some(_) if ui.notes.focus_handle(cx).is_focused(window) => {
-            format!("focused:{}", ui.notes.text)
-        }
-        Some(_) => format!("idle:{}", ui.notes.text),
-    };
-    format!("{n}:{editor}")
+/// Open the editor on `agent`'s `note` (a new one: `None`, with its captured `quote`), and focus it.
+fn begin(ui: &mut Ui, agent: &str, note: Option<Note>, quote: Option<String>) {
+    let text = note.as_ref().map_or(String::new(), |n| n.text.clone());
+    let agent = agent.to_string();
+    let notes = &mut ui.notes;
+    notes.editing = Some(Editing { agent, note, quote });
+    notes.load = Some(text);
+    (notes.armed, notes.problem) = (None, None);
+    ui.focus = Some(Focus::Editor);
 }
 
-/// What the pointer selected in the zoomed transcript, for the harness's `select:` (it cannot drag).
-pub fn select(ui: &mut Ui, text: &str) {
-    let agent = ui.zoomed_agent().map(String::from);
-    ui.notes.selected(agent, text);
-}
-
-/// What a click on the strip dispatches, for the harness's `click:` (`capture`, `handoff`, or `edit:i`
-/// and `delete:i` on the zoomed agent's note `i`, oldest first); `None` where the strip has no such thing.
-pub fn clicked(store: &Store, ui: &Ui, what: &str) -> Option<Notes> {
-    let agent = ui.zoomed_agent()?;
-    let note = |i: &str| {
-        let note = store.notes_of(agent).nth(i.parse().ok()?)?;
-        Some(SharedString::from(note.id.clone()))
-    };
-    match what.split_once(':').unwrap_or((what, "")) {
-        ("capture", _) => {
-            ui.notes.selection.as_ref().filter(|(a, _)| a == agent)?;
-            Some(Notes::Capture)
-        }
-        ("handoff", _) => {
-            let shown = note("0").is_some() && !store.hand_off_blocked(agent);
-            shown.then_some(Notes::HandOff)
-        }
-        ("edit", i) => note(i).map(Notes::Edit),
-        ("delete", i) => note(i).map(Notes::Delete),
-        _ => None,
-    }
+fn close(ui: &mut Ui) {
+    (ui.notes.editing, ui.notes.problem) = (None, None);
+    ui.focus = Some(Focus::Out);
 }
 
 pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
@@ -205,13 +159,13 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
     let notes = &mut ui.notes;
     let event = |step| vec![Event::Note(step)];
     match key {
-        Notes::Add => notes.begin(&agent, None, None),
+        Notes::Add => begin(ui, &agent, None, None),
         Notes::Capture => match notes.selection.take_if(|(a, _)| *a == agent) {
-            Some((_, quote)) => notes.begin(&agent, None, Some(quote)),
+            Some((_, quote)) => begin(ui, &agent, None, Some(quote)),
             None => return Vec::new(),
         },
         Notes::HandOff => {
-            ui.composer.want = Some(store.can_send(&agent).is_ok());
+            ui.focus = Some(Focus::Box);
             return event(Step::HandOff {
                 agent,
                 stamp: stamp(),
@@ -240,15 +194,15 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
             if notes.problem.is_some() {
                 return Vec::new();
             }
-            notes.close();
+            close(ui);
             return event(step);
         }
-        Notes::Cancel => notes.close(),
+        Notes::Cancel => close(ui),
         Notes::Toggle => notes.open = !notes.open,
         Notes::Edit(id) => {
             let note = store.notes.iter().find(|n| n.id == id.as_ref());
             if let Some(n) = note {
-                notes.begin(&agent, Some(n.clone()), n.quote.clone());
+                begin(ui, &agent, Some(n.clone()), n.quote.clone());
             }
         }
         Notes::Delete(id) if notes.armed.as_ref() == Some(id) => {
@@ -289,15 +243,12 @@ fn line(s: &str) -> String {
 /// Why notes are not being saved or synced, for `agent`'s strip: its editor's refusal, its last
 /// transfer's, and a notes sync the server is holding back.
 fn problems(store: &Store, v: &View, agent: &str) -> Vec<String> {
-    let hold = match store.sync[&Ns::Notes].hold {
-        Some(Hold::TooLarge) => Some(
-            "The server refused the notes as too large (413); unsent notes wait for the next edit.",
-        ),
-        Some(Hold::LocalOnly) => {
-            Some("Notes stay on this Mac: the server refused its attribution (409).")
+    let hold = store.sync[&Ns::Notes].hold.map(|h| match h {
+        Hold::TooLarge => {
+            "The server refused the notes as too large (413); unsent notes wait for the next edit."
         }
-        None => None,
-    };
+        Hold::LocalOnly => "Notes stay on this Mac: the server refused its attribution (409).",
+    });
     let editor = v
         .problem
         .filter(|_| v.editing.as_ref().is_some_and(|e| e.agent == agent));
@@ -321,11 +272,9 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
         return None;
     }
     let (n, open) = (notes.len(), notes.len() <= SHOWN || v.open);
-    let count = format!(
-        "{n} note{} {}",
-        if n == 1 { "" } else { "s" },
-        if open { "▾" } else { "▸" }
-    );
+    let s = if n == 1 { "" } else { "s" };
+    let fold = if open { "▾" } else { "▸" };
+    let count = format!("{n} note{s} {fold}");
     let count = match n > SHOWN {
         true => click(div().id("notes-count"), Notes::Toggle).child(count),
         false => div().id("notes-count").child(count),
@@ -337,12 +286,10 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
         .text_size(t.small);
     let head = head
         .child(count.text_color(rgb(pal::SLATE)))
-        .when(n > 0 && !store.hand_off_blocked(agent), |h| {
-            h.child(chip("handoff", "→ composer  p".into(), Notes::HandOff, t))
-        })
         // Unavailable (the box is read-only or busy; it says why), shown as such rather than hidden.
-        .when(n > 0 && store.hand_off_blocked(agent), |h| {
-            h.child(dim("→ composer unavailable"))
+        .when(n > 0, |h| match store.hand_off_blocked(agent) {
+            true => h.child(dim("→ composer unavailable")),
+            false => h.child(chip("handoff", "→ composer  p".into(), Notes::HandOff, t)),
         })
         .children(selection.map(|(_, s)| {
             chip("capture", format!("❝ {}  c", line(s)), Notes::Capture, t)
@@ -368,11 +315,8 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
         let x = div()
             .id(ElementId::Name(format!("del-{id}").into()))
             .flex_none();
-        let x = click(x, Notes::Delete(id)).text_color(rgb(if armed {
-            pal::AMBER
-        } else {
-            pal::SLATE
-        }));
+        let color = if armed { pal::AMBER } else { pal::SLATE };
+        let x = click(x, Notes::Delete(id)).text_color(rgb(color));
         div()
             .flex()
             .items_center()

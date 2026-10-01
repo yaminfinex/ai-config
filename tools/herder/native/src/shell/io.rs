@@ -1,16 +1,15 @@
 //! The shell's background I/O: a REST read, or the outbox save and the posts it guards. Each takes the
 //! client (and disk) and reports back as `Event`s; nothing here touches GPUI or view state.
 
-use crate::api::client::Client;
-use crate::api::client::Error;
+use crate::api::client::{Client, Error};
 use crate::api::types::StateRow;
 use crate::harness;
 use crate::local::{self, Disk};
 use crate::store::composer::{self, Failure};
-use crate::store::notes;
+use crate::store::notes::{self, Dest};
 use crate::store::sync::{Ns, Step};
 use crate::store::transcript::{self, Got, What};
-use crate::store::{Event, Fetch};
+use crate::store::{Effect, Event, Fetch, Persist};
 
 pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     match fetch {
@@ -49,19 +48,58 @@ pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     }
 }
 
-/// Save the outbox, then post each write and report its answer. A failed save posts nothing: every
-/// write comes back as a transport-style failure, which backs off and tries again (saving first again).
+/// One batch of effects' writes, as the shell gathers them (and the fake-serve tests' driver, so both
+/// route alike): whether the outbox changed, the posts and the queued notes (`Dest::Note`) that wait on
+/// its save, and the hand-offs into the draft (`Dest::Draft`) that wait on the prefs'.
+#[derive(Default)]
+pub struct Batch {
+    pub save: bool,
+    pub sends: Vec<(Ns, Vec<StateRow>)>,
+    pub lands: Vec<String>,
+    pub drafts: Vec<String>,
+}
+
+impl Batch {
+    /// Keep `effect` when it is one of the batch's; anything else goes back to the caller.
+    pub fn take(&mut self, effect: Effect) -> Option<Effect> {
+        match effect {
+            Effect::Persist(Persist::Outbox) => self.save = true,
+            Effect::Post { ns, rows } => self.sends.push((ns, rows)),
+            Effect::Transfer { to, agent } => match to {
+                Dest::Note => self.lands.push(agent),
+                Dest::Draft => self.drafts.push(agent),
+            },
+            effect => return Some(effect),
+        }
+        None
+    }
+
+    /// A post or a queued note waits on the outbox's save (`save_then_send`).
+    pub fn waits(&self) -> bool {
+        !self.sends.is_empty() || !self.lands.is_empty()
+    }
+}
+
+/// Save the outbox; then report the queued notes it holds as landed (`lands`: the agents whose transfer
+/// it is the destination of); then post each write and report its answer. A failed save lands nothing
+/// and posts nothing: every write comes back as a transport-style failure, which backs off and tries
+/// again (saving first again).
 pub fn save_then_send(
     disk: &Disk,
     client: &Client,
     outbox: &[u8],
     seq: u64,
     sends: Vec<(Ns, Vec<StateRow>)>,
+    lands: Vec<String>,
     mut on: impl FnMut(Event),
 ) {
     let saved = disk.write(local::OUTBOX, outbox, seq);
     if let Err(e) = &saved {
         eprintln!("local: could not save outbox.json, not sending: {e}");
+    }
+    for agent in lands {
+        let saved = saved.as_ref().map(|_| ()).map_err(|e| e.to_string());
+        on(Event::Note(notes::Step::Landed { agent, saved }));
     }
     for (ns, rows) in sends {
         let step = match &saved {
@@ -117,16 +155,11 @@ pub fn save_then_message(
     Event::Compose(composer::Step::Sent { agent, result })
 }
 
-/// Save one file now, the destination of a note transfer, and report whether it is on disk.
-pub fn save_then_land(
-    disk: &Disk,
-    name: &'static str,
-    bytes: &[u8],
-    seq: u64,
-    agent: String,
-) -> Event {
-    let saved = disk.write(name, bytes, seq).map_err(|e| {
-        eprintln!("local: could not save {name}: {e}");
+/// Save the prefs now, the destination of a hand-off into the draft (`notes::Dest::Draft`), and report
+/// whether they are on disk. A queued note lands with the outbox's save instead (`save_then_send`).
+pub fn save_then_land(disk: &Disk, prefs: &[u8], seq: u64, agent: String) -> Event {
+    let saved = disk.write(local::PREFS, prefs, seq).map_err(|e| {
+        eprintln!("local: could not save prefs.json: {e}");
         e.to_string()
     });
     Event::Note(notes::Step::Landed { agent, saved })

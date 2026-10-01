@@ -3,7 +3,7 @@
 //! (a `hello`, a retry timer, a reconnect) sends it again, because `POST …/message` has no idempotency
 //! key and a message must never land twice.
 
-use super::spaces::{self, Seen};
+use super::attention::{self, Seen};
 use super::{Attribution, Effect, Persist, Store};
 use crate::api::Refusal;
 
@@ -99,20 +99,6 @@ impl Store {
         self.in_flight(agent) || self.transfers.contains_key(agent)
     }
 
-    /// A fleet frame: a pending file-back's block acknowledgement lapses once its agent is seen
-    /// unblocked or gone, so blocking again at the same turn still needs the owner.
-    pub(super) fn lapse_blocks(&mut self) {
-        for (agent, sending) in &mut self.sends {
-            if let Sending::InFlight {
-                file_back: Some(then),
-                ..
-            } = sending
-            {
-                then.blocked &= spaces::looking(&self.fleet, agent).is_some_and(|now| now.blocked);
-            }
-        }
-    }
-
     pub(super) fn compose(&mut self, step: Step, out: &mut Vec<Effect>) {
         // The box is disabled while a send is in flight; an edit then would race its answer.
         if let Step::Edit { agent, .. } = &step
@@ -138,7 +124,7 @@ impl Store {
                 }
                 let text = self.prefs.drafts[&agent].clone();
                 let file_back = file_back
-                    .then(|| spaces::looking(&self.fleet, &agent))
+                    .then(|| attention::looking(&self.fleet, &agent))
                     .flatten();
                 let flight = Sending::InFlight {
                     text: text.clone(),
@@ -161,7 +147,7 @@ impl Store {
                         // what they saw when sending is seen: a turn since still needs them.
                         if let Some(then) = file_back {
                             let seen = &mut self.prefs.seen;
-                            if spaces::acknowledge(seen, &self.fleet, &agent, then) {
+                            if attention::acknowledge(seen, &self.fleet, &agent, then) {
                                 out.push(Effect::Persist(Persist::Prefs));
                             }
                             out.push(Effect::FiledBack { agent });

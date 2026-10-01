@@ -25,7 +25,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 | Module | Responsibility (one sentence) | Depends on |
 |---|---|---|
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
-| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. | `api::types` |
+| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). | `api::types` |
 | `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
 | `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
@@ -99,13 +99,20 @@ Derived shapes are in `store`:
   An agent absent from the board is gone; retired detail (`bus_status: retired`) makes a transcript read-only.
 - **`spaces::Space`** — `{id, name, order}` from the `spaces` namespace, tombstones dropped. **`Member`** is
   `Agent{name}` or `File{root, path}` from `spaces.members`, in dock order. Local: **`Row`** (`Focus`,
-  `Watch`, `Background`) per space, the **visible agent** per space, and **seen** per agent: the board's
+  `Watch`, `Background`) per space and the **visible agent** per space. **`attention::Seen`** per agent: the board's
   `turn_end_id` (the hcom event id of the agent's latest completed turn, monotonic) the owner has seen; the
   board carries no activity timestamp. An agent seen for the first time takes its current turn as the
   baseline (web's policy: an unknown baseline is not a new turn), and marks are pruned to agents on the
   board or in a space. **Needs you** = the agent is not `Working`, not `retired` or `stopped`, and its
   `turn_end_id` is above its seen mark, or it is `Blocked` and this block has not been viewed (owner ruling,
-  U2: blocking again needs you again). The card count is the number of such agents in the space.
+  U2: blocking again needs you again). The card count is the number of such agents in the space, at least
+  one while the space is marked unread (`u`). The header's "N need you" and the dock badge are one number
+  (owner rulings, 2026-10-01): each agent that needs you once, in one space, several or none, plus each
+  marked space none of whose agents already counts. While the owner watches an agent's tail (frontmost,
+  zoomed on it, the transcript at the bottom) what lands is seen at once: it neither counts nor alerts.
+  Leaving the bottom (a scroll key, the wheel) reaches the store as it happens, before any fleet frame
+  behind it; the view's word on the tail names the transcript's agent and generation, and a stale one
+  (after a zoom switch or a reset) is dropped.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
   orders and pairs them): `Prompt`, `Delivery{sender, text, operator, quiet}` (`quiet`: an ack or the
   launcher, a one-line chip),
@@ -154,7 +161,7 @@ composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel)
 |---|---|---|---|
 | `cmd-q`; `cmd-=` `cmd-shift-=` / `cmd--` / `cmd-0` | `Lens` | Quit; TextBigger / TextSmaller / TextReset | A0 |
 | `left right h l j k` `1 2 3` `v` `m u` `t s` `?` `enter` | `Lens && !Input && !Terminal` | move, set row, cycle visible, seen/unseen, card text/size, help, zoom in | U2 |
-| `n` / `N` | both navigation predicates | next needing you / and zoom in | U2 |
+| `n` / `N` | both navigation predicates | next needing you / and zoom in; after the spaces, `N` (and `n` zoomed) opens an agent in no space alone | U2, U6 |
 | `escape` `[` `]` `tab` `shift-tab` | `Space && !Input && !Terminal` | zoom out, prev/next space, prev/next agent | U2 |
 | `j k space shift-space g G` | `Space && !Input && !Terminal` | scroll the transcript | U3 |
 | `/` `r` | `Space && !Input && !Terminal` | focus the composer | U4 |
@@ -252,10 +259,12 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   and any failed step (a bad keystroke, a failed screenshot, an unknown step) exits non-zero. Any
   `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge and the
   summon chord are logged no-ops. The harness knows no views: what it asks of them goes through
-  `harness::Probe`, which the shell builds. A scenario that sends anything points `HERDER_URL` at
-  `testdata/fake_serve.py` on loopback, never at the real serve. Steps live in `src/harness.rs`'s module
-  doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`, `check-alerts`) in the
-  justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
+  the `harness::Probe` trait, which the shell implements with `views::probe` (`ask`, `action`, `select`),
+  the one file that spells what a script compares against. A scenario that sends anything points
+  `HERDER_URL` at `testdata/fake_serve.py` on loopback, never at the real serve (`scripts/scenario.sh`,
+  shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Steps live
+  in `src/harness.rs`'s module doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`,
+  `check-alerts`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
   (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -275,25 +284,29 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after D1 (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after D2 (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
+`shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
+are restated rather than split: what did not belong in them has moved out (`views::probe`,
+`store::attention`, `shell::io`).
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 322 | `views/mod.rs` | 375 |
-| `api/client.rs` | 206 | `views/lens.rs` | 360 |
-| `api/sse.rs` | 194 | `views/space.rs` | 356 |
-| `store/mod.rs` | 420 | `views/transcript.rs` | 401 |
-| `store/sync.rs` | 314 | `views/composer.rs` | 228 |
-| `store/fleet.rs` | 117 | `views/notes.rs` | 421 |
-| `store/spaces.rs` | 420 | `views/markdown.rs` | 238 |
-| `store/transcript.rs` | 539 | `views/theme.rs` | 100 |
-| `store/condense.rs` | 189 | `shell.rs` | 447 |
-| `store/notes.rs` | 430 | `shell/io.rs` | 133 |
-| `store/composer.rs` | 180 | `harness.rs` | 307 |
+| `api/types.rs` | 322 | `views/mod.rs` | 378 |
+| `api/client.rs` | 206 | `views/lens.rs` | 379 |
+| `api/sse.rs` | 194 | `views/space.rs` | 335 |
+| `store/mod.rs` | 422 | `views/transcript.rs` | 435 |
+| `store/sync.rs` | 312 | `views/composer.rs` | 204 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 365 |
+| `store/spaces.rs` | 209 | `views/probe.rs` | 93 |
+| `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
+| `store/transcript.rs` | 552 | `views/theme.rs` | 98 |
+| `store/condense.rs` | 189 | `shell.rs` | 420 |
+| `store/notes.rs` | 424 | `shell/io.rs` | 166 |
+| `store/composer.rs` | 166 | `harness.rs` | 267 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
 
-About 6,900 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
+About 6,950 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 

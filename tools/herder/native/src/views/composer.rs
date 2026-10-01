@@ -12,7 +12,7 @@
 use crate::store::composer::{Failure, ReadOnly, Sending, Step};
 use crate::store::notes::Step as NoteStep;
 use crate::store::{Attribution, Event, Store};
-use crate::views::lens::Ui;
+use crate::views::lens::{Focus, Ui};
 use crate::views::space::{self, Zoomed};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim, on, settle_later};
@@ -37,12 +37,9 @@ const ROWS: (usize, usize) = (1, 8);
 const HINT: &str = "⌘⏎ send · ⌘⇧⏎ send and back to the lens · ⌥⏎ keep as a note · esc leave";
 
 pub struct View {
-    state: Entity<TextareaState>,
+    pub(super) state: Entity<TextareaState>,
     /// The agent whose draft the box holds.
     agent: Option<String>,
-    /// The last action's focus request: `Some(true)` into the box, `Some(false)` out of it; or a landed
-    /// file-back's, taken at the next render.
-    pub(super) want: Option<bool>,
 }
 
 impl View {
@@ -59,11 +56,7 @@ impl View {
             }
         })
         .detach();
-        View {
-            state,
-            agent: None,
-            want: None,
-        }
+        View { state, agent: None }
     }
 
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -77,7 +70,7 @@ impl View {
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     let agent = ui.zoomed_agent().map(String::from);
     let stranded = ui.composer.agent != agent && ui.composer.focus_handle(cx).is_focused(window);
-    if ui.composer.want.take() == Some(false) || stranded {
+    if ui.focus.take() == Some(Focus::Out) || stranded {
         window.focus(ui.focus_target(), cx);
     }
     let view = &mut ui.composer;
@@ -94,15 +87,8 @@ pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     }
 }
 
-/// `focused:text` or `idle:text`, for the harness's `box:` step.
-pub fn probe(ui: &Ui, window: &Window, cx: &App) -> String {
-    let focused = ui.composer.focus_handle(cx).is_focused(window);
-    let text = ui.composer.state.read(cx).value();
-    format!("{}:{text}", if focused { "focused" } else { "idle" })
-}
-
 /// A composer key: `Focus` from the zoom, the rest from the box itself.
-pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
+pub fn act(ui: &mut Ui, key: Compose) -> Vec<Event> {
     let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
     };
@@ -113,8 +99,8 @@ pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
         })]
     };
     match key {
-        Compose::Focus => ui.composer.want = Some(store.can_send(&agent).is_ok()),
-        Compose::Leave => ui.composer.want = Some(false),
+        Compose::Focus => ui.focus = Some(Focus::Box),
+        Compose::Leave => ui.focus = Some(Focus::Out),
         Compose::Send => return send(false),
         // The zoom stays, "sending", until it lands (`Effect::FiledBack`); a failure stays to say why.
         Compose::FileBack => return send(true),
@@ -139,7 +125,7 @@ pub fn filed_back<H: Host>(
     let before = ui.anim.as_ref().map(space::Anim::seq);
     let out = space::act(store, ui, Zoomed::Out);
     settle_later(ui, before, cx);
-    ui.composer.want = Some(false);
+    ui.focus = Some(Focus::Out);
     out
 }
 
@@ -156,7 +142,7 @@ pub fn render<H: Host>(
     let input = Textarea::new(&ui.composer.state).disabled(!writable);
     let input = div()
         .key_context("Composer")
-        .on_action(on(cx, |store, ui, c: &Compose| act(store, ui, *c)))
+        .on_action(on(cx, |_, ui, c: &Compose| act(ui, *c)))
         .child(input);
     div()
         .flex_none()
@@ -171,15 +157,9 @@ pub fn render<H: Host>(
         .child(dim(line).text_size(t.small).text_color(rgb(color)))
 }
 
-/// The zoomed agent's line under the box, for the harness's `says:` step.
-pub fn says(store: &Store, ui: &Ui) -> String {
-    ui.zoomed_agent()
-        .map_or_else(String::new, |a| status(store, a).0)
-}
-
 /// The line under the box and its colour: why it is read-only, "sending…", "saving the notes…" (a U5
 /// transfer), the last failure or the keys.
-fn status(store: &Store, agent: &str) -> (String, u32) {
+pub(super) fn status(store: &Store, agent: &str) -> (String, u32) {
     match (store.can_send(agent), store.sends.get(agent)) {
         (Err(why), _) => (say_read_only(&store.viewer, why), pal::AMBER),
         (Ok(()), _) if store.transfers.contains_key(agent) => {
@@ -197,12 +177,10 @@ fn say_read_only(viewer: &Attribution, why: ReadOnly) -> String {
         _ => None,
     };
     match (why, refusal) {
-        (ReadOnly::Refused, Some(r)) if r.error == "sender refused" => {
-            format!(
-                "read-only · sender collision: this Mac's sender name is taken ({})",
-                r.detail
-            )
-        }
+        (ReadOnly::Refused, Some(r)) if r.error == "sender refused" => format!(
+            "read-only · sender collision: this Mac's sender name is taken ({})",
+            r.detail
+        ),
         (ReadOnly::Refused, Some(r)) => format!("read-only · attribution required: {}", r.detail),
         (ReadOnly::Refused, None) => "read-only: the server refused this Mac's attribution".into(),
         (ReadOnly::OffBoard, _) => "read-only: not on the board".into(),
@@ -218,11 +196,9 @@ fn say_failure(failure: &Failure) -> String {
         Failure::Unreachable(why) => format!("unreachable, not sent ({why}) · ⌘⏎ retry"),
         Failure::UnknownAgent => "the server knows no such agent".into(),
         Failure::Rejected(status, why) => format!("rejected ({status}): {why}"),
-        Failure::NoAnswer(why) => {
-            format!(
-                "no answer ({why}): it may have been sent; check the transcript before retrying"
-            )
-        }
+        Failure::NoAnswer(why) => format!(
+            "no answer ({why}): it may have been sent; check the transcript before retrying"
+        ),
         Failure::NotSaved(why) => format!("not sent: the draft could not be saved ({why})"),
     }
 }

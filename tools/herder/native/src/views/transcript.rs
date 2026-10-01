@@ -9,7 +9,6 @@
 //! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing. Text
 //! selected here with the pointer is offered to the notes strip for capture (U5).
 
-use crate::store::spaces::Move;
 use crate::store::transcript::{Item, Key, Step, Transcript};
 use crate::store::{Event, Store};
 use crate::views::lens::{State, Ui};
@@ -20,7 +19,7 @@ use crate::views::{Host, dim};
 use gpui_kit::component::text::TextView;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 
 /// `j k space shift-space g G` (ARCHITECTURE §4).
@@ -53,10 +52,10 @@ pub struct View {
     open: RefCell<HashSet<Key>>,
     /// Linked text per row and fold state.
     md: RefCell<(Mentions, Linked)>,
-    /// The agent and turn a "seen at the bottom" was last sent for.
-    seen: RefCell<Option<(String, Option<u64>)>>,
     /// Herder web, where a mermaid diagram links to.
     web: String,
+    /// The wheel's scroll handler is on the list.
+    wheel: Cell<bool>,
 }
 
 impl Default for View {
@@ -68,8 +67,8 @@ impl Default for View {
             rows: RefCell::default(),
             open: RefCell::default(),
             md: RefCell::default(),
-            seen: RefCell::default(),
             web: String::new(),
+            wheel: Cell::default(),
         }
     }
 }
@@ -85,7 +84,7 @@ impl View {
 
     /// Point the list at the transcript's rows: a new transcript resets it, rows before the first or
     /// after the last are splices, anything else (rare) a reset.
-    fn sync(&self, t: &Transcript, store: &Store) {
+    pub(super) fn sync(&self, t: &Transcript, store: &Store) {
         let mut rows = self.rows.borrow_mut();
         let tag = (t.agent.clone(), t.generation);
         let n = t.items.len();
@@ -114,6 +113,23 @@ impl View {
         }
         *rows = (tag, keys);
     }
+
+    /// Whether the list follows the bottom, tagged with the transcript its rows mirror (`Step::Tail`).
+    pub(super) fn tail(&self, tail: bool) -> Event {
+        let (agent, generation) = self.rows.borrow().0.clone();
+        Event::Transcript(Step::Tail {
+            agent,
+            generation,
+            tail,
+        })
+    }
+}
+
+/// Leaving the bottom is published as it happens (a scroll key, the wheel), so a fleet frame drained
+/// before the next render does not land as seen. Coming back is seen by that render.
+fn left(store: &Store, view: &View, following: bool) -> Option<Event> {
+    let open = store.transcript.open.as_ref()?;
+    (open.tail && !following).then(|| view.tail(false))
 }
 
 /// Herder web's address (the shell's server), for diagram links.
@@ -139,7 +155,10 @@ pub fn scroll(store: &Store, ui: &mut State, s: Scroll) -> Vec<Event> {
         Scroll::Top => list.scroll_to(ListOffset::default()),
         Scroll::Bottom => list.set_follow_mode(FollowMode::Tail),
     }
-    Vec::new()
+    let view = &ui.transcript;
+    left(store, view, view.list.is_following_tail())
+        .into_iter()
+        .collect()
 }
 
 /// The body under the tabs.
@@ -165,19 +184,34 @@ pub fn render<H: Host>(
     let top = view.list.logical_scroll_top().item_ix.min(tr.items.len());
     let more = tr.loaded() && !tr.at_start() && !tr.paging() && !tr.blocked();
     if more && top < PREFETCH {
-        let older = Event::Transcript(Step::Older);
-        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(older, cx)))
+        let event = Event::Transcript(Step::Older);
+        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(event, cx)))
             .detach();
     }
-    // Reaching the bottom counts as viewing: mark a new turn seen once while following the tail.
-    let turn = store.fleet.agents.get(name).and_then(|a| a.turn_end);
-    let key = Some((name.to_string(), turn));
-    if store.agent_needs_you(name) && view.list.is_following_tail() && *view.seen.borrow() != key {
-        *view.seen.borrow_mut() = key;
-        let (space, agent) = (zoom.space.clone(), Some(name.to_string()));
-        let seen = Event::Lens(Move::View { space, agent });
-        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(seen, cx)))
+    // Following the bottom is watching the tail: the store sees what lands (`attention::watch`). Seen
+    // here, it is read again as it is dispatched, and the store drops it if the transcript moved on.
+    if view.list.is_following_tail() != tr.tail {
+        let follow = |h: &mut H, cx: &mut Context<H>| {
+            let view = &h.view().1.transcript;
+            let event = view.tail(view.list.is_following_tail());
+            h.dispatch(event, cx)
+        };
+        cx.spawn(async move |host, cx| host.update(cx, follow))
             .detach();
+    }
+    // The wheel stops following inside the list's own handler: published from there at once.
+    if !view.wheel.replace(true) {
+        let host = cx.weak_entity();
+        let wheel = move |e: &ListScrollEvent, _: &mut Window, cx: &mut App| {
+            let publish = |h: &mut H, cx: &mut Context<H>| {
+                let (store, ui) = h.view();
+                if let Some(event) = left(store, &ui.transcript, e.is_following_tail) {
+                    h.dispatch(event, cx)
+                }
+            };
+            host.update(cx, publish).ok();
+        };
+        view.list.set_scroll_handler(wheel);
     }
     let note = |s: &'static str| div().flex_1().p(t.px(24.)).child(dim(s)).into_any_element();
     let rows = if !tr.loaded() {

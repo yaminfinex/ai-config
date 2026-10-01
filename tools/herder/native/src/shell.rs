@@ -13,26 +13,25 @@
 //!
 //! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
 //! send was decided (`io::save_then_send`); a save still pending elsewhere cannot be overtaken. A note
-//! transfer's destination is saved at once and reported back (`io::save_then_land`) before its source
-//! changes. The REST reads and those saves run in `io`.
+//! transfer's destination is saved and reported back before its source changes: a draft at once
+//! (`io::save_then_land`), a queued note by that same outbox save, before its posts. The REST reads
+//! and those saves run in `io`.
 
 use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
-use crate::store::sync::Step;
-use crate::store::transcript;
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, space,
-    theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, probe,
+    space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use io::run_fetch;
-pub use io::{save_then_land, save_then_message, save_then_send};
+pub use io::{Batch, save_then_land, save_then_message, save_then_send};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -54,11 +53,9 @@ pub struct Shell {
     tx: UnboundedSender<Event>,
     stream: Option<sse::Reader>,
     /// Files with a write waiting out its coalescing window; it reads the store when it fires.
-    saves: HashSet<&'static str>,
+    saves: HashSet<Persist>,
     painted: bool,
     live_painted: bool,
-    /// The window is the key window: the app is frontmost (U6).
-    front: bool,
 }
 
 impl Shell {
@@ -81,9 +78,11 @@ impl Shell {
             while let Some(event) = rx.next().await {
                 let ok = match event {
                     // The chord toggles: hide when frontmost, else come forward on the lens.
-                    Event::Summon => this.read_with(cx, |s, _| s.front).map(|front| {
-                        cx.update(|cx| if front { cx.hide() } else { summon("", cx) })
-                    }),
+                    Event::Summon => this
+                        .read_with(cx, |s, _| s.store.alerts.front)
+                        .map(|front| {
+                            cx.update(|cx| if front { cx.hide() } else { summon("", cx) })
+                        }),
                     event => this.update(cx, |s, cx| s.dispatch(event, cx)),
                 };
                 if ok.is_err() {
@@ -92,9 +91,12 @@ impl Shell {
             }
         })
         .detach();
-        if !platform_mac::assume_front() {
-            cx.observe_window_activation(window, |s: &mut Self, window, _| {
-                s.front = window.is_window_active()
+        // Seeded from the window: a first activation missed must not leave a frontmost app in the back.
+        let assume = platform_mac::assume_front();
+        store.apply(Event::Front(assume || window.is_window_active()));
+        if !assume {
+            cx.observe_window_activation(window, |s: &mut Self, window, cx| {
+                s.dispatch(Event::Front(window.is_window_active()), cx)
             })
             .detach();
         }
@@ -110,7 +112,6 @@ impl Shell {
             saves: HashSet::new(),
             painted: false,
             live_painted: false,
-            front: platform_mac::assume_front(),
         }
     }
 }
@@ -133,13 +134,6 @@ impl Host for Shell {
                 ..
             }
         );
-        // Whom the owner is looking at, as the store last heard: a notification never interrupts that.
-        let looking = self.ui.zoomed_agent().filter(|_| self.front);
-        let looking = looking.map(String::from);
-        if looking != self.store.alerts.looking {
-            let effects = self.store.apply(Event::Looking(looking));
-            self.run(effects, cx);
-        }
         let scale = self.store.prefs.text_scale;
         let effects = self.store.apply(event);
         if self.store.prefs.text_scale != scale {
@@ -156,9 +150,8 @@ impl Host for Shell {
 
 impl Shell {
     fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
-        let mut save_outbox = false;
-        let (mut sends, mut filed) = (Vec::new(), Vec::new());
-        for effect in effects {
+        let (mut batch, mut filed) = (Batch::default(), Vec::new());
+        for effect in effects.into_iter().filter_map(|e| batch.take(e)) {
             match effect {
                 Effect::Stream { generation, agents } => {
                     self.stream = None; // Dropping a reader closes it.
@@ -173,42 +166,15 @@ impl Shell {
                 }
                 Effect::Fetch(fetch) => self.background(cx, |_, client| run_fetch(client, fetch)),
                 Effect::Message { agent, text } => {
-                    let (bytes, seq) = (local::encode(&self.store.prefs), local::next_seq());
-                    let send = (agent, text);
+                    let ((_, bytes, seq), send) = (self.bytes(Persist::Prefs), (agent, text));
                     self.background(cx, move |disk, client| {
                         save_then_message(disk, client, &bytes, seq, send)
                     })
                 }
-                Effect::Post { ns, rows } => sends.push((ns, rows)),
-                Effect::Retry { ns, after_ms } => {
-                    let step = Step::Retry;
-                    self.later(after_ms, Event::Sync { ns, step }, cx)
-                }
-                Effect::RetryViewer { after_ms } => self.later(after_ms, Event::ViewerRetry, cx),
-                Effect::RetryTranscript { timer, after_ms } => {
-                    let step = transcript::Step::Retry(timer);
-                    self.later(after_ms, Event::Transcript(step), cx)
-                }
-                Effect::Persist(Persist::Outbox) => save_outbox = true,
-                Effect::Persist(Persist::Prefs) => {
-                    self.save_later(local::PREFS, PREFS_COALESCE, cx)
-                }
-                Effect::Persist(Persist::Snapshot) => {
-                    self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
-                }
-                Effect::Transfer { file, agent } => {
-                    let (name, bytes) = match file {
-                        Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
-                        Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
-                        Persist::Snapshot => {
-                            (local::SNAPSHOT, local::encode(&self.store.snapshot()))
-                        }
-                    };
-                    let seq = local::next_seq();
-                    self.background(cx, move |disk, _| {
-                        save_then_land(disk, name, &bytes, seq, agent)
-                    })
-                }
+                Effect::After { after_ms, wake } => self.later(after_ms, Event::Wake(wake), cx),
+                Effect::Persist(file) => self.save_later(file, cx),
+                // Taken by the batch (`Batch::take`), as is the outbox's persist.
+                Effect::Post { .. } | Effect::Transfer { .. } => {}
                 Effect::FiledBack { agent } => {
                     filed.extend(composer::filed_back(&self.store, &mut self.ui, &agent, cx))
                 }
@@ -222,7 +188,6 @@ impl Shell {
                     actions: Vec::new(),
                 }),
                 Effect::Badge(n) => platform_mac::badge(n),
-                Effect::Burst { after_ms } => self.later(after_ms, Event::BurstEnded, cx),
                 Effect::OpenFile { path, line } => {
                     match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
                         Some(url) => cx.open_url(&url),
@@ -231,21 +196,33 @@ impl Shell {
                 }
             }
         }
+        for agent in std::mem::take(&mut batch.drafts) {
+            let (_, bytes, seq) = self.bytes(Persist::Prefs);
+            self.background(cx, move |disk, _| save_then_land(disk, &bytes, seq, agent))
+        }
         for event in filed {
             self.dispatch(event, cx);
         }
-        if !save_outbox && sends.is_empty() {
+        if !batch.save && !batch.waits() {
             return;
         }
         // Saved now even when this batch did not change the outbox: an edit's own save may still be
         // waiting on another task, and a send must never overtake it.
-        let (bytes, seq) = (local::encode(&self.store.outbox()), local::next_seq());
+        let (_, bytes, seq) = self.bytes(Persist::Outbox);
         let (disk, client, tx) = (self.disk.clone(), self.client.clone(), self.tx.clone());
         cx.background_executor()
             .spawn(async move {
-                save_then_send(&disk, &client, &bytes, seq, sends, |event| {
-                    let _ = tx.unbounded_send(event);
-                })
+                save_then_send(
+                    &disk,
+                    &client,
+                    &bytes,
+                    seq,
+                    batch.sends,
+                    batch.lands,
+                    |event| {
+                        let _ = tx.unbounded_send(event);
+                    },
+                )
             })
             .detach();
     }
@@ -263,37 +240,44 @@ impl Shell {
 
     /// Dispatch `event` after `after_ms`.
     fn later(&self, after_ms: u64, event: Event, cx: &mut Context<Self>) {
-        let tx = self.tx.clone();
-        let timer = cx
-            .background_executor()
-            .timer(Duration::from_millis(after_ms));
-        cx.background_executor()
-            .spawn(async move {
-                timer.await;
-                let _ = tx.unbounded_send(event);
-            })
-            .detach();
+        let (tx, after) = (self.tx.clone(), Duration::from_millis(after_ms));
+        let timer = cx.background_executor().timer(after);
+        let task = async move {
+            timer.await;
+            drop(tx.unbounded_send(event))
+        };
+        cx.background_executor().spawn(task).detach();
     }
 
-    /// Write `name` once `delay` has passed, from the store as it is then. A write already waiting
-    /// covers this change too.
-    fn save_later(&mut self, name: &'static str, delay: Duration, cx: &mut Context<Self>) {
-        if !self.saves.insert(name) {
+    /// `file` as the store holds it now: its name, its bytes, and the sequence that orders this write
+    /// after every earlier one.
+    fn bytes(&self, file: Persist) -> (&'static str, Vec<u8>, u64) {
+        let (name, bytes) = match file {
+            Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
+            Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
+            Persist::Snapshot => (local::SNAPSHOT, local::encode(&self.store.snapshot())),
+        };
+        (name, bytes, local::next_seq())
+    }
+
+    /// Write `file` once its coalescing delay has passed, from the store as it is then. A write already
+    /// waiting covers this change too.
+    fn save_later(&mut self, file: Persist, cx: &mut Context<Self>) {
+        if !self.saves.insert(file) {
             return;
         }
+        let delay = match file {
+            Persist::Prefs => PREFS_COALESCE,
+            _ => SNAPSHOT_COALESCE,
+        };
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let Ok((bytes, disk)) = this.update(cx, |s, _| {
-                s.saves.remove(name);
-                let bytes = match name {
-                    local::PREFS => local::encode(&s.store.prefs),
-                    _ => local::encode(&s.store.snapshot()),
-                };
-                (bytes, s.disk.clone())
+            let Ok(((name, bytes, seq), disk)) = this.update(cx, |s, _| {
+                s.saves.remove(&file);
+                (s.bytes(file), s.disk.clone())
             }) else {
                 return;
             };
-            let seq = local::next_seq();
             cx.background_executor()
                 .spawn(async move {
                     if let Err(e) = disk.write(name, &bytes, seq) {
@@ -387,37 +371,7 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
-                let [s, s2, s3, s4, s5, s6, s7] = [(); 7].map(|_| shell.clone());
-                let probe = harness::Probe {
-                    shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
-                    link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
-                    summon: |tag| Box::new(space::Summon(tag.to_string().into())),
-                    start: Box::new(move |cx| {
-                        let open = s2.read(cx).store.transcript.open.as_ref();
-                        let t = open.filter(|t| t.at_start())?;
-                        Some(format!(
-                            "{}: start reached, {} rows",
-                            t.agent,
-                            t.items.len()
-                        ))
-                    }),
-                    composer: Box::new(move |w, cx| composer::probe(&s3.read(cx).ui, w, cx)),
-                    says: Box::new(move |cx| composer::says(&s4.read(cx).store, &s4.read(cx).ui)),
-                    notes: Box::new(move |w, cx| {
-                        notes::probe(&s5.read(cx).store, &s5.read(cx).ui, w, cx)
-                    }),
-                    select: Box::new(move |text, cx| {
-                        s6.update(cx, |s, cx| {
-                            notes::select(&mut s.ui, text);
-                            cx.notify()
-                        })
-                    }),
-                    click: Box::new(move |what, cx| {
-                        let s = s7.read(cx);
-                        let action = notes::clicked(&s.store, &s.ui, what)?;
-                        Some(Box::new(action) as Box<dyn Action>)
-                    }),
-                };
+                let probe = shell.clone();
                 window
                     .spawn(cx, async move |cx| harness::run(script, probe, cx).await)
                     .detach();
@@ -432,6 +386,25 @@ pub fn run() {
             cx.on_system_notification_response(|response, cx| summon(&response.tag, cx));
         }
     });
+}
+
+impl harness::Probe for Entity<Shell> {
+    fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String> {
+        let s = self.read(cx);
+        probe::ask(&s.store, &s.ui, op, window, cx)
+    }
+
+    fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>> {
+        let s = self.read(cx);
+        probe::action(&s.store, &s.ui, op, arg)
+    }
+
+    fn select(&self, text: &str, cx: &mut App) {
+        self.update(cx, |s, cx| {
+            probe::select(&mut s.ui, text);
+            cx.notify()
+        })
+    }
 }
 
 /// Bring the app forward, to a notification's agent or space (`space::summon`); `""` is the lens.

@@ -6,7 +6,7 @@
 //! persisted and never goes through the store. Rows, the visible agent, seen marks and unread spaces
 //! are the store's, changed by dispatching `Move`s.
 
-use crate::store::spaces::{Move, Row, Space};
+use crate::store::spaces::{Move, Row, Space, Stop};
 use crate::store::{Conn, Event, Store};
 use crate::views::space::{self, Anim, Zoom};
 use crate::views::theme::{TypeScale, pal};
@@ -39,6 +39,15 @@ pub enum Nav {
 /// Card sizes (`s`): width in design pixels and text lines, as the prototype; the first is the default.
 const SIZES: [(f32, usize); 4] = [(284., 5), (360., 8), (440., 12), (240., 3)];
 
+/// Where an action asks focus to go: into the composer's box (where it is writable), into the notes
+/// editor, or out of them to the zoom (or the lens).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    Box,
+    Editor,
+    Out,
+}
+
 /// The lens's focus handles around its view state.
 pub struct Ui {
     home: FocusHandle,
@@ -54,6 +63,9 @@ pub struct State {
     /// The selected space's id; `None` is the first card.
     selected: Option<String>,
     pub(super) zoom: Option<Zoom>,
+    /// The last action's focus request, taken by `views::on` as it returns; or a landed file-back's,
+    /// taken at the next render (`composer::sync`).
+    pub(super) focus: Option<Focus>,
     /// A zoom transition in flight (`space::Anim`), cleared when it lands.
     pub(super) anim: Option<Anim>,
     help: bool,
@@ -176,12 +188,19 @@ fn step_row(store: &Store, ui: &mut State, from: &Space, by: isize) {
 }
 
 /// `n` / `N`: select the next space needing you after the current one; zoom into it for `N` or when
-/// already zoomed (a sideways swipe there).
+/// already zoomed (a sideways swipe there). After the spaces, `N` (and `n` zoomed) opens each agent
+/// needing you in no space alone, as its notification's click does; with no card for one on the lens,
+/// `n` there passes them by.
 pub(super) fn next_needing(store: &Store, ui: &mut State, zoom: bool) -> Vec<Event> {
-    let zoomed = ui.zoom.as_ref().map(|z| z.space.clone());
-    let from = zoomed.or_else(|| ui.selected(store).map(|s| s.id.clone()));
-    let Some(next) = store.next_needing(from.as_deref()) else {
-        return Vec::new();
+    let from = match ui.zoom.as_ref() {
+        Some(z) if z.alone() => z.agent.as_deref().map(Stop::Alone),
+        Some(z) => space::zoomed(store, z).map(Stop::Space),
+        None => ui.selected(store).map(Stop::Space),
+    };
+    let next = match store.next_needing(from, zoom || ui.zoom.is_some()) {
+        Some(Stop::Space(next)) => next,
+        Some(Stop::Alone(agent)) => return space::summon(store, ui, &format!("agent:{agent}")),
+        None => return Vec::new(),
     };
     ui.select(&next.id);
     match (zoom, ui.zoom.is_some()) {
@@ -249,14 +268,15 @@ fn home<H: Host>(store: &Store, ui: &Ui, t: TypeScale, cx: &mut Context<H>) -> A
                 .flex()
                 .flex_col()
                 .gap(t.px(22.))
-                .child(header(store, t))
+                .child(dim(header_line(store)).text_size(t.small))
                 .children(rows),
         )
         .when(ui.help, |el| el.child(help(t)))
         .into_any_element()
 }
 
-fn header(store: &Store, t: TypeScale) -> Div {
+/// The lens header: the connection, the spaces, how many need you (the dock badge's count).
+pub(super) fn header_line(store: &Store) -> String {
     let conn = match &store.conn {
         Conn::Offline => "offline",
         Conn::Live => "live",
@@ -265,8 +285,7 @@ fn header(store: &Store, t: TypeScale) -> Div {
     let fresh = store.server_updated;
     let updated = if fresh { " · server updated" } else { "" };
     let spaces = store.spaces.len();
-    let line = format!("herder · {conn} · {spaces} spaces · {needs} need you{updated} · ? keys");
-    dim(line).text_size(t.small)
+    format!("herder · {conn} · {spaces} spaces · {needs} need you{updated} · ? keys")
 }
 
 /// One space: bright with its unread count when it needs you, dim otherwise. The card shows the

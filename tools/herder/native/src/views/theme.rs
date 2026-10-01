@@ -14,8 +14,6 @@ pub const MONO: &str = "Monaco";
 
 /// The owner's factor on the spike's sizes; the spike's body was 12 px.
 const OWNER: f32 = 0.9;
-/// Body size at scale 1.0, in pixels.
-pub const BASE_PX: f32 = 12.0 * OWNER;
 
 /// Sizes for one scale factor. Line height is 1.5× body, which keeps transcript rows even.
 #[derive(Clone, Copy, Debug, PartialEq)]

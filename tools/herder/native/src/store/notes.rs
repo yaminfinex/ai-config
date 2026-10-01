@@ -116,6 +116,14 @@ pub enum Transfer {
     Queue { draft: String },
 }
 
+/// Where a transfer's destination is saved: a hand-off's draft (`prefs.json`), a queued draft's note
+/// (`outbox.json`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dest {
+    Draft,
+    Note,
+}
+
 /// Web's limit on a note's text and quote together (`maxNoteBytes`), in UTF-8 bytes.
 pub const MAX_BYTES: usize = 8 * 1024;
 const TOO_LONG: &str = "This note is too long to save. Shorten it and try again.";
@@ -238,19 +246,12 @@ impl Store {
                     taken,
                     stamp,
                 };
-                self.begin_transfer(agent, transfer, Persist::Prefs, out);
+                self.begin_transfer(agent, transfer, Dest::Draft, out);
                 return;
             }
             Step::Queue { agent, stamp } => {
-                let draft = self
-                    .prefs
-                    .drafts
-                    .get(&agent)
-                    .filter(|d| !d.trim().is_empty());
-                let Some(draft) = draft.cloned() else {
-                    return;
-                };
-                if self.busy(&agent) {
+                let draft = self.prefs.drafts.get(&agent).cloned().unwrap_or_default();
+                if draft.trim().is_empty() || self.busy(&agent) {
                     return;
                 }
                 let add = Step::Add {
@@ -261,7 +262,7 @@ impl Store {
                 };
                 self.note(add, out);
                 let transfer = Transfer::Queue { draft };
-                return self.begin_transfer(agent, transfer, Persist::Outbox, out);
+                return self.begin_transfer(agent, transfer, Dest::Note, out);
             }
             Step::Landed { agent, saved } => match self.land(&agent, saved, out) {
                 Some(rows) => rows,
@@ -279,11 +280,11 @@ impl Store {
         Some((row.key.clone(), row.updated, row.write_id.clone()))
     }
 
-    fn begin_transfer(&mut self, agent: String, t: Transfer, file: Persist, out: &mut Vec<Effect>) {
+    fn begin_transfer(&mut self, agent: String, t: Transfer, to: Dest, out: &mut Vec<Effect>) {
         self.sends.remove(&agent);
         self.note_problems.remove(&agent);
         self.transfers.insert(agent.clone(), t);
-        out.push(Effect::Transfer { file, agent });
+        out.push(Effect::Transfer { to, agent });
     }
 
     /// Finish `agent`'s transfer once its destination is saved, or undo what was not; a hand-off's
@@ -370,11 +371,9 @@ pub fn transfer_text(n: &Note) -> String {
         return n.text.clone();
     };
     let transcript = source["kind"] == "transcript";
+    let agent = source["agent"].as_str().unwrap_or("");
     let label = match transcript {
-        true => format!(
-            "from {}'s transcript:",
-            source["agent"].as_str().unwrap_or("")
-        ),
+        true => format!("from {agent}'s transcript:"),
         false => source_label(source),
     };
     // A source of an unknown kind with no path has no label: no empty line for it.
@@ -403,12 +402,7 @@ pub fn transfer_text(n: &Note) -> String {
 
 /// Web's `noteSourceLabel` for a file or diff source: `path:start-end`, and `(vs base)` for a diff.
 fn source_label(source: &Value) -> String {
-    let num = |k: &str| {
-        source
-            .get(k)
-            .filter(|v| v.is_number())
-            .map(Value::to_string)
-    };
+    let num = |k: &str| Some(source.get(k).filter(|v| v.is_number())?.to_string());
     let (start, end) = (num("start"), num("end"));
     let range = match (&start, &end) {
         (None, _) => String::new(),

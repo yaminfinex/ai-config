@@ -4,7 +4,7 @@
 //! comes from `theme::type_scale`.
 //!
 //! One file per surface, added by the unit that needs it: `lens` (U2, the home rows and cards), `space`
-//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5). `theme` holds the
+//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5); `probe` answers the harness. `theme` holds the
 //! palette and the type scale. This file holds what they share: the key table and its help, the
 //! agent chrome (glyph, label, pill), and the window's `Frame` with the working-dot `Pulse`.
 
@@ -12,6 +12,7 @@ pub mod composer;
 pub mod lens;
 pub mod markdown;
 pub mod notes;
+pub mod probe;
 pub mod space;
 #[cfg(test)]
 mod tests;
@@ -20,6 +21,7 @@ pub mod transcript;
 
 use crate::store::fleet::{Agent, Status};
 use crate::store::{Event, Store};
+use crate::views::lens::Focus;
 use gpui_kit::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -180,10 +182,11 @@ pub fn on<A: Action, H: Host>(
         let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
         let events = f(store, ui, action);
         let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
-        let target = match (ui.composer.want.take(), ui.notes.want.take(), held) {
-            (Some(true), _, _) => ui.composer.focus_handle(cx),
-            (_, Some(true), _) => ui.notes.focus_handle(cx),
-            (None, None, Some(held)) => held,
+        let writable = ui.zoomed_agent().is_some_and(|a| store.can_send(a).is_ok());
+        let target = match (ui.focus.take(), held) {
+            (Some(Focus::Box), _) if writable => ui.composer.focus_handle(cx),
+            (Some(Focus::Editor), _) => ui.notes.focus_handle(cx),
+            (None, Some(held)) => held,
             _ => ui.focus_target().clone(),
         };
         if !target.is_focused(window) {

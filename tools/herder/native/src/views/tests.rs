@@ -1,11 +1,14 @@
 //! The lens and zoom key logic against the fixture store: which moves reach the store, where the
 //! selection and zoom go, and when the selected card is revealed. Drawing is the harness's job.
 
-use crate::store::spaces::{Move, Row, Space};
-use crate::store::tests::{board, bump, fleet_frame, loaded, space_of};
-use crate::store::{Event, Store};
+use crate::api::Entries;
+use crate::store::spaces::{Move, Row, Space, Stop};
+use crate::store::tests::{board, bump, fleet_frame, frame, loaded, space_of};
+use crate::store::transcript::{Got, Step, What};
+use crate::store::{Effect, Event, Fetch, Store};
 use crate::views::lens::{self, Nav, State};
 use crate::views::space::{self, Zoomed};
+use crate::views::transcript::{self, Scroll};
 
 /// A live store where mupu (slack) and orch-lega (herder) have unread turns.
 fn store() -> Store {
@@ -81,17 +84,21 @@ fn n_and_brackets_move_between_spaces_and_swipe_when_zoomed() {
     let mut ui = State::default();
     let events = lens::act(&store, &mut ui, Nav::NextNeeding(false));
     assert!(events.is_empty(), "n only selects");
-    let first = store.next_needing(None).unwrap();
+    let Some(Stop::Space(first)) = store.next_needing(None, false) else {
+        panic!("a space needs you")
+    };
     assert_eq!(ui.selected(&store).map(|s| &s.id), Some(&first.id));
     assert!(ui.reveal.get(), "the selection is revealed");
 
     lens::act(&store, &mut ui, Nav::ZoomIn);
-    let next = store.next_needing(Some(&first.id)).unwrap();
+    let Some(Stop::Space(next)) = store.next_needing(Some(Stop::Space(first)), true) else {
+        panic!("another space needs you")
+    };
     let events = lens::next_needing(&store, &mut ui, true);
     assert_eq!(zoomed(&ui).map(|z| z.0), Some(next.id.as_str()));
     assert!(matches!(
         events.as_slice(),
-        [Event::Lens(Move::View { .. }), Event::Transcript(_)]
+        [Event::Lens(Move::View { .. })]
     ));
     assert!(
         ui.anim.as_ref().is_some_and(|a| !a.morphs()),
@@ -108,6 +115,41 @@ fn n_and_brackets_move_between_spaces_and_swipe_when_zoomed() {
         Some(&after.id),
         "the lens follows"
     );
+}
+
+/// Owner ruling: after the spaces, `N` (and `n` zoomed) opens an agent needing you in no space alone,
+/// as its notification's click does, then goes round to the first space; `n` on the lens passes it by.
+#[test]
+fn n_reaches_an_agent_in_no_space_after_the_spaces() {
+    let mut store = store();
+    let alone = "risk-framework-gezu";
+    let mut b = board();
+    for agent in ["mupu", "orch-lega", alone] {
+        bump(&mut b, agent, 1);
+    }
+    store.apply(fleet_frame(b));
+    assert!(store.agent_needs_you(alone) && store.home(alone).is_none());
+    let order: Vec<String> = (store.lens().into_iter())
+        .filter(|s| store.needs_you(s) > 0)
+        .map(|s| s.id.clone())
+        .collect();
+    assert_eq!(order.len(), 2);
+    let mut ui = State::default();
+    ui.select(&order[1]);
+    assert!(lens::act(&store, &mut ui, Nav::NextNeeding(false)).is_empty());
+    assert_eq!(
+        ui.selected(&store).map(|s| &s.id),
+        Some(&order[0]),
+        "n passes it by"
+    );
+    ui.select(&order[1]);
+    let events = lens::act(&store, &mut ui, Nav::NextNeeding(true));
+    assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+    assert_eq!(zoomed(&ui), Some(("", Some(alone))));
+    // Zoomed, `n` goes on round: the first space.
+    let events = lens::next_needing(&store, &mut ui, false);
+    assert_eq!(viewed(events).len(), 1);
+    assert_eq!(zoomed(&ui).map(|z| z.0), Some(order[0].as_str()));
 }
 
 #[test]
@@ -172,6 +214,41 @@ fn placing_the_implicit_first_selection_keeps_it_selected() {
         first,
         "and the selection with it"
     );
+}
+
+/// Owner ruling (c): a scroll key that leaves the bottom says so as it moves the list, so a fleet frame
+/// drained before the next render does not land as seen.
+#[test]
+fn a_scroll_key_leaves_the_tail_before_the_next_render() {
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    store.apply(Event::Front(true));
+    let (space, agent) = (space_of(&store, "mupu").id.clone(), Some("mupu".into()));
+    let effects = store.apply(Event::Lens(Move::View { space, agent }));
+    let read = effects.into_iter().find_map(|e| match e {
+        Effect::Fetch(Fetch::Transcript(r)) if matches!(r.what, What::Page(_)) => Some(r),
+        _ => None,
+    });
+    let tail = include_str!("../../testdata/agents/mupu/tail.json");
+    let page: Entries = serde_json::from_str(tail).expect("entries fixture decodes");
+    let got = Ok(Got::Page(Box::new(page)));
+    store.apply(Event::Transcript(Step::Read(read.unwrap(), got)));
+    // A render: the list mirrors the rows and follows the bottom, and says so.
+    let mut ui = State::default();
+    ui.transcript
+        .sync(store.transcript.open.as_ref().unwrap(), &store);
+    store.apply(ui.transcript.tail(true));
+    bump(&mut b, "mupu", 1);
+    store.apply(frame(&store, b.clone()));
+    assert!(!store.agent_needs_you("mupu"), "watched as it lands");
+    // `g`, then a fleet frame before any render.
+    for event in transcript::scroll(&store, &mut ui, Scroll::Top) {
+        store.apply(event);
+    }
+    bump(&mut b, "mupu", 1);
+    store.apply(frame(&store, b));
+    assert!(store.agent_needs_you("mupu"), "scrolled off the bottom");
 }
 
 mod links {
@@ -358,7 +435,10 @@ mod summon {
         assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
         assert_eq!(zoomed(&ui), Some(("", Some(alone))));
         assert!(ui.zoom.as_ref().is_some_and(Zoom::alone));
-        assert_eq!(space::shown(&store, &ui), format!("{alone} preview"));
+        assert_eq!(
+            crate::views::probe::shown(&store, &ui),
+            format!("{alone} preview")
+        );
         assert_eq!(ui.selected(&store).map(|s| s.id.clone()), before);
         // Summoned again while open: still seen.
         let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));

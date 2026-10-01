@@ -14,7 +14,7 @@
 //! its start; fails after `ms`) · `box:<focused|idle>:<text>` (the composer's focus and text, `+` for a
 //! space; U4) · `says:<text>` (the line under the composer contains it) · `has:<text>` (the composer's
 //! `box:` contains it) · `notes:<n>:<closed|focused:text|idle:text>` (the zoomed agent's notes and the
-//! notes editor; U5) · `select:<text>` (as if the pointer had selected it in the transcript) ·
+//! notes editor; U5) · `header:<text>` (the lens header contains it; U6) · `select:<text>` (as if the pointer had selected it in the transcript) ·
 //! `tap:<keystroke>` (as `key:`, but bound to nothing is fine) · `click:<capture|handoff|edit:i|delete:i>`
 //! (what a click on the notes strip dispatches, `i` the zoomed agent's note, oldest first; it fails when
 //! there is no such thing to click). Units add `type:` as they need it.
@@ -73,10 +73,7 @@ fn a_set_script_must_have_steps() {
 
 /// One metric line on stderr, stamped with milliseconds since `start_clock`.
 pub fn metric(msg: impl AsRef<str>) {
-    let ms = T0
-        .get()
-        .map(|t| t.elapsed().as_secs_f64() * 1e3)
-        .unwrap_or(0.0);
+    let ms = T0.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1e3);
     eprintln!("[metric +{ms:>8.1}ms] {}", msg.as_ref());
 }
 
@@ -85,12 +82,9 @@ fn ps(field: &str) -> Option<String> {
     let pid = std::process::id().to_string();
     let out = std::process::Command::new("ps")
         .args(["-o", field, "-p", &pid])
-        .output();
-    Some(
-        String::from_utf8_lossy(&out.ok()?.stdout)
-            .trim()
-            .to_string(),
-    )
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// Resident set size of this process in MB, via `ps`.
@@ -108,35 +102,17 @@ fn cpu_s() -> f64 {
     m.parse::<f64>().unwrap_or(0.0) * 60.0 + s.parse::<f64>().unwrap_or(0.0)
 }
 
-/// `start:`'s answer: the open transcript and its rows, once it reaches its start.
-type Reached = Option<String>;
-type Ask = Box<dyn Fn(&Window, &App) -> String>;
-type Set = Box<dyn Fn(&str, &mut App)>;
-type Click = Box<dyn Fn(&str, &App) -> Option<Box<dyn Action>>>;
-
-/// What the harness asks the app; the shell answers, so the harness knows no views.
-pub struct Probe {
-    /// The zoomed agent (`name`, or `name preview`), for `expect:`.
-    pub shown: Box<dyn Fn(&App) -> String>,
-    /// The action a click on a transcript link dispatches, for `link:`.
-    pub link: fn(&str) -> Box<dyn Action>,
-    /// The action a click on a notification dispatches, for `summon:`.
-    pub summon: fn(&str) -> Box<dyn Action>,
-    /// The open transcript once it holds every entry back to the start, for `start:`.
-    pub start: Box<dyn Fn(&App) -> Reached>,
-    /// The composer's focus and text (`focused:text` or `idle:text`), for `box:`.
-    pub composer: Ask,
-    /// The line under the composer, for `says:`.
-    pub says: Box<dyn Fn(&App) -> String>,
-    /// The zoomed agent's note count and the notes editor (`n:closed`, `n:focused:text`), for `notes:`.
-    pub notes: Ask,
+/// What the harness asks the app; the shell answers from `views::probe`, so the harness knows no views.
+pub trait Probe {
+    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `header` and `start` (`None`: not yet).
+    fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String>;
+    /// The action a click dispatches, for `link`, `summon` and `click` (`None`: nothing to click).
+    fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>>;
     /// Stand in for a pointer selection in the transcript, for `select:`.
-    pub select: Set,
-    /// The action a click on the notes strip dispatches, for `click:`.
-    pub click: Click,
+    fn select(&self, text: &str, cx: &mut App);
 }
 
-pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
+pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext) {
     let shot_dir = std::env::var("HERDER_NATIVE_SHOT_DIR").unwrap_or_else(|_| ".".into());
     let mut failed = false;
     let mut fail = |what: String| {
@@ -147,10 +123,8 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
         let (op, arg) = step.split_once(':').unwrap_or((step, ""));
         match op {
             "wait" => {
-                let ms = arg.parse().unwrap_or(500);
-                cx.background_executor()
-                    .timer(Duration::from_millis(ms))
-                    .await;
+                let ms = Duration::from_millis(arg.parse().unwrap_or(500));
+                cx.background_executor().timer(ms).await;
             }
             // `tap:` presses a key that may be bound to nothing (a guard checks what did not happen).
             "key" | "tap" => match Keystroke::parse(arg) {
@@ -165,7 +139,7 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 Err(e) => fail(format!("{op} {arg}: {e}")),
             },
             "select" => {
-                let _ = cx.update(|_, cx| (probe.select)(&arg.replace('+', " "), cx));
+                let _ = cx.update(|_, cx| probe.select(&arg.replace('+', " "), cx));
                 metric(format!("select {arg}"));
             }
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
@@ -192,34 +166,22 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
             }
             // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
             "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
-            "click" => {
+            "link" | "summon" | "click" => {
                 let ok = cx.update(|window, cx| {
-                    let action = (probe.click)(arg, cx);
+                    let action = probe.action(op, arg, cx);
                     action.map(|a| window.dispatch_action(a, cx)).is_some()
                 });
                 match ok {
-                    Ok(true) => metric(format!("click {arg}")),
-                    _ => fail(format!("click {arg}: nothing to click")),
+                    Ok(true) => metric(format!("{op} {arg}")),
+                    _ => fail(format!("{op} {arg}: nothing to click")),
                 }
             }
-            "link" | "summon" => {
-                let action = if op == "link" {
-                    probe.link
-                } else {
-                    probe.summon
-                };
-                let _ = cx.update(|window, cx| window.dispatch_action(action(arg), cx));
-                metric(format!("{op} {arg}"));
-            }
-            "expect" | "box" | "has" | "says" | "notes" => {
-                let got = cx.update(|window, cx| match op {
-                    "expect" => (probe.shown)(cx),
-                    "box" | "has" => (probe.composer)(window, cx),
-                    "notes" => (probe.notes)(window, cx),
-                    _ => (probe.says)(cx),
-                });
-                let (got, want) = (got.unwrap_or_default(), arg.replace('+', " "));
-                match got == want || matches!(op, "says" | "has") && got.contains(&want) {
+            "expect" | "box" | "has" | "says" | "notes" | "header" => {
+                let got = cx.update(|window, cx| probe.ask(op, window, cx));
+                let got = got.ok().flatten().unwrap_or_default();
+                let want = arg.replace('+', " ");
+                let part = matches!(op, "says" | "has" | "header") && got.contains(&want);
+                match got == want || part {
                     true => metric(format!("{op} {arg}: ok")),
                     false => fail(format!("{op} {arg}: got `{got}`")),
                 }
@@ -229,7 +191,8 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 let tick = Duration::from_millis(16);
                 let reached = loop {
                     let _ = cx.update(|window, cx| window.draw(cx).clear(cx));
-                    let reached = cx.update(|_, cx| (probe.start)(cx)).ok().flatten();
+                    let reached = cx.update(|window, cx| probe.ask(op, window, cx));
+                    let reached = reached.ok().flatten();
                     if reached.is_some() || Instant::now() > limit {
                         break reached;
                     }
@@ -255,11 +218,8 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                     ms.extend(drawn.ok());
                 }
                 ms.sort_by(f64::total_cmp);
-                let at = |q: f64| {
-                    ms.get(((ms.len() as f64 - 1.0) * q) as usize)
-                        .copied()
-                        .unwrap_or(0.0)
-                };
+                let i = |q: f64| ((ms.len() as f64 - 1.0) * q) as usize;
+                let at = |q: f64| ms.get(i(q)).copied().unwrap_or(0.0);
                 let (p50, p95, max) = (at(0.5), at(0.95), at(1.0));
                 metric(format!(
                     "cpuscroll {arg}: draw p50 {p50:.2} ms, p95 {p95:.2} ms, max {max:.2} ms"

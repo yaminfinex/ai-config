@@ -176,10 +176,8 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
             if !to.alone() {
                 ui.select(&to.space);
             }
-            return vec![Event::Lens(Move::View {
-                space: to.space,
-                agent: to.agent,
-            })];
+            let Zoom { space, agent } = to;
+            return vec![Event::Lens(Move::View { space, agent })];
         }
         return zoom_to(ui, &to.space, to.agent, None);
     }
@@ -191,23 +189,18 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
 }
 
 pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<Event> {
-    let (s, a) = (space.clone(), agent.clone());
-    ui.zoom = Some(Zoom { space, agent });
-    let show = a.clone().map(|agent| {
-        let space = s.clone();
-        Event::Transcript(transcript::Step::Show { space, agent })
+    ui.zoom = Some(Zoom {
+        space: space.clone(),
+        agent: agent.clone(),
     });
-    let view = Event::Lens(Move::View { space: s, agent: a });
-    std::iter::once(view).chain(show).collect()
+    vec![Event::Lens(Move::View { space, agent })]
 }
 
 /// A clicked link: a path resolves and opens in VS Code; a member becomes its tab and any other agent
 /// a preview tab in this zoom, never added to the space.
 fn open(ui: &mut State, url: &str) -> Vec<Event> {
     if let Some(path) = url.strip_prefix(PATH) {
-        return vec![Event::Transcript(transcript::Step::OpenPath(
-            path.to_string(),
-        ))];
+        return vec![Event::Transcript(transcript::Step::OpenPath(path.into()))];
     }
     let (Some(agent), Some(zoom)) = (url.strip_prefix(AGENT), ui.zoom.clone()) else {
         return Vec::new();
@@ -217,20 +210,6 @@ fn open(ui: &mut State, url: &str) -> Vec<Event> {
         return Vec::new();
     }
     show(ui, zoom.space, Some(agent.to_string()))
-}
-
-/// What the zoom shows: `name`, or `name preview` for an outsider (the harness's `expect:`).
-pub fn shown(store: &Store, ui: &State) -> String {
-    let Some(zoom) = ui.zoom.as_ref() else {
-        return String::new();
-    };
-    let agent = zoom.agent.clone().unwrap_or_default();
-    let member = zoomed(store, zoom).is_some_and(|s| s.agents().any(|a| a == agent));
-    if member || agent.is_empty() {
-        agent
-    } else {
-        format!("{agent} preview")
-    }
 }
 
 pub(super) fn zoomed<'a>(store: &'a Store, zoom: &Zoom) -> Option<&'a Space> {
@@ -334,8 +313,8 @@ pub fn render<H: Host>(
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
         .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
         .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
-        .on_action(on(cx, |store, ui, c: &Compose| match c {
-            Compose::Focus => composer::act(store, ui, *c),
+        .on_action(on(cx, |_, ui, c: &Compose| match c {
+            Compose::Focus => composer::act(ui, *c),
             _ => Vec::new(),
         }))
         .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))

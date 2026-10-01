@@ -5,12 +5,14 @@
 //! the foreground thread only. Views read `&Store`; they never hold `&mut`.
 //!
 //! - `fleet`: agents and their status, derived from the board.
-//! - `spaces`: spaces and their members, in lens order; the lens row type; needs-you alerts (U6).
+//! - `spaces`: spaces and their members, in lens order; the lens row type and the owner's moves.
+//! - `attention`: seen marks, needs-you, the alerts and the dock badge (U2, U6).
 //! - `notes`: note records and the owner's note edits, hand-off and queueing (U5).
 //! - `composer`: drafts, who can be written to, and each message send (U4).
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
 //! - `transcript`: entries → compact items, paging cursors, tool/result pairing (U3).
 
+pub mod attention;
 pub mod composer;
 pub mod condense;
 pub mod fleet;
@@ -46,7 +48,7 @@ pub struct Prefs {
     /// The visible agent per space id (U2).
     pub visible: BTreeMap<String, String>,
     /// Per agent, the latest turn end (`turn_end_id`) the owner has seen, and whether this block was.
-    pub seen: BTreeMap<String, spaces::Seen>,
+    pub seen: BTreeMap<String, attention::Seen>,
     /// Spaces the owner marked unread (`u`): they need you until the next zoom-in.
     pub unread: BTreeSet<String>,
     /// The unsent composer text per agent (U4).
@@ -117,8 +119,6 @@ pub enum Event {
     },
     /// `GET /api/viewer`: the attributed name, or the failure's HTTP status (`None`: transport).
     Viewer(Result<String, Option<u16>>),
-    /// The viewer's backoff elapsed.
-    ViewerRetry,
     /// A state namespace's network answer, backoff or local edit.
     Sync {
         ns: Ns,
@@ -130,10 +130,10 @@ pub enum Event {
     Transcript(transcript::Step),
     Compose(composer::Step),
     Note(notes::Step),
-    /// The agent zoomed in while the app is frontmost, or none (U6): it is never notified.
-    Looking(Option<String>),
-    /// A notification burst's `spaces::BURST_MS` is up.
-    BurstEnded,
+    /// The app became frontmost, or stopped being (U6): the agent zoomed in meanwhile is never notified.
+    Front(bool),
+    /// A timer set by `Effect::After` is up.
+    Wake(Wake),
     /// The summon hotkey; the shell handles it before the store, which ignores it.
     Summon,
 }
@@ -146,7 +146,7 @@ pub enum Fetch {
 }
 
 /// A file the shell writes from the store's current state; it coalesces bursts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Persist {
     Prefs,
     Outbox,
@@ -174,25 +174,16 @@ pub enum Effect {
         agent: String,
         text: String,
     },
-    /// Dispatch `Event::Sync { ns, step: Step::Retry }` after this long.
-    Retry {
-        ns: Ns,
+    /// Dispatch `Event::Wake(wake)` after this long.
+    After {
         after_ms: u64,
-    },
-    /// Dispatch `Event::Transcript(Step::Retry(timer))` after this long.
-    RetryTranscript {
-        timer: transcript::Timer,
-        after_ms: u64,
-    },
-    /// Dispatch `Event::ViewerRetry` after this long.
-    RetryViewer {
-        after_ms: u64,
+        wake: Wake,
     },
     Persist(Persist),
-    /// Save `file` now, from the store as it is, then dispatch `notes::Step::Landed` for `agent`: the
-    /// destination of a note transfer is on disk before its source changes.
+    /// Save the destination `to` now, from the store as it is, then dispatch `notes::Step::Landed` for
+    /// `agent`: the destination of a note transfer is on disk before its source changes.
     Transfer {
-        file: Persist,
+        to: notes::Dest,
         agent: String,
     },
     /// A filed-back send (`cmd-shift-enter`) landed: leave the zoom if it is still on `agent`.
@@ -200,18 +191,24 @@ pub enum Effect {
         agent: String,
     },
     /// Post a notification (U6); on the foreground, through `platform_mac`'s test-mode switch.
-    Notify(spaces::Notice),
+    Notify(attention::Notice),
     /// Show this needs-you count on the dock (0 clears it).
     Badge(usize),
-    /// Dispatch `Event::BurstEnded` after this long.
-    Burst {
-        after_ms: u64,
-    },
     /// Open a file or folder on the agents' host in VS Code (the file panel's seam, Rung 2).
     OpenFile {
         path: String,
         line: Option<u32>,
     },
+}
+
+/// What a timer wakes (`Effect::After`): a namespace's, the transcript's or the viewer's retry, or the
+/// end of a notification burst (`attention::BURST_MS`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Wake {
+    Sync(Ns),
+    Transcript(transcript::Timer),
+    Viewer,
+    Burst,
 }
 
 /// Who this Mac's writes are attributed to (`GET /api/viewer`).
@@ -245,7 +242,7 @@ pub struct Store {
     pub transfers: BTreeMap<String, notes::Transfer>,
     /// Per agent, why its last queue or transfer did not happen; until its next transfer.
     pub note_problems: BTreeMap<String, String>,
-    pub alerts: spaces::Alerts,
+    pub alerts: attention::Alerts,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
@@ -301,13 +298,18 @@ impl Store {
                         if !std::mem::replace(&mut self.viewer_retry, true) {
                             let after_ms = self.viewer_backoff_ms.max(500);
                             self.viewer_backoff_ms = (after_ms * 2).min(10_000);
-                            out.push(Effect::RetryViewer { after_ms });
+                            let wake = Wake::Viewer;
+                            out.push(Effect::After { after_ms, wake });
                         }
                         Attribution::Unknown
                     }
                 };
             }
-            Event::ViewerRetry => {
+            Event::Wake(Wake::Sync(ns)) => self.sync_step(ns, Step::Retry, &mut out),
+            Event::Wake(Wake::Transcript(t)) => {
+                self.transcript_step(transcript::Step::Retry(t), &mut out)
+            }
+            Event::Wake(Wake::Viewer) => {
                 self.viewer_retry = false;
                 self.ask_viewer(&mut out);
             }
@@ -316,8 +318,8 @@ impl Store {
             Event::Transcript(step) => self.transcript_step(step, &mut out),
             Event::Compose(step) => self.compose(step, &mut out),
             Event::Note(step) => self.note(step, &mut out),
-            Event::Looking(agent) => self.alerts.looking = agent,
-            Event::BurstEnded => self.burst_ended(&mut out),
+            Event::Front(front) => self.alerts.front = front,
+            Event::Wake(Wake::Burst) => self.burst_ended(&mut out),
             Event::Summon => {}
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
@@ -331,6 +333,7 @@ impl Store {
                 out.push(Effect::Persist(Persist::Prefs));
             }
         }
+        self.watch(&mut out);
         self.transitions(&mut out);
         self.badge(boot, &mut out);
         out
@@ -392,9 +395,8 @@ impl Store {
 
     fn board(&mut self, board: Board, live: bool, out: &mut Vec<Effect>) {
         self.fleet.ingest(board);
-        self.lapse_blocks();
         self.alerts.live |= live;
-        if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
+        if self.reseen() {
             out.push(Effect::Persist(Persist::Prefs));
         }
     }
