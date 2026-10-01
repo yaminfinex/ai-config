@@ -272,8 +272,9 @@ pub(super) fn acknowledge(
     changed
 }
 
-/// What one notification says (U6). The tag routes its click: `agent:<name>` zooms into that agent,
-/// `space:<id>` (a burst's summary) selects that space on the lens.
+/// What one notification says (U6). The tag routes its click: `agent:<name>` zooms into that agent
+/// (alone when it sits in no space), `space:<id>` (a burst's summary) selects that space on the lens,
+/// and `lens` (a summary whose first agent is in no space) just brings the lens.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Notice {
     pub tag: String,
@@ -324,7 +325,7 @@ impl Store {
         for name in names {
             let a = &self.fleet.agents[&name];
             let (turn, blocked) = (a.turn_end, a.status() == Status::Blocked);
-            let eligible = self.alertable(&name);
+            let eligible = self.agent_needs_you(&name);
             let looking = self.alerts.looking.as_deref() == Some(name.as_str());
             let fresh = Mark {
                 eligible: false,
@@ -356,10 +357,13 @@ impl Store {
         let burst = std::mem::take(&mut self.alerts.burst);
         let lens = self.lens();
         let home = |a: &str| lens.iter().copied().find(|s| s.agents().any(|m| m == a));
-        let due: Vec<(&str, &Space)> = (burst.iter())
-            .filter(|a| self.alertable(a) && self.alerts.looking.as_ref() != Some(a))
-            .filter_map(|a| Some((a.as_str(), home(a)?)))
+        let due: Vec<(&str, Option<&Space>)> = (burst.iter())
+            .filter(|a| self.agent_needs_you(a) && self.alerts.looking.as_ref() != Some(a))
+            .map(|a| (a.as_str(), home(a)))
             .collect();
+        fn name(s: Option<&Space>) -> &str {
+            s.map_or("no space", |s| s.name.as_str())
+        }
         let reason = |a: &str| match self.fleet.agents.get(a).map(|a| a.status()) {
             Some(Status::Blocked) => "blocked",
             _ => "your turn",
@@ -368,14 +372,14 @@ impl Store {
             [] => return,
             [(agent, space)] => Notice {
                 tag: format!("agent:{agent}"),
-                title: format!("{agent} · {}", space.name),
+                title: format!("{agent} · {}", name(*space)),
                 body: reason(agent).into(),
             },
             [(_, first), ..] => Notice {
-                tag: format!("space:{}", first.id),
+                tag: first.map_or("lens".into(), |s| format!("space:{}", s.id)),
                 title: format!("{} agents need you", due.len()),
                 body: (due.iter())
-                    .map(|(a, s)| format!("{a} · {} ({})", s.name, reason(a)))
+                    .map(|(a, s)| format!("{a} · {} ({})", name(*s), reason(a)))
                     .collect::<Vec<_>>()
                     .join("\n"),
             },
@@ -383,15 +387,17 @@ impl Store {
         out.push(Effect::Notify(notice));
     }
 
-    /// Needs you and sits in a space (the lens shows it).
-    fn alertable(&self, name: &str) -> bool {
-        self.agent_needs_you(name) && self.spaces.iter().any(|s| s.agents().any(|a| a == name))
-    }
-
-    /// The dock badge: the lens's needs-you total, sent when it changes, and at boot (`all`) whatever it
-    /// is, as the effects of the loads before boot are not run.
+    /// The dock badge: the lens's needs-you total plus the agents in no space that need you (they alert
+    /// too, owner ruling), sent when it changes, and at boot (`all`) whatever it is, as the effects of
+    /// the loads before boot are not run.
     pub(super) fn badge(&mut self, all: bool, out: &mut Vec<Effect>) {
-        let n = self.spaces.iter().map(|s| self.needs_you(s)).sum();
+        let lens: usize = self.spaces.iter().map(|s| self.needs_you(s)).sum();
+        let homed = |a: &str| self.spaces.iter().any(|s| s.agents().any(|m| m == a));
+        let fleet = self.fleet.agents.keys();
+        let alone = fleet
+            .filter(|a| !homed(a) && self.agent_needs_you(a))
+            .count();
+        let n = lens + alone;
         if std::mem::replace(&mut self.alerts.badge, n) != n || all {
             out.push(Effect::Badge(n));
         }

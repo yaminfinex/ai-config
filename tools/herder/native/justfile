@@ -136,12 +136,16 @@ check-notes port="4412":
 # lens    mupu's turn ends with the app on the lens: one notification for mupu, the badge goes to 1;
 # looking zoomed on mupu and frontmost (`HERDER_NATIVE_FRONT=1`), mupu and chief-mihe end a turn in one
 #         frame: only chief-mihe is notified;
-# burst   two frames 0.3 s apart: one summary for both.
+# burst   two frames 0.3 s apart: one summary for both;
+# alone   risk-framework-gezu, in no space, ends a turn: notified as "· no space", the badge counts it;
+#         its click opens it alone (shot u6-no-space), where the transcript, composer and notes work,
+#         esc is the lens again, and no space is written.
 # A blank script (set, so automation) is refused with exit 2 before the app opens.
 check-alerts port="4413":
     #!/usr/bin/env bash
     set -euo pipefail
-    cargo build --release
+    cargo build --release --features shots
+    mkdir -p shots
     home=$(mktemp -d) fake=
     trap '[ -z "$fake" ] || kill $fake 2>/dev/null; rm -r "$home"' EXIT
     run() { # NAME FRONT SCRIPT TURNS...
@@ -150,11 +154,11 @@ check-alerts port="4413":
         python3 testdata/fake_serve.py {{port}} "$@" 2>"$home/$name.fake" & fake=$!
         sleep 0.5
         status=0
-        HOME="$home/$name" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_FRONT=$front \
+        HOME="$home/$name" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_FRONT=$front HERDER_NATIVE_SHOT_DIR=shots \
             HERDER_NATIVE_SCRIPT="$script" ./target/release/herder-native >"$home/$name.log" 2>&1 || status=$?
         { kill $fake && wait $fake; } 2>/dev/null || true
         fake=
-        grep -E "platform|harness|expect" "$home/$name.log" || true
+        grep -E "platform|harness|expect|box|notes|summon" "$home/$name.log" || true
         [ $status = 0 ] && grep -q '\] quit$' "$home/$name.log" || { echo "check-alerts: $name failed (exit $status)"; exit 1; }
         grep -q "turn:" "$home/$name.fake" || { echo "check-alerts: $name: no turn was sent"; exit 1; }
         notified=$(grep "would notify" "$home/$name.log" || true)
@@ -181,7 +185,15 @@ check-alerts port="4413":
     run burst 0 "wait:6000 quit" --turn mupu --turn support-mifa
     want burst "no summary" "would notify space:.*2 agents need you"
     once burst
-    echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, no chord taken)"
+    alone="summon:agent:risk-framework-gezu wait:1500 draw expect:risk-framework-gezu+preview notes:0:closed"
+    alone+=" key:/ draw key:h key:i draw box:focused:hi key:alt-enter wait:800 draw box:focused: notes:1:closed"
+    run alone 0 "wait:5500 $alone shot:u6-no-space key:escape draw box:idle: key:escape wait:400 draw expect: quit" --turn risk-framework-gezu
+    want alone "no notice for the agent in no space" "would notify agent:risk-framework-gezu: risk-framework-gezu · no space / your turn"
+    once alone
+    grep -q "platform: badge 1" "$home/alone.log" || { echo "check-alerts: alone: not badged"; exit 1; }
+    [ "$(grep -c "state notes:" "$home/alone.fake")" = 1 ] || { echo "check-alerts: alone: the note was not saved"; exit 1; }
+    ! grep -q "state spaces" "$home/alone.fake" || { echo "check-alerts: alone: a space was written"; exit 1; }
+    echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, an agent in no space alerts and opens alone, no chord taken)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.

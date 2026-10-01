@@ -2697,7 +2697,6 @@ mod alerts {
         let (mut store, mut b) = live();
         let slack = space_of(&store, "mupu").name.clone();
         bump(&mut b, "mupu", 1);
-        bump(&mut b, "risk-framework-gezu", 1); // in no space: the lens never shows it
         assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
         let want = Notice {
             tag: "agent:mupu".into(),
@@ -2778,6 +2777,57 @@ mod alerts {
             ),
         };
         assert_eq!(notices(store.apply(Event::BurstEnded)), [want]);
+    }
+
+    /// Owner ruling: an agent in no space alerts too, blocked included, and opens alone (the view's
+    /// `space` is empty), which marks it seen and writes no space.
+    #[test]
+    fn an_agent_in_no_space_alerts_too() {
+        let (mut store, mut b) = live();
+        let alone = "risk-framework-gezu";
+        assert!(store.spaces.iter().all(|s| s.agents().all(|a| a != alone)));
+        bump(&mut b, alone, 1);
+        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
+        let want = Notice {
+            tag: format!("agent:{alone}"),
+            title: format!("{alone} · no space"),
+            body: "your turn".into(),
+        };
+        assert_eq!(notices(store.apply(Event::BurstEnded)), [want]);
+        let spaces = store.spaces.clone();
+        let seen = Event::Lens(spaces::Move::View {
+            space: String::new(),
+            agent: Some(alone.into()),
+        });
+        let effects = store.apply(seen);
+        assert!(!store.agent_needs_you(alone), "seen");
+        assert_eq!(store.spaces, spaces);
+        assert!(!effects.iter().any(|e| matches!(e, Effect::Send(_))));
+        block(&mut b, alone, true);
+        assert!(store.apply(fleet_frame(b)).contains(&BURST));
+        let got = notices(store.apply(Event::BurstEnded));
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            (got[0].title.as_str(), got[0].body.as_str()),
+            (format!("{alone} · no space").as_str(), "blocked")
+        );
+    }
+
+    #[test]
+    fn a_summary_led_by_an_agent_in_no_space_brings_the_lens() {
+        let (mut store, mut b) = live();
+        let slack = space_of(&store, "mupu").name.clone();
+        bump(&mut b, "risk-framework-gezu", 1);
+        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
+        bump(&mut b, "mupu", 1);
+        store.apply(fleet_frame(b));
+        let got = notices(store.apply(Event::BurstEnded));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].tag, "lens");
+        let lines: Vec<&str> = got[0].body.lines().collect();
+        let mupu = format!("mupu · {slack} (your turn)");
+        assert!(lines.contains(&"risk-framework-gezu · no space (your turn)"));
+        assert!(lines.contains(&mupu.as_str()));
     }
 
     fn herdr(b: &mut Board, name: &str, status: &str) {
@@ -2880,8 +2930,11 @@ mod alerts {
         assert_eq!(badges(store.apply(fleet_frame(b.clone()))), [1]);
         assert!(badges(store.apply(fleet_frame(b.clone()))).is_empty());
         bump(&mut b, "support-mifa", 1);
-        assert_eq!(badges(store.apply(fleet_frame(b))), [2]);
+        assert_eq!(badges(store.apply(fleet_frame(b.clone()))), [2]);
         let read = Event::Lens(spaces::Move::Read(space_of(&store, "mupu").id.clone()));
         assert_eq!(badges(store.apply(read)), [0]);
+        // The lens total plus the agents in no space that need you.
+        bump(&mut b, "risk-framework-gezu", 1);
+        assert_eq!(badges(store.apply(fleet_frame(b))), [1]);
     }
 }

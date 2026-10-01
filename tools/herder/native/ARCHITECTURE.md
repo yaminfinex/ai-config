@@ -275,8 +275,9 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   expects and no message. U6: a scripted run is test mode (`platform_mac::quiet`): notifications, the
   dock badge and the summon chord are logged no-ops (`platform: would notify …`, `platform: badge N`), and
   `HERDER_NATIVE_FRONT=1` makes it count as frontmost with its window still behind; the fake serve's
-  `--turn` sends fleet frames that end agents' turns, and `just check-alerts` runs three scenarios (a
-  turn on the lens, the agent in view, a burst). Screenshots and presented-frame timings need an
+  `--turn` sends fleet frames that end agents' turns, `summon:<tag>` dispatches what a notification's
+  click does (without activating the app), and `just check-alerts` runs four scenarios (a turn on the
+  lens, the agent in view, a burst, an agent in no space opened alone, shot `u6-no-space`). Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -315,11 +316,12 @@ About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 
-U6 (asked of review): `store/spaces.rs` 374, where needs-you lives (the brief's placement): `Alerts`, the
+U6 (asked of review; finding 4 grew these): `store/spaces.rs` 405, where needs-you lives (the brief's placement): `Alerts`, the
 transition rule (an agent's turn or block moving on into needing you), the one-second burst and its
-summary, the badge; `shell.rs` 442 (the effects, the frontmost/zoom sync into the store, the chord and
-notification-click summon); `store/mod.rs` 426 (`Looking`, `BurstEnded`, `Summon`, `Notify`, `Badge`,
-`Burst`); `views/space.rs` 325 (`Summon` and `summon`); `platform_mac.rs` 96, under its 150.
+summary, the badge (the lens total plus agents in no space that need you; they alert too, owner ruling, and open
+alone in a zoom of no space, `Zoom::alone`); `shell.rs` 446 (the effects, the frontmost/zoom sync into the store, the chord and
+notification-click summon); `store/mod.rs` 427 (`Looking`, `BurstEnded`, `Summon`, `Notify`, `Badge`,
+`Burst`); `views/space.rs` 357 (`Summon`, `summon`, the zoom of no space); `harness.rs` 338 (`summon:`); `platform_mac.rs` 96, under its 150.
 
 U5 exceptions (agreed at review; the U5 fixes grew the first two): `views/notes.rs` 426, one cohesive view
 (the strip, its count collapse, the editor with its own key context for add, capture and edit and its

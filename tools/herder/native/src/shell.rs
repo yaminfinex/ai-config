@@ -390,6 +390,7 @@ pub fn run() {
                 let probe = harness::Probe {
                     shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
                     link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
+                    summon: |tag| Box::new(space::Summon(tag.to_string().into())),
                     start: Box::new(move |cx| {
                         let open = s2.read(cx).store.transcript.open.as_ref();
                         let t = open.filter(|t| t.at_start())?;

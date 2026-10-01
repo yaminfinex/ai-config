@@ -7,6 +7,7 @@
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
 //! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) · `draw` (one
 //! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches) ·
+//! `summon:<tag>` (what clicking a notification tagged so dispatches, without activating the app; U6) ·
 //! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) ·
 //! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
 //! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
@@ -129,6 +130,8 @@ pub struct Probe {
     pub shown: Box<dyn Fn(&App) -> String>,
     /// The action a click on a transcript link dispatches, for `link:`.
     pub link: fn(&str) -> Box<dyn Action>,
+    /// The action a click on a notification dispatches, for `summon:`.
+    pub summon: fn(&str) -> Box<dyn Action>,
     /// The open transcript once it holds every entry back to the start, for `start:`.
     pub start: Box<dyn Fn(&App) -> Reached>,
     /// The composer's focus and text (`focused:text` or `idle:text`), for `box:`.
@@ -233,6 +236,11 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 let link = (probe.link)(arg);
                 let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
                 metric(format!("link {arg}"));
+            }
+            "summon" => {
+                let summon = (probe.summon)(arg);
+                let _ = cx.update(|window, cx| window.dispatch_action(summon, cx));
+                metric(format!("summon {arg}"));
             }
             "expect" | "box" | "has" | "says" | "notes" => {
                 let got = cx.update(|window, cx| match op {

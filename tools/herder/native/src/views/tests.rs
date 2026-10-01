@@ -346,6 +346,32 @@ mod summon {
         assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
     }
 
+    /// Owner ruling: an agent in no space opens alone, a preview in a zoom of no space; only `escape`
+    /// does anything there, back to the lens, and no space gains a member.
+    #[test]
+    fn an_agent_in_no_space_opens_alone() {
+        let store = store();
+        let alone = "risk-framework-gezu";
+        let mut ui = State::default();
+        let before = ui.selected(&store).map(|s| s.id.clone());
+        let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));
+        assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+        assert_eq!(zoomed(&ui), Some(("", Some(alone))));
+        assert!(ui.zoom.as_ref().is_some_and(Zoom::alone));
+        assert_eq!(space::shown(&store, &ui), format!("{alone} preview"));
+        assert_eq!(ui.selected(&store).map(|s| s.id.clone()), before);
+        // Summoned again while open: still seen.
+        let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));
+        assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+        for key in [Zoomed::Agent(1), Zoomed::Space(1), Zoomed::Space(-1)] {
+            assert!(space::act(&store, &mut ui, key).is_empty());
+            assert_eq!(zoomed(&ui), Some(("", Some(alone))));
+        }
+        space::act(&store, &mut ui, Zoomed::Out);
+        assert_eq!(zoomed(&ui), None);
+        assert!(store.spaces.iter().all(|s| s.agents().all(|a| a != alone)));
+    }
+
     #[test]
     fn a_summary_or_the_chord_comes_back_to_the_lens() {
         let store = store();
@@ -358,6 +384,9 @@ mod summon {
         assert_eq!(ui.selected(&store).map(|s| &s.id), Some(&herder.id));
         space::summon(&store, &mut ui, "agent:mupu");
         space::summon(&store, &mut ui, "");
+        assert_eq!(zoomed(&ui), None);
+        space::summon(&store, &mut ui, "agent:risk-framework-gezu");
+        space::summon(&store, &mut ui, "lens");
         assert_eq!(zoomed(&ui), None);
     }
 }
