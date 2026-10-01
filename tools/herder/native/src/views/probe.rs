@@ -2,15 +2,16 @@
 //! compares against is spelled here, so the view files hold no harness code.
 
 use crate::store::Store;
+use crate::store::condense::Row;
 use crate::views::composer;
 use crate::views::lens::{self, Pick, State, Ui};
 use crate::views::notes::Notes;
 use crate::views::notes_list::Card;
 use crate::views::space::{Summon, Tab, Zoomed, zoomed};
-use crate::views::transcript::OpenLink;
+use crate::views::transcript::{OpenLink, Scroll};
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header`, `rows` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `jump` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
     let agent = ui.zoomed_agent();
@@ -67,6 +68,11 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             let (rows, runs, open) = ui.transcript.census();
             format!("{rows} rows, {runs} runs, {open} open")
         }
+        // Whether jump-to-bottom shows.
+        "jump" => match ui.transcript.jumps() {
+            true => "shown".into(),
+            false => "hidden".into(),
+        },
         "start" => {
             let t = store.transcript.open.as_ref().filter(|t| t.at_start())?;
             format!("{}: start reached, {} rows", t.agent, t.items.len())
@@ -78,7 +84,8 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 /// What a click dispatches: `link:<url>` on a transcript link, `summon:<tag>` on a notification,
 /// `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` on the notes strip (`i` the zoomed
 /// agent's note, newest-updated first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
-/// order), `click:tab:i` (the zoom's tab, from the left) and `click:crumb` (`lens ›`); `None` where
+/// order), `click:tab:i` (the zoom's tab, from the left), `click:crumb` (`lens ›`) and `click:jump`
+/// (jump-to-bottom, while it shows); `None` where
 /// there is no such thing to click.
 pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {
     let notes = |what: Notes| Some(Box::new(what) as Box<dyn Action>);
@@ -109,7 +116,8 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
             return Some(Box::new(Tab(tabs.get(nth(i)?)?.to_string().into())));
         }
         ("crumb", Some(_)) => return Some(Box::new(Zoomed::Out)),
-        ("card" | "card2" | "tab" | "crumb", _) => return None,
+        ("jump", Some(_)) if ui.transcript.jumps() => return Some(Box::new(Scroll::Bottom)),
+        ("card" | "card2" | "tab" | "crumb" | "jump", _) => return None,
         _ => {}
     }
     let agent = ui.zoomed_agent()?;
@@ -145,6 +153,25 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
 pub fn select(ui: &mut Ui, text: &str) {
     let agent = ui.zoomed_agent().map(String::from);
     ui.notes.selected(agent, text);
+}
+
+/// Scroll the zoomed transcript so the first row with `text` in an item (as debug-printed) is at the
+/// top.
+pub fn find(store: &Store, ui: &Ui, text: &str) -> bool {
+    let Some(tr) = store.transcript.open.as_ref() else {
+        return false;
+    };
+    let rows = ui.transcript.rows.borrow();
+    let items = |r: &Row| tr.items.range(r.first()..=r.last());
+    let holds = |r: &Row| items(r).any(|(_, item)| format!("{item:?}").contains(text));
+    let Some(ix) = rows.2.iter().position(holds) else {
+        return false;
+    };
+    ui.transcript.list.scroll_to(ListOffset {
+        item_ix: ix,
+        offset_in_item: px(0.),
+    });
+    true
 }
 
 /// What the zoom shows: `name`, or `name preview` for an outsider.

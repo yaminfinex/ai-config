@@ -1518,15 +1518,24 @@ mod layout {
             panic!("the top row is a run")
         };
         scroll(&body, px(0.), cx);
-        let height = row(&body, 0, cx).size.height;
-        assert!(height > px(60.), "the strip wraps: {height:?}");
-        // A pill on the strip's last line, the viewport's top just above it.
+        // The first pill on the strip's last line (what the viewport's top reads, of a line), the
+        // viewport's top just above it.
         let pills = body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().marks.clone());
         let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
-        let pills = pills.into_iter().filter(|(m, _)| inside(m));
-        let (read, b) = pills
-            .max_by(|a, b| a.1.top().partial_cmp(&b.1.top()).unwrap())
+        let pills: Vec<_> = pills.into_iter().filter(|(m, _)| inside(m)).collect();
+        let (read, b) = *pills
+            .iter()
+            .max_by(|a, b| {
+                (a.1.top(), b.1.left())
+                    .partial_cmp(&(b.1.top(), a.1.left()))
+                    .unwrap()
+            })
             .unwrap();
+        let line = pills
+            .iter()
+            .map(|(_, b)| b.top())
+            .fold(b.top(), Pixels::min);
+        assert!(b.top() > line, "the strip wraps");
         scroll(&body, b.top() - row(&body, 0, cx).top() - px(4.), cx);
         let was = mark(&body, read, cx).unwrap().top();
         let top = screen(&body, cx).top();
@@ -1542,6 +1551,31 @@ mod layout {
                 .any(|r| matches!(*r, Row::Run(f, l) if f < first && l == last))
         );
         held(&body, read, was, cx);
+    }
+
+    #[gpui_kit::test]
+    fn a_page_landing_before_a_scroll_is_painted_keeps_the_scroll(cx: &mut TestAppContext) {
+        // A key (or the harness's `find`) scrolls, and a page lands before the next frame: what is
+        // read is where the list now is, not what was last painted (the tail).
+        let limit = split("mupu");
+        let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
+        let key = rows(&body, cx)[2].first();
+        body.read_with(cx, |b, _| {
+            let list = &b.ui.transcript.list;
+            list.scroll_to(ListOffset {
+                item_ix: 2,
+                offset_in_item: px(0.),
+            });
+        });
+        older(&body, "mupu", (usize::MAX, limit), false, cx);
+        let ix = rows(&body, cx).iter().position(|r| r.first() == key);
+        let ix = ix.expect("the row read is still a row");
+        assert!(ix > 2, "rows went in above it");
+        let (now, top) = (row(&body, ix, cx).top(), screen(&body, cx).top());
+        assert!(
+            (now - top).abs() < px(0.5),
+            "row {ix} at {now:?}, top {top:?}"
+        );
     }
 
     #[gpui_kit::test]
@@ -1571,5 +1605,51 @@ mod layout {
         );
         body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
         assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
+    }
+}
+
+mod frame {
+    use crate::views::theme::{prose, type_scale};
+    use crate::views::transcript::{Kind, gap};
+    use gpui_kit::px;
+
+    #[test]
+    fn css_lengths_are_web_pixels_at_the_scale() {
+        assert_eq!(type_scale(1.).css(13.), px(13.));
+        assert_eq!(type_scale(1.2).css(10.), px(12.));
+        // The lens's lengths stay the spike's at 0.9.
+        assert_eq!(type_scale(1.).px(10.), px(9.));
+    }
+
+    #[test]
+    fn paragraphs_are_six_web_pixels_apart_at_any_scale() {
+        // The kit's root sets the rem to the theme's body size, not 16.
+        for scale in [0.8, 1., 1.3] {
+            let t = type_scale(scale);
+            let gap = prose(t).paragraph_gap.to_pixels(t.body);
+            assert!((gap - t.css(6.)).abs() < px(0.01), "{scale}: {gap:?}");
+        }
+    }
+
+    #[test]
+    fn kinds_sit_as_far_apart_as_web_measures_them() {
+        use Kind::*;
+        let measured = [
+            (None, Answer, 10.),
+            (Some(Answer), Answer, 10.),
+            (Some(Answer), Strip, 10.),
+            (Some(Answer), Card, 10.),
+            (Some(Strip), Answer, 10.),
+            (Some(Strip), Strip, 5.),
+            (Some(Strip), Card, 9.),
+            (Some(Card), Strip, 9.),
+            (Some(Card), Answer, 10.),
+            (Some(Strip), Divider, 14.),
+            (Some(Divider), Answer, 14.),
+            (Some(Strip), System, 6.),
+        ];
+        for (prev, next, want) in measured {
+            assert_eq!(gap(prev, next), want, "{prev:?} → {next:?}");
+        }
     }
 }

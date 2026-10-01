@@ -418,6 +418,11 @@ impl harness::Probe for Entity<Shell> {
             cx.notify()
         })
     }
+
+    fn find(&self, text: &str, cx: &mut App) -> bool {
+        let s = self.read(cx);
+        probe::find(&s.store, &s.ui, text)
+    }
 }
 
 /// Bring the app forward, to a notification's agent or space (`space::summon`); `""` is the lens.

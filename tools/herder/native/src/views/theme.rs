@@ -6,15 +6,19 @@ use gpui_kit::component::text::TextViewStyle;
 use gpui_kit::component::theme::{ThemeConfig, ThemeRegistry};
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{
-    App, HighlightStyle, Overflow, Pixels, StyleRefinement, Styled as _, WhiteSpace, px, relative,
-    rems, rgb,
+    App, FontWeight, HighlightStyle, Overflow, Pixels, StyleRefinement, Styled as _, WhiteSpace,
+    px, relative, rems, rgb,
 };
 use std::rc::Rc;
 
 /// The families are explicit so the kit never enumerates installed fonts to resolve `.SystemUIFont`
-/// (~150 ms of the cold-start budget). U2 owns the choice.
+/// (~150 ms of the cold-start budget). U2 owns the choice: the lens, composer and notes stay on Menlo.
 pub const FONT: &str = "Menlo";
-pub const MONO: &str = "Monaco";
+/// The transcript's, as web's `system-ui` and `ui-monospace` (spec §0): SF Pro and SF Mono. Neither
+/// resolves by name ("SF Mono" is Helvetica); these are CoreText's names for the system families.
+/// Mono is also the kit's, which only the transcript's markdown uses (code blocks, inline code).
+pub const SANS_T: &str = ".AppleSystemUIFont";
+pub const MONO_T: &str = ".AppleSystemUIFontMonospaced";
 
 /// The owner's factor on the spike's sizes; the spike's body was 12 px.
 const OWNER: f32 = 0.9;
@@ -35,6 +39,11 @@ impl TypeScale {
     pub fn px(&self, design: f32) -> Pixels {
         px(design * OWNER * self.scale)
     }
+
+    /// A length as web's CSS gives it, so the transcript matches web at scale 1.0 (spec §0).
+    pub fn css(&self, web: f32) -> Pixels {
+        px(web * self.scale)
+    }
 }
 
 /// The palette as `rgb()` hex. Neutrals are herder web's dark theme (`styles.css`), so ink on ground
@@ -51,8 +60,12 @@ pub mod pal {
     pub const EDGE: u32 = 0x3A3C45;
     /// Web's `--accent`: a selected note's edge and a quoted note's bar.
     pub const BLUE: u32 = 0x5B93FF;
-    /// Selected text.
+    /// A selected note.
     pub const SELECT: u32 = 0x31406B;
+    /// Selected text: Chromium's default, as web shows it (spec §1 Selection).
+    pub const SELECTION: u32 = 0x375576;
+    /// Web's `--link`.
+    pub const LINK: u32 = 0xA9C4FF;
     /// Inline code spans.
     pub const CHIP: u32 = 0x2B2D35;
     /// Fenced code: darker than the ground, dimmer than ink.
@@ -93,16 +106,21 @@ pub fn type_scale(scale: f32) -> TypeScale {
     }
 }
 
-/// Transcript markdown as web sets it: paragraphs 6 px apart, inline code on a chip, and fenced code
-/// darker than the ground in smaller, tighter, dimmer ink, unwrapped so aligned columns stay aligned, scrolling sideways
-/// under a horizontal swipe only (a vertical wheel still scrolls the transcript).
+/// Transcript markdown as web sets it (spec §1 "Markdown prose"): blocks 6 apart, headings at web's
+/// sizes, fenced code darker than the ground in SF Mono 11, unwrapped so aligned columns stay aligned,
+/// scrolling sideways under a horizontal swipe only (a vertical wheel still scrolls the transcript);
+/// table cells on the ground, padded 4 8, the header row semibold. Inline code can only take a ground
+/// (`HighlightStyle`: no padding, border or radius); the kit sets it in mono at 0.875 of the text,
+/// web's 11 of 13.
 pub fn prose(t: TypeScale) -> TextViewStyle {
     let mut code = StyleRefinement::default()
+        .font_family(MONO_T)
         .bg(rgb(pal::CODE))
         .text_color(rgb(pal::CODE_INK))
-        .text_size(t.small)
-        .line_height(relative(1.3))
-        .p(t.px(10.));
+        .text_size(t.css(11.))
+        .line_height(relative(1.2))
+        .rounded(t.css(5.))
+        .p(t.css(9.));
     code.text.white_space = Some(WhiteSpace::Nowrap);
     code.overflow.x = Some(Overflow::Scroll);
     code.restrict_scroll_to_axis = Some(true);
@@ -110,11 +128,22 @@ pub fn prose(t: TypeScale) -> TextViewStyle {
         background_color: Some(rgb(pal::CHIP).into()),
         ..Default::default()
     };
-    // The gap is in rems of the window's 16 px, so it is given from a design length to follow ⌘+.
+    let table = StyleRefinement::default()
+        .bg(rgb(pal::GROUND))
+        .rounded(px(0.));
+    let head = StyleRefinement::default().font_weight(FontWeight::SEMIBOLD);
+    let cell = StyleRefinement::default().px(t.css(8.)).py(t.css(4.));
+    let heading =
+        move |level: u8, _| t.css([26., 19.5, 15.2, 13.][usize::from(level.clamp(1, 4) - 1)]);
+    // The gap is in rems, and the kit's root sets the rem to the theme's body size (`apply`).
     TextViewStyle::default()
-        .paragraph_gap(rems(f32::from(t.px(7.)) / 16.))
+        .paragraph_gap(rems(f32::from(t.css(6.)) / f32::from(t.body)))
+        .heading_font_size(heading)
         .code_block(code)
         .inline_code(chip)
+        .table(table)
+        .table_head(head)
+        .table_cell(cell)
 }
 
 /// Push the scale into the kit's theme so its own widgets follow it: `font_size` for inputs, lists and
@@ -133,7 +162,7 @@ pub fn apply(scale: f32, cx: &mut App) {
 fn ours(c: &ThemeConfig) -> Rc<ThemeConfig> {
     let mut c = c.clone();
     c.font_family = Some(FONT.into());
-    c.mono_font_family = Some(MONO.into());
+    c.mono_font_family = Some(MONO_T.into());
     let hex = |v: u32| Some(format!("#{v:06X}").into());
     let k = &mut c.colors;
     k.background = hex(pal::GROUND);
@@ -141,8 +170,8 @@ fn ours(c: &ThemeConfig) -> Rc<ThemeConfig> {
     k.muted = hex(pal::CODE);
     k.muted_foreground = hex(pal::SLATE);
     k.border = hex(pal::RULE);
-    k.link = hex(pal::ACC);
-    k.selection = hex(pal::SELECT);
+    k.link = hex(pal::LINK);
+    k.selection = hex(pal::SELECTION);
     // Markdown tables: the header row as web's `th`, the body on the panel (the kit's table surface is
     // the popover colour).
     k.table_head = hex(pal::WASH);
@@ -162,7 +191,7 @@ pub fn seed(cx: &mut App) {
     theme.light_theme = ours(&ThemeConfig::default());
     theme.dark_theme = theme.light_theme.clone();
     theme.font_family = FONT.into();
-    theme.mono_font_family = MONO.into();
+    theme.mono_font_family = MONO_T.into();
     cx.set_global(theme);
 }
 

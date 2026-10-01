@@ -217,14 +217,15 @@ check-mouse port="4414":
 
 # Activity runs (F2), through `scripts/scenario.sh`: zoomed on mupu, both recorded pages group into web's 19 rows
 # and 9 runs (`testdata/runs-web.json`); `o` opens the lowest run on screen (at the tail, the last one) and
-# closes it again; scrolled to the top, `o` opens a run there. Shot: f2-runs (the last run open).
+# closes it again; scrolled to the top, `o` opens a run there. Shot: f2-runs (the last run open). Jump-to-bottom
+# (A1) is hidden at the tail, shows scrolled up, and a click on it follows the tail again.
 check-runs port="4415":
     #!/usr/bin/env bash
     . scripts/scenario.sh check-runs {{port}}
     zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:1500 draw"
     rows() { echo "rows:19+rows,+9+runs,+$1+open"; }
-    scenario runs "" "$zoom $(rows 0) key:o draw $(rows 1) shot:f2-runs key:o draw $(rows 0) key:g draw key:o draw $(rows 1) quit"
-    echo "check-runs: ok (mupu in web's 19 rows and 9 runs, o opens and closes the lowest run, at the tail and scrolled up)"
+    scenario runs "" "$zoom $(rows 0) jump:hidden key:o draw $(rows 1) shot:f2-runs key:o draw $(rows 0) key:g draw jump:shown key:o draw $(rows 1) click:jump draw jump:hidden quit"
+    echo "check-runs: ok (mupu in web's 19 rows and 9 runs, o opens and closes the lowest run, at the tail and scrolled up; jump-to-bottom shows only scrolled up, and a click on it follows the tail again)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.
