@@ -10,6 +10,7 @@ use crate::store::spaces::{Move, Space};
 use crate::store::transcript;
 use crate::store::{Event, Store};
 use crate::views::lens::{self, Nav, State, Ui};
+use crate::views::markdown::{AGENT, PATH};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::transcript::{self as body, OpenLink, Scroll};
 use crate::views::{Host, dim, glyph, on, pill};
@@ -149,6 +150,24 @@ pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<
     std::iter::once(view).chain(show).collect()
 }
 
+/// A clicked link: a path resolves and opens in VS Code; a member becomes its tab and any other agent
+/// a preview tab in this zoom, never added to the space.
+fn open(ui: &mut State, url: &str) -> Vec<Event> {
+    if let Some(path) = url.strip_prefix(PATH) {
+        return vec![Event::Transcript(transcript::Step::OpenPath(
+            path.to_string(),
+        ))];
+    }
+    let (Some(agent), Some(zoom)) = (url.strip_prefix(AGENT), ui.zoom.clone()) else {
+        return Vec::new();
+    };
+    // Linked names are board names; one that has left the board since (retired) opens read-only.
+    if agent.is_empty() || zoom.agent.as_deref() == Some(agent) {
+        return Vec::new();
+    }
+    show(ui, zoom.space, Some(agent.to_string()))
+}
+
 pub(super) fn zoomed<'a>(store: &'a Store, zoom: &Zoom) -> Option<&'a Space> {
     store.spaces.iter().find(|s| s.id == zoom.space)
 }
@@ -237,9 +256,7 @@ pub fn render<H: Host>(
         .track_focus(&ui.zoom_focus)
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
         .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
-        .on_action(on(cx, |store, ui, l: &OpenLink| {
-            body::open(store, ui, &l.0)
-        }))
+        .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
             _ => Vec::new(),

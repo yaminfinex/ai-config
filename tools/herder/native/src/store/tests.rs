@@ -1434,8 +1434,10 @@ mod transcript_pages {
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, PAGE as usize);
         let before = items(&store).clone();
-        let effects = store.apply(Event::Transcript(T::Older));
-        drive(&mut store, effects, &all, PAGE as usize);
+        while !store.transcript.open.as_ref().unwrap().at_start() {
+            let effects = store.apply(Event::Transcript(T::Older));
+            drive(&mut store, effects, &all, PAGE as usize);
+        }
         let tools = |m: &BTreeMap<(u64, u16), Item>| {
             let paired = m.values().filter(|i| {
                 matches!(

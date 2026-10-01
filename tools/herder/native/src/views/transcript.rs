@@ -14,7 +14,7 @@ use crate::store::transcript::{Item, Key, Step, Transcript};
 use crate::store::{Event, Store};
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, AGENT, Mentions, PATH};
-use crate::views::space::{self, Zoom};
+use crate::views::space::Zoom;
 use crate::views::theme::{TypeScale, pal, type_scale};
 use crate::views::{Host, dim};
 use gpui_kit::component::text::TextView;
@@ -114,9 +114,15 @@ pub fn scroll(store: &Store, ui: &mut State, s: Scroll) -> Vec<Event> {
     let list = &ui.transcript.list;
     let line = type_scale(store.prefs.text_scale).line * 3.;
     let page = list.viewport_bounds().size.height * 0.9;
+    // The wheel's arithmetic: `scroll_by` counts from the follow anchor (the content's end, not the
+    // viewport's top), so scrolling up from the tail by less than a viewport would snap back.
+    let by = |d: Pixels| {
+        let top = (-list.scroll_px_offset_for_scrollbar().y).min(list.max_offset_for_scrollbar().y);
+        list.set_offset_from_scrollbar(point(px(0.), -(top + d)));
+    };
     match s {
-        Scroll::Lines(n) => list.scroll_by(line * n as f32),
-        Scroll::Pages(n) => list.scroll_by(page * n as f32),
+        Scroll::Lines(n) => by(line * n as f32),
+        Scroll::Pages(n) => by(page * n as f32),
         Scroll::Top => list.scroll_to(ListOffset::default()),
         Scroll::Bottom => {
             list.scroll_to_end();
@@ -124,21 +130,6 @@ pub fn scroll(store: &Store, ui: &mut State, s: Scroll) -> Vec<Event> {
         }
     }
     Vec::new()
-}
-
-/// A clicked mention or path.
-pub fn open(store: &Store, ui: &mut State, url: &str) -> Vec<Event> {
-    if let Some(path) = url.strip_prefix(PATH) {
-        return vec![Event::Transcript(Step::OpenPath(path.to_string()))];
-    }
-    let (Some(agent), Some(zoom)) = (url.strip_prefix(AGENT), ui.zoom.clone()) else {
-        return Vec::new();
-    };
-    if !store.fleet.agents.contains_key(agent) || zoom.agent.as_deref() == Some(agent) {
-        return Vec::new();
-    }
-    // A member becomes its tab; anyone else a preview tab in this zoom, never added to the space.
-    space::show(ui, zoom.space, Some(agent.to_string()))
 }
 
 /// The body under the tabs.
@@ -161,10 +152,8 @@ pub fn render<H: Host>(
     view.sync(tr, store);
     if tr.at_start() && view.logged.get() == (tr.generation, false) {
         view.logged.set((tr.generation, true));
-        metric(format!(
-            "transcript {name}: start reached, {} rows",
-            tr.items.len()
-        ));
+        let n = tr.items.len();
+        metric(format!("transcript {name}: start reached, {n} rows"));
     }
     // Reaching the bottom counts as viewing: mark a new turn seen once while following the tail.
     let turn = store.fleet.agents.get(name).and_then(|a| a.turn_end);
@@ -176,18 +165,11 @@ pub fn render<H: Host>(
         cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(seen, cx)))
             .detach();
     }
+    let note = |s: &'static str| div().flex_1().p(t.px(24.)).child(dim(s)).into_any_element();
     let rows = if !tr.loaded() {
-        div()
-            .flex_1()
-            .p(t.px(24.))
-            .child(dim("loading transcript…"))
-            .into_any_element()
+        note("loading transcript…")
     } else if tr.items.is_empty() {
-        div()
-            .flex_1()
-            .p(t.px(24.))
-            .child(dim("(nothing readable yet)"))
-            .into_any_element()
+        note("(nothing readable yet)")
     } else {
         let host = cx.weak_entity();
         list(view.list.clone(), move |ix, _, cx| {
@@ -206,28 +188,22 @@ pub fn render<H: Host>(
         .into_any_element()
     };
     let head = strip(store, tr, t, cx);
-    let queued = tr
-        .detail
-        .as_ref()
-        .and_then(|d| d.queued.clone())
-        .filter(|_| !tr.retired());
-    let queued = queued.into_iter().flatten().map(|q| {
-        let line = format!(
-            "queued · {}: {}",
-            q.sender,
-            q.preview.lines().next().unwrap_or("")
-        );
-        dim(line).truncate().px(t.px(20.)).text_size(t.small)
-    });
+    let queued = tr.detail.as_ref().and_then(|d| d.queued.clone());
+    let queued = queued
+        .filter(|_| !tr.retired())
+        .into_iter()
+        .flatten()
+        .map(|q| {
+            let first = q.preview.lines().next().unwrap_or("");
+            let line = format!("queued · {}: {first}", q.sender);
+            dim(line).truncate().px(t.px(20.)).text_size(t.small)
+        });
     let notice = tr.notice.clone().map(|n| {
         let dismiss = cx
             .listener(|h, _: &ClickEvent, _, cx| h.dispatch(Event::Transcript(Step::Dismiss), cx));
-        let el = div()
-            .id("notice")
-            .px(t.px(20.))
-            .py(t.px(4.))
-            .text_size(t.small);
-        el.text_color(rgb(pal::AMBER))
+        let el = div().id("notice").px(t.px(20.)).py(t.px(4.));
+        el.text_size(t.small)
+            .text_color(rgb(pal::AMBER))
             .child(format!("{n}  ✕"))
             .on_click(dismiss)
     });
@@ -242,11 +218,8 @@ fn strip<H: Host>(store: &Store, tr: &Transcript, t: TypeScale, cx: &mut Context
     let d = tr.detail.as_ref();
     let model = d.and_then(|d| d.model.clone());
     let ctx = d.and_then(|d| d.context_usage.clone()).map(|c| {
-        let pct = c
-            .used_percent
-            .map(|p| format!(" ({p:.0}%)"))
-            .unwrap_or_default();
-        format!("ctx {}k{pct}", c.used_tokens / 1000)
+        let pct = c.used_percent.map(|p| format!(" ({p:.0}%)"));
+        format!("ctx {}k{}", c.used_tokens / 1000, pct.unwrap_or_default())
     });
     let cwd = d
         .and_then(|d| d.cwd.clone())
@@ -254,32 +227,22 @@ fn strip<H: Host>(store: &Store, tr: &Transcript, t: TypeScale, cx: &mut Context
     let open =
         cx.listener(|h, _: &ClickEvent, _, cx| h.dispatch(Event::Transcript(Step::OpenCwd), cx));
     let cwd = cwd.map(|c| {
-        let link = div()
-            .id("cwd")
-            .cursor_pointer()
-            .text_color(rgb(pal::ACC))
-            .on_click(open);
-        link.child(format!("{c} ↗"))
+        let link = div().id("cwd").cursor_pointer().on_click(open);
+        link.text_color(rgb(pal::ACC)).child(format!("{c} ↗"))
     });
     let facts = [model, ctx].into_iter().flatten().map(dim);
-    let bar = div()
-        .flex()
-        .items_center()
-        .gap(t.px(14.))
-        .px(t.px(20.))
-        .py(t.px(5.));
-    bar.border_b_1()
+    let retired = div()
+        .text_color(rgb(pal::AMBER))
+        .child("retired · read-only");
+    let bar = div().flex().items_center().gap(t.px(14.));
+    bar.px(t.px(20.))
+        .py(t.px(5.))
+        .border_b_1()
         .border_color(rgb(pal::RULE))
         .text_size(t.small)
         .children(facts)
         .children(cwd)
-        .when(tr.retired(), |el| {
-            el.child(
-                div()
-                    .text_color(rgb(pal::AMBER))
-                    .child("retired · read-only"),
-            )
-        })
+        .when(tr.retired(), |el| el.child(retired))
         .when(tr.paging(), |el| el.child(dim("reading older…")))
 }
 
@@ -297,20 +260,17 @@ fn row<H: Host>(
         .open
         .as_ref()
         .filter(|tr| tr.agent == rows.0.0);
-    let (Some(tr), Some(&key)) = (tr, rows.1.get(ix)) else {
-        return (div().into_any_element(), false);
-    };
-    let Some(item) = tr.items.get(&key) else {
+    let found = tr
+        .zip(rows.1.get(ix))
+        .and_then(|(tr, &k)| Some((tr, k, tr.items.get(&k)?)));
+    let Some((tr, key, item)) = found else {
         return (div().into_any_element(), false);
     };
     let older = ix < NEAR_TOP && !tr.at_start() && !tr.paging();
     if view.logged.get().0 != tr.generation {
         view.logged.set((tr.generation, false));
-        metric(format!(
-            "transcript {}: tail laid out, {} rows",
-            tr.agent,
-            tr.items.len()
-        ));
+        let n = tr.items.len();
+        metric(format!("transcript {}: tail laid out, {n} rows", tr.agent));
     }
     let open = view.open.borrow().contains(&key);
     let toggle = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -329,11 +289,10 @@ fn row<H: Host>(
     };
     let el = div().w_full().max_w(t.px(980.)).px(t.px(20.)).pb(t.px(10.));
     let small = |text: String| dim(text).text_size(t.small);
-    let fold = |glyph: &str, text: String| {
-        div()
-            .id(id("fold"))
-            .cursor_pointer()
-            .on_click(toggle.clone())
+    let glyph = if open { "▾" } else { "▸" };
+    let fold = |text: String| {
+        let el = div().id(id("fold")).cursor_pointer();
+        el.on_click(toggle.clone())
             .child(small(format!("{glyph} {text}")))
     };
     let body = match item {
@@ -357,28 +316,11 @@ fn row<H: Host>(
             operator,
             ..
         } => {
-            let from = if *operator {
-                format!("← {sender} · operator")
-            } else {
-                format!("← {sender}")
-            };
-            let long = text.lines().count() > 5 || text.len() > 420;
-            let shown = if long && !open {
-                preview(text)
-            } else {
-                text.clone()
-            };
-            let more = long.then(|| {
-                fold(
-                    if open { "▾" } else { "▸" },
-                    if open { "less" } else { "more" }.into(),
-                )
-            });
-            div()
-                .child(small(from))
-                .child(shown)
-                .children(more)
-                .into_any_element()
+            let from = format!("← {sender}{}", if *operator { " · operator" } else { "" });
+            let (shown, long) = preview(text, open);
+            let more = long.then(|| fold(if open { "less" } else { "more" }.into()));
+            let el = div().child(small(from)).child(shown);
+            el.children(more).into_any_element()
         }
         Item::TaskNotification(s) => small(format!("⚑ {s}")).into_any_element(),
         Item::SystemChip(s) => small(format!("· {s}")).into_any_element(),
@@ -409,7 +351,7 @@ fn row<H: Host>(
             small("∴ thinking".into()).into_any_element()
         }
         Item::Thinking(text) => div()
-            .child(fold(if open { "▾" } else { "▸" }, "thinking".into()))
+            .child(fold("thinking".into()))
             .when(open, |el| el.child(small(text.clone())))
             .into_any_element(),
         Item::Tool {
@@ -419,20 +361,10 @@ fn row<H: Host>(
         } => {
             let err = result.as_ref().is_some_and(|r| r.error);
             let mark = if err { " ✗" } else { "" };
-            let line = fold(
-                if open { "▾" } else { "▸" },
-                format!("{name} {summary}{mark}"),
-            )
-            .truncate();
-            let line = if err {
-                line.text_color(rgb(pal::PORT))
-            } else {
-                line
-            };
-            let detail = result
-                .as_ref()
-                .filter(|_| open)
-                .map(|r| small(format!("→ {}", r.text)));
+            let line = fold(format!("{name} {summary}{mark}")).truncate();
+            let line = line.when(err, |el| el.text_color(rgb(pal::PORT)));
+            let detail = result.as_ref().filter(|_| open);
+            let detail = detail.map(|r| small(format!("→ {}", r.text)));
             div().child(line).children(detail).into_any_element()
         }
         Item::Error(text) => div()
@@ -443,20 +375,18 @@ fn row<H: Host>(
     (el.child(body).into_any_element(), older)
 }
 
-/// Web's delivery preview, tighter: at most five lines and 420 characters, cut at a word.
-fn preview(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().take(5).collect();
-    let joined = lines.join("\n");
-    match joined.char_indices().nth(420) {
-        Some((at, _)) => {
-            let cut = &joined[..at];
-            format!(
-                "{}…",
-                cut.rfind(' ')
-                    .filter(|&s| s > 210)
-                    .map_or(cut, |s| &cut[..s])
-            )
-        }
-        None => format!("{joined}…"),
+/// A delivery as shown, and whether it is long: web's preview, tighter, of at most five lines and 420
+/// characters cut at a word, unless unfolded.
+fn preview(text: &str, open: bool) -> (String, bool) {
+    let long = text.lines().count() > 5 || text.len() > 420;
+    if !long || open {
+        return (text.to_string(), long);
     }
+    let joined = text.lines().take(5).collect::<Vec<_>>().join("\n");
+    let Some((at, _)) = joined.char_indices().nth(420) else {
+        return (format!("{joined}…"), long);
+    };
+    let cut = &joined[..at];
+    let word = cut.rfind(' ').filter(|&s| s > 210);
+    (format!("{}…", word.map_or(cut, |s| &cut[..s])), long)
 }

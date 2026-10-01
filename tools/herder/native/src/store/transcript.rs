@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::mem::{replace, take};
 
 /// Entries per read. The server caps a window at 500; smaller pages keep each request fast.
-pub const PAGE: u32 = 200;
+pub const PAGE: u32 = 100;
 /// Characters kept per tool line and result, and per thinking pill.
 const LINE: usize = 200;
 const THINKING: usize = 2000;
@@ -223,9 +223,8 @@ impl Transcript {
     }
 
     pub fn retired(&self) -> bool {
-        self.detail
-            .as_ref()
-            .is_some_and(|d| d.bus_status == "retired")
+        let detail = self.detail.as_ref();
+        detail.is_some_and(|d| d.bus_status == "retired")
     }
 
     fn read(&self, what: What, out: &mut Vec<Effect>) {
@@ -436,14 +435,9 @@ pub fn condense(entry: &Entry) -> Vec<Item> {
 fn delivery(d: &Value) -> Item {
     let (sender, raw) = (str_at(d, "sender").to_string(), str_at(d, "text"));
     let quiet = sender == "[hcom-launcher]" || str_at(d, "intent") == "ack";
-    let body = strip_operator(raw);
-    let text = body
-        .unwrap_or(raw)
-        .trim_end()
-        .trim_end_matches(" |")
-        .trim()
-        .to_string();
-    let operator = body.is_some();
+    let (body, operator) = (strip_operator(raw), strip_operator(raw).is_some());
+    let text = body.unwrap_or(raw).trim_end().trim_end_matches(" |");
+    let text = text.trim().to_string();
     Item::Delivery {
         sender,
         text,
@@ -454,7 +448,7 @@ fn delivery(d: &Value) -> Item {
 
 /// The message inside the web operator envelope, current and prerelease forms.
 fn strip_operator(text: &str) -> Option<&str> {
-    let forms = [
+    const FORMS: [(&str, &str); 2] = [
         (
             "[HERDER_WEB_OPERATOR_NOTE_BEGIN]",
             "[HERDER_WEB_OPERATOR_NOTE_END]",
@@ -464,7 +458,7 @@ fn strip_operator(text: &str) -> Option<&str> {
             "<<<END_HERDER_WEB_OPERATOR_NOTE>>>",
         ),
     ];
-    forms.iter().find_map(|(begin, end)| {
+    FORMS.iter().find_map(|(begin, end)| {
         let rest = text.strip_prefix(begin)?;
         Some(rest[rest.find(end)? + end.len()..].trim_start_matches('\n'))
     })
@@ -472,10 +466,8 @@ fn strip_operator(text: &str) -> Option<&str> {
 
 /// Web's compact view shows only these system entries (an empty label hides the rest).
 fn system_chip(p: &Value) -> String {
-    let to = p["fallbackModel"]
-        .as_str()
-        .map(|m| format!(" to {m}"))
-        .unwrap_or_default();
+    let to = p["fallbackModel"].as_str().map(|m| format!(" to {m}"));
+    let to = to.unwrap_or_default();
     match str_at(p, "subtype") {
         "scheduled_task_fire" => str_at(p, "content").to_string(),
         "model_refusal_fallback" => format!("model switched{to} — safeguards flagged a message"),
@@ -486,19 +478,16 @@ fn system_chip(p: &Value) -> String {
 
 /// `<internal>…</internal>` removed (an unclosed one hides the rest) and `<status>` tags unwrapped.
 pub fn clean(text: &str) -> String {
+    const CLOSE: &str = "</internal>";
     let (mut out, mut rest) = (String::with_capacity(text.len()), text);
     while let Some(at) = rest.find("<internal>") {
         out.push_str(&rest[..at]);
-        let end = rest[at..]
-            .find("</internal>")
-            .map(|e| at + e + "</internal>".len());
+        let end = rest[at..].find(CLOSE).map(|e| at + e + CLOSE.len());
         rest = &rest[end.unwrap_or(rest.len())..];
     }
     out.push_str(rest);
-    out.replace("<status>", "")
-        .replace("</status>", "")
-        .trim()
-        .to_string()
+    let out = out.replace("<status>", "").replace("</status>", "");
+    out.trim().to_string()
 }
 
 /// Web's one-line tool summary: the command or file when there is one, else the first input value.
@@ -511,29 +500,24 @@ fn tool_summary(name: &str, input: &Value) -> String {
     let preferred = keys.iter().map(|k| &input[k]);
     let values = preferred.chain(input.as_object().into_iter().flat_map(|o| o.values()));
     let mut texts = values.map(|v| text_of(v).split_whitespace().collect::<Vec<_>>().join(" "));
-    texts
-        .find(|t| !t.is_empty())
-        .unwrap_or_else(|| "no input summary".into())
+    let found = texts.find(|t| !t.is_empty());
+    found.unwrap_or_else(|| "no input summary".into())
 }
 
 /// The file to open: the one exact or suffix candidate when every root answered completely, else a
 /// top candidate web calls confident (not fuzzy, or fuzzy scoring 20 per query character).
 fn pick(r: &Resolved, query: &str) -> Option<String> {
     let complete = r.roots.iter().all(|root| root.status == "complete");
-    let mut strong = r
-        .candidates
+    let (all, bar) = (&r.candidates, 20.0 * query.chars().count() as f64);
+    let mut strong = all
         .iter()
         .filter(|c| c.tier == "exact" || c.tier == "suffix");
     let only = strong
         .next()
         .filter(|_| strong.next().is_none() && complete);
-    let bar = 20.0 * query.chars().count() as f64;
-    let top = r
-        .candidates
-        .first()
-        .filter(|c| c.tier != "fuzzy" || c.score >= bar);
-    only.or(top)
-        .map(|c| format!("{}/{}", c.root.trim_end_matches('/'), c.path))
+    let top = all.first().filter(|c| c.tier != "fuzzy" || c.score >= bar);
+    let c = only.or(top)?;
+    Some(format!("{}/{}", c.root.trim_end_matches('/'), c.path))
 }
 
 /// `src/x.rs:12` or `src/x.rs:12:4` → the path and its line.
@@ -555,11 +539,8 @@ fn text_of<'a>(v: &'a Value) -> String {
         Value::String(s) => s.clone(),
         Value::Array(blocks) => {
             let text = |b: &'a Value| b["text"].as_str().or(b["thinking"].as_str());
-            blocks
-                .iter()
-                .filter_map(text)
-                .collect::<Vec<_>>()
-                .join("\n")
+            let texts: Vec<&str> = blocks.iter().filter_map(text).collect();
+            texts.join("\n")
         }
         Value::Null | Value::Object(_) => String::new(),
         other => other.to_string(),
@@ -576,10 +557,8 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
 }
 
 fn first_line(text: &str) -> &str {
-    text.lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
+    let mut lines = text.lines().map(str::trim);
+    lines.find(|l| !l.is_empty()).unwrap_or("")
 }
 
 fn clip(text: &str, max: usize) -> String {

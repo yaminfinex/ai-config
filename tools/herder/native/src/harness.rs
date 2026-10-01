@@ -5,10 +5,11 @@
 //! Steps: `wait:<ms>` · `key:<keystroke>` (GPUI syntax such as `cmd-=`, through
 //! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
-//! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) ·
-//! `link:<url>` (what clicking a transcript link dispatches) · `expect:<agent>` (the zoom shows it; a
-//! preview tab is `expect:<agent>+preview`) · `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed
-//! by a timed `Window::draw`: the frame's CPU cost, occluded or not). Units add `type:` as they need it.
+//! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) · `draw` (one
+//! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches) ·
+//! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) ·
+//! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
+//! cost, occluded or not). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
@@ -155,6 +156,8 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
                     "cpu {pct:.2}% of one core over {ms} ms ({on}): {m} pointer moves, {p} pulse paints, {r} shell renders"
                 ));
             }
+            // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
+            "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
             "link" => {
                 let link = crate::views::transcript::OpenLink(arg.to_string().into());
                 let _ = cx.update(|window, cx| window.dispatch_action(Box::new(link), cx));
