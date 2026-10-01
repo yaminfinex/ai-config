@@ -17,14 +17,14 @@
 
 use crate::store::condense::{self, Pill, Row};
 use crate::store::transcript::{Item, Key, Step, Tone, Transcript};
-use crate::store::{Event, Store};
+use crate::store::{Effect, Event, Store};
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, Mentions};
 use crate::views::space::Zoom;
 use crate::views::theme::{self, MONO_T, SANS_T, TypeScale, pal, type_scale};
 use crate::views::{Host, dim};
+use gpui_kit::base::TextView;
 use gpui_kit::base::{Scrollbar, ScrollbarMode};
-use gpui_kit::component::text::TextView;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::cell::{Cell, RefCell};
@@ -200,8 +200,14 @@ impl View {
         let on = painted.rows.iter().filter(|(_, b)| shown(b));
         let first = on.min_by(|a, b| f32::from(a.1.top()).total_cmp(&f32::from(b.1.top())));
         let top = self.list.logical_scroll_top();
-        let Some((ix, at)) = first.filter(|(ix, _)| **ix == top.item_ix) else {
-            // Scrolled since the last frame (a key, the harness's `find`): the list's top, not the paint.
+        // The paint holds only if the list's top is where it painted: the same row, at the same offset.
+        let fresh = |(ix, at): &(&usize, &Bounds<Pixels>)| {
+            let off = at.top() - screen.top() + top.offset_in_item;
+            **ix == top.item_ix && off.abs() < px(0.5)
+        };
+        let Some((ix, at)) = first.filter(fresh) else {
+            // Scrolled since the last frame (a key, the scrollbar, the harness's `find`), even within
+            // one row: the list's top, not the paint.
             let y = -top.offset_in_item;
             let row = rows.get(top.item_ix)?;
             return Some(Anchor {
@@ -370,6 +376,17 @@ fn top(list: &ListState) -> usize {
 fn left(store: &Store, view: &View, following: bool) -> Option<Event> {
     let open = store.transcript.open.as_ref()?;
     (open.tail && !following).then(|| view.tail(false))
+}
+
+/// Reduce an event as the shell does: a tail the list left by a route that publishes nothing (the
+/// scrollbar's handle moves the list without its scroll handler) is published first, so a fleet frame
+/// that lands before the next render is not seen.
+pub fn reduce(store: &mut Store, ui: &State, event: Event) -> Vec<Effect> {
+    let view = &ui.transcript;
+    let left = left(store, view, view.list.is_following_tail());
+    let mut effects = left.map(|e| store.apply(e)).unwrap_or_default();
+    effects.extend(store.apply(event));
+    effects
 }
 
 /// Herder web's address (the shell's server), for diagram links.

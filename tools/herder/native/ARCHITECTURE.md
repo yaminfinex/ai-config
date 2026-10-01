@@ -111,7 +111,8 @@ Derived shapes are in `store`:
   marked space none of whose agents already counts. While the owner watches an agent's tail (frontmost,
   zoomed on it, the transcript at the bottom) what lands is seen at once: it neither counts nor alerts.
   Leaving the bottom (a scroll key, the wheel) reaches the store as it happens, before any fleet frame
-  behind it; the view's word on the tail names the transcript's agent and generation, and a stale one
+  behind it; a route that publishes nothing (the scrollbar's drag) is caught as the shell reduces its next
+  event (`transcript::reduce`, which publishes the list's leaving first); the view's word on the tail names the transcript's agent and generation, and a stale one
   (after a zoom switch or a reset) is dropped.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
   orders and pairs them): `Prompt`, `Delivery{sender, text, operator}` (acks and the launcher vanish,
@@ -256,7 +257,7 @@ every window, so inputs, lists, markdown and the code editor follow. The scale p
 restored at boot. The palette (`theme::pal`) is dark only in v0, its neutrals herder web's dark theme (ink
 on ground ~12:1). The kit's own text (markdown, inputs, lists) paints from it too: `theme::dark` sets the kit
 theme's foreground, muted, border, link, selection, table, input, ring and caret colours from `pal`, and transcript markdown takes
-`theme::prose` (paragraph gap, inline code chip, unwrapped fenced code that scrolls sideways; a row
+`theme::prose`, a whole base `TextViewStyle` of its own so none of it reaches the kit's other text (paragraph gap, inline code chip, unwrapped fenced code that scrolls sideways; a row
 stops a mostly sideways wheel so the list does not take its vertical part, `transcript::sideways`). Font families are explicit so the
 kit never enumerates installed fonts: the lens, composer and notes are Menlo (`FONT`); the transcript is web's
 `system-ui` and `ui-monospace` (A1), as CoreText's system families `SANS_T` (`.AppleSystemUIFont`) and `MONO_T`
@@ -266,8 +267,12 @@ unchanged (the lens draws neither).
 
 The transcript is set to web's measured styles (A1, `transcript-style-spec.md`), so its lengths are web's CSS
 pixels at the scale, `TypeScale::css(w) = w × scale`, while the lens, composer and notes keep `TypeScale::px`
-(the spike's design pixels × 0.9). Prose is 13 on a 20.15 line; code blocks SF Mono 11, padding 9, radius 5;
-table cells 4 8 on the ground, the header semibold. `theme::prose` gives the paragraph gap in rems of the kit
+(the spike's design pixels × 0.9). Prose is 13 on a 20.15 line; headings 26/19.5/15.2/13 bold with web's
+margins under them (nothing gaps after a heading, so its bottom padding is the whole gap); code blocks SF Mono
+11, padding 9, radius 5; tables transparent (a card's ground shows through), cells 4 8, the header semibold on
+the wash; links #a9c4ff (paths too: the kit gives every link the one colour and underline). The selection is
+web's #375576 as seen on the ground: the kit paints it over the glyphs, so it is #538ecb at half opacity; the
+kit theme's #31406b stays for the composer and notes. `theme::prose` gives the paragraph gap in rems of the kit
 root's rem, which is the theme's `font_size` (`body`), not 16. Each row carries its own font, size and line
 height, because `hold` lays a row out alone and must measure it as the list does. Rows are spaced by kind
 (`transcript::Kind`: answer 10, run strip 5, card 9, divider 14, system chip 6): the gap above a row is
@@ -373,19 +378,19 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `api/types.rs` | 324 | `views/mod.rs` | 419 |
 | `api/client.rs` | 206 | `views/lens.rs` | 442 |
 | `api/sse.rs` | 194 | `views/space.rs` | 366 |
-| `store/mod.rs` | 445 | `views/transcript.rs` | 963 |
+| `store/mod.rs` | 445 | `views/transcript.rs` | 980 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 221 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 430 |
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
 | `store/attention.rs` | 281 | `views/probe.rs` | 186 |
 | `store/transcript.rs` | 585 | `views/markdown.rs` | 238 |
-| `store/condense.rs` | 395 | `views/theme.rs` | 204 |
-| `store/notes.rs` | 432 | `shell.rs` | 438 |
+| `store/condense.rs` | 395 | `views/theme.rs` | 233 |
+| `store/notes.rs` | 432 | `shell.rs` | 441 |
 | `store/composer.rs` | 166 | `shell/io.rs` | 180 |
 | `local.rs` | 95 | `harness.rs` | 282 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 
-About 8,920 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
+About 8,970 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
