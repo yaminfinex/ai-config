@@ -2742,14 +2742,17 @@ mod alerts {
     #[test]
     fn nothing_for_the_agent_the_owner_is_looking_at() {
         let (mut store, mut b) = live();
-        store.apply(Event::Looking(Some("mupu".into())));
+        store.apply(Event::Front(true));
+        store.apply(view(&store, "mupu"));
         bump(&mut b, "mupu", 1);
-        assert!(!store.apply(fleet_frame(b.clone())).contains(&BURST));
-        // Zoomed in on it during the burst's second: dropped from the burst.
-        store.apply(Event::Looking(None));
+        assert!(!store.apply(frame(&store, b.clone())).contains(&BURST));
+        // Zoomed in on it in the background, it alerts; the app coming forward during the burst's
+        // second drops it from the burst.
+        store.apply(Event::Front(false));
+        store.apply(view(&store, "support-mifa"));
         bump(&mut b, "support-mifa", 1);
-        assert!(store.apply(fleet_frame(b)).contains(&BURST));
-        store.apply(Event::Looking(Some("support-mifa".into())));
+        assert!(store.apply(frame(&store, b)).contains(&BURST));
+        store.apply(Event::Front(true));
         assert!(notices(store.apply(Event::BurstEnded)).is_empty());
     }
 

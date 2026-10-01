@@ -57,8 +57,6 @@ pub struct Shell {
     saves: HashSet<&'static str>,
     painted: bool,
     live_painted: bool,
-    /// The window is the key window: the app is frontmost (U6).
-    front: bool,
 }
 
 impl Shell {
@@ -81,9 +79,11 @@ impl Shell {
             while let Some(event) = rx.next().await {
                 let ok = match event {
                     // The chord toggles: hide when frontmost, else come forward on the lens.
-                    Event::Summon => this.read_with(cx, |s, _| s.front).map(|front| {
-                        cx.update(|cx| if front { cx.hide() } else { summon("", cx) })
-                    }),
+                    Event::Summon => this
+                        .read_with(cx, |s, _| s.store.alerts.front)
+                        .map(|front| {
+                            cx.update(|cx| if front { cx.hide() } else { summon("", cx) })
+                        }),
                     event => this.update(cx, |s, cx| s.dispatch(event, cx)),
                 };
                 if ok.is_err() {
@@ -92,9 +92,11 @@ impl Shell {
             }
         })
         .detach();
-        if !platform_mac::assume_front() {
-            cx.observe_window_activation(window, |s: &mut Self, window, _| {
-                s.front = window.is_window_active()
+        if platform_mac::assume_front() {
+            store.apply(Event::Front(true));
+        } else {
+            cx.observe_window_activation(window, |s: &mut Self, window, cx| {
+                s.dispatch(Event::Front(window.is_window_active()), cx)
             })
             .detach();
         }
@@ -110,7 +112,6 @@ impl Shell {
             saves: HashSet::new(),
             painted: false,
             live_painted: false,
-            front: platform_mac::assume_front(),
         }
     }
 }
@@ -133,13 +134,6 @@ impl Host for Shell {
                 ..
             }
         );
-        // Whom the owner is looking at, as the store last heard: a notification never interrupts that.
-        let looking = self.ui.zoomed_agent().filter(|_| self.front);
-        let looking = looking.map(String::from);
-        if looking != self.store.alerts.looking {
-            let effects = self.store.apply(Event::Looking(looking));
-            self.run(effects, cx);
-        }
         let scale = self.store.prefs.text_scale;
         let effects = self.store.apply(event);
         if self.store.prefs.text_scale != scale {

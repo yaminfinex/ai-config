@@ -321,8 +321,8 @@ pub struct Alerts {
     burst: Vec<String>,
     /// The dock count last shown; the dock starts clear.
     badge: usize,
-    /// The agent zoomed in while the app is frontmost (the shell says, `Event::Looking`): never alerted.
-    pub looking: Option<String>,
+    /// The app is frontmost (`Event::Front`).
+    pub front: bool,
 }
 
 /// One agent's alert state. Eligibility and causes are separate: an alert needs a move into
@@ -349,7 +349,7 @@ impl Store {
             let a = &self.fleet.agents[&name];
             let (turn, blocked) = (a.turn_end, a.status() == Status::Blocked);
             let eligible = self.agent_needs_you(&name);
-            let looking = self.alerts.looking.as_deref() == Some(name.as_str());
+            let looking = self.looking_at() == Some(name.as_str());
             let fresh = Mark {
                 eligible: false,
                 turn,
@@ -376,11 +376,22 @@ impl Store {
         }
     }
 
+    /// The agent the owner is looking at: zoomed in on it (its transcript is open) with the app
+    /// frontmost. It is never alerted.
+    pub(super) fn looking_at(&self) -> Option<&str> {
+        let open = self
+            .transcript
+            .open
+            .as_ref()
+            .filter(|_| self.alerts.front)?;
+        Some(&open.agent)
+    }
+
     /// The burst's second is up: one notification for those that still need you, a summary for several.
     pub(super) fn burst_ended(&mut self, out: &mut Vec<Effect>) {
         let burst = std::mem::take(&mut self.alerts.burst);
         let due: Vec<(&str, Option<&Space>)> = (burst.iter())
-            .filter(|a| self.agent_needs_you(a) && self.alerts.looking.as_ref() != Some(a))
+            .filter(|a| self.agent_needs_you(a) && self.looking_at() != Some(a.as_str()))
             .map(|a| (a.as_str(), self.home(a)))
             .collect();
         fn name(s: Option<&Space>) -> &str {

@@ -130,8 +130,8 @@ pub enum Event {
     Transcript(transcript::Step),
     Compose(composer::Step),
     Note(notes::Step),
-    /// The agent zoomed in while the app is frontmost, or none (U6): it is never notified.
-    Looking(Option<String>),
+    /// The app became frontmost, or stopped being (U6): the agent zoomed in meanwhile is never notified.
+    Front(bool),
     /// A notification burst's `spaces::BURST_MS` is up.
     BurstEnded,
     /// The summon hotkey; the shell handles it before the store, which ignores it.
@@ -316,7 +316,7 @@ impl Store {
             Event::Transcript(step) => self.transcript_step(step, &mut out),
             Event::Compose(step) => self.compose(step, &mut out),
             Event::Note(step) => self.note(step, &mut out),
-            Event::Looking(agent) => self.alerts.looking = agent,
+            Event::Front(front) => self.alerts.front = front,
             Event::BurstEnded => self.burst_ended(&mut out),
             Event::Summon => {}
             Event::TextScale(step) => {
