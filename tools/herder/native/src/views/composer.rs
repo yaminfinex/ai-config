@@ -4,16 +4,17 @@
 //! It is disabled while a send is in flight and read-only, with the reason, when the store says the
 //! agent cannot be written to. A send that failed keeps its text and says why under the box.
 //!
-//! Keys (ARCHITECTURE §4): `/` or `r` in the zoom focus it; in the box `cmd-enter` sends,
-//! `cmd-shift-enter` sends and files the agent back into the lens (seen), `escape` leaves the box.
+//! Keys (ARCHITECTURE §4): `/` or `r` in the zoom focus it; in the box (`Composer > Input`, so no other
+//! input sends) `cmd-enter` sends, `cmd-shift-enter` sends and, once it lands, files the agent back
+//! into the lens (seen), `escape` leaves the box. The wording under the box is here, the states in
+//! `store::composer`.
 
-use crate::store::composer::{Sending, Step};
-use crate::store::spaces::Move;
-use crate::store::{Event, Store};
+use crate::store::composer::{Failure, ReadOnly, Sending, Step};
+use crate::store::{Attribution, Event, Store};
 use crate::views::lens::Ui;
 use crate::views::space::{self, Zoomed};
 use crate::views::theme::{TypeScale, pal};
-use crate::views::{Host, dim};
+use crate::views::{Host, dim, on, settle_later};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::*;
 
@@ -26,6 +27,8 @@ pub enum Compose {
     Leave,
 }
 
+/// Where the box's chords bind: its own Input, not any Input in the zoom.
+pub const BOX: &str = "Composer > Input";
 /// Rows the box grows to before it scrolls.
 const ROWS: (usize, usize) = (1, 8);
 const HINT: &str = "⌘⏎ send · ⌘⇧⏎ send and back to the lens · esc leave";
@@ -64,9 +67,13 @@ impl View {
     }
 }
 
-/// Point the box at the zoomed agent's draft, before a frame is drawn.
+/// Point the box at the zoomed agent's draft, before a frame is drawn. A box left focused under another
+/// zoom (a filed-back send landed) hands focus to the zoom or the lens.
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
+    if ui.composer.agent != agent && ui.composer.focus_handle(cx).is_focused(window) {
+        window.focus(ui.focus_target(), cx);
+    }
     let view = &mut ui.composer;
     let drafts = &store.prefs.drafts;
     let draft = agent
@@ -88,49 +95,58 @@ pub fn probe(ui: &Ui, window: &Window, cx: &App) -> String {
     format!("{}:{text}", if focused { "focused" } else { "idle" })
 }
 
-/// A composer key, handled on the zoom shell (an ancestor of both the zoom and the box).
+/// A composer key: `Focus` from the zoom, the rest from the box itself.
 pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
-    let Some((zoom, agent)) = ui.zoom.clone().and_then(|z| Some((z.clone(), z.agent?))) else {
+    let Some((space, agent)) = ui.zoom.clone().and_then(|z| Some((z.space, z.agent?))) else {
         return Vec::new();
     };
     let send = |file_back| {
-        Event::Compose(Step::Send {
+        vec![Event::Compose(Step::Send {
             agent: agent.clone(),
             file_back,
-        })
+        })]
     };
     match key {
         Compose::Focus => ui.composer.want = Some(store.can_send(&agent).is_ok()),
         Compose::Leave => ui.composer.want = Some(false),
-        Compose::Send => return vec![send(None)],
-        // Only a send that will go files the agent back; otherwise the box stays, saying why.
-        Compose::FileBack if store.ready(&agent) => {
-            let seen = Event::Lens(Move::View {
-                space: zoom.space.clone(),
-                agent: Some(agent.clone()),
-            });
-            let out = space::act(store, ui, Zoomed::Out);
-            return [send(Some(zoom.space)), seen]
-                .into_iter()
-                .chain(out)
-                .collect();
-        }
-        Compose::FileBack => {}
+        Compose::Send => return send(None),
+        // The zoom stays, "sending", until it lands (`Effect::FiledBack`); a failure stays to say why.
+        Compose::FileBack => return send(Some(space)),
     }
     Vec::new()
 }
 
+/// A filed-back send landed (`Effect::FiledBack`): leave for the lens if the zoom is still on `agent`.
+pub fn filed_back<H: Host>(
+    store: &Store,
+    ui: &mut Ui,
+    agent: &str,
+    cx: &mut Context<H>,
+) -> Vec<Event> {
+    if ui.zoom.as_ref().and_then(|z| z.agent.as_deref()) != Some(agent) {
+        return Vec::new();
+    }
+    let before = ui.anim.as_ref().map(space::Anim::seq);
+    let out = space::act(store, ui, Zoomed::Out);
+    settle_later(ui, before, cx);
+    out
+}
+
 /// The box and its status line, under the transcript.
-pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Div {
-    let read_only = store.can_send(agent).err();
-    let sending = store.in_flight(agent);
-    let (line, color) = match (read_only, store.sends.get(agent)) {
-        (Some(why), _) => (why.say().to_string(), pal::AMBER),
-        (None, _) if sending => ("sending…".to_string(), pal::SLATE),
-        (None, Some(Sending::Failed(failure))) => (failure.say(), pal::AMBER),
-        (None, _) => (HINT.to_string(), pal::SLATE),
-    };
-    let input = Textarea::new(&ui.composer.state).disabled(read_only.is_some() || sending);
+pub fn render<H: Host>(
+    store: &Store,
+    ui: &Ui,
+    agent: &str,
+    t: TypeScale,
+    cx: &mut Context<H>,
+) -> Div {
+    let (line, color) = status(store, agent);
+    let writable = store.can_send(agent).is_ok() && !store.in_flight(agent);
+    let input = Textarea::new(&ui.composer.state).disabled(!writable);
+    let input = div()
+        .key_context("Composer")
+        .on_action(on(cx, |store, ui, c: &Compose| act(store, ui, *c)))
+        .child(input);
     div()
         .flex_none()
         .flex()
@@ -142,4 +158,56 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Div {
         .border_color(rgb(pal::RULE))
         .child(input)
         .child(dim(line).text_size(t.small).text_color(rgb(color)))
+}
+
+/// The zoomed agent's line under the box, for the harness's `says:` step.
+pub fn says(store: &Store, ui: &Ui) -> String {
+    let agent = ui.zoom.as_ref().and_then(|z| z.agent.as_deref());
+    agent.map_or_else(String::new, |a| status(store, a).0)
+}
+
+/// The line under the box and its colour: why it is read-only, "sending…", the last failure or the keys.
+fn status(store: &Store, agent: &str) -> (String, u32) {
+    match (store.can_send(agent), store.sends.get(agent)) {
+        (Err(why), _) => (say_read_only(&store.viewer, why), pal::AMBER),
+        (Ok(()), Some(Sending::InFlight { .. })) => ("sending…".to_string(), pal::SLATE),
+        (Ok(()), Some(Sending::Failed(failure))) => (say_failure(failure), pal::AMBER),
+        (Ok(()), None) => (HINT.to_string(), pal::SLATE),
+    }
+}
+
+fn say_read_only(viewer: &Attribution, why: ReadOnly) -> String {
+    let refusal = match viewer {
+        Attribution::Refused(Some(r)) => Some(r),
+        _ => None,
+    };
+    match (why, refusal) {
+        (ReadOnly::Refused, Some(r)) if r.error == "sender refused" => {
+            format!(
+                "read-only · sender collision: this Mac's sender name is taken ({})",
+                r.detail
+            )
+        }
+        (ReadOnly::Refused, Some(r)) => format!("read-only · attribution required: {}", r.detail),
+        (ReadOnly::Refused, None) => "read-only: the server refused this Mac's attribution".into(),
+        (ReadOnly::OffBoard, _) => "read-only: not on the board".into(),
+        (ReadOnly::Pending, _) => "waiting for the agent's details…".into(),
+        (ReadOnly::Retired, _) => "retired · read-only".into(),
+    }
+}
+
+fn say_failure(failure: &Failure) -> String {
+    match failure {
+        Failure::Unattributed(r) => format!("refused: {}", r.detail),
+        Failure::Refused(why) => format!("refused: {why}"),
+        Failure::Unreachable(why) => format!("unreachable, not sent ({why}) · ⌘⏎ retry"),
+        Failure::UnknownAgent => "the server knows no such agent".into(),
+        Failure::Rejected(status, why) => format!("rejected ({status}): {why}"),
+        Failure::NoAnswer(why) => {
+            format!(
+                "no answer ({why}): it may have been sent; check the transcript before retrying"
+            )
+        }
+        Failure::NotSaved(why) => format!("not sent: the draft could not be saved ({why})"),
+    }
 }

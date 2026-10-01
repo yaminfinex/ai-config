@@ -4,16 +4,14 @@
 use gpui_kit::{KeyContext, Keymap, Keystroke};
 use herder_native::views;
 
-/// A lens or zoom binding fires: the composer's own chords in the box (U4) do not count.
+/// Any of our bindings fires.
 fn fires(keymap: &Keymap, key: &str, stack: &[&str]) -> bool {
     let stack: Vec<KeyContext> = stack
         .iter()
         .map(|c| KeyContext::parse(c).unwrap())
         .collect();
     let key = Keystroke::parse(key).unwrap();
-    let (hits, _) = keymap.bindings_for_input(&[key], &stack);
-    hits.iter()
-        .any(|b| !b.action().name().starts_with("composer::"))
+    !keymap.bindings_for_input(&[key], &stack).0.is_empty()
 }
 
 #[test]
@@ -98,10 +96,11 @@ fn transcript_scroll_keys_win_over_home_inside_the_zoom() {
     );
 }
 
-/// U4: in the box, `cmd-enter` / `cmd-shift-enter` / `escape` are the composer's (not the zoom's
-/// `escape`), and `/` `r` focus it from the zoom but type into it once there.
+/// U4: in the box (`Composer > Input`), `cmd-enter` / `cmd-shift-enter` / `escape` are the composer's
+/// (not the zoom's `escape`), and `/` `r` focus it from the zoom but type into it once there. Another
+/// input in the zoom (U5's notes) gets none of them.
 #[test]
-fn composer_chords_win_in_the_box_and_focus_keys_stay_in_the_zoom() {
+fn composer_chords_win_in_the_box_only_and_focus_keys_stay_in_the_zoom() {
     use views::composer::Compose;
     let keymap = Keymap::new(views::bindings());
     let parse = |s: &[&str]| -> Vec<KeyContext> {
@@ -111,7 +110,7 @@ fn composer_chords_win_in_the_box_and_focus_keys_stay_in_the_zoom() {
         let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse(key).unwrap()], &parse(stack));
         hits.first().map(|b| b.action().boxed_clone())
     };
-    let boxed = ["Lens", "Space", "Input"];
+    let boxed = ["Lens", "Space", "Composer", "Input"];
     for (key, want) in [
         ("cmd-enter", Compose::Send),
         ("cmd-shift-enter", Compose::FileBack),
@@ -122,6 +121,21 @@ fn composer_chords_win_in_the_box_and_focus_keys_stay_in_the_zoom() {
             got.is_some_and(|a| a.partial_eq(&want)),
             "`{key}` in the box"
         );
+    }
+    for other in [
+        &["Lens", "Space", "Input"][..],
+        &["Lens", "Space", "Notes", "Input"],
+    ] {
+        for key in [
+            "cmd-enter",
+            "cmd-shift-enter",
+            "alt-enter",
+            "escape",
+            "/",
+            "r",
+        ] {
+            assert!(!fires(&keymap, key, other), "`{key}` fires in {other:?}");
+        }
     }
     for key in ["/", "r"] {
         let got = first(key, &["Lens", "Space"]);

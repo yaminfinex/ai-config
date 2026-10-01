@@ -40,33 +40,46 @@ check-keys: build
     grep -q '"text_scale": 1.1' "$prefs" && echo "check-keys: ok (text_scale 1.1 persisted)"
     rm -rf "$home"
 
-# Composer scenario (U4), against testdata/fake_serve.py on loopback: nothing reaches a real agent.
-# Focus the box, type keys the lens and zoom bind (they must land as text), cmd-enter sends once and clears
-# the draft, escape leaves the box but not the zoom; then a held send shows "sending" and swallows a second
-# cmd-enter. Throwaway HOME; screenshots in shots/ need the `shots` feature (`just harness` builds it).
+# Composer scenarios (U4), against testdata/fake_serve.py on loopback: nothing reaches a real agent. Each run
+# has its own throwaway HOME and must exit 0 having reached `quit`, with exactly the POSTs it expects:
+# keys    focus the box, type keys the lens and zoom bind (they land as text), cmd-enter sends once and
+#         clears the draft, escape leaves the box but not the zoom;
+# held    a held send shows "sending" and swallows a second cmd-enter;
+# drafts  drafts A -> B -> A across tabs and spaces; a path or same-agent link keeps the box focused, another
+#         agent's link gives focus to the zoom (no send);
+# failed  cmd-shift-enter on a preview answered 502 stays on the preview, saying why;
+# fileback cmd-shift-enter stays "sending" until the (slow) send lands, then leaves for the lens;
+# collide a 409 sender collision makes every box read-only.
+# Screenshots in shots/ need the `shots` feature (`just harness` builds it).
 check-composer port="4411":
-    #!/usr/bin/env sh
-    set -eu
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo build --release --features shots
     mkdir -p shots
-    home=$(mktemp -d)
+    home=$(mktemp -d) fake=
+    trap '[ -z "$fake" ] || kill $fake 2>/dev/null; rm -r "$home"' EXIT
     zoom="wait:1500 key:enter wait:400 draw link:herder-agent:mupu wait:1500 draw expect:mupu+preview"
-    run() {
-        python3 testdata/fake_serve.py {{port}} --message "$1" 2>"$home/fake.log" & fake=$!
+    typed="$zoom key:/ draw key:h key:i draw"
+    run() { # MODE NAME POSTS SCRIPT
+        python3 testdata/fake_serve.py {{port}} --message "$1" 2>"$home/$2.fake" & fake=$!
         sleep 0.5
-        HOME="$home" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_SHOT_DIR=shots \
-            HERDER_NATIVE_SCRIPT="$zoom $2" ./target/release/herder-native 2>&1 | grep -E "harness|box|expect" || true
-        kill $fake
-        grep -c "message to mupu" "$home/fake.log" || true
+        status=0
+        HOME="$home/$2" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_SHOT_DIR=shots \
+            HERDER_NATIVE_SCRIPT="$4" ./target/release/herder-native >"$home/$2.log" 2>&1 || status=$?
+        { kill $fake && wait $fake; } 2>/dev/null || true
+        fake=
+        grep -E "harness|box|expect|says" "$home/$2.log" || true
+        [ $status = 0 ] && grep -q '\] quit$' "$home/$2.log" || { echo "check-composer: $2 failed (exit $status)"; exit 1; }
+        posts=$(grep -c "message to" "$home/$2.fake" || true)
+        [ "$posts" = "$3" ] || { echo "check-composer: $2 made $posts POSTs, expected $3"; exit 1; }
     }
-    out=$(run ok "key:/ draw box:focused: key:n key:j key:[ key:] key:1 key:v key:? draw box:focused:nj[]1v? expect:mupu+preview shot:u4-draft key:cmd-enter wait:800 draw box:focused: shot:u4-empty key:escape draw box:idle: expect:mupu+preview quit")
-    echo "$out"
-    held=$(run hold "key:/ draw key:h key:i key:cmd-enter wait:400 draw shot:u4-sending key:x key:cmd-enter wait:300 draw box:focused:hi quit")
-    echo "$held"
-    if echo "$out$held" | grep -q FAILED; then echo "check-composer: FAILED"; exit 1; fi
-    [ "$(echo "$out" | tail -1)" = 1 ] && [ "$(echo "$held" | tail -1)" = 1 ] || { echo "check-composer: expected exactly one POST per run"; exit 1; }
-    rm -r "$home"
-    echo "check-composer: ok (keys typed, one send each, held send not repeated)"
+    run ok keys 1 "$zoom key:/ draw box:focused: key:n key:j key:[ key:] key:1 key:v key:? draw box:focused:nj[]1v? expect:mupu+preview shot:u4-draft key:cmd-enter wait:800 draw box:focused: shot:u4-empty key:escape draw box:idle: expect:mupu+preview quit"
+    run hold held 1 "$typed key:cmd-enter wait:400 draw says:sending shot:u4-sending key:x key:cmd-enter wait:300 draw box:focused:hi quit"
+    run ok drafts 0 "wait:1500 key:enter wait:400 draw expect:chief-mihe key:/ draw key:a draw box:focused:a key:escape draw box:idle:a key:] wait:600 draw expect:mupu box:idle: key:tab wait:300 draw expect:support-mifa key:/ draw key:b draw box:focused:b key:escape key:shift-tab wait:300 draw expect:mupu box:idle: key:tab draw expect:support-mifa box:idle:b key:[ wait:600 draw expect:chief-mihe box:idle:a key:/ draw link:herder-path:src/main.rs wait:400 draw box:focused:a link:herder-agent:chief-mihe draw box:focused:a link:herder-agent:mupu wait:400 draw expect:mupu+preview box:idle: key:/ draw box:focused: quit"
+    run 502 failed 1 "$typed key:cmd-shift-enter wait:600 draw expect:mupu+preview box:focused:hi says:unreachable,+not+sent shot:u4-fileback-failed quit"
+    run slow fileback 1 "$typed key:cmd-shift-enter wait:300 draw expect:mupu+preview says:sending wait:1500 draw expect: box:idle: quit"
+    run 409 collide 1 "$typed key:cmd-enter wait:600 draw box:focused:hi says:sender+collision shot:u4-collision key:escape link:herder-agent:chief-mihe wait:400 draw says:read-only quit"
+    echo "check-composer: ok (keys typed, one send each, held send not repeated, drafts per agent, link focus, file-back on success only, collision read-only)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id).
 bundle *args:

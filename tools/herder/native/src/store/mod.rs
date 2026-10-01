@@ -22,7 +22,7 @@ pub mod transcript;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::api::{Board, StateRow, Wire};
+use crate::api::{Board, Refusal, StateRow, Wire};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use sync::{Ns, Step, Syncs};
@@ -184,6 +184,10 @@ pub enum Effect {
         after_ms: u64,
     },
     Persist(Persist),
+    /// A filed-back send (`cmd-shift-enter`) landed: leave the zoom if it is still on `agent`.
+    FiledBack {
+        agent: String,
+    },
     /// Open a file or folder on the agents' host in VS Code (the file panel's seam, Rung 2).
     OpenFile {
         path: String,
@@ -199,8 +203,9 @@ pub enum Attribution {
     #[default]
     Unknown,
     Attributed(String),
-    /// The server refused (409 on loopback or an unattributed peer); writes will be refused too.
-    Refused,
+    /// The server refused (409 on loopback or an unattributed peer); writes will be refused too. With
+    /// the reason when a send was refused for it (`attribution required`, `sender refused`).
+    Refused(Option<Refusal>),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -261,7 +266,7 @@ impl Store {
                 self.viewer_asked = false;
                 self.viewer = match v {
                     Ok(name) => Attribution::Attributed(name),
-                    Err(Some(409)) => Attribution::Refused,
+                    Err(Some(409)) => Attribution::Refused(None),
                     // Transport or a server fault: ask again after a backoff (one timer at a time); a
                     // healthy stream may never send another `hello`.
                     Err(_) => {

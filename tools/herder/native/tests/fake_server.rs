@@ -412,28 +412,35 @@ fn a_failed_save_posts_nothing_and_retries() {
     std::fs::remove_file(dir).unwrap();
 }
 
-/// U4: `POST /api/agents/{name}/message` with exactly `{text}`, after the prefs are saved; each
-/// refusal status maps to its failure, and a failed save posts nothing.
+/// U4: `POST /api/agents/{name}/message` with exactly `{text}`, after the prefs are saved (the fake
+/// checks the file as the POST arrives); each refusal maps to its failure, and a failed save posts
+/// nothing.
 #[test]
 fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
+    use herder_native::api::Refusal;
     use herder_native::store::composer::{Failure, Step as C};
     let refusal = |status: u16, error: &str| {
         let body = json!({"error": error, "detail": format!("{error} detail")});
         Reply::Json(status, body.to_string())
     };
+    let (disk, dir) = scratch("message");
+    let prefs = br#"{"drafts": {"ok": "hello \"there\""}}"#;
+    let saved = dir.join(local::PREFS);
+    assert!(!saved.exists());
     let (base, log) = serve(move |target, _| match target.split('/').nth(3) {
-        Some("ok") => Reply::Json(
+        Some("ok") if std::fs::read(&saved).ok().as_deref() == Some(&prefs[..]) => Reply::Json(
             200,
             json!({"sent": true, "to": "ok", "from": "web-x", "intent": "request"}).to_string(),
         ),
+        Some("ok") => refusal(500, "posted before the prefs were saved"),
         Some("gone") => refusal(404, "agent not found"),
-        Some("refuse") => refusal(409, "sender refused"),
+        Some("collide") => refusal(409, "sender refused"),
+        Some("anon") => refusal(409, "attribution required"),
+        Some("retired") => refusal(409, "retired agent"),
         Some("down") => refusal(502, "substrate unreachable"),
         _ => refusal(400, "bad body"),
     });
     let client = Client::new(base);
-    let (disk, dir) = scratch("message");
-    let prefs = br#"{"drafts": {"ok": "hello \"there\""}}"#;
     let send = |agent: &str| {
         let text = "hello \"there\"".to_string();
         match save_then_message(
@@ -449,9 +456,17 @@ fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
     };
     assert_eq!(send("ok"), Ok(()));
     assert_eq!(send("gone"), Err(Failure::UnknownAgent));
+    let unattributed = |error: &str| {
+        Err(Failure::Unattributed(Refusal {
+            error: error.into(),
+            detail: format!("{error} detail"),
+        }))
+    };
+    assert_eq!(send("collide"), unattributed("sender refused"));
+    assert_eq!(send("anon"), unattributed("attribution required"));
     assert_eq!(
-        send("refuse"),
-        Err(Failure::Refused("sender refused detail".into()))
+        send("retired"),
+        Err(Failure::Refused("retired agent detail".into()))
     );
     assert_eq!(
         send("down"),
@@ -462,7 +477,7 @@ fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
         Err(Failure::Rejected(400, "bad body detail".into()))
     );
     let log = log.lock().unwrap().clone();
-    assert_eq!(log.len(), 5, "one POST each: {log:?}");
+    assert_eq!(log.len(), 7, "one POST each: {log:?}");
     assert_eq!(
         log[0],
         r#"POST /api/agents/ok/message {"text":"hello \"there\""}"#

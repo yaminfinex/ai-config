@@ -97,7 +97,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     let focus = [("/", Compose::Focus), ("r", Compose::Focus)];
     keys.extend(focus.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     // After the kit's own `Input` bindings (`gpui_kit::init`), so these win in the box.
-    keys.extend(compose.map(|(k, a)| KeyBinding::new(k, a, Some("Input"))));
+    keys.extend(compose.map(|(k, a)| KeyBinding::new(k, a, Some(composer::BOX))));
     keys
 }
 
@@ -149,8 +149,9 @@ pub trait Host: Sized + 'static {
 
 /// An action handler: `f` reads the store, moves the view state and returns the events to dispatch;
 /// then focus follows the zoom (the `Space` context is live only while its element has focus), except
-/// that the composer keeps it while the zoom stays put (a clicked link) or takes it when asked, and a
-/// transition that started gets its end scheduled.
+/// that an input in the zoom (the composer, U5's notes) keeps it while the zoom stays put (a clicked
+/// link) and the composer takes or leaves it when asked; a transition that started gets its end
+/// scheduled.
 pub fn on<A: Action, H: Host>(
     cx: &mut Context<H>,
     f: impl Fn(&Store, &mut lens::Ui, &A) -> Vec<Event> + 'static,
@@ -158,33 +159,38 @@ pub fn on<A: Action, H: Host>(
     cx.listener(move |host: &mut H, action: &A, window, cx| {
         let (store, ui) = host.parts();
         let before = ui.anim.as_ref().map(space::Anim::seq);
-        let (zoom, typing) = (ui.zoom.clone(), ui.composer.focus_handle(cx));
-        let typing = typing.is_focused(window);
+        let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
         let events = f(store, ui, action);
-        let typing = ui.composer.want.take().unwrap_or(typing && ui.zoom == zoom);
-        let target = match typing {
-            true => ui.composer.focus_handle(cx),
-            false => ui.focus_target().clone(),
+        let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
+        let target = match (ui.composer.want.take(), held) {
+            (Some(true), _) => ui.composer.focus_handle(cx),
+            (None, Some(held)) => held,
+            _ => ui.focus_target().clone(),
         };
         if !target.is_focused(window) {
             window.focus(&target, cx);
         }
-        if let Some(anim) = ui.anim.as_ref().filter(|a| Some(a.seq()) != before) {
-            let (seq, done) = (anim.seq(), anim.duration());
-            cx.spawn(async move |host, cx| {
-                cx.background_executor().timer(done).await;
-                host.update(cx, |host, cx| {
-                    host.parts().1.settle(seq);
-                    cx.notify();
-                })
-            })
-            .detach();
-        }
+        settle_later(ui, before, cx);
         for event in events {
             host.dispatch(event, cx);
         }
         cx.notify();
     })
+}
+
+/// Schedule the end of a transition that started since `before` (the previous one's `seq`).
+pub(super) fn settle_later<H: Host>(ui: &lens::Ui, before: Option<u64>, cx: &mut Context<H>) {
+    if let Some(anim) = ui.anim.as_ref().filter(|a| Some(a.seq()) != before) {
+        let (seq, done) = (anim.seq(), anim.duration());
+        cx.spawn(async move |host, cx| {
+            cx.background_executor().timer(done).await;
+            host.update(cx, |host, cx| {
+                host.parts().1.settle(seq);
+                cx.notify();
+            })
+        })
+        .detach();
+    }
 }
 
 pub(super) fn working(agent: &Agent) -> bool {

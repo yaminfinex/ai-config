@@ -2,9 +2,10 @@
 """A fake herder serve over the recorded fixtures, for harness runs that press cmd-enter: nothing a
 scenario sends may reach a real agent. Reads answer from testdata/; POST …/message never delivers.
 
-    testdata/fake_serve.py PORT [--message ok|409|502|hold] [--retired AGENT]
+    testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT]
 
-`hold` keeps the POST open (the composer stays "sending"). Every request is logged on stderr.
+`slow` answers ok after a second, `hold` keeps the POST open (the composer stays "sending"); `409` is a
+sender collision. Every request is logged on stderr.
 """
 
 import argparse
@@ -78,8 +79,8 @@ class Fake(BaseHTTPRequestHandler):
         if parts[:2] != ["api", "agents"] or parts[3:] != ["message"]:
             return self.reply(404, {"error": "not found", "detail": self.path})
         self.log_message("message to %s: %s (%s)", parts[2], body, ARGS.message)
-        if ARGS.message == "hold":
-            time.sleep(600)
+        if ARGS.message in ("hold", "slow"):
+            time.sleep(600 if ARGS.message == "hold" else 1)
         if ARGS.message == "409":
             return self.reply(409, {"error": "sender refused",
                                     "detail": "the fake serve refuses every message"})
@@ -91,7 +92,7 @@ class Fake(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("port", type=int)
-    p.add_argument("--message", default="ok", choices=["ok", "409", "502", "hold"])
+    p.add_argument("--message", default="ok", choices=["ok", "slow", "409", "502", "hold"])
     p.add_argument("--retired")
     ARGS = p.parse_args()
     ThreadingHTTPServer(("127.0.0.1", ARGS.port), Fake).serve_forever()

@@ -11,7 +11,8 @@
 //! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
 //! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
 //! its start; fails after `ms`) · `box:<focused|idle>:<text>` (the composer's focus and text, `+` for a
-//! space; U4). Units add `type:` as they need it.
+//! space; U4) · `says:<text>` (the line under the composer contains it). Units add `type:` as they need
+//! it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
@@ -110,6 +111,8 @@ pub struct Probe {
     pub start: Box<dyn Fn(&App) -> Reached>,
     /// The composer's focus and text (`focused:text` or `idle:text`), for `box:`.
     pub composer: Ask,
+    /// The line under the composer, for `says:`.
+    pub says: Box<dyn Fn(&App) -> String>,
 }
 
 pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
@@ -181,13 +184,14 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
                 metric(format!("link {arg}"));
             }
-            "expect" | "box" => {
+            "expect" | "box" | "says" => {
                 let got = cx.update(|window, cx| match op {
                     "expect" => (probe.shown)(cx),
-                    _ => (probe.composer)(window, cx),
+                    "box" => (probe.composer)(window, cx),
+                    _ => (probe.says)(cx),
                 });
-                let got = got.unwrap_or_default();
-                match got == arg.replace('+', " ") {
+                let (got, want) = (got.unwrap_or_default(), arg.replace('+', " "));
+                match got == want || op == "says" && got.contains(&want) {
                     true => metric(format!("{op} {arg}: ok")),
                     false => fail(format!("{op} {arg}: got `{got}`")),
                 }

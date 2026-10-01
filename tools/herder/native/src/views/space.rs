@@ -269,8 +269,9 @@ pub fn render<H: Host>(
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
         .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
         .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
-        .on_action(on(cx, |store, ui, c: &Compose| {
-            composer::act(store, ui, *c)
+        .on_action(on(cx, |store, ui, c: &Compose| match c {
+            Compose::Focus => composer::act(store, ui, *c),
+            _ => Vec::new(),
         }))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
@@ -283,6 +284,6 @@ pub fn render<H: Host>(
         .child(bar)
         .child(strip.children(tabs))
         .child(body::render(store, ui, zoom, t, cx))
-        .children(current.map(|agent| composer::render(store, ui, agent, t)))
+        .children(current.map(|agent| composer::render(store, ui, agent, t, cx)))
         .into_any_element()
 }

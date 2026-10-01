@@ -132,7 +132,7 @@ impl Host for Shell {
 impl Shell {
     fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
         let mut save_outbox = false;
-        let mut sends = Vec::new();
+        let (mut sends, mut filed) = (Vec::new(), Vec::new());
         for effect in effects {
             match effect {
                 Effect::Stream { generation, agents } => {
@@ -171,6 +171,9 @@ impl Shell {
                 Effect::Persist(Persist::Snapshot) => {
                     self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
                 }
+                Effect::FiledBack { agent } => {
+                    filed.extend(composer::filed_back(&self.store, &mut self.ui, &agent, cx))
+                }
                 Effect::OpenFile { path, line } => {
                     match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
                         Some(url) => cx.open_url(&url),
@@ -178,6 +181,9 @@ impl Shell {
                     }
                 }
             }
+        }
+        for event in filed {
+            self.dispatch(event, cx);
         }
         if !save_outbox && sends.is_empty() {
             return;
@@ -325,7 +331,7 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
-                let (s, s2, s3) = (shell.clone(), shell.clone(), shell.clone());
+                let [s, s2, s3, s4] = [(); 4].map(|_| shell.clone());
                 let probe = harness::Probe {
                     shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
                     link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
@@ -339,6 +345,7 @@ pub fn run() {
                         ))
                     }),
                     composer: Box::new(move |w, cx| composer::probe(&s3.read(cx).ui, w, cx)),
+                    says: Box::new(move |cx| composer::says(&s4.read(cx).store, &s4.read(cx).ui)),
                 };
                 window
                     .spawn(cx, async move |cx| harness::run(script, probe, cx).await)

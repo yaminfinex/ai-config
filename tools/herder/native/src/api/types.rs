@@ -322,7 +322,7 @@ pub struct NoteValue {
 }
 
 /// The JSON refusal body: `{error, detail}` with a 4xx/5xx status.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Refusal {
     pub error: String,

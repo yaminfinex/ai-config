@@ -94,6 +94,12 @@ pub fn save_then_message(
             eprintln!("message {agent}: {e}");
             match e {
                 Error::Transport(why) => Failure::NoAnswer(why),
+                Error::Refused {
+                    status: 409,
+                    refusal,
+                } if ["attribution required", "sender refused"].contains(&&*refusal.error) => {
+                    Failure::Unattributed(refusal)
+                }
                 Error::Refused { status, refusal } => {
                     let why = [refusal.detail, refusal.error]
                         .into_iter()

@@ -138,15 +138,15 @@ so a `capture_key_down` handler never sees them. Every binding is therefore an `
 predicate. GPUI evaluates a predicate against the whole focus stack, so a binding on `Lens` also fires while
 the composer inside it has focus; single-letter navigation must exclude text surfaces explicitly.
 
-Contexts (identifiers on elements): `Lens` (the root), `Space` (the zoom shell), `Input` (any kit text
-input), `Terminal` (a terminal panel). Predicates:
+Contexts (identifiers on elements): `Lens` (the root), `Space` (the zoom shell), `Composer` (around the
+composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel). Predicates:
 
 | Predicate | Used for |
 |---|---|
 | `Lens` | app-wide chords only: `cmd-q`, text scale `cmd-=` `cmd-shift-=` `cmd--` `cmd-0` |
 | `Lens && !Input && !Terminal` | home navigation letters |
 | `Space && !Input && !Terminal` | in-space navigation letters and scrolling |
-| `Input` | the composer's own chords (`cmd-enter`, `cmd-shift-enter`, `alt-enter`, `escape`) |
+| `Composer > Input` | the composer's own chords (`cmd-enter`, `cmd-shift-enter`, `alt-enter`, `escape`); no other input (U5's notes) gets them |
 | `Terminal` | keys the terminal consumes (Rung 2); `cmd-w` `cmd-t` `cmd-1…9` stay on `Space` |
 
 | Keys | Predicate | Action | Unit |
@@ -157,8 +157,8 @@ input), `Terminal` (a terminal panel). Predicates:
 | `escape` `[` `]` `tab` `shift-tab` | `Space && !Input && !Terminal` | zoom out, prev/next space, prev/next agent | U2 |
 | `j k space shift-space g G` | `Space && !Input && !Terminal` | scroll the transcript | U3 |
 | `/` `r` | `Space && !Input && !Terminal` | focus the composer | U4 |
-| `cmd-enter` / `cmd-shift-enter` / `escape` | `Input` | send / send and file back / leave the box | U4 |
-| `alt-enter` | `Input` | queue as note | U5 |
+| `cmd-enter` / `cmd-shift-enter` / `escape` | `Composer > Input` | send / send and file back / leave the box | U4 |
+| `alt-enter` | `Composer > Input` | queue as note | U5 |
 | `cmd-w` `cmd-t` `cmd-1…9` | `Space` | close panel, terminal, switch panel | Rung 2 |
 | `ctrl-alt-cmd-h` | global (`global-hotkey`) | summon | U6 |
 
@@ -166,10 +166,14 @@ Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and chec
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
 no navigation happened.
 
-Focus follows the zoom after every action (`views::on`), with one exception (U4): the composer keeps
-focus while the zoom stays on the same agent (a clicked path or mention of that agent), takes it on `/` `r`
-(only when the agent can be written to) and gives it back to the zoom on `escape`. A mention that opens
-another agent moves focus to the zoom, so the box never types into an agent the owner did not pick.
+Focus follows the zoom after every action (`views::on`), with one exception (U4): an input inside the
+zoom that holds focus (the composer, U5's notes) keeps it while the zoom stays on the same agent (a clicked
+path or mention of that agent); the composer takes it on `/` `r` (only when the agent can be written to)
+and gives it back to the zoom on `escape`. A mention that opens another agent moves focus to the zoom, so
+the box never types into an agent the owner did not pick. The composer's chords are handled on its own
+element, so they act only on the focused box. `cmd-shift-enter` leaves the zoom only once the send lands
+(`Effect::FiledBack`, marking the agent seen); a failure stays on that agent, preview included, saying why.
+A focused box left under another zoom hands focus on at the next render (`composer::sync`).
 
 ## 5. Type scale and theme
 
@@ -252,9 +256,11 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   `harness::Probe`, so the harness knows no views), `cpuscroll:<key>x<n>` (`n` keystrokes, each with a
   timed `Window::draw`) and `start:<ms>` (draws until the open transcript has paged back to its start,
   logging its rows; also a `Probe` query). U4 added `box:<focused|idle>:<text>` (the composer's focus
-  and text) and `testdata/fake_serve.py`, a loopback serve over the fixtures whose `POST …/message`
-  answers ok, 409, 502 or holds: any scenario that presses `cmd-enter` points `HERDER_URL` at it, never at
-  the real serve (`just check-composer`). Screenshots and presented-frame timings need an
+  and text), `says:<text>` (the line under the box contains it) and `testdata/fake_serve.py`, a loopback
+  serve over the fixtures whose `POST …/message` answers ok, slowly ok, 409 (sender collision), 502 or
+  holds: any scenario that presses `cmd-enter` points `HERDER_URL` at it, never at the real serve
+  (`just check-composer`, six runs, each failing unless the app exits 0 at `quit` with the POSTs it
+  expects). Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -286,17 +292,18 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 | `store/transcript.rs` | 400 | `shell.rs` | 300 |
 | `store/condense.rs` | 220 | `views/markdown.rs` | 250 |
 | `store/notes.rs` | 250 | `local.rs`, `platform_mac.rs`, `harness.rs` | 120, 150, 200 |
-| `store/composer.rs` | 170 | | |
+| `store/composer.rs` | 160 | | |
 | | | `shell/io.rs` | 100 |
 
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 
-U4 (pending review): `store/composer.rs` is new (drafts, `can_send`, the send lifecycle and the wording
-of each refusal); `shell/io.rs` 113 (`save_then_message`, the prefs-before-POST barrier for a message,
-beside `save_then_send`); `store/mod.rs` 378, `shell.rs` 351, `views/lens.rs` 353 and `harness.rs` 274
-carry the composer's event, effect, widget and probe.
+U4 exceptions (agreed at review): `store/composer.rs` is new (drafts, `can_send`, the send lifecycle) at
+156; `views/composer.rs` 213 (the box, its keys, file-back and the wording of every read-only state and
+failure, moved from the store at review); `shell/io.rs` 119 (`save_then_message`, the prefs-before-POST
+barrier for a message, beside `save_then_send`); `store/mod.rs` 383, `shell.rs` 358, `views/lens.rs` 353,
+`views/mod.rs` 356 and `harness.rs` 279 carry the composer's event, effects, widget, focus rule and probes.
 
 Documented U3 exceptions (agreed at the U3 reviews): `store/transcript.rs` 539 (one cohesive paging and
 request lifecycle: cursors, pairing, wake coalescing and each read's own retries; the condenser moved to

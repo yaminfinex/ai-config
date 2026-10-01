@@ -5,12 +5,14 @@
 
 use super::spaces::Move;
 use super::{Attribution, Effect, Persist, Store, Write};
+use crate::api::Refusal;
 
 #[derive(Clone, Debug)]
 pub enum Step {
     /// The box's text for `agent` changed.
     Edit { agent: String, text: String },
-    /// `cmd-enter`: send `agent`'s draft. `file_back`: the zoom left this space for the lens as it sent.
+    /// `cmd-enter`: send `agent`'s draft. `file_back` (`cmd-shift-enter`): once it lands, mark the agent
+    /// seen in this space and leave the zoom for the lens.
     Send {
         agent: String,
         file_back: Option<String>,
@@ -25,7 +27,10 @@ pub enum Step {
 /// Why a send did not land. Every one keeps the draft.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Failure {
-    /// 409: the server refused it (attribution, a sender collision, the substrate), with its reason.
+    /// 409 `attribution required` or `sender refused`: no write from this Mac will land, so every box
+    /// goes read-only with the server's reason (`Attribution::Refused`).
+    Unattributed(Refusal),
+    /// Any other 409 (a retired agent, the substrate), with its reason.
     Refused(String),
     /// 502: the server could not reach the bus; nothing was sent.
     Unreachable(String),
@@ -64,7 +69,7 @@ pub enum ReadOnly {
 impl Store {
     /// Whether the owner can write to `agent`. `Unknown` attribution may send: the server decides.
     pub fn can_send(&self, agent: &str) -> Result<(), ReadOnly> {
-        if self.viewer == Attribution::Refused {
+        if matches!(self.viewer, Attribution::Refused(_)) {
             return Err(ReadOnly::Refused);
         }
         if !self.fleet.agents.contains_key(agent) {
@@ -131,46 +136,21 @@ impl Store {
                             drafts.remove(&agent);
                             out.push(Effect::Persist(Persist::Prefs));
                         }
+                        // Filed back: only a send that landed lets the owner leave the agent.
+                        if let Some(space) = file_back {
+                            let seen = Some(agent.clone());
+                            self.lens_move(Move::View { space, agent: seen }, out);
+                            out.push(Effect::FiledBack { agent });
+                        }
+                    }
+                    Err(Failure::Unattributed(why)) => {
+                        self.viewer = Attribution::Refused(Some(why))
                     }
                     Err(failure) => {
                         self.sends.insert(agent, Sending::Failed(failure));
-                        // Filed back before the answer: the space needs the owner again, to see why.
-                        if let Some(space) = file_back {
-                            self.lens_move(Move::Unread(space), out);
-                        }
                     }
                 }
             }
-        }
-    }
-}
-
-impl ReadOnly {
-    /// What the composer says under the box.
-    pub fn say(self) -> &'static str {
-        match self {
-            ReadOnly::Refused => "read-only: the server refused this Mac's attribution",
-            ReadOnly::OffBoard => "read-only: not on the board",
-            ReadOnly::Pending => "waiting for the agent's details…",
-            ReadOnly::Retired => "retired · read-only",
-        }
-    }
-}
-
-impl Failure {
-    /// What the composer says under the box.
-    pub fn say(&self) -> String {
-        match self {
-            Failure::Refused(why) => format!("refused: {why}"),
-            Failure::Unreachable(why) => format!("unreachable, not sent ({why}) · ⌘⏎ retry"),
-            Failure::UnknownAgent => "the server knows no such agent".into(),
-            Failure::Rejected(status, why) => format!("rejected ({status}): {why}"),
-            Failure::NoAnswer(why) => {
-                format!(
-                    "no answer ({why}): it may have been sent; check the transcript before retrying"
-                )
-            }
-            Failure::NotSaved(why) => format!("not sent: the draft could not be saved ({why})"),
         }
     }
 }

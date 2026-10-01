@@ -577,7 +577,7 @@ fn an_unknown_viewer_is_retried_on_a_timer_and_only_409_is_a_refusal() {
     let mut store = Store::default();
     store.apply(Event::Boot);
     let effects = store.apply(Event::Viewer(Err(Some(409))));
-    assert_eq!(store.viewer, Attribution::Refused);
+    assert_eq!(store.viewer, Attribution::Refused(None));
     assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(asks(&store.apply(hello("b1"))), 0, "a refusal is an answer");
 }
@@ -1856,7 +1856,7 @@ mod transcript_pages {
 /// U4: drafts, who can be written to, and each send's lifecycle.
 mod composer {
     use super::*;
-    use crate::api::AgentDetail;
+    use crate::api::{AgentDetail, Refusal};
     use crate::store::composer::{Failure, ReadOnly, Sending, Step as C};
     use crate::store::transcript::{Got, Step as T, What};
 
@@ -2032,14 +2032,66 @@ mod composer {
     }
 
     #[test]
-    fn a_filed_back_send_that_fails_marks_its_space_unread() {
+    fn a_filed_back_send_leaves_only_once_it_lands() {
         let mut store = zoomed("mupu", Some("listening"));
         let space = store.spaces[0].id.clone();
+        store.apply(Event::Lens(spaces::Move::Unread(space.clone())));
         edit(&mut store, "mupu", "done here");
-        send(&mut store, "mupu", Some(&space));
-        assert!(!store.prefs.unread.contains(&space));
-        let effects = sent(&mut store, "mupu", Err(Failure::Refused("no".into())));
+        assert_eq!(messages(&send(&mut store, "mupu", Some(&space))).len(), 1);
+        // In flight: still unread, the zoom stays.
         assert!(store.prefs.unread.contains(&space));
-        assert_eq!(effects, vec![Effect::Persist(Persist::Prefs)]);
+        let effects = sent(&mut store, "mupu", Ok(()));
+        assert!(!store.prefs.unread.contains(&space), "seen");
+        let filed = Effect::FiledBack {
+            agent: "mupu".into(),
+        };
+        assert!(effects.contains(&filed));
+        // A failure stays in the zoom, saying why, and leaves the lens marks alone.
+        edit(&mut store, "mupu", "again");
+        store.apply(Event::Lens(spaces::Move::Unread(space.clone())));
+        send(&mut store, "mupu", Some(&space));
+        let effects = sent(&mut store, "mupu", Err(Failure::Unreachable("down".into())));
+        assert!(effects.is_empty(), "{effects:?}");
+        assert!(store.prefs.unread.contains(&space));
+        let failed = Sending::Failed(Failure::Unreachable("down".into()));
+        assert_eq!(store.sends["mupu"], failed);
+    }
+
+    #[test]
+    fn an_attribution_refusal_makes_every_box_read_only() {
+        let mut store = zoomed("mupu", Some("listening"));
+        store.apply(Event::Viewer(Ok("web-me".into())));
+        assert_eq!(store.can_send("mupu"), Ok(()));
+        for error in ["attribution required", "sender refused"] {
+            let mut store = store.clone();
+            edit(&mut store, "mupu", "hi");
+            send(&mut store, "mupu", None);
+            let why = Refusal {
+                error: error.into(),
+                detail: "web-vile already exists".into(),
+            };
+            sent(&mut store, "mupu", Err(Failure::Unattributed(why.clone())));
+            assert_eq!(store.viewer, Attribution::Refused(Some(why)));
+            assert_eq!(store.can_send("mupu"), Err(ReadOnly::Refused));
+            assert_eq!(store.prefs.drafts["mupu"], "hi", "the draft stays");
+            // A hello does not ask again: the refusal holds until the app restarts.
+            assert!(
+                store
+                    .apply(hello("b1"))
+                    .iter()
+                    .all(|e| *e != Effect::Fetch(Fetch::Viewer))
+            );
+            assert_eq!(store.can_send("mupu"), Err(ReadOnly::Refused));
+        }
+        // Any other 409 is this send's alone.
+        edit(&mut store, "mupu", "hi");
+        send(&mut store, "mupu", None);
+        sent(
+            &mut store,
+            "mupu",
+            Err(Failure::Refused("peer not found".into())),
+        );
+        assert_eq!(store.viewer, Attribution::Attributed("web-me".into()));
+        assert!(store.ready("mupu"));
     }
 }
