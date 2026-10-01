@@ -1,7 +1,13 @@
 //! The zoom body: the zoomed agent's transcript in compact mode, over a context strip and above its
-//! queued messages. A GPUI `list` anchored at the bottom follows the tail while it is at the bottom; its
-//! rows mirror the store's `(offset, sub)` keys, so an older page is a splice at the top that keeps the
-//! scroll position. Laying out any of the first rows asks for the page before, until the start.
+//! queued messages. A GPUI `list` anchored at the bottom follows the tail while it is at the bottom.
+//! Its rows are `condense::rows` of the store's items: a standalone item, or a run of activity drawn
+//! as one strip of pills that a click (or `o`) opens to its members. A run has no key of its own; it is
+//! the range of its members' `(offset, sub)` keys, which never move, so its open state, the members'
+//! folds and the markdown cache are all kept by member key. An older page or a live entry is a splice
+//! at either end (`plan`) that keeps the scroll position, growing the end rows in place; when a page grows
+//! the head, `hold` keeps the member or pill at the viewport's top where it was. Laying out any
+//! of the first rows asks for the page before, until the start. When the last row is a closed run, its
+//! last member shows in full under its age (web's latest activity).
 //!
 //! Assistant text renders with the kit's markdown (fenced blocks highlighted by tree-sitter), with
 //! mentions and paths linked by `markdown::link`; a click on one dispatches `OpenLink`, which the zoom
@@ -9,7 +15,8 @@
 //! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing. Text
 //! selected here with the pointer is offered to the notes strip for capture (U5).
 
-use crate::store::transcript::{Item, Key, Step, Transcript};
+use crate::store::condense::{self, Pill, Row};
+use crate::store::transcript::{Item, Key, Step, Tone, Transcript};
 use crate::store::{Event, Store};
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, Mentions};
@@ -20,7 +27,9 @@ use gpui_kit::component::text::TextView;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `j k space shift-space g G` (ARCHITECTURE §4).
 #[derive(Clone, Copy, Debug, PartialEq, Action)]
@@ -37,8 +46,12 @@ pub enum Scroll {
 #[action(namespace = transcript, no_json)]
 pub struct OpenLink(pub SharedString);
 
-/// Rows above the viewport's top under which the page before is read.
-const PREFETCH: usize = 60;
+actions!(transcript, [ToggleRun]);
+
+/// Rows above the viewport's top under which the page before is read. A row holds about four entries.
+const PREFETCH: usize = 20;
+/// Characters of a status pill, as web's (`statusChipChars`); opening the run shows it in full.
+const STATUS: usize = 26;
 /// Linked markdown kept per row; dropped beyond this, as the rows scroll by.
 const MD_CACHE: usize = 1500;
 
@@ -46,16 +59,66 @@ type Linked = HashMap<(Key, bool), SharedString>;
 
 /// The list and what it currently mirrors. Interior mutability: views render from `&Ui`.
 pub struct View {
-    list: ListState,
-    /// `(agent, generation)` the rows belong to, and their keys in order.
-    rows: RefCell<((String, u64), Vec<Key>)>,
+    pub(super) list: ListState,
+    /// `(agent, generation)` the rows belong to, the item count they were grouped from (items are only
+    /// ever inserted, so the count is a complete change signal), and the rows.
+    rows: RefCell<((String, u64), usize, Vec<Row>)>,
+    /// Unfolded items (a tool's result, thinking, a long delivery), by key.
     open: RefCell<HashSet<Key>>,
+    /// Open runs: a run is open while any of its members' keys is here, so it stays open as a page or
+    /// an entry grows it at either end. Apart from `open`, so a member's own fold never closes its run.
+    runs: RefCell<BTreeSet<Key>>,
     /// Linked text per row and fold state.
     md: RefCell<(Mentions, Linked)>,
     /// Herder web, where a mermaid diagram links to.
     web: String,
     /// The wheel's scroll handler is on the list.
     wheel: Cell<bool>,
+    /// Where each row, and each mark in it, last laid out (window coordinates).
+    pub(super) painted: Rc<RefCell<Painted>>,
+    /// What was read when a page grew the head, for `hold`.
+    anchor: Cell<Option<Anchor>>,
+}
+
+#[derive(Default)]
+pub(super) struct Painted {
+    pub(super) rows: HashMap<usize, Bounds<Pixels>>,
+    pub(super) marks: Vec<(Mark, Bounds<Pixels>)>,
+}
+
+/// What a row draws that a reader's eye can be on: a member in full (open, or the latest), or a pill,
+/// as the first and last members it merges.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Mark {
+    Member(Key),
+    Pill(Key, Key),
+}
+
+impl Mark {
+    fn key(self) -> Key {
+        match self {
+            Mark::Member(key) | Mark::Pill(key, _) => key,
+        }
+    }
+
+    /// The same thing as `was`, laid out again: a pill once grown at either end still holds its key.
+    pub(super) fn is(self, was: Mark) -> bool {
+        match (self, was) {
+            (Mark::Member(a), Mark::Member(b)) => a == b,
+            (Mark::Pill(first, last), Mark::Pill(key, _)) => first <= key && key <= last,
+            _ => false,
+        }
+    }
+}
+
+/// At the viewport's top when a page grew the head: the mark (`None`: the row has none on screen), a
+/// key in its row, and how far below the viewport's top the mark and the row were.
+#[derive(Clone, Copy)]
+struct Anchor {
+    mark: Option<Mark>,
+    key: Key,
+    y: Pixels,
+    row: Pixels,
 }
 
 impl Default for View {
@@ -66,9 +129,12 @@ impl Default for View {
             list,
             rows: RefCell::default(),
             open: RefCell::default(),
+            runs: RefCell::default(),
             md: RefCell::default(),
             web: String::new(),
             wheel: Cell::default(),
+            painted: Rc::default(),
+            anchor: Cell::default(),
         }
     }
 }
@@ -80,15 +146,14 @@ impl View {
         *self.rows.borrow_mut() = Default::default();
         self.md.borrow_mut().1 = HashMap::new();
         self.open.borrow_mut().clear();
+        self.runs.borrow_mut().clear();
     }
 
-    /// Point the list at the transcript's rows: a new transcript resets it, rows before the first or
-    /// after the last are splices, anything else (rare) a reset.
+    /// Point the list at the transcript's rows: a new transcript resets it, rows grown at either end
+    /// are splices (`plan`), anything else (rare) a reset.
     pub(super) fn sync(&self, t: &Transcript, store: &Store) {
         let mut rows = self.rows.borrow_mut();
         let tag = (t.agent.clone(), t.generation);
-        let n = t.items.len();
-        let (first, last) = (rows.1.first().copied(), rows.1.last().copied());
         let same = rows.0 == tag;
         let names = store.fleet.agents.keys().map(String::as_str);
         let mentions = Mentions::new(names);
@@ -96,22 +161,83 @@ impl View {
         if md.0 != mentions || !same || md.1.len() > MD_CACHE {
             *md = (mentions, HashMap::new());
         }
-        if same && n == rows.1.len() {
+        if same && rows.1 == t.items.len() {
             return;
         }
-        let keys: Vec<Key> = t.items.keys().copied().collect();
-        let before = first.map_or(0, |f| t.items.range(..f).count());
-        let after = last.map_or(0, |l| n - t.items.range(..=l).count());
-        if same && before + after + rows.1.len() == n && !rows.1.is_empty() {
-            let old = rows.1.len();
-            self.list.splice(old..old, after);
-            self.list.splice(0..0, before);
-        } else {
-            self.list.reset(n);
-            self.list.set_follow_mode(FollowMode::Tail);
-            self.open.borrow_mut().clear();
+        let new = condense::rows(&t.items);
+        let m = rows.2.len();
+        match plan(&rows.2, &new).filter(|_| same) {
+            Some((before, after)) => {
+                // A page that grows the head can push what is read down: `hold` puts it back.
+                let head = new.first().map(Row::first) != rows.2.first().map(Row::first);
+                if head && !self.list.is_following_tail() {
+                    self.anchor.set(self.reading(&rows.2));
+                }
+                self.list.splice(m..m, after);
+                self.list.splice(0..0, before);
+                // The end rows may have grown, and a last row's height depends on being last.
+                self.list.remeasure_items(before..before + 1);
+                self.list.remeasure_items(before + m - 1..before + m);
+            }
+            None => {
+                self.list.reset(new.len());
+                self.list.set_follow_mode(FollowMode::Tail);
+                self.open.borrow_mut().clear();
+                self.runs.borrow_mut().clear();
+            }
         }
-        *rows = (tag, keys);
+        *rows = (tag, t.items.len(), new);
+    }
+
+    /// What the viewport's top shows, as last laid out: in the topmost row on screen, the mark nearest
+    /// the viewport's top, else the row.
+    fn reading(&self, rows: &[Row]) -> Option<Anchor> {
+        let painted = self.painted.borrow();
+        let screen = self.list.viewport_bounds();
+        let shown = |b: &Bounds<Pixels>| b.bottom() > screen.top() && b.top() < screen.bottom();
+        let near = |b: &Bounds<Pixels>| f32::from((b.top() - screen.top()).abs());
+        let on = painted.rows.iter().filter(|(_, b)| shown(b));
+        let (ix, at) = on.min_by(|a, b| f32::from(a.1.top()).total_cmp(&f32::from(b.1.top())))?;
+        let row = rows.get(*ix)?;
+        let inside = |m: &Mark| row.first() <= m.key() && m.key() <= row.last();
+        let marks = painted.marks.iter().filter(|(m, b)| inside(m) && shown(b));
+        let mark = marks.min_by(|a, b| near(&a.1).total_cmp(&near(&b.1)));
+        let row_y = at.top() - screen.top();
+        Some(Anchor {
+            mark: mark.map(|(m, _)| *m),
+            key: mark.map_or(row.first(), |(m, _)| m.key()),
+            y: mark.map_or(row_y, |(_, b)| b.top() - screen.top()),
+            row: row_y,
+        })
+    }
+
+    /// Open or close the run from `first` to `last`, list row `ix`.
+    pub(super) fn toggle(&self, (first, last): (Key, Key), ix: usize) {
+        let mut runs = self.runs.borrow_mut();
+        let open: Vec<Key> = runs.range(first..=last).copied().collect();
+        if open.is_empty() {
+            runs.insert(first);
+        }
+        for key in open {
+            runs.remove(&key);
+        }
+        self.list.remeasure_items(ix..ix + 1);
+    }
+
+    fn opened(&self, first: Key, last: Key) -> bool {
+        self.runs.borrow().range(first..=last).next().is_some()
+    }
+
+    /// The rows, how many are runs and how many of those are open, for the harness.
+    pub(super) fn census(&self) -> (usize, usize, usize) {
+        let rows = &self.rows.borrow().2;
+        let runs = rows.iter().filter_map(|r| match *r {
+            Row::Run(first, last) => Some(self.opened(first, last)),
+            Row::One(_) => None,
+        });
+        let runs: Vec<bool> = runs.collect();
+        let open = runs.iter().filter(|&&o| o).count();
+        (rows.len(), runs.len(), open)
     }
 
     /// Whether the list follows the bottom, tagged with the transcript its rows mirror (`Step::Tail`).
@@ -123,6 +249,55 @@ impl View {
             tail,
         })
     }
+}
+
+/// Where `new` rows go around the `old` ones the list holds, as rows before and after them: only when
+/// `new` is `old` grown at its ends (a `before=` page, a live entry, or both), its first and last rows
+/// perhaps grown into longer runs and every row between unchanged. `None`: anything else (a mid
+/// insertion, which paging never makes), and the list resets.
+pub fn plan(old: &[Row], new: &[Row]) -> Option<(usize, usize)> {
+    let (first, last, m) = (old.first()?, old.last()?, old.len());
+    // The new rows holding old's first and last rows.
+    let b = new.partition_point(|r| r.last() < first.last());
+    let e = new.partition_point(|r| r.last() < last.first());
+    let ends = new.get(b)?.first() <= first.first() && new.get(e)?.last() >= last.last();
+    let fits = ends && e + 1 == b + m && (m < 2 || old[1..m - 1] == new[b + 1..e]);
+    fits.then(|| (b, new.len() - 1 - e))
+}
+
+/// `o`: open or close the lowest run on screen.
+pub fn toggle_lowest(ui: &State) -> Vec<Event> {
+    let view = &ui.transcript;
+    let list = &view.list;
+    let rows = view.rows.borrow();
+    // As laid out: following the tail, the list keeps no top to ask.
+    let screen = list.viewport_bounds();
+    let painted = view.painted.borrow();
+    let shown = |ix: usize| {
+        let b = painted.rows.get(&ix);
+        b.is_some_and(|b| b.bottom() > screen.top() && b.top() < screen.bottom())
+    };
+    let mut runs = rows
+        .2
+        .iter()
+        .enumerate()
+        .rev()
+        .filter_map(|(ix, r)| match *r {
+            Row::Run(first, last) => Some(((first, last), ix)),
+            Row::One(_) => None,
+        });
+    if let Some((run, ix)) = runs.find(|&(_, ix)| shown(ix)) {
+        view.toggle(run, ix);
+    }
+    Vec::new()
+}
+
+/// The first row on screen. Following the tail, the list lays out up from the end and keeps no top:
+/// the first row when every row fits, else (somewhere near the bottom) the row count.
+fn top(list: &ListState) -> usize {
+    let (top, n) = (list.logical_scroll_top().item_ix, list.item_count());
+    let fits = list.max_offset_for_scrollbar().y <= px(0.);
+    if top < n || !fits { top.min(n) } else { 0 }
 }
 
 /// Leaving the bottom is published as it happens (a scroll key, the wheel), so a fleet frame drained
@@ -180,8 +355,10 @@ pub fn render<H: Host>(
     };
     let view = &ui.transcript;
     view.sync(tr, store);
+    let hold = hold(view, t, cx.weak_entity());
+    *view.painted.borrow_mut() = Painted::default();
     // Read the page before while the viewport's top is near the first rows (or there are none).
-    let top = view.list.logical_scroll_top().item_ix.min(tr.items.len());
+    let top = top(&view.list);
     let more = tr.loaded() && !tr.at_start() && !tr.paging() && !tr.blocked();
     if more && top < PREFETCH {
         let event = Event::Transcript(Step::Older);
@@ -258,6 +435,7 @@ pub fn render<H: Host>(
     });
     body.capture_any_mouse_up(let_go)
         .child(head)
+        .children(hold)
         .child(rows)
         .children(queued)
         .children(notice)
@@ -296,7 +474,7 @@ fn strip<H: Host>(store: &Store, tr: &Transcript, t: TypeScale, cx: &mut Context
         .when(tr.paging(), |el| el.child(dim("reading older…")))
 }
 
-/// One row of the list.
+/// One row of the list: an item, or a run.
 fn row<H: Host>(
     (store, ui): (&Store, &Ui),
     ix: usize,
@@ -305,128 +483,318 @@ fn row<H: Host>(
 ) -> AnyElement {
     let view = &ui.transcript;
     let rows = view.rows.borrow();
-    let tr = store
-        .transcript
-        .open
-        .as_ref()
-        .filter(|tr| tr.agent == rows.0.0);
-    let found = tr
-        .zip(rows.1.get(ix))
-        .and_then(|(tr, &k)| Some((tr, k, tr.items.get(&k)?)));
-    let Some((tr, key, item)) = found else {
+    let tr = store.transcript.open.as_ref();
+    let tr = tr.filter(|tr| tr.agent == rows.0.0);
+    let (Some(tr), Some(&r)) = (tr, rows.2.get(ix)) else {
         return div().into_any_element();
     };
-    let open = view.open.borrow().contains(&key);
-    let toggle = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-        let _ = host.update(cx, |h, cx| {
-            let v = &h.parts().1.transcript;
-            let mut o = v.open.borrow_mut();
-            if !o.remove(&key) {
-                o.insert(key);
-            }
-            v.list.remeasure_items(ix..ix + 1);
-            cx.notify();
-        });
+    let paint = Paint {
+        view,
+        tr,
+        t,
+        host,
+        ix,
     };
-    let id = |kind: &str| {
-        ElementId::Name(format!("{kind}-{}-{}-{}", tr.generation, key.0, key.1).into())
-    };
-    let el = div().w_full().max_w(t.px(980.)).px(t.px(20.)).pb(t.px(6.));
-    let small = |text: String| dim(text).text_size(t.small);
-    let glyph = if open { "▾" } else { "▸" };
-    let fold = |text: String| {
-        let el = div().id(id("fold")).cursor_pointer();
-        el.on_click(toggle.clone())
-            .child(small(format!("{glyph} {text}")))
-    };
-    // Prompts, deliveries and assistant text: linked, selectable markdown (U5's selection seam).
-    let md = |text: &str| {
-        let linked = {
-            let mut md = view.md.borrow_mut();
-            let (mentions, cache) = &mut *md;
-            let web = format!("{}/agents/{}", view.web, tr.agent);
-            let link = || SharedString::from(markdown::link(text, mentions, &web));
-            cache.entry((key, open)).or_insert_with(link).clone()
+    let el = div().relative().w_full().max_w(t.px(980.));
+    let el = el.px(t.px(20.)).pb(t.px(6.));
+    let el = el.child(record(&view.painted, move |p, b| p.rows.insert(ix, b)));
+    match r {
+        Row::One(key) => el.children(tr.items.get(&key).map(|item| paint.body(key, item))),
+        Row::Run(first, last) => el.child(paint.run((first, last), ix + 1 == rows.2.len())),
+    }
+    .into_any_element()
+}
+
+/// What a row draws with: the list row `ix`, which a fold or run toggle remeasures.
+struct Paint<'a, H> {
+    view: &'a View,
+    tr: &'a Transcript,
+    t: TypeScale,
+    host: WeakEntity<H>,
+    ix: usize,
+}
+
+impl<H: Host> Paint<'_, H> {
+    fn id(&self, kind: &str, key: Key) -> ElementId {
+        let generation = self.tr.generation;
+        ElementId::Name(format!("{kind}-{generation}-{}-{}", key.0, key.1).into())
+    }
+
+    /// A run: its strip of pills, a click opening it to every member behind a rule. Closed and last,
+    /// its last member is drawn in full under its age instead of as a pill.
+    fn run(&self, (first, last): (Key, Key), tail: bool) -> Div {
+        let (view, tr, t, ix) = (self.view, self.tr, self.t, self.ix);
+        let members = || tr.items.range(first..=last);
+        let open = view.opened(first, last);
+        let latest = members().next_back().filter(|_| tail && !open);
+        let n = members().count() - usize::from(latest.is_some());
+        let pills = condense::pills(members().take(n).map(|(_, item)| item));
+        let keys: Vec<Key> = members().take(n).map(|(&key, _)| key).collect();
+        let host = self.host.clone();
+        let toggle = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+            let _ = host.update(cx, |h, cx| {
+                h.parts().1.transcript.toggle((first, last), ix);
+                cx.notify();
+            });
         };
-        let text = TextView::markdown(id("md"), linked).selectable(true);
-        // No actions are drawn; asking for them gives each fenced block an id, which its sideways
-        // scroll keeps its offset under.
-        let text = text
-            .style(theme::prose(t))
-            .code_block_actions(|_, _, _| Empty);
-        let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
-            Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
-            None if url.starts_with("http://") || url.starts_with("https://") => cx.open_url(url),
-            None => {}
+        let strip = (!pills.is_empty()).then(|| {
+            let el = div().id(self.id("run", first)).cursor_pointer();
+            el.on_click(toggle)
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(t.px(5.))
+                .child(dim(if open { "⌄" } else { "›" }))
+                .children(pills.iter().enumerate().map(|(i, p)| {
+                    let end = pills.get(i + 1).map_or(n, |next| next.at);
+                    let mark = Mark::Pill(keys[p.at], keys[end - 1]);
+                    let at = record(&view.painted, move |pt, b| pt.marks.push((mark, b)));
+                    pill(p, t).relative().child(at)
+                }))
         });
-        sideways(div().child(text))
+        let each = members().map(|(&key, item)| {
+            let mark = Mark::Member(key);
+            let at = record(&view.painted, move |p, b| p.marks.push((mark, b)));
+            let el = div().relative().pb(t.px(4.));
+            el.child(self.body(key, item)).child(at)
+        });
+        let detail = open.then(|| {
+            let el = div().border_l_1().border_color(rgb(pal::RULE));
+            el.ml(t.px(4.)).pl(t.px(12.)).pt(t.px(4.)).children(each)
+        });
+        let latest = latest.map(|(&key, item)| {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH);
+            let now = now.map_or(0, |d| d.as_secs());
+            let age = tr.times.get(&key.0).map(|&at| ago(now.saturating_sub(at)));
+            let age = age.unwrap_or_else(|| "time unknown".into());
+            let line = dim(format!("latest · {age}")).text_size(t.small);
+            let mark = Mark::Member(key);
+            let at = record(&view.painted, move |p, b| p.marks.push((mark, b)));
+            let el = div().relative().pt(t.px(3.)).child(line);
+            el.child(self.body(key, item)).child(at)
+        });
+        let el = div().flex().flex_col().gap(t.px(2.));
+        el.children(strip).children(detail).children(latest)
+    }
+
+    /// One item as its own row, or as a member of an open run or the latest.
+    fn body(&self, key: Key, item: &Item) -> AnyElement {
+        let (view, tr, t, ix) = (self.view, self.tr, self.t, self.ix);
+        let open = view.open.borrow().contains(&key);
+        let host = self.host.clone();
+        let toggle = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+            let _ = host.update(cx, |h, cx| {
+                let v = &h.parts().1.transcript;
+                let mut o = v.open.borrow_mut();
+                if !o.remove(&key) {
+                    o.insert(key);
+                }
+                v.list.remeasure_items(ix..ix + 1);
+                cx.notify();
+            });
+        };
+        let id = |kind: &str| self.id(kind, key);
+        let small = |text: String| dim(text).text_size(t.small);
+        let glyph = if open { "▾" } else { "▸" };
+        let fold = |text: String| {
+            let el = div().id(id("fold")).cursor_pointer();
+            el.on_click(toggle.clone())
+                .child(small(format!("{glyph} {text}")))
+        };
+        // Prompts, deliveries and assistant text: linked, selectable markdown (U5's selection seam).
+        let md = |text: &str| {
+            let linked = {
+                let mut md = view.md.borrow_mut();
+                let (mentions, cache) = &mut *md;
+                let web = format!("{}/agents/{}", view.web, tr.agent);
+                let link = || SharedString::from(markdown::link(text, mentions, &web));
+                cache.entry((key, open)).or_insert_with(link).clone()
+            };
+            let text = TextView::markdown(id("md"), linked).selectable(true);
+            // No actions are drawn; asking for them gives each fenced block an id, which its sideways
+            // scroll keeps its offset under.
+            let text = text
+                .style(theme::prose(t))
+                .code_block_actions(|_, _, _| Empty);
+            let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
+                Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
+                None if url.starts_with("http://") || url.starts_with("https://") => {
+                    cx.open_url(url)
+                }
+                None => {}
+            });
+            sideways(div().child(text))
+        };
+        match item {
+            Item::Prompt(text) => div()
+                .bg(rgb(pal::ACCW))
+                .border_l(t.px(3.))
+                .border_color(rgb(pal::ACC))
+                .rounded(t.px(4.))
+                .px(t.px(10.))
+                .py(t.px(6.))
+                .child(md(text))
+                .into_any_element(),
+            Item::Delivery {
+                sender,
+                text,
+                operator,
+            } => {
+                let from = format!("← {sender}{}", if *operator { " · operator" } else { "" });
+                let (shown, long) = preview(text, open);
+                let more = long.then(|| fold(if open { "less" } else { "more" }.into()));
+                let el = div().child(small(from)).child(md(&shown));
+                el.children(more).into_any_element()
+            }
+            // The pill uncut, then what it stands for when that says more.
+            Item::Chip { tone, label, text } => {
+                let full = Pill {
+                    tone: *tone,
+                    label: label.clone(),
+                    count: 1,
+                    error: false,
+                    at: 0,
+                };
+                let more = (text != label && !text.is_empty()).then(|| small(text.clone()));
+                let el = div().flex().flex_col().items_start().gap(t.px(2.));
+                el.child(chip(&full, label.clone(), t).max_w_full())
+                    .children(more)
+                    .into_any_element()
+            }
+            Item::SystemChip(s) => small(format!("· {s}")).into_any_element(),
+            Item::CompactDivider(s) => {
+                let rule = || div().flex_1().h(px(1.)).bg(rgb(pal::PURPLE_RULE));
+                let el = div().flex().items_center().gap(t.px(8.)).py(t.px(8.));
+                el.text_size(t.small)
+                    .text_color(rgb(pal::PURPLE))
+                    .child(rule())
+                    .child(s.clone())
+                    .child(rule())
+                    .into_any_element()
+            }
+            Item::Assistant { markdown } => md(markdown).into_any_element(),
+            Item::Thinking(text) if text.trim().is_empty() => {
+                small("∴ thinking".into()).into_any_element()
+            }
+            Item::Thinking(text) => div()
+                .child(fold("thinking".into()))
+                .when(open, |el| el.child(small(text.clone())))
+                .into_any_element(),
+            Item::Tool {
+                name,
+                summary,
+                result,
+            } => {
+                let err = result.as_ref().is_some_and(|r| r.error);
+                let mark = if err { " ✗" } else { "" };
+                let line = fold(format!("{name} {summary}{mark}")).truncate();
+                let line = line.when(err, |el| el.text_color(rgb(pal::PORT)));
+                let detail = result.as_ref().filter(|_| open);
+                let detail = detail.map(|r| small(format!("→ {}", r.text)));
+                div().child(line).children(detail).into_any_element()
+            }
+            Item::Error(text) => div()
+                .text_color(rgb(pal::PORT))
+                .child(format!("✗ {text}"))
+                .into_any_element(),
+        }
+    }
+}
+
+/// Records where its parent laid out into `painted` (a parent drawn this frame is on screen or in
+/// the list's overdraw).
+fn record<T>(
+    painted: &Rc<RefCell<Painted>>,
+    put: impl Fn(&mut Painted, Bounds<Pixels>) -> T + 'static,
+) -> impl IntoElement {
+    let painted = painted.clone();
+    let at = move |b, _: &mut Window, _: &mut App| {
+        put(&mut painted.borrow_mut(), b);
     };
-    let body = match item {
-        Item::Prompt(text) => div()
-            .bg(rgb(pal::ACCW))
-            .border_l(t.px(3.))
-            .border_color(rgb(pal::ACC))
-            .rounded(t.px(4.))
-            .px(t.px(10.))
-            .py(t.px(6.))
-            .child(md(text))
-            .into_any_element(),
-        Item::Delivery {
-            sender,
-            quiet: true,
-            ..
-        } => small(format!("· {sender}")).into_any_element(),
-        Item::Delivery {
-            sender,
-            text,
-            operator,
-            ..
-        } => {
-            let from = format!("← {sender}{}", if *operator { " · operator" } else { "" });
-            let (shown, long) = preview(text, open);
-            let more = long.then(|| fold(if open { "less" } else { "more" }.into()));
-            let el = div().child(small(from)).child(md(&shown));
-            el.children(more).into_any_element()
-        }
-        Item::TaskNotification(s) => small(format!("⚑ {s}")).into_any_element(),
-        Item::SystemChip(s) => small(format!("· {s}")).into_any_element(),
-        Item::CompactDivider(s) => {
-            let rule = || div().flex_1().h(px(1.)).bg(rgb(pal::PURPLE_RULE));
-            let el = div().flex().items_center().gap(t.px(8.)).py(t.px(8.));
-            el.text_size(t.small)
-                .text_color(rgb(pal::PURPLE))
-                .child(rule())
-                .child(s.clone())
-                .child(rule())
-                .into_any_element()
-        }
-        Item::Assistant { markdown } => md(markdown).into_any_element(),
-        Item::Thinking(text) if text.trim().is_empty() => {
-            small("∴ thinking".into()).into_any_element()
-        }
-        Item::Thinking(text) => div()
-            .child(fold("thinking".into()))
-            .when(open, |el| el.child(small(text.clone())))
-            .into_any_element(),
-        Item::Tool {
-            name,
-            summary,
-            result,
-        } => {
-            let err = result.as_ref().is_some_and(|r| r.error);
-            let mark = if err { " ✗" } else { "" };
-            let line = fold(format!("{name} {summary}{mark}")).truncate();
-            let line = line.when(err, |el| el.text_color(rgb(pal::PORT)));
-            let detail = result.as_ref().filter(|_| open);
-            let detail = detail.map(|r| small(format!("→ {}", r.text)));
-            div().child(line).children(detail).into_any_element()
-        }
-        Item::Error(text) => div()
-            .text_color(rgb(pal::PORT))
-            .child(format!("✗ {text}"))
-            .into_any_element(),
+    canvas(at, |_, _, _, _| {}).absolute().size_full()
+}
+
+/// Keeps what is read in place when a page grows the head (`View::anchor`): before the list lays out,
+/// lays the row now holding the anchor out of sight, finds the same mark in it (else takes the row's
+/// top) and scrolls so that sits where it was. However the row grew or rewrapped, above or below.
+fn hold<H: Host>(view: &View, t: TypeScale, host: WeakEntity<H>) -> Option<impl IntoElement> {
+    let a = view.anchor.take()?;
+    let ix = view.rows.borrow().2.partition_point(|r| r.last() < a.key);
+    let (list, painted) = (view.list.clone(), view.painted.clone());
+    let measure = move |_, window: &mut Window, cx: &mut App| {
+        let Some(h) = host.upgrade() else { return };
+        let mut el = row::<H>(h.read(cx).view(), ix, t, host.clone());
+        let width = AvailableSpace::Definite(list.viewport_bounds().size.width);
+        let space = size(width, AvailableSpace::MinContent);
+        // Far above the window: measured, never seen or hit.
+        let away = point(px(0.), px(-100_000.));
+        let was = std::mem::take(&mut *painted.borrow_mut());
+        el.prepaint_as_root(away, space, window, cx);
+        let laid = std::mem::replace(&mut *painted.borrow_mut(), was);
+        let mark = a
+            .mark
+            .and_then(|m| laid.marks.iter().copied().find(|(n, _)| n.is(m)));
+        let (at, y) = mark.map_or((px(0.), a.row), |(_, b)| (b.top() - away.y, a.y));
+        list.scroll_to(ListOffset {
+            item_ix: ix,
+            offset_in_item: (at - y).max(px(0.)),
+        });
     };
-    el.child(body).into_any_element()
+    Some(canvas(measure, |_, _, _, _| {}))
+}
+
+/// A run's pill: `Bash ×4`, a status cut to web's width, red when a merged tool failed.
+fn pill(p: &Pill, t: TypeScale) -> Div {
+    let text = match p.count {
+        1 => p.label.clone(),
+        n => format!("{} ×{n}", p.label),
+    };
+    let text = match p.tone {
+        Tone::Status => cut(&text, STATUS),
+        _ => text,
+    };
+    chip(p, text, t).flex_none()
+}
+
+fn chip(p: &Pill, text: String, t: TypeScale) -> Div {
+    let (border, ground, ink) = pal::chip(p.tone);
+    let (border, ink) = if p.error {
+        (pal::PORT, pal::PORT)
+    } else {
+        (border, ink)
+    };
+    div()
+        .px(t.px(7.))
+        .border_1()
+        .border_color(rgb(border))
+        .bg(rgb(ground))
+        .text_color(rgb(ink))
+        .rounded(t.px(10.))
+        .text_size(t.small)
+        .child(text)
+}
+
+/// `text` with its whitespace collapsed, cut to `max` characters with an ellipsis.
+fn cut(text: &str, max: usize) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    match text.char_indices().nth(max) {
+        Some(_) => {
+            let keep: String = text.chars().take(max - 1).collect();
+            format!("{keep}…")
+        }
+        None => text,
+    }
+}
+
+/// How long ago, in web's units: seconds (at least one), minutes, hours or days, rounded.
+pub fn ago(secs: u64) -> String {
+    let round = |unit: u64| (secs + unit / 2) / unit;
+    match secs {
+        0..60 => format!("{}s", secs.max(1)),
+        60..3600 => format!("{}m", round(60)),
+        3600..86_400 => format!("{}h", round(3600)),
+        _ => format!("{}d", round(86_400)),
+    }
 }
 
 /// Keeps a sideways gesture off the list. A fenced block scrolls itself sideways (`theme::prose`), but

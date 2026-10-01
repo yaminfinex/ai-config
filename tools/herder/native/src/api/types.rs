@@ -167,6 +167,8 @@ pub struct Reset {}
 #[serde(default, rename_all = "camelCase")]
 pub struct Entry {
     pub byte_offset: u64,
+    /// RFC 3339 UTC, as the serve writes it (`2026-09-30T00:07:16.868Z`).
+    pub timestamp: String,
     pub kind: Kind,
     pub payload: Payload,
 }

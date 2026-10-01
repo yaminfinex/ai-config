@@ -66,6 +66,19 @@ pub mod pal {
     pub const GREEN: u32 = 0x3CC486;
     pub const AMBER: u32 = 0xF2B51C;
     pub const PORT: u32 = 0xF0685C;
+
+    use crate::store::transcript::Tone;
+
+    /// A run pill's border, ground and ink: web's dark `--pill-*` tokens, and `--info-*` for a status.
+    pub fn chip(tone: Tone) -> (u32, u32, u32) {
+        match tone {
+            Tone::Tool => (0x2C4370, 0x1B2438, 0xA9C4FF),
+            Tone::Thinking => (0x40325C, 0x2A2138, 0xD2B4FF),
+            Tone::Message => (0x31563A, 0x182E1D, 0xB7DDB9),
+            Tone::Other => (0x5C4716, 0x3D2E12, 0xE5C365),
+            Tone::Status => (0x484B55, 0x26272E, 0xB6BAC4),
+        }
+    }
 }
 
 pub fn type_scale(scale: f32) -> TypeScale {

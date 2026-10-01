@@ -1037,3 +1037,539 @@ mod notes_events {
         assert_eq!(state(&shell, cx).1.as_deref(), Some("c"));
     }
 }
+
+/// F2: where regrouped rows splice into the list, and which runs stay open as pages land.
+mod runs {
+    use crate::store::condense::{self, Row};
+    use crate::store::tests::loaded;
+    use crate::store::tests::transcript_pages::{drive, history, items, open, reference, wake};
+    use crate::store::transcript::{Key, Step};
+    use crate::store::{Event, Store};
+    use crate::views::transcript::{View, plan};
+
+    /// The rows of `agent`'s history from `a` to `b`, read whole.
+    fn rows(agent: &str, a: usize, b: usize) -> Vec<Row> {
+        condense::rows(&reference(agent, &history(agent)[a..b]))
+    }
+
+    fn fits(old: &[Row], new: &[Row]) -> (usize, usize) {
+        let (before, after) =
+            plan(old, new).unwrap_or_else(|| panic!("a splice: {old:?} into {new:?}"));
+        assert_eq!(before + old.len() + after, new.len());
+        let m = old.len();
+        if m > 1 {
+            assert_eq!(
+                old[1..m - 1],
+                new[before + 1..before + m - 1],
+                "rows between unchanged"
+            );
+        }
+        (before, after)
+    }
+
+    #[test]
+    fn earlier_pages_splice_in_before_even_when_they_join_a_run() {
+        let mut store = loaded();
+        let all = history("mupu");
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, 7);
+        let mut joined = 0;
+        loop {
+            let old = condense::rows(items(&store));
+            let effects = store.apply(Event::Transcript(Step::Older));
+            if effects.is_empty() {
+                break;
+            }
+            drive(&mut store, effects, &all, 7);
+            let new = condense::rows(items(&store));
+            let (before, after) = fits(&old, &new);
+            assert_eq!(after, 0, "a page before adds nothing after");
+            joined += usize::from(new[before] != old[0]);
+        }
+        assert!(joined > 0, "some page joined the run at the top");
+    }
+
+    #[test]
+    fn live_entries_splice_in_after_and_both_ends_at_once() {
+        let n = history("mupu").len();
+        for b in n - 12..n {
+            let (before, _) = fits(&rows("mupu", 10, b), &rows("mupu", 10, b + 1));
+            assert_eq!(before, 0, "an entry after adds nothing before");
+            fits(&rows("mupu", 10, b), &rows("mupu", 7, b + 1));
+        }
+    }
+
+    #[test]
+    fn a_row_in_the_middle_resets() {
+        let new = rows("mupu", 0, history("mupu").len());
+        let mut old = new.clone();
+        old.remove(new.len() / 2);
+        assert_eq!(plan(&old, &new), None);
+        assert_eq!(plan(&[], &new), None);
+    }
+
+    fn sync(view: &View, store: &Store) {
+        view.sync(store.transcript.open.as_ref().unwrap(), store);
+    }
+
+    /// The first and last runs among the view's rows, with their row indices.
+    fn ends(store: &Store) -> [((Key, Key), usize); 2] {
+        ends_of(&condense::rows(items(store))).unwrap()
+    }
+
+    fn ends_of(rows: &[Row]) -> Option<[((Key, Key), usize); 2]> {
+        let mut runs = rows.iter().enumerate().filter_map(|(ix, r)| match *r {
+            Row::Run(first, last) => Some(((first, last), ix)),
+            Row::One(_) => None,
+        });
+        let top = runs.next()?;
+        Some([top, runs.next_back().unwrap_or(top)])
+    }
+
+    #[test]
+    fn open_runs_stay_open_as_they_grow_and_close_whole() {
+        let all = history("mupu");
+        // Cut the live tail inside mupu's last run, so a wake grows it.
+        let whole = rows("mupu", 0, all.len());
+        let last = whole.last().unwrap();
+        assert!(matches!(last, Row::Run(..)), "mupu ends in a run");
+        let cut = (1..all.len())
+            .rev()
+            .find(|&b| {
+                all[b].byte_offset > last.first().0 && all[b - 1].byte_offset >= last.first().0
+            })
+            .unwrap();
+        // A page size whose first page holds two runs, the top one cut short.
+        let split = |a: usize| {
+            let key = (all[a].byte_offset, 0);
+            let run = |r: &&Row| matches!(r, Row::Run(f, l) if *f < key && key <= *l);
+            whole.iter().any(|r| run(&r))
+        };
+        let two = |a: usize| ends_of(&rows("mupu", a, cut)).is_some_and(|[t, b]| t != b);
+        let page = (20..cut).find(|&n| split(cut - n) && two(cut - n)).unwrap();
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all[..cut], page);
+        let view = View::default();
+        sync(&view, &store);
+        let [top, bottom] = ends(&store);
+        assert_ne!(top, bottom, "two runs on the first page");
+        for (run, ix) in [top, bottom] {
+            view.toggle(run, ix);
+        }
+        assert_eq!(view.census().2, 2, "{:?}", view.census());
+        // Pages before join the top run, the wake grows the bottom one.
+        let mut joined = false;
+        loop {
+            let effects = store.apply(Event::Transcript(Step::Older));
+            if effects.is_empty() {
+                break;
+            }
+            drive(&mut store, effects, &all, page);
+            sync(&view, &store);
+            assert_eq!(view.census().2, 2, "still open after a page before");
+            let first = ends(&store)[0].0.0;
+            joined |= first < (top.0).0
+                && condense::rows(items(&store)).first() == Some(&Row::Run(first, (top.0).1));
+        }
+        assert!(joined, "a page before joined the open top run");
+        let effects = store.apply(wake(&store, "mupu"));
+        drive(&mut store, effects, &all, page);
+        sync(&view, &store);
+        assert_eq!(items(&store), &reference("mupu", &all), "read to both ends");
+        let (rows, runs, open) = view.census();
+        assert_eq!((rows, open), (whole.len(), 2), "{runs} runs");
+        // Close the grown runs that hold the keys opened.
+        let now = condense::rows(items(&store));
+        for key in [(top.0).0, (bottom.0).0] {
+            let ix = now
+                .iter()
+                .position(|r| r.first() <= key && key <= r.last())
+                .unwrap();
+            view.toggle((now[ix].first(), now[ix].last()), ix);
+        }
+        assert_eq!(view.census().2, 0, "a closed run holds no open key");
+    }
+
+    #[test]
+    fn ages_round_in_webs_units() {
+        let ago = crate::views::transcript::ago;
+        let cases = [
+            (0, "1s"),
+            (59, "59s"),
+            (60, "1m"),
+            (89, "1m"),
+            (90, "2m"),
+            (3599, "60m"),
+        ];
+        let cases = cases
+            .into_iter()
+            .chain([(3600, "1h"), (86_399, "24h"), (86_400, "1d")]);
+        for (secs, want) in cases {
+            assert_eq!(ago(secs), want, "{secs}s");
+        }
+    }
+}
+
+/// F2 review: the real transcript body laid out headless. A page that grows the run at the viewport's
+/// top leaves what is read where it was; `o` toggles only a run on screen.
+mod layout {
+    use crate::api::types::Entry;
+    use crate::store::condense::{self, Row};
+    use crate::store::tests::loaded;
+    use crate::store::tests::transcript_pages::{self, drive, history, items, open, reference};
+    use crate::store::transcript::{Key, Step};
+    use crate::store::{Event, Store};
+    use crate::views::lens::Ui;
+    use crate::views::space::Zoom;
+    use crate::views::transcript::{self, Mark};
+    use crate::views::{Host, theme};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Bounds, Context, Entity, IntoElement, ListOffset, ParentElement as _, Pixels, Render,
+        Styled as _, TestAppContext, VisualTestContext, Window, div, px, size,
+    };
+
+    struct Body {
+        store: Store,
+        ui: Ui,
+    }
+
+    impl Host for Body {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        // The test reads the pages itself.
+        fn dispatch(&mut self, _: Event, _: &mut Context<Self>) {}
+
+        fn copy(&mut self, _: String, _: &mut Context<Self>) {}
+    }
+
+    impl Render for Body {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let zoom = self.ui.zoom.clone().unwrap();
+            let t = theme::type_scale(1.);
+            let body = transcript::render(&self.store, &self.ui, &zoom, t, cx);
+            div().size_full().flex().flex_col().child(body)
+        }
+    }
+
+    /// `agent`'s first `served` entries, its tail read `limit` entries a page, in a window this size.
+    fn body<'a>(
+        cx: &'a mut TestAppContext,
+        agent: &'static str,
+        (served, limit): (usize, usize),
+        (width, height): (f32, f32),
+    ) -> (Entity<Body>, &'a mut VisualTestContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+        });
+        let mut store = loaded();
+        let effects = open(&mut store, agent);
+        drive(&mut store, effects, served_of(agent, served), limit);
+        let (body, cx) = cx.add_window_view(move |window, cx| {
+            let mut ui = Ui::new(window, cx);
+            let (space, agent) = ("none".into(), Some(agent.into()));
+            ui.zoom = Some(Zoom { space, agent });
+            Body { store, ui }
+        });
+        cx.simulate_resize(size(px(width), px(height)));
+        draw(cx);
+        (body, cx)
+    }
+
+    fn served_of(agent: &str, served: usize) -> &'static [Entry] {
+        let all = Box::leak(history(agent).into_boxed_slice());
+        &all[..served.min(all.len())]
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+    }
+
+    fn rows(body: &Entity<Body>, cx: &mut VisualTestContext) -> Vec<Row> {
+        body.read_with(cx, |b, _| condense::rows(items(&b.store)))
+    }
+
+    fn row(body: &Entity<Body>, ix: usize, cx: &mut VisualTestContext) -> Bounds<Pixels> {
+        body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().rows[&ix])
+    }
+
+    /// Where `was` (a member, or a pill holding its key) last laid out.
+    fn mark(body: &Entity<Body>, was: Mark, cx: &mut VisualTestContext) -> Option<Bounds<Pixels>> {
+        body.read_with(cx, |b, _| {
+            let painted = b.ui.transcript.painted.borrow();
+            painted
+                .marks
+                .iter()
+                .find(|(m, _)| m.is(was))
+                .map(|(_, b)| *b)
+        })
+    }
+
+    fn screen(body: &Entity<Body>, cx: &mut VisualTestContext) -> Bounds<Pixels> {
+        body.read_with(cx, |b, _| b.ui.transcript.list.viewport_bounds())
+    }
+
+    /// Read the page before and then, when `wake`, what the served file has after; then lay out once.
+    fn older(
+        body: &Entity<Body>,
+        agent: &str,
+        (served, limit): (usize, usize),
+        wake: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        body.update(cx, |b, cx| {
+            let all = served_of(agent, served);
+            let effects = b.store.apply(Event::Transcript(Step::Older));
+            drive(&mut b.store, effects, all, limit);
+            if wake {
+                let effects = b.store.apply(transcript_pages::wake(&b.store, agent));
+                drive(&mut b.store, effects, all, limit);
+            }
+            cx.notify();
+        });
+        draw(cx);
+    }
+
+    /// The rows of `all[a..b]` read whole, and how many members each run has.
+    fn window(agent: &str, all: &[Entry], (a, b): (usize, usize)) -> (Vec<Row>, Vec<usize>) {
+        let items = reference(agent, &all[a..b]);
+        let rows = condense::rows(&items);
+        let size = |r: &Row| items.range(r.first()..=r.last()).count();
+        let sizes = rows.iter().map(size).collect();
+        (rows, sizes)
+    }
+
+    /// A page size whose tail is several rows, the first a run that the page before grows.
+    fn split(agent: &str) -> usize {
+        let all = history(agent);
+        let whole = condense::rows(&reference(agent, &all));
+        let inside = |n: usize| {
+            let key = (all[all.len() - n].byte_offset, 0);
+            whole
+                .iter()
+                .any(|r| matches!(*r, Row::Run(f, l) if f < key && key <= l))
+        };
+        // Its top run has a strip that wraps, and rows enough to scroll.
+        let fits = |n: usize| {
+            let (rows, sizes) = window(agent, &all, (all.len() - n, all.len()));
+            rows.len() >= 8 && matches!(rows[0], Row::Run(..)) && sizes[0] >= 6
+        };
+        (20..all.len()).find(|&n| inside(n) && fits(n)).unwrap()
+    }
+
+    /// Scroll the top row so the viewport's top is `y` into it.
+    fn scroll(body: &Entity<Body>, y: Pixels, cx: &mut VisualTestContext) {
+        body.read_with(cx, |b, _| {
+            let list = &b.ui.transcript.list;
+            list.scroll_to(ListOffset {
+                item_ix: 0,
+                offset_in_item: y,
+            });
+        });
+        draw(cx);
+    }
+
+    /// Open the top run and put the viewport's top 10px above a member: the third, or the latest of
+    /// the first three the list can scroll to. Returns that member and its y.
+    fn read_third(body: &Entity<Body>, cx: &mut VisualTestContext) -> (Mark, Pixels) {
+        let Row::Run(first, last) = rows(body, cx)[0] else {
+            panic!("the top row is a run")
+        };
+        body.read_with(cx, |b, _| b.ui.transcript.toggle((first, last), 0));
+        scroll(body, px(0.), cx);
+        let keys: Vec<Key> = body.read_with(cx, |b, _| {
+            items(&b.store)
+                .range(first..=last)
+                .map(|(k, _)| *k)
+                .collect()
+        });
+        let most = body.read_with(cx, |b, _| b.ui.transcript.list.max_offset_for_scrollbar().y);
+        let top = row(body, 0, cx).top();
+        let mut reach = Vec::new();
+        for &key in keys.iter().take(3) {
+            let y = mark(body, Mark::Member(key), cx).unwrap().top() - top;
+            reach.extend((y - px(10.) <= most).then_some((key, y)));
+        }
+        let (key, y) = *reach.last().expect("a member the list scrolls to");
+        let read = Mark::Member(key);
+        scroll(body, y - px(10.), cx);
+        let was = mark(body, read, cx).unwrap().top();
+        let top = screen(body, cx).top();
+        assert!(
+            (was - top - px(10.)).abs() < px(0.5),
+            "scrolled to it: {was:?}"
+        );
+        (read, was)
+    }
+
+    fn held(body: &Entity<Body>, read: Mark, was: Pixels, cx: &mut VisualTestContext) {
+        let now = mark(body, read, cx).expect("still laid out").top();
+        assert!(
+            (now - was).abs() < px(0.5),
+            "{read:?} moved from {was:?} to {now:?}"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_page_growing_the_open_top_run_leaves_its_members_in_place(cx: &mut TestAppContext) {
+        let limit = split("mupu");
+        let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
+        let Row::Run(first, last) = rows(&body, cx)[0] else {
+            panic!("the top row is a run")
+        };
+        let (read, was) = read_third(&body, cx);
+        older(&body, "mupu", (usize::MAX, limit), false, cx);
+        let grown = rows(&body, cx);
+        assert!(
+            grown
+                .iter()
+                .skip(1)
+                .any(|r| matches!(*r, Row::Run(f, l) if f < first && l == last)),
+            "rows went in above the grown run"
+        );
+        held(&body, read, was, cx);
+    }
+
+    #[gpui_kit::test]
+    fn a_page_growing_only_the_open_top_run_leaves_its_members_in_place(cx: &mut TestAppContext) {
+        // The page before adds members to the top run and no row: `before` is 0. With rows under
+        // the run to scroll by.
+        let only = |agent: &'static str| {
+            let all = history(agent);
+            let n = all.len();
+            let fits = |k: usize| {
+                let (old, sizes) = window(agent, &all, (n - k, n));
+                let (new, _) = window(agent, &all, (n - 2 * k, n));
+                let head =
+                    matches!((old[0], new[0]), (Row::Run(f, l), Row::Run(g, m)) if g < f && m == l);
+                head && sizes[0] >= 3
+                    && old.len() >= 5
+                    && old.len() == new.len()
+                    && old[1..] == new[1..]
+            };
+            (3..n / 2).find(|&k| fits(k)).map(|k| (agent, k))
+        };
+        let agents = ["mupu", "conductor-line", "grill-confirm-lubo"];
+        let (agent, limit) = agents
+            .into_iter()
+            .find_map(only)
+            .expect("a page that only grows the top run");
+        let (body, cx) = body(cx, agent, (usize::MAX, limit), (420., 160.));
+        let (read, was) = read_third(&body, cx);
+        let count = rows(&body, cx).len();
+        older(&body, agent, (usize::MAX, limit), false, cx);
+        assert_eq!(rows(&body, cx).len(), count, "no row before");
+        held(&body, read, was, cx);
+    }
+
+    #[gpui_kit::test]
+    fn a_run_grown_at_both_ends_at_once_leaves_its_members_in_place(cx: &mut TestAppContext) {
+        // The list is one open run; a page before and a live entry both grow it before one layout.
+        let all = history("mupu");
+        let n = all.len();
+        let both = |(b, k): (usize, usize)| {
+            let (old, sizes) = window("mupu", &all, (b - k, b));
+            let (new, _) = window("mupu", &all, (b.saturating_sub(2 * k), (b + 1).min(n)));
+            let [Row::Run(f, l)] = old[..] else {
+                return false;
+            };
+            sizes[0] >= 6
+                && new
+                    .iter()
+                    .any(|r| matches!(*r, Row::Run(g, m) if g < f && m > l))
+        };
+        let pairs = (2 * 3..n).flat_map(|b| (3..b / 2).map(move |k| (b, k)));
+        let (b, k) = pairs
+            .filter(|&(b, _)| b < n)
+            .find(|&p| both(p))
+            .expect("one run, grown at both ends");
+        let (body, cx) = body(cx, "mupu", (b, k), (420., 90.));
+        let (read, was) = read_third(&body, cx);
+        older(&body, "mupu", (b + 1, k), true, cx);
+        let grown = rows(&body, cx);
+        let (f, l) = match read {
+            Mark::Member(key) => (key, key),
+            Mark::Pill(..) => unreachable!(),
+        };
+        assert!(
+            grown
+                .iter()
+                .any(|r| r.first() < f && r.last() > l && matches!(r, Row::Run(..))),
+            "the run grew at both ends: {grown:?}"
+        );
+        held(&body, read, was, cx);
+    }
+
+    #[gpui_kit::test]
+    fn a_page_growing_the_closed_top_strip_leaves_the_pill_read_in_place(cx: &mut TestAppContext) {
+        let limit = split("mupu");
+        let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
+        let Row::Run(first, last) = rows(&body, cx)[0] else {
+            panic!("the top row is a run")
+        };
+        scroll(&body, px(0.), cx);
+        let height = row(&body, 0, cx).size.height;
+        assert!(height > px(60.), "the strip wraps: {height:?}");
+        // A pill on the strip's last line, the viewport's top just above it.
+        let pills = body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().marks.clone());
+        let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
+        let pills = pills.into_iter().filter(|(m, _)| inside(m));
+        let (read, b) = pills
+            .max_by(|a, b| a.1.top().partial_cmp(&b.1.top()).unwrap())
+            .unwrap();
+        scroll(&body, b.top() - row(&body, 0, cx).top() - px(4.), cx);
+        let was = mark(&body, read, cx).unwrap().top();
+        let top = screen(&body, cx).top();
+        assert!(
+            (was - top - px(4.)).abs() < px(0.5),
+            "scrolled to it: {was:?}"
+        );
+        older(&body, "mupu", (usize::MAX, limit), false, cx);
+        let grown = rows(&body, cx);
+        assert!(
+            grown
+                .iter()
+                .any(|r| matches!(*r, Row::Run(f, l) if f < first && l == last))
+        );
+        held(&body, read, was, cx);
+    }
+
+    #[gpui_kit::test]
+    fn o_at_the_tail_opens_the_last_run_when_it_shows(cx: &mut TestAppContext) {
+        let (body, cx) = body(cx, "mupu", (usize::MAX, usize::MAX), (900., 700.));
+        body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
+        let (rows, _, open) = body.read_with(cx, |b, _| b.ui.transcript.census());
+        assert_eq!(open, 1);
+        let last = row(&body, rows - 1, cx);
+        assert!(last.size.height > px(0.));
+    }
+
+    #[gpui_kit::test]
+    fn o_at_the_tail_leaves_a_run_above_a_tall_answer(cx: &mut TestAppContext) {
+        // conductor-line ends in an answer after a run; a short window shows only the answer.
+        let (body, cx) = body(cx, "conductor-line", (usize::MAX, usize::MAX), (900., 160.));
+        let rows = rows(&body, cx);
+        let n = rows.len();
+        assert!(matches!(rows[n - 1], Row::One(_)) && matches!(rows[n - 2], Row::Run(..)));
+        let screen = body.read_with(cx, |b, _| b.ui.transcript.list.viewport_bounds());
+        let run = body.read_with(cx, |b, _| {
+            b.ui.transcript.painted.borrow().rows.get(&(n - 2)).copied()
+        });
+        assert!(
+            run.is_none_or(|b| b.bottom() <= screen.top()),
+            "the run is off screen"
+        );
+        body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
+        assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
+    }
+}

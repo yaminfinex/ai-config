@@ -10,7 +10,7 @@ use crate::views::space::{Summon, Tab, Zoomed, zoomed};
 use crate::views::transcript::OpenLink;
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header`, `rows` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
     let agent = ui.zoomed_agent();
@@ -62,6 +62,11 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
         "selected" => ui
             .selected(store)
             .map_or_else(String::new, |s| s.name.clone()),
+        // The zoomed transcript's list rows: how many, how many are runs, and how many runs are open.
+        "rows" => {
+            let (rows, runs, open) = ui.transcript.census();
+            format!("{rows} rows, {runs} runs, {open} open")
+        }
         "start" => {
             let t = store.transcript.open.as_ref().filter(|t| t.at_start())?;
             format!("{}: start reached, {} rows", t.agent, t.items.len())

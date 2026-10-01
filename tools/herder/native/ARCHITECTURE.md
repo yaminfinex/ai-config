@@ -114,12 +114,32 @@ Derived shapes are in `store`:
   behind it; the view's word on the tail names the transcript's agent and generation, and a stale one
   (after a zoom switch or a reset) is dropped.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
-  orders and pairs them): `Prompt`, `Delivery{sender, text, operator, quiet}` (`quiet`: an ack or the
-  launcher, a one-line chip),
-  `TaskNotification`, `SystemChip` (`injected_system`, `command_stdout`, `system_chip`, `turn_duration` fold
-  here or are dropped), `CompactDivider`, `Assistant{markdown}`, `Thinking` (a collapsed pill),
-  `Tool{name, summary, result: Option<ToolResult{error, text}>}`, `Error`. Assistant text has `<internal>…</internal>` removed and `<status>`
-  unwrapped; the operator envelope (`[HERDER_WEB_OPERATOR_NOTE_BEGIN]…END]`) is stripped from deliveries.
+  orders and pairs them): `Prompt`, `Delivery{sender, text, operator}` (acks and the launcher vanish,
+  owner ruling F2), `Chip{tone, label, text}` (a run pill: a task notification, a slash command, an unknown
+  entry, or an answer that is only `<status>`/`<internal>` fences; `Tone` is `Tool`, `Thinking`, `Message`,
+  `Other` or `Status`, web's pill colours), `SystemChip` (model switches; `injected_system`,
+  `command_stdout`, `turn_duration` and scheduled-task fires fold or are dropped), `CompactDivider`,
+  `Assistant{markdown}`, `Thinking`, `Tool{name, summary, result: Option<ToolResult{error, text}>}`, `Error`.
+  An answer's fences parse as web's `fencingModel` (`condense::fence`); a malformed one stays literal. Answers
+  with visible text still have `<internal>…</internal>` removed and `<status>` unwrapped (F3 draws them). The
+  operator envelope (`[HERDER_WEB_OPERATOR_NOTE_BEGIN]…END]`) is stripped from deliveries.
+- **Rows** (F2) — `condense::rows` groups the items, in key order, into `Row::One(key)` or
+  `Row::Run(first, last)`: a run is consecutive activity (`Item::activity`: tools, thinking, chips, agents'
+  deliveries), as web's `cleanRows` (`testdata/runs-web.json` is web's own grouping of the fixtures, and
+  must match). `condense::pills` aggregates a run as web's `aggregateActivityPills`: adjacent tools of one
+  name, and adjacent equal status or internal chips, merge as `×n`. Rows are derived, never stored: the view
+  regroups when the item count changes, and `views::transcript::plan(old, new)` splices the rows grown at
+  either end into the list in place (a `before=` page may join the top run, a live entry the bottom one);
+  anything else resets. Each row's last laid-out bounds are recorded, and in it each mark: a member drawn
+  in full or a pill (as the member keys it merges). A page that grows the head (the first member key
+  changes) anchors what is read: the mark nearest the viewport's top in the topmost row, and its y. Before
+  the list lays out, `hold` (a canvas ahead of it) lays the row now holding that mark out of sight, finds
+  the same mark (a pill grown at either end still holds its key) and scrolls it back to that y, however
+  the row grew or rewrapped. A mark gone since (a latest block replaced by an answer) falls back to the
+  row's top: a stated limitation. `o` toggles the lowest run on screen among the recorded rows (the list
+  keeps no top while following the tail). Open runs are a set of member keys, so a run stays open as it grows and closing it
+  drops every key in it. `Transcript.times` maps an entry's offset to its UTC seconds for the tail's
+  "latest · 3m" line.
 - **`transcript::Transcript`** — pages arrive in both directions, so nothing is an append-only fold:
   - One wire entry can yield several items (an `hcom_delivery` entry carries every delivery of that
     injection; `grill-confirm-lubo` has three at one offset), so the row key is `(byte_offset, sub)` with
@@ -175,6 +195,7 @@ composer's box, U4), `NotesList` (the notes strip's list, F6), `Input` (any kit 
 | `n` / `N` | both navigation predicates | next needing you / and zoom in; after the spaces, `N` (and `n` zoomed) opens an agent in no space alone | U2, U6 |
 | `escape` `[` `]` `tab` `shift-tab` | `Space && !Input && !Terminal` | zoom out, prev/next space, prev/next agent | U2 |
 | `j k space shift-space g G` | `Space && !Input && !Terminal` | scroll the transcript | U3 |
+| `o` | `Space && !Input && !Terminal` | open / close the lowest run on screen, as laid out (none if none shows); a click on a run's pills does the same | F2 |
 | `/` `r` | `Space && !Input && !Terminal` | focus the composer | U4 |
 | `cmd-enter` / `cmd-shift-enter` / `escape` | `Composer > Input` | send / send and file back / leave the box | U4 |
 | `alt-enter` | `Composer > Input` | queue as note | U5 |
@@ -324,7 +345,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after F6 (F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after F2 (F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -332,22 +353,24 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 322 | `views/mod.rs` | 417 |
+| `api/types.rs` | 324 | `views/mod.rs` | 419 |
 | `api/client.rs` | 206 | `views/lens.rs` | 442 |
-| `api/sse.rs` | 194 | `views/space.rs` | 365 |
-| `store/mod.rs` | 445 | `views/transcript.rs` | 459 |
+| `api/sse.rs` | 194 | `views/space.rs` | 366 |
+| `store/mod.rs` | 445 | `views/transcript.rs` | 827 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 221 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 430 |
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
-| `store/attention.rs` | 281 | `views/probe.rs` | 154 |
-| `store/transcript.rs` | 552 | `views/markdown.rs` | 238 |
-| `store/condense.rs` | 189 | `views/theme.rs` | 162 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 159 |
+| `store/transcript.rs` | 585 | `views/markdown.rs` | 238 |
+| `store/condense.rs` | 395 | `views/theme.rs` | 175 |
 | `store/notes.rs` | 432 | `shell.rs` | 433 |
 | `store/composer.rs` | 166 | `shell/io.rs` | 180 |
-| `local.rs` | 95 | `harness.rs` | 273 |
+| `local.rs` | 95 | `harness.rs` | 274 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 
-About 8,100 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
+About 8,720 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
+its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
+open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 

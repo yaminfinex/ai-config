@@ -28,15 +28,21 @@ pub type Key = (u64, u16);
 pub enum Item {
     /// The owner's own message, boxed.
     Prompt(String),
-    /// `operator`: sent through the web operator envelope; `quiet`: bus traffic (an ack, the
-    /// launcher) that web folds into activity.
+    /// `operator`: sent through the web operator envelope (a standalone row); any other is another
+    /// agent's message, a pill in its run. Acks and the launcher are not items.
     Delivery {
         sender: String,
         text: String,
         operator: bool,
-        quiet: bool,
     },
-    TaskNotification(String),
+    /// A pill in a run: a task, a slash command, an unknown entry, or an answer of only statuses and
+    /// internal notes.
+    Chip {
+        tone: Tone,
+        label: String,
+        text: String,
+    },
+    /// A model switch, the one system entry web's compact view shows.
     SystemChip(String),
     CompactDivider(String),
     Assistant {
@@ -50,6 +56,28 @@ pub enum Item {
         result: Option<ToolResult>,
     },
     Error(String),
+}
+
+/// A pill's colours, as web's: tools blue, thinking and internal notes purple, agents' messages green,
+/// other activity amber, statuses grey.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Tone {
+    Tool,
+    Thinking,
+    Message,
+    Other,
+    Status,
+}
+
+impl Item {
+    /// Folds into a run (web's `cleanViewDisposition` "activity"); anything else is its own row.
+    pub fn activity(&self) -> bool {
+        match self {
+            Item::Tool { .. } | Item::Thinking(_) | Item::Chip { .. } => true,
+            Item::Delivery { operator, .. } => !operator,
+            _ => false,
+        }
+    }
 }
 
 /// A tool's result: whether it failed, and its first line.
@@ -143,6 +171,8 @@ pub struct Transcript {
     pub generation: u64,
     pub session: Option<String>,
     pub items: BTreeMap<Key, Item>,
+    /// Each item's entry time, epoch seconds by byte offset.
+    pub times: HashMap<u64, u64>,
     calls: HashMap<String, Key>,
     orphans: HashMap<String, ToolResult>,
     pub next_offset: Option<u64>,
@@ -497,6 +527,7 @@ impl Transcript {
     fn ingest(&mut self, entry: Entry) {
         let (offset, p) = (entry.byte_offset, &entry.payload);
         let id = p.tool_use_id.as_str().unwrap_or("").to_string();
+        let mut items = Vec::new();
         match entry.kind {
             Kind::ToolUse => {
                 let (name, summary) = condense::tool_call(p);
@@ -506,7 +537,7 @@ impl Transcript {
                     summary,
                     result,
                 };
-                self.items.insert((offset, 0), tool);
+                items.push(tool);
                 self.calls.insert(id, (offset, 0));
             }
             Kind::ToolResult => {
@@ -516,11 +547,13 @@ impl Transcript {
                     _ => drop(self.orphans.insert(id, result)),
                 }
             }
-            _ => {
-                for (sub, item) in condense::condense(&entry).into_iter().enumerate() {
-                    self.items.insert((offset, sub as u16), item);
-                }
-            }
+            _ => items = condense::condense(&entry),
+        }
+        if let Some(at) = condense::epoch(&entry.timestamp).filter(|_| !items.is_empty()) {
+            self.times.insert(offset, at);
+        }
+        for (sub, item) in items.into_iter().enumerate() {
+            self.items.insert((offset, sub as u16), item);
         }
     }
 }
