@@ -5,9 +5,9 @@ use herder_native::api::client::{Client, Page};
 use herder_native::api::sse::Reader;
 use herder_native::api::{StateRow, Wire};
 use herder_native::local::{self, Disk};
-use herder_native::shell::{save_then_land, save_then_message, save_then_send};
+use herder_native::shell::{destination, save_then_land, save_then_message, save_then_send};
 use herder_native::store::sync::{Hold, Ns, Step};
-use herder_native::store::{Effect, Event, Fetch, Persist, Store, StreamEvent};
+use herder_native::store::{Effect, Event, Fetch, Store, StreamEvent};
 use serde_json::json;
 use std::io::{BufRead, BufReader, Read, Write as _};
 use std::net::TcpListener;
@@ -108,12 +108,8 @@ fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
                     events.push(Event::Sync { ns, step });
                 }
                 Effect::Post { ns, rows } => sends.push((ns, rows)),
-                Effect::Transfer { file, agent } => {
-                    let (name, bytes) = match file {
-                        Persist::Prefs => (local::PREFS, local::encode(&store.prefs)),
-                        _ => (local::OUTBOX, local::encode(&store.outbox())),
-                    };
-                    let seq = local::next_seq();
+                Effect::Transfer { to, agent } => {
+                    let ((name, bytes), seq) = (destination(store, to), local::next_seq());
                     events.push(save_then_land(disk, name, &bytes, seq, agent));
                 }
                 _ => {}

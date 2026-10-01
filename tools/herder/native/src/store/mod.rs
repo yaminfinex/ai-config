@@ -191,10 +191,10 @@ pub enum Effect {
         after_ms: u64,
     },
     Persist(Persist),
-    /// Save `file` now, from the store as it is, then dispatch `notes::Step::Landed` for `agent`: the
-    /// destination of a note transfer is on disk before its source changes.
+    /// Save the destination `to` now, from the store as it is, then dispatch `notes::Step::Landed` for
+    /// `agent`: the destination of a note transfer is on disk before its source changes.
     Transfer {
-        file: Persist,
+        to: notes::Dest,
         agent: String,
     },
     /// A filed-back send (`cmd-shift-enter`) landed: leave the zoom if it is still on `agent`.

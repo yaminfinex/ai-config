@@ -2407,7 +2407,7 @@ mod notes {
         assert_eq!(store.prefs.drafts["mupu"], draft);
         // Only the draft's save, at once: no tombstone is queued, saved or sent until it lands.
         let save = Effect::Transfer {
-            file: Persist::Prefs,
+            to: crate::store::notes::Dest::Draft,
             agent: "mupu".into(),
         };
         assert_eq!(effects, [save]);
@@ -2517,7 +2517,7 @@ mod notes {
         let effects = store.apply(Event::Note(queue("mupu")));
         // The note first, with the outbox it is in saved now; the draft stays until that landed.
         let save = Effect::Transfer {
-            file: Persist::Outbox,
+            to: crate::store::notes::Dest::Note,
             agent: "mupu".into(),
         };
         assert!(effects.contains(&save));

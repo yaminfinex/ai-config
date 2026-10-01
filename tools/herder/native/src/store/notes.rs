@@ -116,6 +116,14 @@ pub enum Transfer {
     Queue { draft: String },
 }
 
+/// Where a transfer's destination is saved: a hand-off's draft (`prefs.json`), a queued draft's note
+/// (`outbox.json`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dest {
+    Draft,
+    Note,
+}
+
 /// Web's limit on a note's text and quote together (`maxNoteBytes`), in UTF-8 bytes.
 pub const MAX_BYTES: usize = 8 * 1024;
 const TOO_LONG: &str = "This note is too long to save. Shorten it and try again.";
@@ -238,7 +246,7 @@ impl Store {
                     taken,
                     stamp,
                 };
-                self.begin_transfer(agent, transfer, Persist::Prefs, out);
+                self.begin_transfer(agent, transfer, out);
                 return;
             }
             Step::Queue { agent, stamp } => {
@@ -261,7 +269,7 @@ impl Store {
                 };
                 self.note(add, out);
                 let transfer = Transfer::Queue { draft };
-                return self.begin_transfer(agent, transfer, Persist::Outbox, out);
+                return self.begin_transfer(agent, transfer, out);
             }
             Step::Landed { agent, saved } => match self.land(&agent, saved, out) {
                 Some(rows) => rows,
@@ -279,11 +287,15 @@ impl Store {
         Some((row.key.clone(), row.updated, row.write_id.clone()))
     }
 
-    fn begin_transfer(&mut self, agent: String, t: Transfer, file: Persist, out: &mut Vec<Effect>) {
+    fn begin_transfer(&mut self, agent: String, t: Transfer, out: &mut Vec<Effect>) {
+        let to = match t {
+            Transfer::HandOff { .. } => Dest::Draft,
+            Transfer::Queue { .. } => Dest::Note,
+        };
         self.sends.remove(&agent);
         self.note_problems.remove(&agent);
         self.transfers.insert(agent.clone(), t);
-        out.push(Effect::Transfer { file, agent });
+        out.push(Effect::Transfer { to, agent });
     }
 
     /// Finish `agent`'s transfer once its destination is saved, or undo what was not; a hand-off's

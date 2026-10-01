@@ -7,10 +7,10 @@ use crate::api::types::StateRow;
 use crate::harness;
 use crate::local::{self, Disk};
 use crate::store::composer::{self, Failure};
-use crate::store::notes;
+use crate::store::notes::{self, Dest};
 use crate::store::sync::{Ns, Step};
 use crate::store::transcript::{self, Got, What};
-use crate::store::{Event, Fetch};
+use crate::store::{Event, Fetch, Store};
 
 pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     match fetch {
@@ -115,6 +115,14 @@ pub fn save_then_message(
         }),
     };
     Event::Compose(composer::Step::Sent { agent, result })
+}
+
+/// The file a note transfer's destination `to` is saved in, and its bytes from the store as it is.
+pub fn destination(store: &Store, to: Dest) -> (&'static str, Vec<u8>) {
+    match to {
+        Dest::Draft => (local::PREFS, local::encode(&store.prefs)),
+        Dest::Note => (local::OUTBOX, local::encode(&store.outbox())),
+    }
 }
 
 /// Save one file now, the destination of a note transfer, and report whether it is on disk.

@@ -32,7 +32,7 @@ use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use io::run_fetch;
-pub use io::{save_then_land, save_then_message, save_then_send};
+pub use io::{destination, save_then_land, save_then_message, save_then_send};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -190,15 +190,8 @@ impl Shell {
                 Effect::Persist(Persist::Snapshot) => {
                     self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
                 }
-                Effect::Transfer { file, agent } => {
-                    let (name, bytes) = match file {
-                        Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
-                        Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
-                        Persist::Snapshot => {
-                            (local::SNAPSHOT, local::encode(&self.store.snapshot()))
-                        }
-                    };
-                    let seq = local::next_seq();
+                Effect::Transfer { to, agent } => {
+                    let ((name, bytes), seq) = (destination(&self.store, to), local::next_seq());
                     self.background(cx, move |disk, _| {
                         save_then_land(disk, name, &bytes, seq, agent)
                     })
