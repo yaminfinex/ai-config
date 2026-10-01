@@ -27,6 +27,13 @@ pub(crate) fn fleet_frame(board: Board) -> Event {
     }
 }
 
+/// A fleet frame on the stream the store has open now (a zoom resubscribes it).
+pub(crate) fn frame(store: &Store, board: Board) -> Event {
+    let generation = store.stream;
+    let event = StreamEvent::Frame(Wire::Fleet(board));
+    Event::Stream { generation, event }
+}
+
 fn hello(build: &str) -> Event {
     Event::Stream {
         generation: 1,
@@ -241,7 +248,7 @@ fn needs_you_follows_seen_marks() {
         space: space.id.clone(),
         agent: Some("mupu".into()),
     };
-    let effects = store.apply(Event::Lens(view));
+    let effects = marks(store.apply(Event::Lens(view)));
     assert_eq!(effects, [Effect::Persist(Persist::Prefs), Effect::Badge(0)]);
     assert_eq!(store.needs_you(&space), 0);
 
@@ -632,6 +639,12 @@ fn lens(m: spaces::Move) -> Event {
     Event::Lens(m)
 }
 
+/// What a lens move saves and badges, without the zoom's transcript reads and stream.
+fn marks(effects: Vec<Effect>) -> Vec<Effect> {
+    let zoom = |e: &Effect| matches!(e, Effect::Stream { .. } | Effect::Fetch(_));
+    effects.into_iter().filter(|e| !zoom(e)).collect()
+}
+
 #[test]
 fn spaces_sit_in_watch_until_placed() {
     let mut store = loaded();
@@ -762,7 +775,7 @@ fn next_needing_walks_the_rows_in_order_and_wraps() {
 fn read_and_unread_mark_the_whole_space() {
     let mut store = loaded();
     let mut b = board();
-    store.apply(fleet_frame(b.clone()));
+    store.apply(frame(&store, b.clone()));
     let slack = space_of(&store, "mupu").clone();
     assert_eq!(store.needs_you(&slack), 0);
 
@@ -771,7 +784,7 @@ fn read_and_unread_mark_the_whole_space() {
     let marked = [Effect::Persist(Persist::Prefs), Effect::Badge(1)];
     assert_eq!(store.apply(unread()), marked);
     assert!(store.apply(unread()).is_empty(), "already unread");
-    store.apply(fleet_frame(b.clone()));
+    store.apply(frame(&store, b.clone()));
     assert_eq!(store.needs_you(&slack), 1);
     assert_eq!(store.next_needing(None).map(|s| &s.id), Some(&slack.id));
     let view = |agent: &str| {
@@ -782,7 +795,7 @@ fn read_and_unread_mark_the_whole_space() {
         })
     };
     assert_eq!(
-        store.apply(view("support-mifa")),
+        marks(store.apply(view("support-mifa"))),
         [Effect::Persist(Persist::Prefs), Effect::Badge(0)]
     );
     assert_eq!(store.needs_you(&slack), 0, "a zoom-in clears it");
@@ -795,7 +808,7 @@ fn read_and_unread_mark_the_whole_space() {
     // `m`: every agent in the space is read, and the unread mark goes too.
     bump(&mut b, "mupu", 2);
     bump(&mut b, "support-mifa", 2);
-    store.apply(fleet_frame(b));
+    store.apply(frame(&store, b));
     store.apply(unread());
     assert_eq!(store.needs_you(&slack), 2);
     assert_eq!(
@@ -816,7 +829,7 @@ fn viewing_an_absent_agent_leaves_prefs_alone() {
         space: slack.clone(),
         agent: Some("nobody".into()),
     };
-    assert!(store.apply(lens(view)).is_empty());
+    assert!(marks(store.apply(lens(view))).is_empty());
     assert!(
         store
             .apply(lens(spaces::Move::Read("no-such-space".into())))
@@ -841,7 +854,7 @@ fn block(b: &mut Board, name: &str, blocked: bool) {
 fn a_block_needs_you_until_viewed_and_again_when_it_recurs() {
     let mut store = loaded();
     let mut b = board();
-    store.apply(fleet_frame(b.clone()));
+    store.apply(frame(&store, b.clone()));
     let slack = space_of(&store, "mupu").id.clone();
     let view = || {
         let agent = Some("mupu".to_string());
@@ -852,26 +865,26 @@ fn a_block_needs_you_until_viewed_and_again_when_it_recurs() {
     };
 
     block(&mut b, "mupu", true);
-    store.apply(fleet_frame(b.clone()));
+    store.apply(frame(&store, b.clone()));
     assert!(store.agent_needs_you("mupu"), "blocked, no new turn");
     let seen = [Effect::Persist(Persist::Prefs), Effect::Badge(0)];
-    assert_eq!(store.apply(view()), seen);
+    assert_eq!(marks(store.apply(view())), seen);
     assert!(
         !store.agent_needs_you("mupu"),
         "viewing acknowledges this block"
     );
-    store.apply(fleet_frame(b.clone()));
+    store.apply(frame(&store, b.clone()));
     assert!(!store.agent_needs_you("mupu"), "still the same block");
 
     // It leaves Blocked and blocks again within the same turn: that alerts again.
     block(&mut b, "mupu", false);
-    let effects = store.apply(fleet_frame(b.clone()));
+    let effects = store.apply(frame(&store, b.clone()));
     assert!(
         effects.contains(&Effect::Persist(Persist::Prefs)),
         "the block mark clears"
     );
     block(&mut b, "mupu", true);
-    store.apply(fleet_frame(b));
+    store.apply(frame(&store, b));
     assert!(store.agent_needs_you("mupu"));
 }
 
@@ -892,14 +905,14 @@ fn a_block_before_any_turn_alerts_again_when_it_recurs() {
         agent: Some("mupu".into()),
     });
     block(&mut b, "mupu", true);
-    store.apply(fleet_frame(b.clone()));
+    store.apply(frame(&store, b.clone()));
     assert!(store.agent_needs_you("mupu"), "blocked with no turn yet");
     store.apply(view);
     assert!(!store.agent_needs_you("mupu"), "viewed");
     block(&mut b, "mupu", false);
-    store.apply(fleet_frame(b.clone()));
+    store.apply(frame(&store, b.clone()));
     block(&mut b, "mupu", true);
-    store.apply(fleet_frame(b));
+    store.apply(frame(&store, b));
     assert!(store.agent_needs_you("mupu"), "blocked again");
 }
 
@@ -1013,7 +1026,10 @@ mod transcript_pages {
 
     fn open(store: &mut Store, agent: &str) -> Vec<Effect> {
         let (space, agent) = ("none".into(), agent.to_string());
-        store.apply(Event::Transcript(T::Show { space, agent }))
+        store.apply(Event::Lens(spaces::Move::View {
+            space,
+            agent: Some(agent),
+        }))
     }
 
     fn items(store: &Store) -> &BTreeMap<(u64, u16), Item> {
@@ -1436,6 +1452,11 @@ mod transcript_pages {
         assert!(store.apply(Event::Transcript(T::Hide)).is_empty(), "once");
         let reopened = reads(&open(&mut store, "mupu"));
         assert!(matches!(reopened[0].what, What::Page(Page::Tail { .. })));
+        // Zooming into a space with no agent shows none: the transcript and its stream go too.
+        let (space, agent) = ("empty".to_string(), None);
+        let effects = store.apply(Event::Lens(spaces::Move::View { space, agent }));
+        assert!(store.transcript.open.is_none());
+        assert!(effects.iter().any(unsubscribed), "{effects:?}");
     }
 
     #[test]
@@ -1500,9 +1521,9 @@ mod transcript_pages {
         store.apply(fleet_frame(board()));
         let space = space_of(&store, "mupu").clone();
         let view = |agent: &str| {
-            Event::Transcript(T::Show {
+            Event::Lens(spaces::Move::View {
                 space: space.id.clone(),
-                agent: agent.into(),
+                agent: Some(agent.into()),
             })
         };
         let streams = |effects: &[Effect]| -> Vec<Vec<String>> {
@@ -1869,9 +1890,9 @@ mod composer {
         store.apply(fleet_frame(board()));
         let space = store.spaces[0].id.clone();
         let agent_name = agent.to_string();
-        let effects = store.apply(Event::Transcript(T::Show {
+        let effects = store.apply(Event::Lens(spaces::Move::View {
             space,
-            agent: agent_name,
+            agent: Some(agent_name),
         }));
         let detail = effects.into_iter().find_map(|e| match e {
             Effect::Fetch(Fetch::Transcript(r)) if r.what == What::Detail => Some(r),
@@ -2002,9 +2023,9 @@ mod composer {
         later.extend(store.apply(fleet_frame(board())));
         sent(&mut store, "mupu", Err(Failure::Unreachable("down".into())));
         later.extend(store.apply(hello("b1")));
-        later.extend(store.apply(Event::Transcript(T::Show {
+        later.extend(store.apply(Event::Lens(spaces::Move::View {
             space,
-            agent: "mupu".into(),
+            agent: Some("mupu".into()),
         })));
         assert!(
             messages(&later).is_empty(),
@@ -2033,7 +2054,10 @@ mod composer {
         send(&mut store, "mupu", true);
         let other = space.agents().find(|a| *a != "mupu").unwrap().to_string();
         let (id, agent) = (space.id.clone(), other);
-        store.apply(Event::Transcript(T::Show { space: id, agent }));
+        store.apply(Event::Lens(spaces::Move::View {
+            space: id,
+            agent: Some(agent),
+        }));
         bump(&mut b, "mupu", 1);
         // On the stream the open transcript reopened (`fleet_frame` is generation 1's).
         let event = StreamEvent::Frame(Wire::Fleet(b.clone()));
@@ -2770,7 +2794,7 @@ mod alerts {
         let alone = "risk-framework-gezu";
         assert!(store.spaces.iter().all(|s| s.agents().all(|a| a != alone)));
         bump(&mut b, alone, 1);
-        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
+        assert!(store.apply(frame(&store, b.clone())).contains(&BURST));
         let want = Notice {
             tag: format!("agent:{alone}"),
             title: format!("{alone} · no space"),
@@ -2791,7 +2815,7 @@ mod alerts {
                 .any(|e| matches!(e, Effect::Post { .. } | Effect::Message { .. }))
         );
         block(&mut b, alone, true);
-        assert!(store.apply(fleet_frame(b)).contains(&BURST));
+        assert!(store.apply(frame(&store, b)).contains(&BURST));
         let got = notices(store.apply(Event::BurstEnded));
         assert_eq!(got.len(), 1);
         assert_eq!(
@@ -2874,13 +2898,16 @@ mod alerts {
     fn unblocking_and_blocking_again_alerts_again() {
         let (mut store, mut b) = live();
         block(&mut b, "mupu", true);
-        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
+        assert!(store.apply(frame(&store, b.clone())).contains(&BURST));
         store.apply(Event::BurstEnded);
         store.apply(view(&store, "mupu"));
         block(&mut b, "mupu", false);
-        assert!(!store.apply(fleet_frame(b.clone())).contains(&BURST));
+        assert!(!store.apply(frame(&store, b.clone())).contains(&BURST));
         block(&mut b, "mupu", true);
-        assert!(store.apply(fleet_frame(b)).contains(&BURST), "a new block");
+        assert!(
+            store.apply(frame(&store, b)).contains(&BURST),
+            "a new block"
+        );
         let got = notices(store.apply(Event::BurstEnded));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].body, "blocked");

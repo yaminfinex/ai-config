@@ -91,7 +91,7 @@ fn n_and_brackets_move_between_spaces_and_swipe_when_zoomed() {
     assert_eq!(zoomed(&ui).map(|z| z.0), Some(next.id.as_str()));
     assert!(matches!(
         events.as_slice(),
-        [Event::Lens(Move::View { .. }), Event::Transcript(_)]
+        [Event::Lens(Move::View { .. })]
     ));
     assert!(
         ui.anim.as_ref().is_some_and(|a| !a.morphs()),

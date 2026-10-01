@@ -191,14 +191,11 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
 }
 
 pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<Event> {
-    let (s, a) = (space.clone(), agent.clone());
-    ui.zoom = Some(Zoom { space, agent });
-    let show = a.clone().map(|agent| {
-        let space = s.clone();
-        Event::Transcript(transcript::Step::Show { space, agent })
+    ui.zoom = Some(Zoom {
+        space: space.clone(),
+        agent: agent.clone(),
     });
-    let view = Event::Lens(Move::View { space: s, agent: a });
-    std::iter::once(view).chain(show).collect()
+    vec![Event::Lens(Move::View { space, agent })]
 }
 
 /// A clicked link: a path resolves and opens in VS Code; a member becomes its tab and any other agent

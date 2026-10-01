@@ -125,7 +125,8 @@ pub fn baseline_seen(seen: &mut BTreeMap<String, Seen>, fleet: &Fleet, spaces: &
 /// An owner move on the lens. Spaces are named by id.
 #[derive(Clone, Debug)]
 pub enum Move {
-    /// Zoomed into a space, looking at `agent`: the space's unread mark clears and the agent is seen.
+    /// Zoomed into a space, looking at `agent`: the space's unread mark clears, the agent is seen, and
+    /// the zoom opens its transcript and streams the space (`transcript::show`).
     View {
         space: String,
         agent: Option<String>,
@@ -147,8 +148,12 @@ impl Store {
         let space = |id: &str| self.spaces.iter().find(|s| s.id == id);
         let changed = match m {
             Move::View { space, agent } => {
-                let seen = agent.is_some_and(|a| mark_seen(&mut prefs.seen, fleet, &a));
-                prefs.unread.remove(&space) | seen
+                let seen = agent
+                    .as_ref()
+                    .is_some_and(|a| mark_seen(&mut prefs.seen, fleet, a));
+                let changed = prefs.unread.remove(&space) | seen;
+                self.show(&space, agent.as_deref(), out);
+                changed
             }
             Move::Read(id) => {
                 let agents = space(&id).into_iter().flat_map(Space::agents);

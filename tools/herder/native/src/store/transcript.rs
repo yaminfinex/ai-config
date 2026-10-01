@@ -115,11 +115,6 @@ pub enum Got {
 
 #[derive(Clone, Debug)]
 pub enum Step {
-    /// The zoom shows this agent of this space (or previews it there).
-    Show {
-        space: String,
-        agent: String,
-    },
     /// The zoom closed: drop the transcript and stop streaming its agents.
     Hide,
     /// The viewport neared the first rows: read the page before.
@@ -179,9 +174,13 @@ pub struct Live {
 }
 
 impl Store {
-    /// The zoom shows `agent` in `space`: subscribe the stream to the space's agents (and a previewed
-    /// outsider), and open the agent's transcript unless it is the open one.
-    fn show(&mut self, space: &str, agent: &str, out: &mut Vec<Effect>) {
+    /// The zoom shows `agent` in `space` (`Move::View`): subscribe the stream to the space's agents (and
+    /// a previewed outsider), and open the agent's transcript unless it is the open one. A zoom with no
+    /// agent (an empty space) shows none: as zoomed out.
+    pub(super) fn show(&mut self, space: &str, agent: Option<&str>, out: &mut Vec<Effect>) {
+        let Some(agent) = agent else {
+            return self.transcript_step(Step::Hide, out);
+        };
         let space = self.spaces.iter().filter(|s| s.id == space);
         let mut agents: Vec<String> = space.flat_map(|s| s.agents().map(String::from)).collect();
         if !agents.iter().any(|a| a == agent) {
@@ -217,9 +216,6 @@ impl Store {
     }
 
     pub(super) fn transcript_step(&mut self, step: Step, out: &mut Vec<Effect>) {
-        if let Step::Show { space, agent } = &step {
-            return self.show(space, agent, out);
-        }
         if let Step::Hide = step {
             self.transcript.open = None;
             return self.subscribe(Vec::new(), out);
@@ -227,7 +223,7 @@ impl Store {
         let (live, agents) = (&mut self.transcript, &self.fleet.agents);
         let Some(t) = live.open.as_mut() else { return };
         match step {
-            Step::Show { .. } | Step::Hide => {}
+            Step::Hide => {}
             Step::Older => t.older(out),
             Step::Read(read, _) if read.agent != t.agent || read.generation != t.generation => {}
             Step::Read(_, Ok(Got::Page(e))) if e.reset.is_some() => {
