@@ -73,10 +73,7 @@ fn a_set_script_must_have_steps() {
 
 /// One metric line on stderr, stamped with milliseconds since `start_clock`.
 pub fn metric(msg: impl AsRef<str>) {
-    let ms = T0
-        .get()
-        .map(|t| t.elapsed().as_secs_f64() * 1e3)
-        .unwrap_or(0.0);
+    let ms = T0.get().map_or(0.0, |t| t.elapsed().as_secs_f64() * 1e3);
     eprintln!("[metric +{ms:>8.1}ms] {}", msg.as_ref());
 }
 
@@ -85,12 +82,9 @@ fn ps(field: &str) -> Option<String> {
     let pid = std::process::id().to_string();
     let out = std::process::Command::new("ps")
         .args(["-o", field, "-p", &pid])
-        .output();
-    Some(
-        String::from_utf8_lossy(&out.ok()?.stdout)
-            .trim()
-            .to_string(),
-    )
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// Resident set size of this process in MB, via `ps`.
@@ -129,10 +123,8 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
         let (op, arg) = step.split_once(':').unwrap_or((step, ""));
         match op {
             "wait" => {
-                let ms = arg.parse().unwrap_or(500);
-                cx.background_executor()
-                    .timer(Duration::from_millis(ms))
-                    .await;
+                let ms = Duration::from_millis(arg.parse().unwrap_or(500));
+                cx.background_executor().timer(ms).await;
             }
             // `tap:` presses a key that may be bound to nothing (a guard checks what did not happen).
             "key" | "tap" => match Keystroke::parse(arg) {
@@ -186,10 +178,8 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
             }
             "expect" | "box" | "has" | "says" | "notes" | "header" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
-                let (got, want) = (
-                    got.ok().flatten().unwrap_or_default(),
-                    arg.replace('+', " "),
-                );
+                let got = got.ok().flatten().unwrap_or_default();
+                let want = arg.replace('+', " ");
                 let part = matches!(op, "says" | "has" | "header") && got.contains(&want);
                 match got == want || part {
                     true => metric(format!("{op} {arg}: ok")),
@@ -228,11 +218,8 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                     ms.extend(drawn.ok());
                 }
                 ms.sort_by(f64::total_cmp);
-                let at = |q: f64| {
-                    ms.get(((ms.len() as f64 - 1.0) * q) as usize)
-                        .copied()
-                        .unwrap_or(0.0)
-                };
+                let i = |q: f64| ((ms.len() as f64 - 1.0) * q) as usize;
+                let at = |q: f64| ms.get(i(q)).copied().unwrap_or(0.0);
                 let (p50, p95, max) = (at(0.5), at(0.95), at(1.0));
                 metric(format!(
                     "cpuscroll {arg}: draw p50 {p50:.2} ms, p95 {p95:.2} ms, max {max:.2} ms"
