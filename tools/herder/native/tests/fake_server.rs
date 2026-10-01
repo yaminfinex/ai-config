@@ -538,3 +538,57 @@ fn a_message_without_an_answer_is_not_retried() {
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(*accepted.lock().unwrap(), 1, "exactly one attempt");
 }
+
+/// U5: a note added here is saved to `outbox.json` before its POST (the barrier), posted in web's
+/// record shape, then pulled back and retired from the outbox.
+#[test]
+fn a_note_is_saved_then_posted_in_webs_shape_then_retired() {
+    use herder_native::store::notes::{Stamp, Step as N};
+    let (disk, dir) = scratch("note");
+    let outbox = dir.join(local::OUTBOX);
+    let posted: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let p2 = posted.clone();
+    let (base, log) = serve(move |target, body| {
+        if target.starts_with("POST /api/state/notes") {
+            let on_disk = std::fs::read_to_string(&outbox).unwrap_or_default();
+            p2.lock().unwrap().push((body.to_string(), on_disk));
+            Reply::Json(200, json!({"accepted": ["n1"], "rev": 3}).to_string())
+        } else if target.starts_with("GET /api/state/notes") {
+            let rows = p2.lock().unwrap().last().map(|(b, _)| b.clone());
+            let rows: serde_json::Value = serde_json::from_str(&rows.unwrap_or_default()).unwrap();
+            Reply::Json(200, json!({"rows": rows["rows"], "rev": 3}).to_string())
+        } else {
+            Reply::Json(404, r#"{"error":"nope","detail":""}"#.into())
+        }
+    });
+    let client = Client::new(base);
+    let mut store = Store::default();
+    let stamp = Stamp {
+        now: 1_790_000_000_000,
+        id: "n1".into(),
+        write: "w1".into(),
+    };
+    let add = N::Add {
+        group: "mupu".into(),
+        text: "ask about the tests".into(),
+        quote: Some("cargo test".into()),
+        stamp,
+    };
+    drive(&mut store, &client, &disk, Event::Note(add));
+    std::fs::remove_dir_all(dir).unwrap();
+
+    let posted = posted.lock().unwrap().clone();
+    assert_eq!(posted.len(), 1, "{:?}", log.lock().unwrap());
+    let (body, on_disk) = &posted[0];
+    let body: serde_json::Value = serde_json::from_str(body).unwrap();
+    let want = json!({"key": "n1", "updated": 1_790_000_000_000i64, "writeID": "w1", "deleted": false,
+        "value": {"id": "n1", "group": "mupu", "text": "ask about the tests", "quote": "cargo test",
+                  "source": {"kind": "transcript", "agent": "mupu"}, "created": 1_790_000_000_000i64}});
+    assert_eq!(body["rows"], json!([want]));
+    assert!(
+        on_disk.contains("\"n1\""),
+        "saved before the POST: {on_disk}"
+    );
+    assert!(store.sync[&Ns::Notes].outbox.is_empty());
+    assert_eq!(store.notes_of("mupu").count(), 1);
+}

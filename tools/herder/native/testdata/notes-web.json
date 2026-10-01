@@ -1,0 +1,46 @@
+{
+  "rows": [
+    {
+      "key": "0b7f3c1e-5a2d-4c8e-9f61-3d2a7b9e4c10",
+      "value": {
+        "id": "0b7f3c1e-5a2d-4c8e-9f61-3d2a7b9e4c10",
+        "group": "mupu",
+        "text": "ask it to split this",
+        "quote": "the reducer owns\nevery mutation",
+        "source": {
+          "kind": "transcript",
+          "agent": "mupu"
+        },
+        "created": 1790000000000
+      },
+      "updated": 1790000000500,
+      "writeID": "a1b2c3d4-0000-4000-8000-000000000001",
+      "deleted": false
+    },
+    {
+      "key": "7c2e9a40-1b3f-4d6a-8e05-6f9b2c4d1a77",
+      "value": {
+        "id": "7c2e9a40-1b3f-4d6a-8e05-6f9b2c4d1a77",
+        "group": "mupu",
+        "text": "check the outbox after a 409",
+        "created": 1790000001000
+      },
+      "updated": 1790000001000,
+      "writeID": "a1b2c3d4-0000-4000-8000-000000000002",
+      "deleted": false
+    },
+    {
+      "key": "7c2e9a40-1b3f-4d6a-8e05-6f9b2c4d1a77",
+      "value": {
+        "id": "7c2e9a40-1b3f-4d6a-8e05-6f9b2c4d1a77"
+      },
+      "updated": 1790000002000,
+      "writeID": "e4d1c2b3-0000-4000-8000-000000000003",
+      "deleted": true
+    }
+  ],
+  "handoff": [
+    "from mupu's transcript:\n> the reducer owns\n> every mutation\n\nask it to split this",
+    "check the outbox after a 409"
+  ]
+}

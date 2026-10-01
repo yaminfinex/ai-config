@@ -2,10 +2,12 @@
 """A fake herder serve over the recorded fixtures, for harness runs that press cmd-enter: nothing a
 scenario sends may reach a real agent. Reads answer from testdata/; POST …/message never delivers.
 
-    testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT]
+    testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT] [--notes]
 
 `slow` answers ok after a second, `hold` keeps the POST open (the composer stays "sending"); `409` is a
-sender collision. Every request is logged on stderr.
+sender collision. `POST /api/state/<ns>` keeps the rows in memory, last write wins, and later reads of
+that namespace return them (U5); `--notes` starts the notes namespace with web's two notes on mupu
+(`notes-web.json`). Every request is logged on stderr.
 """
 
 import argparse
@@ -17,6 +19,7 @@ from urllib.parse import parse_qs, urlparse
 
 DATA = pathlib.Path(__file__).resolve().parent
 ARGS = None
+STATE = {}  # namespace -> {key: row}, what was posted (and --notes)
 
 
 def fixture(name):
@@ -53,7 +56,9 @@ class Fake(BaseHTTPRequestHandler):
         elif url.path == "/api/viewer":
             self.reply(200, fixture("viewer.json"))
         elif parts[:2] == ["api", "state"]:
-            self.reply(200, fixture(f"state-{parts[2]}.json"))
+            got = json.loads(fixture(f"state-{parts[2]}.json"))
+            rows = {r["key"]: r for r in got["rows"]} | STATE.get(parts[2], {})
+            self.reply(200, {"rows": list(rows.values()), "rev": got["rev"] + len(STATE.get(parts[2], {}))})
         elif parts[:2] == ["api", "agents"] and len(parts) == 3:
             path = DATA / "agents" / parts[2] / "detail.json"
             detail = json.loads(path.read_text()) if path.exists() else {"name": parts[2]}
@@ -76,6 +81,11 @@ class Fake(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
         parts = urlparse(self.path).path.strip("/").split("/")
+        if parts[:2] == ["api", "state"] and len(parts) == 3:
+            rows = json.loads(body)["rows"]
+            self.log_message("state %s: %s", parts[2], body)
+            merge(parts[2], rows)
+            return self.reply(200, {"accepted": [r["key"] for r in rows], "rev": 1})
         if parts[:2] != ["api", "agents"] or parts[3:] != ["message"]:
             return self.reply(404, {"error": "not found", "detail": self.path})
         self.log_message("message to %s: %s (%s)", parts[2], body, ARGS.message)
@@ -89,10 +99,21 @@ class Fake(BaseHTTPRequestHandler):
         self.reply(200, {"sent": True, "to": parts[2], "from": "web-fake", "intent": "request"})
 
 
+def merge(ns, rows):
+    held = STATE.setdefault(ns, {})
+    for r in rows:
+        old = held.get(r["key"])
+        if old is None or (r["updated"], r["writeID"]) > (old["updated"], old["writeID"]):
+            held[r["key"]] = r
+
+
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("port", type=int)
     p.add_argument("--message", default="ok", choices=["ok", "slow", "409", "502", "hold"])
     p.add_argument("--retired")
+    p.add_argument("--notes", action="store_true")
     ARGS = p.parse_args()
+    if ARGS.notes:
+        merge("notes", json.loads(fixture("notes-web.json"))["rows"][:2])
     ThreadingHTTPServer(("127.0.0.1", ARGS.port), Fake).serve_forever()

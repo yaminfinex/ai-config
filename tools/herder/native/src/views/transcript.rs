@@ -6,7 +6,8 @@
 //! Assistant text renders with the kit's markdown (fenced blocks highlighted by tree-sitter), with
 //! mentions and paths linked by `markdown::link`; a click on one dispatches `OpenLink`, which the zoom
 //! shell handles: an agent in this space becomes its tab, any other opens as a preview tab (never a
-//! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing.
+//! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing. Text
+//! selected here with the pointer is offered to the notes strip for capture (U5).
 
 use crate::store::spaces::Move;
 use crate::store::transcript::{Item, Key, Step, Transcript};
@@ -212,7 +213,18 @@ pub fn render<H: Host>(
             .child(format!("{n}  ✕"))
             .on_click(dismiss)
     });
-    body.child(head)
+    // Where the pointer lets go, the selection it made is what `c` (or the strip's chip) captures.
+    let let_go = cx.listener(|h: &mut H, _: &MouseUpEvent, window, cx| {
+        let text = gpui_kit::base::TextSelection::selected_text(window, cx);
+        let text = Some(text.trim().to_string()).filter(|t| !t.is_empty());
+        let notes = &mut h.parts().1.notes;
+        if notes.selection != text {
+            notes.selection = text;
+            cx.notify();
+        }
+    });
+    body.capture_any_mouse_up(let_go)
+        .child(head)
         .child(rows)
         .children(queued)
         .children(notice)

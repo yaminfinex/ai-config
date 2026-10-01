@@ -12,6 +12,7 @@ use crate::store::{Event, Store};
 use crate::views::composer::{self, Compose};
 use crate::views::lens::{self, Nav, State, Ui};
 use crate::views::markdown::{AGENT, PATH};
+use crate::views::notes::{self, Notes};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::transcript::{self as body, OpenLink, Scroll};
 use crate::views::{Host, dim, glyph, on, pill};
@@ -273,6 +274,7 @@ pub fn render<H: Host>(
             Compose::Focus => composer::act(store, ui, *c),
             _ => Vec::new(),
         }))
+        .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
             _ => Vec::new(),
@@ -284,6 +286,7 @@ pub fn render<H: Host>(
         .child(bar)
         .child(strip.children(tabs))
         .child(body::render(store, ui, zoom, t, cx))
+        .children(current.and_then(|agent| notes::render(store, ui, agent, t)))
         .children(current.map(|agent| composer::render(store, ui, agent, t, cx)))
         .into_any_element()
 }

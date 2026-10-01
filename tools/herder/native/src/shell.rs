@@ -23,7 +23,8 @@ use crate::store::transcript;
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale, Write};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, space, theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, space,
+    theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -266,6 +267,7 @@ impl Render for Shell {
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         composer::sync(&mut self.ui, &self.store, window, cx);
+        notes::sync(&mut self.ui, window, cx);
         let t = theme::type_scale(self.store.prefs.text_scale);
         let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()
@@ -331,7 +333,7 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
-                let [s, s2, s3, s4] = [(); 4].map(|_| shell.clone());
+                let [s, s2, s3, s4, s5, s6] = [(); 6].map(|_| shell.clone());
                 let probe = harness::Probe {
                     shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
                     link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
@@ -346,6 +348,15 @@ pub fn run() {
                     }),
                     composer: Box::new(move |w, cx| composer::probe(&s3.read(cx).ui, w, cx)),
                     says: Box::new(move |cx| composer::says(&s4.read(cx).store, &s4.read(cx).ui)),
+                    notes: Box::new(move |w, cx| {
+                        notes::probe(&s5.read(cx).store, &s5.read(cx).ui, w, cx)
+                    }),
+                    select: Box::new(move |text, cx| {
+                        s6.update(cx, |s, cx| {
+                            notes::select(&mut s.ui, text);
+                            cx.notify()
+                        })
+                    }),
                 };
                 window
                     .spawn(cx, async move |cx| harness::run(script, probe, cx).await)

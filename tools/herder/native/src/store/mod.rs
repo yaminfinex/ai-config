@@ -6,7 +6,7 @@
 //!
 //! - `fleet`: agents and their status, derived from the board.
 //! - `spaces`: spaces and their members, in lens order; the lens row type.
-//! - `notes`: note records; drafts live in `Prefs`.
+//! - `notes`: note records and the owner's note edits, hand-off and queueing (U5).
 //! - `composer`: drafts, who can be written to, and each message send (U4).
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
 //! - `transcript`: entries → compact items, paging cursors, tool/result pairing (U3).
@@ -127,6 +127,7 @@ pub enum Event {
     TextScale(TextScale),
     Transcript(transcript::Step),
     Compose(composer::Step),
+    Note(notes::Step),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -287,20 +288,11 @@ impl Store {
                 self.viewer_retry = false;
                 self.ask_viewer(&mut out);
             }
-            Event::Sync { ns, step } => {
-                self.live |= matches!(step, Step::Pulled(_));
-                let changes = self.sync.get_mut(ns).apply(step, &mut out);
-                if changes.outbox {
-                    out.push(Effect::Persist(Persist::Outbox));
-                }
-                if changes.rows {
-                    self.derive();
-                    out.push(Effect::Persist(Persist::Snapshot));
-                }
-            }
+            Event::Sync { ns, step } => self.sync_step(ns, step, &mut out),
             Event::Lens(m) => self.lens_move(m, &mut out),
             Event::Transcript(step) => self.transcript_step(step, &mut out),
             Event::Compose(step) => self.compose(step, &mut out),
+            Event::Note(step) => self.note(step, &mut out),
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
                 let next = match step {
@@ -377,6 +369,19 @@ impl Store {
         self.lapse_blocks();
         if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
             out.push(Effect::Persist(Persist::Prefs));
+        }
+    }
+
+    /// One step of a namespace's sync; what it changed is re-derived and persisted.
+    fn sync_step(&mut self, ns: Ns, step: Step, out: &mut Vec<Effect>) {
+        self.live |= matches!(step, Step::Pulled(_));
+        let changes = self.sync.get_mut(ns).apply(step, out);
+        if changes.outbox {
+            out.push(Effect::Persist(Persist::Outbox));
+        }
+        if changes.rows {
+            self.derive();
+            out.push(Effect::Persist(Persist::Snapshot));
         }
     }
 

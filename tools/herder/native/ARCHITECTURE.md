@@ -147,6 +147,7 @@ composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel)
 | `Lens && !Input && !Terminal` | home navigation letters |
 | `Space && !Input && !Terminal` | in-space navigation letters and scrolling |
 | `Composer > Input` | the composer's own chords (`cmd-enter`, `cmd-shift-enter`, `alt-enter`, `escape`); no other input (U5's notes) gets them |
+| `Notes > Input` | the notes editor's own (`enter` and `cmd-enter` save, `escape` cancels, U5); `shift-enter` stays a new line |
 | `Terminal` | keys the terminal consumes (Rung 2); `cmd-w` `cmd-t` `cmd-1…9` stay on `Space` |
 
 | Keys | Predicate | Action | Unit |
@@ -159,6 +160,8 @@ composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel)
 | `/` `r` | `Space && !Input && !Terminal` | focus the composer | U4 |
 | `cmd-enter` / `cmd-shift-enter` / `escape` | `Composer > Input` | send / send and file back / leave the box | U4 |
 | `alt-enter` | `Composer > Input` | queue as note | U5 |
+| `a` / `c` / `p` | `Space && !Input && !Terminal` | add a note / capture the transcript selection / notes into the composer | U5 |
+| `enter` `cmd-enter` / `escape` | `Notes > Input` | save the note / cancel | U5 |
 | `cmd-w` `cmd-t` `cmd-1…9` | `Space` | close panel, terminal, switch panel | Rung 2 |
 | `ctrl-alt-cmd-h` | global (`global-hotkey`) | summon | U6 |
 
@@ -263,7 +266,11 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   serve over the fixtures whose `POST …/message` answers ok, slowly ok, 409 (sender collision), 502 or
   holds: any scenario that presses `cmd-enter` points `HERDER_URL` at it, never at the real serve
   (`just check-composer`, six runs, each failing unless the app exits 0 at `quit` with the POSTs it
-  expects). Screenshots and presented-frame timings need an
+  expects). U5 added `notes:<n>:<closed|focused:text>`, `has:` (the composer contains), `select:` (stands in for a
+  pointer selection, which a script cannot drag), `tap:` (a key that may be bound to nothing), and `POST
+  /api/state/<ns>` on the fake serve, held in memory (`--notes` seeds web's two notes from
+  `testdata/notes-web.json`); `just check-notes` runs five scenarios, each failing unless it made exactly the
+  notes POSTs it expects and no message. Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -301,6 +308,16 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
+
+U5 exceptions (to agree at review): `views/notes.rs` 371 (the strip, its count collapse, the editor with its
+own key context for add, capture and edit, the two-click delete, the capture chip, and the note ids and
+clock, which the store may not read; rustfmt lays the GPUI builder chains out a call per line);
+`store/notes.rs` 284 (each edit's row in web's record shape and web's `noteTransferText` and
+`noteSourceLabel`, so a hand-off reads as web's); `harness.rs` 299 and `shell.rs` 369 (the U5 probes and
+steps), `views/mod.rs` 375 (the notes bindings and help, and the editor in the focus rule),
+`views/transcript.rs` 402 (the selection taken at mouse-up), `api/types.rs` 360 (quote and source omitted
+when unset, as web writes them), `store/mod.rs` 393 (`Event::Note` and `sync_step`, shared by the network
+and local edits).
 
 U4 exceptions (agreed at review): `store/composer.rs` is new (drafts, `can_send`, the send lifecycle) at
 174; `views/composer.rs` 217 (the box, its keys, file-back and the wording of every read-only state and
