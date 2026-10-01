@@ -345,7 +345,10 @@ impl Render for Shell {
 
 pub fn run() {
     harness::start_clock();
-    let script = harness::script();
+    let script = harness::script().unwrap_or_else(|e| {
+        eprintln!("harness: {e}");
+        std::process::exit(2)
+    });
     gpui_kit::application().run(move |cx| {
         theme::seed(cx);
         gpui_kit::init(cx);

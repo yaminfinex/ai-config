@@ -137,6 +137,7 @@ check-notes port="4412":
 # looking zoomed on mupu and frontmost (`HERDER_NATIVE_FRONT=1`), mupu and chief-mihe end a turn in one
 #         frame: only chief-mihe is notified;
 # burst   two frames 0.3 s apart: one summary for both.
+# A blank script (set, so automation) is refused with exit 2 before the app opens.
 check-alerts port="4413":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -164,6 +165,11 @@ check-alerts port="4413":
     once() { # NAME
         [ "$(echo "$notified" | grep -c .)" = 1 ] || { echo "check-alerts: $1: not exactly one notification"; exit 1; }
     }
+    for blank in "" " "; do # set but blank: refused before the app opens, so nothing reaches the OS
+        status=0
+        HERDER_NATIVE_SCRIPT="$blank" ./target/release/herder-native >"$home/blank.log" 2>&1 || status=$?
+        [ $status = 2 ] && ! grep -q "platform:" "$home/blank.log" || { echo "check-alerts: blank script ran (exit $status)"; exit 1; }
+    done
     run lens 0 "wait:5500 quit" --turn mupu
     want lens "mupu not notified" "would notify agent:mupu: mupu · "
     once lens

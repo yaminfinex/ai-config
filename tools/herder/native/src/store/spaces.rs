@@ -287,10 +287,11 @@ pub const BURST_MS: u64 = 1000;
 /// The needs-you alerts (U6): notifications on a transition into needing you, and the dock count.
 #[derive(Clone, Debug, Default)]
 pub struct Alerts {
-    /// Per agent, the turn and block it stood at on the last board. Only a change of these can be a
-    /// new reason to need you, so the same turn never alerts twice.
-    last: BTreeMap<String, (Option<u64>, bool)>,
-    /// A live board has been applied: boards from here on are transitions (boot and snapshot are not).
+    /// Per agent: whether it could be alerted, and the causes already spent.
+    marks: BTreeMap<String, Mark>,
+    /// A live board has been applied; once that event's baseline is taken, changes are transitions
+    /// (boot, the snapshot and the first live board are not).
+    pub(super) live: bool,
     armed: bool,
     /// Agents that turned to need you during the burst waiting out `BURST_MS`, in order.
     burst: Vec<String>,
@@ -300,28 +301,54 @@ pub struct Alerts {
     pub looking: Option<String>,
 }
 
+/// One agent's alert state. Eligibility and causes are separate: an alert needs a move into
+/// eligibility *and* a cause not yet spent (a turn past `turn`, or a block not yet alerted), so the
+/// same turn never alerts twice, and a block or a turn while it already needs you alerts nothing.
+#[derive(Clone, Copy, Debug, Default)]
+struct Mark {
+    eligible: bool,
+    /// The latest turn alerted (or baselined, or seen while looking).
+    turn: Option<u64>,
+    /// This block episode was alerted; cleared when the block ends, so blocking again alerts again.
+    block: bool,
+}
+
 impl Store {
-    /// After a board: each agent whose turn or block moved on and that now needs you joins the burst,
-    /// unless the owner is looking at it; the first to join starts the burst's timer. A board that is
-    /// not live (the snapshot) and the first live one only set the baseline.
-    pub(super) fn turns(&mut self, live: bool, out: &mut Vec<Effect>) {
-        let now: BTreeMap<String, (Option<u64>, bool)> = (self.fleet.agents.values())
-            .map(|a| (a.name.clone(), (a.turn_end, a.status() == Status::Blocked)))
-            .collect();
-        if self.alerts.armed {
-            let was_quiet = self.alerts.burst.is_empty();
-            for (name, key) in &now {
-                let moved = self.alerts.last.get(name) != Some(key);
-                if moved && self.alertable(name) && !self.alerts.burst.contains(name) {
-                    self.alerts.burst.push(name.clone());
-                }
+    /// After every event: an agent that moves into eligibility with an unspent cause joins the burst
+    /// (the first to join starts its timer), unless the owner is looking at it, which spends the cause
+    /// all the same. Until the first live board everything is baseline, and nothing alerts.
+    pub(super) fn transitions(&mut self, out: &mut Vec<Effect>) {
+        let was_quiet = self.alerts.burst.is_empty();
+        let armed = self.alerts.armed;
+        let names: Vec<String> = self.fleet.agents.keys().cloned().collect();
+        for name in names {
+            let a = &self.fleet.agents[&name];
+            let (turn, blocked) = (a.turn_end, a.status() == Status::Blocked);
+            let eligible = self.alertable(&name);
+            let looking = self.alerts.looking.as_deref() == Some(name.as_str());
+            let fresh = Mark {
+                eligible: false,
+                turn,
+                block: false,
+            };
+            let mark = self.alerts.marks.entry(name.clone()).or_insert(fresh);
+            mark.block &= blocked;
+            let cause = turn > mark.turn || (blocked && !mark.block);
+            let alert = armed && eligible && !mark.eligible && cause;
+            if alert && !looking {
+                self.alerts.burst.push(name);
             }
-            if was_quiet && !self.alerts.burst.is_empty() {
-                out.push(Effect::Burst { after_ms: BURST_MS });
+            if alert || !armed {
+                (mark.turn, mark.block) = (turn, blocked);
             }
+            mark.eligible = eligible;
         }
-        self.alerts.armed |= live;
-        self.alerts.last = now;
+        let fleet = &self.fleet.agents;
+        self.alerts.marks.retain(|name, _| fleet.contains_key(name));
+        self.alerts.armed = self.alerts.live;
+        if was_quiet && !self.alerts.burst.is_empty() {
+            out.push(Effect::Burst { after_ms: BURST_MS });
+        }
     }
 
     /// The burst's second is up: one notification for those that still need you, a summary for several.
@@ -330,7 +357,7 @@ impl Store {
         let lens = self.lens();
         let home = |a: &str| lens.iter().copied().find(|s| s.agents().any(|m| m == a));
         let due: Vec<(&str, &Space)> = (burst.iter())
-            .filter(|a| self.alertable(a))
+            .filter(|a| self.alertable(a) && self.alerts.looking.as_ref() != Some(a))
             .filter_map(|a| Some((a.as_str(), home(a)?)))
             .collect();
         let reason = |a: &str| match self.fleet.agents.get(a).map(|a| a.status()) {
@@ -356,11 +383,9 @@ impl Store {
         out.push(Effect::Notify(notice));
     }
 
-    /// Needs you, sits in a space (the lens shows it) and is not the one the owner is looking at.
+    /// Needs you and sits in a space (the lens shows it).
     fn alertable(&self, name: &str) -> bool {
-        self.alerts.looking.as_deref() != Some(name)
-            && self.agent_needs_you(name)
-            && self.spaces.iter().any(|s| s.agents().any(|a| a == name))
+        self.agent_needs_you(name) && self.spaces.iter().any(|s| s.agents().any(|a| a == name))
     }
 
     /// The dock badge: the lens's needs-you total, sent when it changes, and at boot (`all`) whatever it

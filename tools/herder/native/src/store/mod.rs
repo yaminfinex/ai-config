@@ -336,6 +336,7 @@ impl Store {
                 out.push(Effect::Persist(Persist::Prefs));
             }
         }
+        self.transitions(&mut out);
         self.badge(boot, &mut out);
         out
     }
@@ -399,10 +400,10 @@ impl Store {
     fn board(&mut self, board: Board, live: bool, out: &mut Vec<Effect>) {
         self.fleet.ingest(board);
         self.lapse_blocks();
+        self.alerts.live |= live;
         if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
             out.push(Effect::Persist(Persist::Prefs));
         }
-        self.turns(live, out);
     }
 
     /// One step of a namespace's sync; what it changed is re-derived and persisted.

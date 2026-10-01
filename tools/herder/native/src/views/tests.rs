@@ -305,3 +305,59 @@ mod links {
         assert_eq!(vscode_url("superset", "relative", None), None);
     }
 }
+
+/// A notification's click (`space::summon`, U6).
+mod summon {
+    use super::*;
+    use crate::views::space::Zoom;
+
+    #[test]
+    fn an_agent_opens_in_its_first_space_from_anywhere() {
+        let store = store();
+        let slack = space_of(&store, "mupu").clone();
+        let chief = space_of(&store, "chief-mihe").clone();
+        let mut ui = State::default();
+        let events = space::summon(&store, &mut ui, "agent:mupu");
+        assert_eq!(viewed(events), [view(&slack, "mupu")]);
+        assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
+
+        // Open elsewhere (a preview in another space): it moves to its own space.
+        ui.zoom = Some(Zoom {
+            space: chief.id.clone(),
+            agent: Some("mupu".into()),
+        });
+        let events = space::summon(&store, &mut ui, "agent:mupu");
+        assert_eq!(viewed(events), [view(&slack, "mupu")]);
+        assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
+    }
+
+    #[test]
+    fn an_agent_already_open_is_still_seen() {
+        let store = store();
+        let slack = space_of(&store, "mupu").clone();
+        let mut ui = State::default();
+        space::summon(&store, &mut ui, "agent:mupu");
+        let events = space::summon(&store, &mut ui, "agent:mupu");
+        assert_eq!(
+            viewed(events),
+            [view(&slack, "mupu")],
+            "its new turn is seen"
+        );
+        assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
+    }
+
+    #[test]
+    fn a_summary_or_the_chord_comes_back_to_the_lens() {
+        let store = store();
+        let herder = space_of(&store, "orch-lega").clone();
+        let mut ui = State::default();
+        space::summon(&store, &mut ui, "agent:mupu");
+        let events = space::summon(&store, &mut ui, &format!("space:{}", herder.id));
+        assert!(viewed(events).is_empty());
+        assert_eq!(zoomed(&ui), None);
+        assert_eq!(ui.selected(&store).map(|s| &s.id), Some(&herder.id));
+        space::summon(&store, &mut ui, "agent:mupu");
+        space::summon(&store, &mut ui, "");
+        assert_eq!(zoomed(&ui), None);
+    }
+}

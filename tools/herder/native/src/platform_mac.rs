@@ -2,8 +2,8 @@
 //! `global-hotkey` (U6). Everything here runs on the main thread. Notifications use GPUI's own
 //! `show_system_notification`, which the shell calls only when `quiet()` is false.
 //!
-//! Test mode is decided here, once: a scripted run (`HERDER_NATIVE_SCRIPT`: the harness and every
-//! `just check-*`) is `quiet`. It posts no notification, sets no badge and never takes the owner's
+//! Test mode is decided here, once: a run with `HERDER_NATIVE_SCRIPT` set at all (the harness and
+//! every `just check-*`; a blank one is refused before the app opens) is `quiet`. It posts no notification, sets no badge and never takes the owner's
 //! chord; each is a logged no-op (`platform: would notify …`, `platform: badge 3`) the scenarios read.
 
 use global_hotkey::hotkey::HotKey;
@@ -14,7 +14,7 @@ use objc2_foundation::NSString;
 
 /// Test mode: notifications, the badge and the chord are logged, never done.
 pub fn quiet() -> bool {
-    std::env::var("HERDER_NATIVE_SCRIPT").is_ok_and(|s| !s.trim().is_empty())
+    std::env::var_os("HERDER_NATIVE_SCRIPT").is_some()
 }
 
 /// A quiet run with `HERDER_NATIVE_FRONT=1` counts as frontmost, though its window stays behind.

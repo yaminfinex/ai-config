@@ -57,11 +57,27 @@ pub fn visible() -> bool {
     std::env::var("HERDER_NATIVE_VISIBLE").is_ok_and(|v| v == "1")
 }
 
-/// The script, if this is a harness run.
-pub fn script() -> Option<String> {
-    std::env::var("HERDER_NATIVE_SCRIPT")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
+/// The script, if this is a harness run. `HERDER_NATIVE_SCRIPT` set at all makes the run automation
+/// (`platform_mac::quiet`), so a script that is empty or blank is refused before the app opens.
+pub fn script() -> Result<Option<String>, String> {
+    script_of(std::env::var_os("HERDER_NATIVE_SCRIPT").map(|v| v.to_string_lossy().into_owned()))
+}
+
+fn script_of(var: Option<String>) -> Result<Option<String>, String> {
+    match var {
+        Some(s) if s.trim().is_empty() => Err("HERDER_NATIVE_SCRIPT is set but empty".into()),
+        var => Ok(var),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_set_script_must_have_steps() {
+    assert_eq!(script_of(None), Ok(None));
+    assert!(script_of(Some(String::new())).is_err());
+    assert!(script_of(Some(" \t ".into())).is_err());
+    let steps = Some("wait:1 quit".to_string());
+    assert_eq!(script_of(steps.clone()), Ok(steps));
 }
 
 /// One metric line on stderr, stamped with milliseconds since `start_clock`.

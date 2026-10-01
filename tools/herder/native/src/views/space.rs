@@ -151,21 +151,26 @@ fn zoom_to(ui: &mut State, space: &Space, agent: Option<String>, swipe: Option<f
     show(ui, space.id.clone(), agent)
 }
 
-/// A summon (`Summon`): a notified agent is zoomed into in the first space holding it; otherwise the
-/// zoom closes onto the lens, with the summary's space selected.
+/// A summon (`Summon`): a notified agent is zoomed into in the first space holding it, and seen even
+/// when that zoom is already open; otherwise the zoom closes onto the lens, with the summary's space
+/// selected.
 pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
     let agent = tag.strip_prefix("agent:");
     let lens = store.lens();
     let home = agent.and_then(|a| lens.into_iter().find(|s| s.agents().any(|m| m == a)));
     if let (Some(agent), Some(space)) = (agent, home) {
-        let same = ui
-            .zoom
-            .as_ref()
-            .is_some_and(|z| z.agent.as_deref() == Some(agent));
-        return match same {
-            true => Vec::new(),
-            false => zoom_to(ui, space, Some(agent.into()), None),
+        let to = Zoom {
+            space: space.id.clone(),
+            agent: Some(agent.into()),
         };
+        if ui.zoom.as_ref() == Some(&to) {
+            ui.select(&space.id);
+            return vec![Event::Lens(Move::View {
+                space: to.space,
+                agent: to.agent,
+            })];
+        }
+        return zoom_to(ui, space, to.agent, None);
     }
     let out = act(store, ui, Zoomed::Out);
     if let Some(id) = tag.strip_prefix("space:") {

@@ -2780,6 +2780,89 @@ mod alerts {
         assert_eq!(notices(store.apply(Event::BurstEnded)), [want]);
     }
 
+    fn herdr(b: &mut Board, name: &str, status: &str) {
+        let panes = b.workspaces.iter_mut().flat_map(|w| &mut w.tabs);
+        for pane in panes.flat_map(|t| &mut t.panes).filter(|p| p.agent == name) {
+            pane.herdr_status = status.into();
+        }
+    }
+
+    fn view(store: &Store, agent: &str) -> Event {
+        let space = space_of(store, agent).id.clone();
+        let agent = Some(agent.to_string());
+        Event::Lens(spaces::Move::View { space, agent })
+    }
+
+    #[test]
+    fn a_turn_seen_working_alerts_once_it_stops() {
+        let (mut store, mut b) = live();
+        bump(&mut b, "mupu", 1);
+        herdr(&mut b, "mupu", "working");
+        assert!(
+            !store.apply(fleet_frame(b.clone())).contains(&BURST),
+            "still working"
+        );
+        herdr(&mut b, "mupu", "idle");
+        assert!(
+            store.apply(fleet_frame(b.clone())).contains(&BURST),
+            "same turn, now idle"
+        );
+        assert_eq!(notices(store.apply(Event::BurstEnded)).len(), 1);
+        // Working again and back without finishing a turn: that turn is spent.
+        herdr(&mut b, "mupu", "working");
+        store.apply(fleet_frame(b.clone()));
+        herdr(&mut b, "mupu", "idle");
+        assert!(!store.apply(fleet_frame(b)).contains(&BURST));
+    }
+
+    #[test]
+    fn a_block_while_it_already_needs_you_alerts_nothing() {
+        let (mut store, mut b) = live();
+        bump(&mut b, "mupu", 1);
+        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
+        assert_eq!(notices(store.apply(Event::BurstEnded)).len(), 1);
+        block(&mut b, "mupu", true);
+        assert!(
+            !store.apply(fleet_frame(b.clone())).contains(&BURST),
+            "needed you throughout"
+        );
+        block(&mut b, "mupu", false);
+        assert!(
+            !store.apply(fleet_frame(b)).contains(&BURST),
+            "the alerted turn is spent"
+        );
+    }
+
+    #[test]
+    fn unblocking_and_blocking_again_alerts_again() {
+        let (mut store, mut b) = live();
+        block(&mut b, "mupu", true);
+        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
+        store.apply(Event::BurstEnded);
+        store.apply(view(&store, "mupu"));
+        block(&mut b, "mupu", false);
+        assert!(!store.apply(fleet_frame(b.clone())).contains(&BURST));
+        block(&mut b, "mupu", true);
+        assert!(store.apply(fleet_frame(b)).contains(&BURST), "a new block");
+        let got = notices(store.apply(Event::BurstEnded));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].body, "blocked");
+    }
+
+    #[test]
+    fn a_reconnect_is_not_a_transition_but_turns_after_it_are() {
+        let (mut store, mut b) = live();
+        let dropped = Event::Stream {
+            generation: 1,
+            event: StreamEvent::Dropped,
+        };
+        store.apply(dropped);
+        store.apply(hello("b1"));
+        assert!(!store.apply(fleet_frame(b.clone())).contains(&BURST));
+        bump(&mut b, "mupu", 1);
+        assert!(store.apply(fleet_frame(b)).contains(&BURST));
+    }
+
     #[test]
     fn the_badge_changes_only_with_the_count() {
         let (mut store, mut b) = live();
