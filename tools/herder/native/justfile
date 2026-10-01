@@ -164,6 +164,27 @@ check-alerts port="4413":
     badged scrolled 1
     echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, an agent in no space alerts and opens alone, an agent in two spaces counts once, what lands on a watched tail is seen and counts once scrolled off it, no chord taken)"
 
+# Mouse (F4), through `scripts/scenario.sh`: a click on a card selects it, a double-click zooms in, a click
+# on a tab shows that agent and a click on `lens ›` zooms out, also from inside the composer and the notes
+# editor (focus leaves them for the zoom); the cards' text reads (`limit=12`) reach the
+# fake serve. Card 1 is `slack` (mupu, support-mifa) in the fixtures' lens order.
+check-mouse port="4414":
+    #!/usr/bin/env bash
+    . scripts/scenario.sh check-mouse {{port}}
+    clicks="click:card:1 draw selected:slack click:card2:1 wait:400 draw expect:mupu"
+    clicks+=" click:tab:1 draw expect:support-mifa click:crumb wait:400 draw expect:"
+    scenario clicks "" "wait:1500 draw shot:f4-lens $clicks quit"
+    # From inside the composer and the notes editor: a tab or `lens ›` click leaves the box for the zoom.
+    zoom="wait:1500 click:card2:1 wait:400 draw expect:mupu"
+    boxed="$zoom key:/ draw box:focused: click:tab:1 draw expect:support-mifa box:idle: click:tab:0 wait:600 draw expect:mupu"
+    boxed+=" key:/ draw box:focused: click:crumb wait:400 draw expect: box:idle:"
+    scenario boxed "" "$boxed quit"
+    noted="$zoom key:a draw notes:0:focused: click:tab:1 draw expect:support-mifa notes:0:closed click:tab:0 wait:600"
+    noted+=" draw key:a draw notes:0:focused: click:crumb wait:400 draw expect: notes:0:closed"
+    scenario noted "" "$noted quit"
+    grep -q "GET /api/agents/mupu/entries?limit=12 " "$home/clicks.fake" || { echo "check-mouse: no card read for mupu"; exit 1; }
+    echo "check-mouse: ok (click selects, double-click zooms in, a tab click switches agent, lens › zooms out, both from the composer and the notes editor too, cards read their tails)"
+
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.
 bundle:

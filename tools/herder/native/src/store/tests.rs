@@ -3140,3 +3140,230 @@ mod alerts {
         assert!(store.agent_needs_you("mupu"));
     }
 }
+
+mod cards {
+    use super::*;
+    use crate::api::{Entries, Entry};
+    use crate::store::cards::{Got, IN_FLIGHT, answer};
+
+    /// The last `n` entries of a recorded tail, as a card read gets them.
+    fn tail(agent: &str, n: usize) -> Vec<Entry> {
+        let text = match agent {
+            "mupu" => include_str!("../../testdata/agents/mupu/tail.json"),
+            _ => include_str!("../../testdata/agents/conductor-line/tail.json"),
+        };
+        let mut e = serde_json::from_str::<Entries>(text).unwrap().entries;
+        e.split_off(e.len() - n)
+    }
+
+    fn said(text: &str) -> Entry {
+        serde_json::from_value(json!({
+            "byteOffset": 1, "kind": "assistant_text",
+            "payload": {"message": {"content": [{"type": "text", "text": text}]}},
+        }))
+        .unwrap()
+    }
+
+    fn reads(effects: &[Effect]) -> Vec<(String, Option<u64>)> {
+        let read = |e: &Effect| match e {
+            Effect::Fetch(Fetch::Card { agent, turn }) => Some((agent.clone(), *turn)),
+            _ => None,
+        };
+        effects.iter().filter_map(read).collect()
+    }
+
+    fn got(agent: &str, turn: Option<u64>, result: Result<Vec<Entry>, String>) -> Event {
+        let agent = agent.into();
+        Event::Card(Got {
+            agent,
+            turn,
+            result,
+        })
+    }
+
+    fn turn(store: &Store, agent: &str) -> Option<u64> {
+        store.fleet.agents[agent].turn_end
+    }
+
+    /// Every space in the background but those showing `keep`, so only their cards carry text.
+    fn only(store: &mut Store, keep: &[&str]) {
+        for k in keep {
+            let space = space_of(store, k).id.clone();
+            store.prefs.visible.insert(space, k.to_string());
+        }
+        let ids: Vec<String> = store.spaces.iter().map(|s| s.id.clone()).collect();
+        for space in ids {
+            let s = store.spaces.iter().find(|s| s.id == space).unwrap();
+            let row = match keep.iter().any(|k| store.visible(s) == Some(*k)) {
+                true => Row::Watch,
+                false => Row::Background,
+            };
+            store.apply(lens(spaces::Move::SetRow { space, row }));
+        }
+        // Land the first board's reads (empty), so `keep`'s are asked.
+        while let Some((agent, t)) = store.cards.flight.pop_first() {
+            store.cards.flight.insert(agent.clone(), t);
+            store.apply(got(&agent, t, Ok(Vec::new())));
+        }
+    }
+
+    #[test]
+    fn the_first_board_reads_four_text_cards_and_a_landing_frees_a_slot() {
+        let mut store = loaded();
+        let first = reads(&store.apply(fleet_frame(board())));
+        assert_eq!(first.len(), IN_FLIGHT, "four in flight at most");
+        for (agent, t) in &first {
+            let space = space_of(&store, agent);
+            assert_eq!(
+                store.visible(space),
+                Some(agent.as_str()),
+                "the visible agent"
+            );
+            assert_eq!(*t, turn(&store, agent), "keyed on its turn");
+        }
+        assert!(
+            reads(&store.apply(fleet_frame(board()))).is_empty(),
+            "no slot"
+        );
+        let (agent, t) = first[0].clone();
+        let next = reads(&store.apply(got(&agent, t, Ok(Vec::new()))));
+        assert_eq!(next.len(), 1, "the slot goes to the next card");
+        assert!(!first.contains(&next[0]));
+    }
+
+    #[test]
+    fn an_agent_is_read_again_only_when_its_turn_ends() {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        only(&mut store, &["conductor-line"]);
+        let t = turn(&store, "conductor-line");
+        store.apply(got("conductor-line", t, Ok(tail("conductor-line", 12))));
+        assert!(store.cards.text("conductor-line").is_some());
+        assert!(reads(&store.apply(fleet_frame(board()))).is_empty());
+        let mut b = board();
+        bump(&mut b, "conductor-line", 1);
+        let again = reads(&store.apply(fleet_frame(b)));
+        assert_eq!(again, [("conductor-line".into(), t.map(|t| t + 1))]);
+    }
+
+    #[test]
+    fn stale_results_are_dropped() {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        only(&mut store, &["conductor-line", "mupu"]);
+        let t = turn(&store, "conductor-line");
+        store.apply(got("conductor-line", t, Ok(vec![said("newer")])));
+        // An answer for an older turn than the one held.
+        let older = t.map(|t| t - 1);
+        store.apply(got("conductor-line", older, Ok(vec![said("older")])));
+        assert_eq!(store.cards.text("conductor-line"), Some("newer"));
+        // An agent whose card no longer carries text (its space went to the background).
+        let space = space_of(&store, "mupu").id.clone();
+        let row = Row::Background;
+        store.apply(lens(spaces::Move::SetRow { space, row }));
+        store.apply(got("mupu", turn(&store, "mupu"), Ok(vec![said("hi")])));
+        assert_eq!(store.cards.text("mupu"), None);
+    }
+
+    #[test]
+    fn a_failed_read_keeps_its_text_until_the_next_hello() {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        only(&mut store, &["conductor-line"]);
+        let t = turn(&store, "conductor-line");
+        store.apply(got("conductor-line", t, Ok(vec![said("kept")])));
+        let mut b = board();
+        bump(&mut b, "conductor-line", 1);
+        store.apply(fleet_frame(b.clone()));
+        let failed = store.apply(got("conductor-line", t.map(|t| t + 1), Err("503".into())));
+        assert!(reads(&failed).is_empty(), "not asked again at once");
+        assert_eq!(store.cards.text("conductor-line"), Some("kept"));
+        assert!(reads(&store.apply(fleet_frame(b))).is_empty());
+        let again = reads(&store.apply(hello("b")));
+        assert_eq!(again, [("conductor-line".into(), t.map(|t| t + 1))]);
+    }
+
+    #[test]
+    fn a_read_overtaken_by_a_newer_turn_is_dropped_and_the_new_turn_read() {
+        for result in [Ok(vec![said("obsolete")]), Err("503".to_string())] {
+            let mut store = loaded();
+            store.apply(fleet_frame(board()));
+            only(&mut store, &["conductor-line"]);
+            let t = turn(&store, "conductor-line");
+            store.apply(got("conductor-line", t, Ok(vec![said("held")])));
+            let mut b = board();
+            bump(&mut b, "conductor-line", 1);
+            let asked = reads(&store.apply(fleet_frame(b.clone())));
+            assert_eq!(asked, [("conductor-line".into(), t.map(|t| t + 1))]);
+            // The fleet moves on again while that read is in flight.
+            bump(&mut b, "conductor-line", 1);
+            assert!(
+                reads(&store.apply(fleet_frame(b))).is_empty(),
+                "one read per agent"
+            );
+            let landed = store.apply(got("conductor-line", t.map(|t| t + 1), result));
+            assert_eq!(store.cards.text("conductor-line"), Some("held"), "dropped");
+            let now = [("conductor-line".into(), t.map(|t| t + 2))];
+            assert_eq!(reads(&landed), now, "the current turn is read");
+        }
+    }
+
+    #[test]
+    fn a_failed_turn_is_not_asked_again_but_a_newer_turn_is() {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        only(&mut store, &["conductor-line"]);
+        let t = turn(&store, "conductor-line");
+        let failed = store.apply(got("conductor-line", t, Err("503".into())));
+        assert!(reads(&failed).is_empty());
+        assert!(
+            reads(&store.apply(fleet_frame(board()))).is_empty(),
+            "not that turn"
+        );
+        let mut b = board();
+        bump(&mut b, "conductor-line", 1);
+        let newer = reads(&store.apply(fleet_frame(b)));
+        assert_eq!(
+            newer,
+            [("conductor-line".into(), t.map(|t| t + 1))],
+            "no hello needed"
+        );
+    }
+
+    #[test]
+    fn the_card_shows_the_last_answer_cleaned_as_the_transcript() {
+        // conductor-line's tail ends on an answer after its tools.
+        let entries = tail("conductor-line", 12);
+        let last = entries.iter().rev().find_map(answer).unwrap();
+        assert!(!last.contains("<status>") && !last.contains("<internal>"));
+        // A status-only answer is no answer: mupu's last 12 entries have none.
+        assert_eq!(tail("mupu", 12).iter().rev().find_map(answer), None);
+        let text = "Done.<internal>scratch</internal> <status>ok</status>\n\nShipped **x**.";
+        assert_eq!(answer(&said(text)).as_deref(), Some("Done. Shipped x."));
+        // One plain paragraph for the card's line clamp: no headings, emphasis, ticks, rules or targets;
+        // a table row is its cells.
+        let md =
+            "## Done\n\nTwo **[PRs](https://x/1)** need you:\n\n| a | b |\n|---|---|\n- `x`  first";
+        let want = "Done Two PRs need you: a · b; - x first";
+        assert_eq!(answer(&said(md)).as_deref(), Some(want));
+        assert_eq!(answer(&said("<status>idle</status>")), None);
+        assert_eq!(
+            answer(&said("half <status>never closed")).as_deref(),
+            Some("half")
+        );
+    }
+
+    #[test]
+    fn a_read_with_no_answer_keeps_the_last_one() {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        only(&mut store, &["mupu"]);
+        let t = turn(&store, "mupu");
+        store.apply(got("mupu", t, Ok(vec![said("earlier")])));
+        let mut b = board();
+        bump(&mut b, "mupu", 1);
+        store.apply(fleet_frame(b));
+        store.apply(got("mupu", t.map(|t| t + 1), Ok(tail("mupu", 12))));
+        assert_eq!(store.cards.text("mupu"), Some("earlier"));
+    }
+}

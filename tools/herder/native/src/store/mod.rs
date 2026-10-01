@@ -11,8 +11,10 @@
 //! - `composer`: drafts, who can be written to, and each message send (U4).
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
 //! - `transcript`: entries → compact items, paging cursors, tool/result pairing (U3).
+//! - `cards`: the lens cards' text, each visible agent's last answer, read once per turn (F4).
 
 pub mod attention;
+pub mod cards;
 pub mod composer;
 pub mod condense;
 pub mod fleet;
@@ -130,6 +132,8 @@ pub enum Event {
     Transcript(transcript::Step),
     Compose(composer::Step),
     Note(notes::Step),
+    /// A lens card's tail read landed (`cards`).
+    Card(cards::Got),
     /// The app became frontmost, or stopped being (U6): the agent zoomed in meanwhile is never notified.
     Front(bool),
     /// A timer set by `Effect::After` is up.
@@ -141,8 +145,16 @@ pub enum Event {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fetch {
     Viewer,
-    State { ns: Ns, since: u64 },
+    State {
+        ns: Ns,
+        since: u64,
+    },
     Transcript(transcript::Read),
+    /// A text card's agent's tail, for its last answer, read for `turn` (`cards`).
+    Card {
+        agent: String,
+        turn: Option<u64>,
+    },
 }
 
 /// A file the shell writes from the store's current state; it coalesces bursts.
@@ -243,6 +255,7 @@ pub struct Store {
     /// Per agent, why its last queue or transfer did not happen; until its next transfer.
     pub note_problems: BTreeMap<String, String>,
     pub alerts: attention::Alerts,
+    pub cards: cards::Cards,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
@@ -318,6 +331,7 @@ impl Store {
             Event::Transcript(step) => self.transcript_step(step, &mut out),
             Event::Compose(step) => self.compose(step, &mut out),
             Event::Note(step) => self.note(step, &mut out),
+            Event::Card(got) => self.card_read(got),
             Event::Front(front) => self.alerts.front = front,
             Event::Wake(Wake::Burst) => self.burst_ended(&mut out),
             Event::Summon => {}
@@ -334,6 +348,7 @@ impl Store {
             }
         }
         self.watch(&mut out);
+        self.card_reads(&mut out);
         self.transitions(&mut out);
         self.badge(boot, &mut out);
         out
@@ -374,6 +389,7 @@ impl Store {
                 self.server_updated |= *first != hello.build_identity;
                 self.conn = Conn::Live;
                 self.catch_up(out);
+                self.cards_hello();
                 self.transcript_wake(None, out);
             }
             Wire::Fleet(board) => {

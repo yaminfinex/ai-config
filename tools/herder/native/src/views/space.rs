@@ -33,6 +33,11 @@ pub enum Zoomed {
     Agent(isize),
 }
 
+/// A clicked tab: show that agent in this zoom.
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = space, no_json)]
+pub struct Tab(pub SharedString);
+
 /// Bring the app to a notification's agent (`agent:<name>`) or space (`space:<id>`), or to the lens
 /// (`""`, the summon chord); U6.
 #[derive(Clone, Debug, PartialEq, Action)]
@@ -212,6 +217,16 @@ fn open(ui: &mut State, url: &str) -> Vec<Event> {
     show(ui, zoom.space, Some(agent.to_string()))
 }
 
+/// A clicked tab: its agent, unless it is already shown.
+fn tab(ui: &mut State, agent: &str) -> Vec<Event> {
+    match ui.zoom.clone() {
+        Some(zoom) if zoom.agent.as_deref() != Some(agent) => {
+            show(ui, zoom.space, Some(agent.to_string()))
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub(super) fn zoomed<'a>(store: &'a Store, zoom: &Zoom) -> Option<&'a Space> {
     store.spaces.iter().find(|s| s.id == zoom.space)
 }
@@ -263,7 +278,12 @@ pub fn render<H: Host>(
     let tabs = members.into_iter().chain(preview).map(|name| {
         let on = Some(name) == current;
         let agent = store.fleet.agents.get(name);
+        let click = Tab(name.to_string().into());
         div()
+            .id(SharedString::from(format!("tab-{name}")))
+            .cursor_pointer()
+            .on_click(move |_, window, cx| window.dispatch_action(click.boxed_clone(), cx))
+            .hover(|s| s.text_color(rgb(pal::INK)))
             .flex()
             .items_center()
             .gap(t.px(6.))
@@ -284,11 +304,18 @@ pub fn render<H: Host>(
     } else {
         "(space gone)"
     };
+    let lens = div()
+        .id("crumb-lens")
+        .cursor_pointer()
+        .hover(|s| s.text_color(rgb(pal::ACC)))
+        .on_click(|_, window, cx| window.dispatch_action(Zoomed::Out.boxed_clone(), cx))
+        .child("lens ›");
     let crumb = format!(
-        "lens › {} › {}",
+        "{} › {}",
         space.map_or(gone, |s| s.name.as_str()),
         current.unwrap_or("no agents")
     );
+    let crumb = div().flex().gap(t.px(8.)).child(lens).child(crumb);
     let bar = div()
         .flex()
         .items_center()
@@ -311,6 +338,7 @@ pub fn render<H: Host>(
         .key_context("Space")
         .track_focus(&ui.zoom_focus)
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
+        .on_action(on(cx, |_, ui, t: &Tab| tab(ui, &t.0)))
         .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
         .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
         .on_action(on(cx, |_, ui, c: &Compose| match c {

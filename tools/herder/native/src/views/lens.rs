@@ -6,6 +6,7 @@
 //! persisted and never goes through the store. Rows, the visible agent, seen marks and unread spaces
 //! are the store's, changed by dispatching `Move`s.
 
+use crate::store::fleet::Agent;
 use crate::store::spaces::{Move, Row, Space, Stop};
 use crate::store::{Conn, Event, Store};
 use crate::views::space::{self, Anim, Zoom};
@@ -34,6 +35,24 @@ pub enum Nav {
     ZoomIn,
     /// `n`, or `N` with `true`: the next space needing you, and zoom in.
     NextNeeding(bool),
+}
+
+/// A click on a card: select its space (`space`, an id); a double-click (`zoom`) zooms in too.
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = lens, no_json)]
+pub struct Pick {
+    pub space: SharedString,
+    pub zoom: bool,
+}
+
+/// What a card's text shows (`t` cycles it): the visible agent's last answer, its status and title,
+/// or its working directory.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Text {
+    #[default]
+    Answer,
+    Status,
+    Cwd,
 }
 
 /// Card sizes (`s`): width in design pixels and text lines, as the prototype; the first is the default.
@@ -69,8 +88,8 @@ pub struct State {
     /// A zoom transition in flight (`space::Anim`), cleared when it lands.
     pub(super) anim: Option<Anim>,
     help: bool,
-    /// Card text: the working directory instead of status and title (`t`).
-    cwd: bool,
+    /// Card text (`t`).
+    text: Text,
     size: usize,
     scroll: ScrollHandle,
     /// The selection moved: scroll its card into view once it is laid out.
@@ -155,7 +174,13 @@ pub fn act(store: &Store, ui: &mut State, nav: Nav) -> Vec<Event> {
         Nav::StepRow(by) => step_row(store, ui, space, by),
         // Pin the implicit first-card selection, which would otherwise move with the space.
         Nav::Place(_) => ui.select(&space.id),
-        Nav::CardText => ui.cwd ^= true,
+        Nav::CardText => {
+            ui.text = match ui.text {
+                Text::Answer => Text::Status,
+                Text::Status => Text::Cwd,
+                Text::Cwd => Text::Answer,
+            }
+        }
         Nav::CardSize => ui.size = (ui.size + 1) % SIZES.len(),
         Nav::Help => ui.help ^= true,
         Nav::ZoomIn => return space::zoom_into(store, ui, space, None),
@@ -171,6 +196,18 @@ pub fn act(store: &Store, ui: &mut State, nav: Nav) -> Vec<Event> {
         _ => return Vec::new(),
     };
     vec![Event::Lens(mv)]
+}
+
+/// A clicked card: select it, and zoom in on a double-click.
+fn pick(store: &Store, ui: &mut State, p: &Pick) -> Vec<Event> {
+    let Some(space) = store.spaces.iter().find(|s| *s.id == *p.space) else {
+        return Vec::new();
+    };
+    ui.select(&space.id);
+    match p.zoom {
+        true => space::zoom_into(store, ui, space, None),
+        false => Vec::new(),
+    }
 }
 
 /// `j k`: the same column in the next or previous row that has cards, else that row's last card.
@@ -241,7 +278,7 @@ pub fn render<H: Host>(
 
 fn home<H: Host>(store: &Store, ui: &Ui, t: TypeScale, cx: &mut Context<H>) -> AnyElement {
     let chosen = ui.selected(store).map(|s| s.id.as_str());
-    let names = ["FOCUS full cards", "WATCH two lines", "BACKGROUND no text"];
+    let names = ["FOCUS last answer", "WATCH two lines", "BACKGROUND no text"];
     let rows = store.rows().into_iter().zip(Row::ALL).enumerate();
     let rows = rows.map(|(i, (spaces, row))| {
         let head = dim(format!("{} {} · {}", i + 1, names[i], spaces.len())).text_size(t.small);
@@ -256,6 +293,7 @@ fn home<H: Host>(store: &Store, ui: &Ui, t: TypeScale, cx: &mut Context<H>) -> A
         .id("lens")
         .track_focus(&ui.home)
         .on_action(on(cx, |store, ui, nav: &Nav| act(store, ui, *nav)))
+        .on_action(on(cx, |store, ui, p: &Pick| pick(store, ui, p)))
         .size_full()
         .relative()
         .child(
@@ -289,9 +327,10 @@ pub(super) fn header_line(store: &Store) -> String {
 }
 
 /// One space: bright with its unread count when it needs you, dim otherwise. The card shows the
-/// visible agent and `+N` for the other members, then its text: focus cards at the chosen size (`s`),
-/// watch cards two lines, background cards none.
-fn card(store: &Store, ui: &Ui, space: &Space, row: Row, on: bool, t: TypeScale) -> Div {
+/// visible agent and `+N` for the other members, then its text (the agent's last answer, `cards`):
+/// focus cards at the chosen size (`s`), watch cards two lines, background cards none. A click selects
+/// it, a double-click zooms in, and the pointer over it lifts its border.
+fn card(store: &Store, ui: &Ui, space: &Space, row: Row, on: bool, t: TypeScale) -> Stateful<Div> {
     let needs = store.needs_you(space);
     let name = store.visible(space);
     let agent = name.and_then(|n| store.fleet.agents.get(n));
@@ -301,13 +340,18 @@ fn card(store: &Store, ui: &Ui, space: &Space, row: Row, on: bool, t: TypeScale)
         (Row::Watch, (width, _)) => (width, 2),
         (Row::Background, _) => (SIZES[3].0, 0),
     };
-    let text = match agent {
-        None => "no agent on the board".to_string(),
-        Some(a) if ui.cwd => a.cwd.clone().unwrap_or_else(|| a.workspace.clone()),
-        Some(a) => match (label(a, store.agent_needs_you(&a.name)), &a.title) {
-            (label, Some(title)) => format!("{label} · {title}"),
-            (label, None) => label.into(),
+    let status = |a: &Agent| match (label(a, store.agent_needs_you(&a.name)), &a.title) {
+        (label, Some(title)) => format!("{label} · {title}"),
+        (label, None) => label.into(),
+    };
+    let text = match (agent, ui.text) {
+        (None, _) => "no agent on the board".to_string(),
+        (Some(a), Text::Cwd) => a.cwd.clone().unwrap_or_else(|| a.workspace.clone()),
+        (Some(a), Text::Answer) => match store.cards.text(&a.name) {
+            Some(answer) => answer.to_string(),
+            None => status(a),
         },
+        (Some(a), Text::Status) => status(a),
     };
     let (bg, border) = match (on, needs > 0) {
         (true, n) => (if n { pal::ACCW } else { pal::PANEL }, pal::AMBER),
@@ -326,7 +370,25 @@ fn card(store: &Store, ui: &Ui, space: &Space, row: Row, on: bool, t: TypeScale)
         .children(agent.map(|a| glyph(a, &ui.dots, t)))
         .child(div().truncate().child(name.unwrap_or("—").to_string()))
         .when(others > 0, |el| el.child(dim(format!("+{others}"))));
+    let click = Pick {
+        space: space.id.clone().into(),
+        zoom: false,
+    };
     div()
+        .id(SharedString::from(format!("card-{}", space.id)))
+        .cursor_pointer()
+        .on_click(move |e, window, cx| {
+            let zoom = e.click_count() >= 2;
+            window.dispatch_action(
+                Pick {
+                    zoom,
+                    ..click.clone()
+                }
+                .boxed_clone(),
+                cx,
+            )
+        })
+        .hover(move |s| s.border_color(rgb(if on { pal::AMBER } else { pal::SLATE })))
         .relative()
         .w(t.px(width))
         .px(t.px(14.))

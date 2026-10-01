@@ -127,7 +127,8 @@ n / N         next needing you / and zoom in
 1 2 3         focus / watch / background
 v             next visible agent
 m / u         read / mark the space unread
-t             status · title ↔ cwd
+t             card text: last answer → status → cwd
+click / 2×    select / zoom in
 s             card size
 ?             this help
 
