@@ -25,7 +25,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 | Module | Responsibility (one sentence) | Depends on |
 |---|---|---|
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
-| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). | `api::types` |
+| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). `store::cards` holds the lens cards' text (F4). | `api::types` |
 | `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
 | `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
@@ -133,6 +133,14 @@ Derived shapes are in `store`:
     seeded from `tail.window.from` (tail responses carry no `prevOffset`) and then from each `before=` page's
     `prevOffset`; `0` means the start of the file. A `before=` response never touches `next_offset`.
   - `generation` (see §2). `rewindow`/`reset` clears everything and re-reads the tail.
+- **`cards::Cards`** (F4) — each focus and watch card's visible agent's last assistant answer, cleaned as
+  the transcript is (`condense::clean`) with `<status>` stripped too; background cards carry none. One tail
+  read (`limit=12`) per agent per turn, keyed on `turn_end_id`; at most four in flight; a result for an
+  agent no longer on a text card, or for an older turn than the one held, is dropped; a failed read keeps
+  its text and is asked again on the next `hello`. Reads start only after `Boot` and are not in the
+  snapshot, so a cold start paints `status · title` until they land. The answer is kept as one plain
+  paragraph (`cards::flat`: no headings, emphasis, ticks, table rules or link targets) for the card's
+  line clamp.
 - **`notes::Note`** — the web record: `{id, group (agent or general), text, quote?, source?, created}`,
   `updated` on the row. **`Draft`** is one string per agent, local only.
 - **`Prefs`** — local owner preferences: `text_scale`, rows, visible, seen, drafts, `hotkey` (U6);
@@ -171,6 +179,11 @@ composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel)
 | `enter` `cmd-enter` / `escape` | `Notes > Input` | save the note / cancel | U5 |
 | `cmd-w` `cmd-t` `cmd-1…9` | `Space` | close panel, terminal, switch panel | Rung 2 |
 | `ctrl-alt-cmd-h` | global (`global-hotkey`) | summon | U6 |
+
+**Mouse (F4).** A card click selects its space and a double-click zooms in (`lens::Pick`); a tab click
+shows that agent (`space::Tab`); `lens ›` in the breadcrumb is `Zoomed::Out`. Each click dispatches the
+same action the harness's `click:card:i`, `card2:i`, `tab:i` and `crumb` do (`just check-mouse`). Hovering
+a card lifts its border, which re-renders the shell on enter and leave only.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -288,7 +301,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after D2 (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after F4 (F4 grew `lens`, `space` and `probe` by the card text and the mouse) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -296,19 +309,20 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 322 | `views/mod.rs` | 378 |
-| `api/client.rs` | 206 | `views/lens.rs` | 379 |
-| `api/sse.rs` | 194 | `views/space.rs` | 335 |
-| `store/mod.rs` | 422 | `views/transcript.rs` | 459 |
+| `api/types.rs` | 322 | `views/mod.rs` | 379 |
+| `api/client.rs` | 206 | `views/lens.rs` | 441 |
+| `api/sse.rs` | 194 | `views/space.rs` | 363 |
+| `store/mod.rs` | 438 | `views/transcript.rs` | 459 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 204 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 365 |
-| `store/spaces.rs` | 209 | `views/probe.rs` | 93 |
+| `store/spaces.rs` | 209 | `views/probe.rs` | 122 |
 | `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
 | `store/transcript.rs` | 552 | `views/theme.rs` | 157 |
 | `store/condense.rs` | 189 | `shell.rs` | 420 |
-| `store/notes.rs` | 424 | `shell/io.rs` | 166 |
-| `store/composer.rs` | 166 | `harness.rs` | 267 |
+| `store/notes.rs` | 424 | `shell/io.rs` | 177 |
+| `store/composer.rs` | 166 | `harness.rs` | 269 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
+| `store/cards.rs` | 169 | | |
 
 About 6,950 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

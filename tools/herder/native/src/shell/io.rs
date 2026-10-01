@@ -1,10 +1,11 @@
 //! The shell's background I/O: a REST read, or the outbox save and the posts it guards. Each takes the
 //! client (and disk) and reports back as `Event`s; nothing here touches GPUI or view state.
 
-use crate::api::client::{Client, Error};
+use crate::api::client::{Client, Error, Page};
 use crate::api::types::StateRow;
 use crate::harness;
 use crate::local::{self, Disk};
+use crate::store::cards::{self, CARD_TAIL};
 use crate::store::composer::{self, Failure};
 use crate::store::notes::{self, Dest};
 use crate::store::sync::{Ns, Step};
@@ -26,6 +27,16 @@ pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
                 }
             };
             Event::Sync { ns, step }
+        }
+        Fetch::Card { agent, turn } => {
+            let page = Page::Tail { limit: CARD_TAIL };
+            let result = client.entries(&agent, &page);
+            let result = result.map(|e| e.entries).map_err(|e| e.to_string());
+            Event::Card(cards::Got {
+                agent,
+                turn,
+                result,
+            })
         }
         Fetch::Transcript(read) => {
             let (started, agent) = (std::time::Instant::now(), read.agent.as_str());

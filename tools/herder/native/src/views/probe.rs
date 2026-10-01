@@ -3,9 +3,9 @@
 
 use crate::store::Store;
 use crate::views::composer;
-use crate::views::lens::{self, State, Ui};
+use crate::views::lens::{self, Pick, State, Ui};
 use crate::views::notes::Notes;
-use crate::views::space::{Summon, zoomed};
+use crate::views::space::{Summon, Tab, Zoomed, zoomed};
 use crate::views::transcript::OpenLink;
 use gpui_kit::*;
 
@@ -36,6 +36,10 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             }
         }
         "header" => lens::header_line(store),
+        // The selected card's space, by name.
+        "selected" => ui
+            .selected(store)
+            .map_or_else(String::new, |s| s.name.clone()),
         "start" => {
             let t = store.transcript.open.as_ref().filter(|t| t.at_start())?;
             format!("{}: start reached, {} rows", t.agent, t.items.len())
@@ -44,9 +48,11 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
     })
 }
 
-/// What a click dispatches: `link:<url>` on a transcript link, `summon:<tag>` on a notification, and
+/// What a click dispatches: `link:<url>` on a transcript link, `summon:<tag>` on a notification,
 /// `click:<capture|handoff|edit:i|delete:i>` on the notes strip (`i` the zoomed agent's note, oldest
-/// first); `None` where there is no such thing to click.
+/// first), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
+/// order), `click:tab:i` (the zoom's tab, from the left) and `click:crumb` (`lens ›`); `None` where
+/// there is no such thing to click.
 pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {
     let notes = |what: Notes| Some(Box::new(what) as Box<dyn Action>);
     match op {
@@ -55,12 +61,35 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
         "click" => {}
         _ => return None,
     }
+    let (what, i) = arg.split_once(':').unwrap_or((arg, ""));
+    let nth = |i: &str| i.parse::<usize>().ok();
+    match (what, &ui.zoom) {
+        ("card" | "card2", None) => {
+            let space = *store.lens().get(nth(i)?)?;
+            let space = space.id.clone().into();
+            return Some(Box::new(Pick {
+                space,
+                zoom: what == "card2",
+            }));
+        }
+        ("tab", Some(zoom)) => {
+            let mut tabs: Vec<&str> = zoomed(store, zoom)
+                .into_iter()
+                .flat_map(|s| s.agents())
+                .collect();
+            tabs.extend(zoom.agent.as_deref().filter(|a| !tabs.contains(a)));
+            return Some(Box::new(Tab(tabs.get(nth(i)?)?.to_string().into())));
+        }
+        ("crumb", Some(_)) => return Some(Box::new(Zoomed::Out)),
+        ("card" | "card2" | "tab" | "crumb", _) => return None,
+        _ => {}
+    }
     let agent = ui.zoomed_agent()?;
     let note = |i: &str| {
         let note = store.notes_of(agent).nth(i.parse().ok()?)?;
         Some(SharedString::from(note.id.clone()))
     };
-    match arg.split_once(':').unwrap_or((arg, "")) {
+    match (what, i) {
         ("capture", _) => {
             ui.notes.selection.as_ref().filter(|(a, _)| a == agent)?;
             notes(Notes::Capture)

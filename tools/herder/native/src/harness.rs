@@ -17,7 +17,9 @@
 //! notes editor; U5) · `header:<text>` (the lens header contains it; U6) · `select:<text>` (as if the pointer had selected it in the transcript) ·
 //! `tap:<keystroke>` (as `key:`, but bound to nothing is fine) · `click:<capture|handoff|edit:i|delete:i>`
 //! (what a click on the notes strip dispatches, `i` the zoomed agent's note, oldest first; it fails when
-//! there is no such thing to click). Units add `type:` as they need it.
+//! there is no such thing to click) · `click:<card:i|card2:i|tab:i|crumb>` (a click on the lens's card
+//! `i` in lens order, a double-click on it, a click on the zoom's tab `i` or on `lens ›`; F4) ·
+//! `selected:<space>` (the selected card's space name, `+` for a space). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
@@ -176,7 +178,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                     _ => fail(format!("{op} {arg}: nothing to click")),
                 }
             }
-            "expect" | "box" | "has" | "says" | "notes" | "header" => {
+            "expect" | "box" | "has" | "says" | "notes" | "header" | "selected" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");
