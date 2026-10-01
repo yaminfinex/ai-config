@@ -47,7 +47,7 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   `Shell::dispatch` on the foreground thread. Views take `&Store` and dispatch `Event`s; they never hold
   `&mut Store`. Each view owns the GPUI widget entities it renders with (`ListState`, `TextareaState`,
   `EditorState`) as plain GPUI state; those are not domain state and never go through the store.
-- **Effects.** `apply` returns what must happen next. Network and disk effects (`Fetch`, `Send`, `Persist`)
+- **Effects.** `apply` returns what must happen next. Network and disk effects (`Fetch`, `Post`, `Message`, `Persist`)
   run off the main thread and their results come back as events. `Notify` and `Badge` are AppKit calls and
   run on the foreground inside `dispatch`. A fixture test checks both the state and the effects a reduction
   produces.
@@ -104,8 +104,8 @@ Derived shapes are in `store`:
   board carries no activity timestamp. An agent seen for the first time takes its current turn as the
   baseline (web's policy: an unknown baseline is not a new turn), and marks are pruned to agents on the
   board or in a space. **Needs you** = the agent is not `Working`, not `retired` or `stopped`, and its
-  `turn_end_id` is above its seen mark; `Blocked` without a new turn does not count (making it always count
-  is an owner policy call for U2). The card count is the number of such agents in the space.
+  `turn_end_id` is above its seen mark, or it is `Blocked` and this block has not been viewed (owner ruling,
+  U2: blocking again needs you again). The card count is the number of such agents in the space.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
   orders and pairs them): `Prompt`, `Delivery{sender, text, operator, quiet}` (`quiet`: an ack or the
   launcher, a one-line chip),
@@ -247,38 +247,16 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   No network, no clock, milliseconds to run.
 - **Layering** (`tests/layering.rs`), see §1.
 - **UI harness** (`harness`, `just harness "<steps>"`): a scripted run opens its window with `focus: false`,
-  orders it behind every other app's windows (`platform_mac::order_windows`) and never calls
-  `activate`, so the owner keeps focus. It always quits when the script ends, and any failed step (a bad
-  keystroke, a failed screenshot, an unknown step) exits non-zero. Steps: `wait:`, `key:` (through
-  `Window::dispatch_keystroke`, the real input path), `shot:` (draws a fresh frame first, then
-  `render_to_image`; needs the `shots` feature = GPUI `test-support`), `rss`, `cpu:<ms>` (CPU share with
-  pulse paints, shell renders, pointer moves and whether the window was on screen), `move:<ms>` (the same
-  while a synthetic pointer sweeps the window), `quit`; `HERDER_NATIVE_WINDOW=WxH` sizes the window and
-  `HERDER_NATIVE_VISIBLE=1` orders it in front, still unfocused, for CPU runs, only when the owner asks
-  for one (the window pops up over their work); units add `type:` and `keycpu:` from the spike as they
-  need them. U3 added `draw` (one frame: a window behind others gets none, and transcript paging is
-  driven by render), `link:<url>` (dispatches what a click on a transcript link dispatches),
-  `expect:<agent>` / `expect:<agent>+preview` (what the zoom shows; the shell answers through
-  `harness::Probe`, so the harness knows no views), `cpuscroll:<key>x<n>` (`n` keystrokes, each with a
-  timed `Window::draw`) and `start:<ms>` (draws until the open transcript has paged back to its start,
-  logging its rows; also a `Probe` query). U4 added `box:<focused|idle>:<text>` (the composer's focus
-  and text), `says:<text>` (the line under the box contains it) and `testdata/fake_serve.py`, a loopback
-  serve over the fixtures whose `POST …/message` answers ok, slowly ok, 409 (sender collision), 502 or
-  holds: any scenario that presses `cmd-enter` points `HERDER_URL` at it, never at the real serve
-  (`just check-composer`, six runs, each failing unless the app exits 0 at `quit` with the POSTs it
-  expects). U5 added `notes:<n>:<closed|focused:text>`, `has:` (the composer contains), `select:` (stands in for a
-  pointer selection, which a script cannot drag), `tap:` (a key that may be bound to nothing), and `POST
-  /api/state/<ns>` on the fake serve, held in memory (`--notes` seeds web's two notes from
-  `testdata/notes-web.json`), and `click:<capture|handoff|edit:i|delete:i>` (what a click on the strip
-  dispatches, through the focused element as the click does). `just check-notes` runs six scenarios (one
-  relaunches on the same HOME after a hand-off), each failing unless it made exactly the notes POSTs it
-  expects and no message. U6: a scripted run is test mode (`platform_mac::quiet`): notifications, the
-  dock badge and the summon chord are logged no-ops (`platform: would notify …`, `platform: badge N`), and
-  `HERDER_NATIVE_FRONT=1` makes it count as frontmost with its window still behind; the fake serve's
-  `--turn` sends fleet frames that end agents' turns, `summon:<tag>` dispatches what a notification's
-  click does (without activating the app), and `just check-alerts` runs four scenarios (a turn on the
-  lens, the agent in view, a burst, an agent in no space opened alone, shot `u6-no-space`). Screenshots and presented-frame timings need an
-  unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
+  orders it behind every other app's windows (`platform_mac::order_back`) and never calls `activate`, so
+  the owner keeps focus; no automated run brings a window on screen. It always quits when the script ends,
+  and any failed step (a bad keystroke, a failed screenshot, an unknown step) exits non-zero. Any
+  `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge and the
+  summon chord are logged no-ops. The harness knows no views: what it asks of them goes through
+  `harness::Probe`, which the shell builds. A scenario that sends anything points `HERDER_URL` at
+  `testdata/fake_serve.py` on loopback, never at the real serve. Steps live in `src/harness.rs`'s module
+  doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`, `check-alerts`) in the
+  justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
+  (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
   the 88 MB transcript. `harness::metric` lines on stderr carry the numbers.
@@ -297,61 +275,27 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
+Current budgets, at each file's size after D1 (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+`mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
+
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 300 | `views/lens.rs` | 350 |
-| `api/client.rs` | 200 | `views/space.rs` | 300 |
-| `api/sse.rs` | 150 | `views/transcript.rs` | 400 |
-| `store/mod.rs` | 250 | `views/composer.rs` | 150 |
-| `store/sync.rs` | 320 | | |
-| `store/fleet.rs` | 120 | `views/notes.rs` | 200 |
-| `store/spaces.rs` | 250 | `views/theme.rs` | 100 |
-| `store/transcript.rs` | 400 | `shell.rs` | 300 |
-| `store/condense.rs` | 220 | `views/markdown.rs` | 250 |
-| `store/notes.rs` | 250 | `local.rs`, `platform_mac.rs`, `harness.rs` | 120, 150, 200 |
-| `store/composer.rs` | 175 | | |
-| | | `shell/io.rs` | 100 |
+| `api/types.rs` | 322 | `views/mod.rs` | 375 |
+| `api/client.rs` | 206 | `views/lens.rs` | 360 |
+| `api/sse.rs` | 194 | `views/space.rs` | 356 |
+| `store/mod.rs` | 420 | `views/transcript.rs` | 401 |
+| `store/sync.rs` | 314 | `views/composer.rs` | 228 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 421 |
+| `store/spaces.rs` | 420 | `views/markdown.rs` | 238 |
+| `store/transcript.rs` | 539 | `views/theme.rs` | 100 |
+| `store/condense.rs` | 189 | `shell.rs` | 447 |
+| `store/notes.rs` | 430 | `shell/io.rs` | 133 |
+| `store/composer.rs` | 180 | `harness.rs` | 307 |
+| `local.rs` | 95 | `platform_mac.rs` | 92 |
 
-About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
+About 6,900 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
-
-U6 (asked of review; finding 4 grew these): `store/spaces.rs` 405, where needs-you lives (the brief's placement): `Alerts`, the
-transition rule (an agent's turn or block moving on into needing you), the one-second burst and its
-summary, the badge (the lens total plus agents in no space that need you; they alert too, owner ruling, and open
-alone in a zoom of no space, `Zoom::alone`); `shell.rs` 446 (the effects, the frontmost/zoom sync into the store, the chord and
-notification-click summon); `store/mod.rs` 427 (`Looking`, `BurstEnded`, `Summon`, `Notify`, `Badge`,
-`Burst`); `views/space.rs` 357 (`Summon`, `summon`, the zoom of no space); `harness.rs` 338 (`summon:`); `platform_mac.rs` 96, under its 150.
-
-U5 exceptions (agreed at review; the U5 fixes grew the first two): `views/notes.rs` 426, one cohesive view
-(the strip, its count collapse, the editor with its own key context for add, capture and edit and its
-refusal kept on screen, the two-click delete, the capture chip and the selection bound to its agent, the
-problem lines, the harness's click map; rustfmt lays the GPUI builder chains out a call per line);
-`store/notes.rs` 427 (each edit's row in web's record shape, web's 8 KiB refusals and edit-after-delete
-fallback, the hand-off and queue as transfers that save their destination first, and web's
-`noteTransferText` and `noteSourceLabel`, so a hand-off reads as web's); `harness.rs` 314 and `shell.rs`
-387 (the U5 probes and steps, the transfer's save), `views/mod.rs` 375 (the notes bindings and help, and
-the editor in the focus rule), `views/transcript.rs` 401 (the selection taken at mouse-up),
-`api/types.rs` 360 (quote and source omitted when unset, as web writes them), `store/mod.rs` 403
-(`Event::Note`, `Effect::Transfer` and `sync_step`, shared by the network and local edits).
-
-U4 exceptions (agreed at review): `store/composer.rs` is new (drafts, `can_send`, the send lifecycle) at
-174; `views/composer.rs` 217 (the box, its keys, file-back and the wording of every read-only state and
-failure, moved from the store at review); `shell/io.rs` 119 (`save_then_message`, the prefs-before-POST
-barrier for a message, beside `save_then_send`); `store/spaces.rs` 273 (`looking` / `acknowledge`, the
-seen mark a file-back bounds to send time); `store/mod.rs` 388, `shell.rs` 358, `views/lens.rs` 353,
-`views/mod.rs` 356 and `harness.rs` 279 carry the composer's event, effects, widget, focus rule and probes.
-
-Documented U3 exceptions (agreed at the U3 reviews): `store/transcript.rs` 539 (one cohesive paging and
-request lifecycle: cursors, pairing, wake coalescing and each read's own retries; the condenser moved to
-`condense.rs`), `api/types.rs` 357 (message recipients and the 11-field payload projection that cut the
-decode high-water), `api/client.rs` 219 (`resolve`'s optional agent scope), `store/mod.rs` 364 (reducer
-vocabulary) and `harness.rs` 267 (the U3 steps and `Probe`). `shell.rs` is back to 338, under its U1
-exception, since its background I/O (`run_fetch`, `save_then_send`) moved to `shell/io.rs`.
-
-Documented U1 exceptions (agreed at U1 review): `store/mod.rs` 349 (the Event/Effect vocabulary,
-`Prefs`, the reducer), `shell.rs` 347 (the effect runner with the save-before-send barrier), `api/sse.rs`
-195 (the reconnecting `Reader` with its cancellation).
 
 ## 9. From the spike: lifted, rewritten, dropped
 

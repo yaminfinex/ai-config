@@ -61,17 +61,14 @@ impl Agent {
     }
 
     /// The one needs-you predicate: not working, retired or stopped; and a turn ended after `seen` (no
-    /// mark: no baseline yet), or Blocked with this block not yet viewed (`block_seen`).
+    /// mark: no baseline yet), or Blocked with this block not yet viewed (`block_seen`; owner ruling, U2).
     pub fn needs_you(&self, seen: Option<u64>, block_seen: bool) -> bool {
         let gone = matches!(self.bus_status.as_str(), "retired" | "stopped");
         let new_turn = matches!((self.turn_end, seen), (Some(turn), Some(seen)) if turn > seen);
-        let blocked = BLOCKED_ALWAYS_NEEDS_YOU && self.status() == Status::Blocked && !block_seen;
+        let blocked = self.status() == Status::Blocked && !block_seen;
         !gone && self.status() != Status::Working && (new_turn || blocked)
     }
 }
-
-/// Owner ruling (U2): a Blocked agent needs you until you view it; blocking again alerts again.
-pub const BLOCKED_ALWAYS_NEEDS_YOU: bool = true;
 
 #[derive(Clone, Debug, Default)]
 pub struct Fleet {

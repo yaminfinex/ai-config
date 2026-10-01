@@ -3,7 +3,7 @@
 //! cleanView, `transcript` with the entries API.
 
 use super::transcript::{Item, ToolResult};
-use crate::api::{Entry, Kind};
+use crate::api::{Entry, Kind, Payload};
 use serde_json::Value;
 
 /// Characters kept per tool line and result, and per thinking pill.
@@ -11,27 +11,27 @@ const LINE: usize = 200;
 const THINKING: usize = 2000;
 
 /// A `tool_use`'s name and web's one-line summary of its input.
-pub(super) fn tool_call(p: &Value) -> (String, String) {
-    let name = str_at(p, "name").to_string();
-    let summary = clip(&tool_summary(&name, &p["input"]), LINE);
+pub(super) fn tool_call(p: &Payload) -> (String, String) {
+    let name = p.name.as_str().unwrap_or("").to_string();
+    let summary = clip(&tool_summary(&name, &p.input), LINE);
     (name, summary)
 }
 
 /// A `tool_result`: whether it failed, and its first line.
-pub(super) fn tool_result(p: &Value) -> ToolResult {
-    let text = clip(first_line(&text_of(&p["content"])), LINE);
-    let error = p["is_error"].as_bool().unwrap_or(false);
+pub(super) fn tool_result(p: &Payload) -> ToolResult {
+    let text = clip(first_line(&text_of(&p.content)), LINE);
+    let error = p.is_error.as_bool().unwrap_or(false);
     ToolResult { error, text }
 }
 
 /// The items one entry yields in compact mode, as web's clean view (tool pairs are `ingest`'s).
 pub fn condense(entry: &Entry) -> Vec<Item> {
     let p = &entry.payload;
-    let text = text_of(&p["message"]["content"]);
+    let text = text_of(&p.message["content"]);
     let item = match entry.kind {
         Kind::HumanPrompt => Item::Prompt(text),
         Kind::HcomDelivery => {
-            let deliveries = p["deliveries"].as_array().into_iter().flatten();
+            let deliveries = p.deliveries.as_array().into_iter().flatten();
             return deliveries.map(delivery).collect();
         }
         Kind::TaskNotification => {
@@ -47,7 +47,7 @@ pub fn condense(entry: &Entry) -> Vec<Item> {
             None => return Vec::new(),
         },
         Kind::CompactDivider => {
-            let m = &p["compactMetadata"];
+            let m = &p.compact_metadata;
             let k = |key: &str| m[key].as_u64().map(|n| format!("{}k", n / 1000));
             Item::CompactDivider(match (k("preTokens"), k("postTokens")) {
                 (Some(pre), Some(post)) => {
@@ -57,7 +57,7 @@ pub fn condense(entry: &Entry) -> Vec<Item> {
                 _ => "compaction summary".into(),
             })
         }
-        Kind::AssistantText if p["isApiErrorMessage"].as_bool() == Some(true) => Item::Error(text),
+        Kind::AssistantText if p.is_api_error_message.as_bool() == Some(true) => Item::Error(text),
         Kind::AssistantText => Item::Assistant {
             markdown: clean(&text),
         },
@@ -114,11 +114,11 @@ fn strip_operator(text: &str) -> Option<&str> {
 }
 
 /// Web's compact view shows only these system entries (an empty label hides the rest).
-fn system_chip(p: &Value) -> String {
-    let to = p["fallbackModel"].as_str().map(|m| format!(" to {m}"));
+fn system_chip(p: &Payload) -> String {
+    let to = p.fallback_model.as_str().map(|m| format!(" to {m}"));
     let to = to.unwrap_or_default();
-    match str_at(p, "subtype") {
-        "scheduled_task_fire" => str_at(p, "content").to_string(),
+    match p.subtype.as_str().unwrap_or("") {
+        "scheduled_task_fire" => p.content.as_str().unwrap_or("").to_string(),
         "model_refusal_fallback" => format!("model switched{to} — safeguards flagged a message"),
         "model_consent_fallback" => format!("model switched{to} — consent required"),
         _ => String::new(),
@@ -167,7 +167,7 @@ fn text_of<'a>(v: &'a Value) -> String {
     }
 }
 
-pub(super) fn str_at<'a>(v: &'a Value, key: &str) -> &'a str {
+fn str_at<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or("")
 }
 

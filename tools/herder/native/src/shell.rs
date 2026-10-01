@@ -21,7 +21,7 @@ use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
 use crate::store::transcript;
-use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale, Write};
+use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
     Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, space,
@@ -134,7 +134,8 @@ impl Host for Shell {
             }
         );
         // Whom the owner is looking at, as the store last heard: a notification never interrupts that.
-        let looking = self.front.then(|| self.ui.zoomed_agent()).flatten();
+        let looking = self.ui.zoomed_agent().filter(|_| self.front);
+        let looking = looking.map(String::from);
         if looking != self.store.alerts.looking {
             let effects = self.store.apply(Event::Looking(looking));
             self.run(effects, cx);
@@ -171,14 +172,14 @@ impl Shell {
                     self.stream = Some(reader);
                 }
                 Effect::Fetch(fetch) => self.background(cx, |_, client| run_fetch(client, fetch)),
-                Effect::Send(Write::Message { agent, text }) => {
+                Effect::Message { agent, text } => {
                     let (bytes, seq) = (local::encode(&self.store.prefs), local::next_seq());
                     let send = (agent, text);
                     self.background(cx, move |disk, client| {
                         save_then_message(disk, client, &bytes, seq, send)
                     })
                 }
-                Effect::Send(write) => sends.push(write),
+                Effect::Post { ns, rows } => sends.push((ns, rows)),
                 Effect::Retry { ns, after_ms } => {
                     let step = Step::Retry;
                     self.later(after_ms, Event::Sync { ns, step }, cx)
@@ -378,7 +379,7 @@ pub fn run() {
         let (handle, _) = gpui_kit::open_window(opts, cx, frame).expect("window");
         let shell = shell.expect("the window built the shell");
         if automated {
-            platform_mac::order_windows(harness::visible());
+            platform_mac::order_back();
         } else {
             cx.activate(true);
         }

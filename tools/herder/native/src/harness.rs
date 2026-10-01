@@ -19,15 +19,10 @@
 //! (what a click on the notes strip dispatches, `i` the zoomed agent's note, oldest first; it fails when
 //! there is no such thing to click). Units add `type:` as they need it.
 //!
-//! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
-//! instead of behind, still without focus: a window behind others is never drawn, so measuring
-//! what a visible window costs needs one that is.
+//! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
 use crate::views::{POINTER_MOVES, PULSE_PAINTS};
-use gpui_kit::{
-    Action, App, AsyncWindowContext, Keystroke, Modifiers, MouseMoveEvent, Pixels, PlatformInput,
-    Size, Window, point, px, size,
-};
+use gpui_kit::{Action, App, AsyncWindowContext, Keystroke, Pixels, Size, Window, px, size};
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
@@ -51,11 +46,6 @@ pub fn window_size() -> Size<Pixels> {
         .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
     let (w, h) = wh.unwrap_or((1400.0, 900.0));
     size(px(w), px(h))
-}
-
-/// A harness run whose window should be seen (in front, unfocused).
-pub fn visible() -> bool {
-    std::env::var("HERDER_NATIVE_VISIBLE").is_ok_and(|v| v == "1")
 }
 
 /// The script, if this is a harness run. `HERDER_NATIVE_SCRIPT` set at all makes the run automation
@@ -163,50 +153,30 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                     .await;
             }
             // `tap:` presses a key that may be bound to nothing (a guard checks what did not happen).
-            "tap" => match Keystroke::parse(arg) {
+            "key" | "tap" => match Keystroke::parse(arg) {
                 Ok(keystroke) => {
                     let handled = cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
-                    metric(format!("tap {arg}: handled {}", handled.unwrap_or(false)));
+                    match (op, handled) {
+                        ("tap", h) => metric(format!("tap {arg}: handled {}", h.unwrap_or(false))),
+                        (_, Ok(true)) => metric(format!("key {arg}")),
+                        _ => fail(format!("key {arg}: not handled by any binding")),
+                    }
                 }
-                Err(e) => fail(format!("tap {arg}: {e}")),
+                Err(e) => fail(format!("{op} {arg}: {e}")),
             },
             "select" => {
                 let _ = cx.update(|_, cx| (probe.select)(&arg.replace('+', " "), cx));
                 metric(format!("select {arg}"));
             }
-            "key" => match Keystroke::parse(arg) {
-                Ok(keystroke) => {
-                    let handled = cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
-                    match handled {
-                        Ok(true) => metric(format!("key {arg}")),
-                        _ => fail(format!("key {arg}: not handled by any binding")),
-                    }
-                }
-                Err(e) => fail(format!("key {arg}: {e}")),
-            },
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
-            // `cpu:` idles; `move:` sweeps a synthetic pointer across the window every 16 ms (the
-            // owner's real pointer stays put). Both count pointer events, real ones included.
-            "cpu" | "move" => {
+            // `cpu:` idles, counting pointer events (real ones) meanwhile.
+            "cpu" => {
                 let ms = arg.parse().unwrap_or(10_000u64);
                 let count = || [&PULSE_PAINTS, &RENDERS, &POINTER_MOVES].map(|c| c.load(Relaxed));
                 let (before, start) = (cpu_s(), count());
-                let (moves, tick) = (if op == "move" { ms / 16 } else { 0 }, 16);
-                for i in 0..moves {
-                    let position = point(px(40. + (i % 90) as f32 * 10.), px(120.));
-                    let (pressed_button, modifiers) = (None, Modifiers::default());
-                    let event = PlatformInput::MouseMove(MouseMoveEvent {
-                        position,
-                        pressed_button,
-                        modifiers,
-                    });
-                    let _ = cx.update(|w, cx| w.dispatch_event(event, cx));
-                    cx.background_executor()
-                        .timer(Duration::from_millis(tick))
-                        .await;
-                }
-                let rest = Duration::from_millis(ms - moves * tick);
-                cx.background_executor().timer(rest).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(ms))
+                    .await;
                 let pct = (cpu_s() - before) / (ms as f64 / 1000.0) * 100.0;
                 let now = count();
                 let [p, r, m] = [0, 1, 2].map(|i| now[i] - start[i]);
@@ -232,15 +202,14 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                     _ => fail(format!("click {arg}: nothing to click")),
                 }
             }
-            "link" => {
-                let link = (probe.link)(arg);
-                let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
-                metric(format!("link {arg}"));
-            }
-            "summon" => {
-                let summon = (probe.summon)(arg);
-                let _ = cx.update(|window, cx| window.dispatch_action(summon, cx));
-                metric(format!("summon {arg}"));
+            "link" | "summon" => {
+                let action = if op == "link" {
+                    probe.link
+                } else {
+                    probe.summon
+                };
+                let _ = cx.update(|window, cx| window.dispatch_action(action(arg), cx));
+                metric(format!("{op} {arg}"));
             }
             "expect" | "box" | "has" | "says" | "notes" => {
                 let got = cx.update(|window, cx| match op {

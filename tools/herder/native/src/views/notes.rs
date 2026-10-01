@@ -134,7 +134,7 @@ pub fn stamp() -> Stamp {
 /// Drop what belonged to another agent (the editor, the selection), before a frame is drawn; load the
 /// editor's text.
 pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
-    let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
+    let agent = ui.zoomed_agent().map(String::from);
     let notes = &mut ui.notes;
     let other = |a: &String| Some(a) != agent.as_ref();
     if notes.selection.as_ref().is_some_and(|(a, _)| other(a)) {
@@ -158,12 +158,7 @@ pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
 /// `notes:` for the harness: the zoomed agent's note count, then the editor (`closed`, or its focus and
 /// text).
 pub fn probe(store: &Store, ui: &Ui, window: &Window, cx: &App) -> String {
-    let agent = ui
-        .zoom
-        .as_ref()
-        .and_then(|z| z.agent.as_deref())
-        .unwrap_or("");
-    let n = store.notes_of(agent).count();
+    let n = store.notes_of(ui.zoomed_agent().unwrap_or("")).count();
     let editor = match &ui.notes.editing {
         None => "closed".to_string(),
         Some(_) if ui.notes.focus_handle(cx).is_focused(window) => {
@@ -176,14 +171,14 @@ pub fn probe(store: &Store, ui: &Ui, window: &Window, cx: &App) -> String {
 
 /// What the pointer selected in the zoomed transcript, for the harness's `select:` (it cannot drag).
 pub fn select(ui: &mut Ui, text: &str) {
-    let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
+    let agent = ui.zoomed_agent().map(String::from);
     ui.notes.selected(agent, text);
 }
 
 /// What a click on the strip dispatches, for the harness's `click:` (`capture`, `handoff`, or `edit:i`
 /// and `delete:i` on the zoomed agent's note `i`, oldest first); `None` where the strip has no such thing.
 pub fn clicked(store: &Store, ui: &Ui, what: &str) -> Option<Notes> {
-    let agent = ui.zoom.as_ref()?.agent.as_deref()?;
+    let agent = ui.zoomed_agent()?;
     let note = |i: &str| {
         let note = store.notes_of(agent).nth(i.parse().ok()?)?;
         Some(SharedString::from(note.id.clone()))
@@ -204,7 +199,7 @@ pub fn clicked(store: &Store, ui: &Ui, what: &str) -> Option<Notes> {
 }
 
 pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
-    let Some(agent) = ui.zoom.as_ref().and_then(|z| z.agent.clone()) else {
+    let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
     };
     let notes = &mut ui.notes;

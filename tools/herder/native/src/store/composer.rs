@@ -4,7 +4,7 @@
 //! key and a message must never land twice.
 
 use super::spaces::{self, Seen};
-use super::{Attribution, Effect, Persist, Store, Write};
+use super::{Attribution, Effect, Persist, Store};
 use crate::api::Refusal;
 
 #[derive(Clone, Debug)]
@@ -73,10 +73,10 @@ impl Store {
         if !self.fleet.agents.contains_key(agent) {
             return Err(ReadOnly::OffBoard);
         }
-        let open = self.transcript.open.as_ref().filter(|t| t.agent == agent);
-        match open.and_then(|t| t.detail.as_ref()) {
+        let open = self.transcript.open.as_ref();
+        match open.filter(|t| t.agent == agent && t.detail.is_some()) {
             None => Err(ReadOnly::Pending),
-            Some(d) if d.bus_status == "retired" => Err(ReadOnly::Retired),
+            Some(t) if t.retired() => Err(ReadOnly::Retired),
             Some(_) => Ok(()),
         }
     }
@@ -86,13 +86,17 @@ impl Store {
     pub fn ready(&self, agent: &str) -> bool {
         let draft = self.prefs.drafts.get(agent);
         self.can_send(agent).is_ok()
-            && !self.in_flight(agent)
-            && !self.transfers.contains_key(agent)
+            && !self.busy(agent)
             && draft.is_some_and(|d| !d.trim().is_empty())
     }
 
     pub fn in_flight(&self, agent: &str) -> bool {
         matches!(self.sends.get(agent), Some(Sending::InFlight { .. }))
+    }
+
+    /// A send of `agent`'s draft or a note transfer of it is in flight: one excludes the other (U5).
+    pub fn busy(&self, agent: &str) -> bool {
+        self.in_flight(agent) || self.transfers.contains_key(agent)
     }
 
     /// A fleet frame: a pending file-back's block acknowledgement lapses once its agent is seen
@@ -141,7 +145,7 @@ impl Store {
                     file_back,
                 };
                 self.sends.insert(agent.clone(), flight);
-                out.push(Effect::Send(Write::Message { agent, text }));
+                out.push(Effect::Message { agent, text });
             }
             Step::Sent { agent, result } => {
                 let Some(Sending::InFlight { text, file_back }) = self.sends.remove(&agent) else {

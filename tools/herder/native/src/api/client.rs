@@ -4,9 +4,7 @@
 //! exactly the documented fields (the server rejects unknown ones). Retries are the caller's business:
 //! `POST …/message` has no idempotency key, so a blind retry can send twice.
 
-use crate::api::types::{
-    Accepted, AgentDetail, Board, Entries, Refusal, Resolved, StateRow, StateRows, Viewer,
-};
+use crate::api::types::{AgentDetail, Entries, Refusal, Resolved, StateRow, StateRows, Viewer};
 use serde::Serialize;
 use std::time::Duration;
 
@@ -108,26 +106,17 @@ impl Client {
         self.http.get(&format!("{}{path}", self.base))
     }
 
-    fn post<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: impl Serialize,
-    ) -> Result<T, Error> {
-        Ok(self
-            .http
+    /// Any 2xx is success; nothing reads the reply.
+    fn post(&self, path: &str, body: impl Serialize) -> Result<(), Error> {
+        self.http
             .post(&format!("{}{path}", self.base))
-            .send_json(body)?
-            .into_json()?)
+            .send_json(body)?;
+        Ok(())
     }
 
     /// `GET /api/viewer`: who this Mac is attributed as. 409 means writes will be refused.
     pub fn viewer(&self) -> Result<Viewer, Error> {
         Ok(self.get("/api/viewer").call()?.into_json()?)
-    }
-
-    /// `GET /api/fleet`.
-    pub fn fleet(&self) -> Result<Board, Error> {
-        Ok(self.get("/api/fleet").call()?.into_json()?)
     }
 
     /// `GET /api/agents/{name}`.
@@ -198,7 +187,7 @@ impl Client {
     }
 
     /// `POST /api/state/{ns}` with `{rows}`.
-    pub fn post_state(&self, ns: &str, rows: &[StateRow]) -> Result<Accepted, Error> {
+    pub fn post_state(&self, ns: &str, rows: &[StateRow]) -> Result<(), Error> {
         #[derive(Serialize)]
         struct Body<'a> {
             rows: &'a [StateRow],
@@ -212,8 +201,6 @@ impl Client {
         struct Body<'a> {
             text: &'a str,
         }
-        let _: serde_json::Value =
-            self.post(&format!("/api/agents/{name}/message"), Body { text })?;
-        Ok(())
+        self.post(&format!("/api/agents/{name}/message"), Body { text })
     }
 }

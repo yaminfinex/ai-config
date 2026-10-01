@@ -170,9 +170,21 @@ impl Store {
         agents.max(usize::from(self.prefs.unread.contains(&space.id)))
     }
 
+    /// The lens's needs-you total: each space's count, summed.
+    pub fn needs_you_total(&self) -> usize {
+        self.spaces.iter().map(|s| self.needs_you(s)).sum()
+    }
+
     /// The spaces in lens order: focus, watch, background, each row in the store's order.
     pub fn lens(&self) -> Vec<&Space> {
         self.rows().concat()
+    }
+
+    /// The first space in lens order holding `agent`: where its notification says it is and where the
+    /// click opens it.
+    pub fn home(&self, agent: &str) -> Option<&Space> {
+        let holds = |s: &&Space| s.agents().any(|m| m == agent);
+        self.spaces.iter().filter(holds).min_by_key(|s| self.row(s))
     }
 
     /// Each row's spaces (focus, watch, background), in the store's order.
@@ -215,9 +227,14 @@ fn visible<'a>(
     fleet: &Fleet,
     picks: &BTreeMap<String, String>,
 ) -> Option<&'a str> {
-    let live = || space.agents().filter(|a| fleet.agents.contains_key(*a));
     let pick = picks.get(&space.id).map(String::as_str);
-    live().find(|a| Some(*a) == pick).or_else(|| live().next())
+    let picked = live(space, fleet).find(|a| Some(*a) == pick);
+    picked.or_else(|| live(space, fleet).next())
+}
+
+/// The space's members on the board, in dock order.
+fn live<'a>(space: &'a Space, fleet: &Fleet) -> impl Iterator<Item = &'a str> {
+    space.agents().filter(|a| fleet.agents.contains_key(*a))
 }
 
 /// Show the next member on the board after the visible one, wrapping. True when the pick changed.
@@ -225,9 +242,10 @@ fn cycle_visible(space: &Space, fleet: &Fleet, prefs: &mut Prefs) -> bool {
     let Some(current) = visible(space, fleet, &prefs.visible) else {
         return false;
     };
-    let live = || space.agents().filter(|a| fleet.agents.contains_key(*a));
-    let after = live().skip_while(|a| *a != current).nth(1);
-    let next = after.or_else(|| live().next()).unwrap_or(current);
+    let after = live(space, fleet).skip_while(|a| *a != current).nth(1);
+    let next = after
+        .or_else(|| live(space, fleet).next())
+        .unwrap_or(current);
     let before = prefs.visible.insert(space.id.clone(), next.to_string());
     before.as_deref() != Some(next)
 }
@@ -356,11 +374,9 @@ impl Store {
     /// The burst's second is up: one notification for those that still need you, a summary for several.
     pub(super) fn burst_ended(&mut self, out: &mut Vec<Effect>) {
         let burst = std::mem::take(&mut self.alerts.burst);
-        let lens = self.lens();
-        let home = |a: &str| lens.iter().copied().find(|s| s.agents().any(|m| m == a));
         let due: Vec<(&str, Option<&Space>)> = (burst.iter())
             .filter(|a| self.agent_needs_you(a) && self.alerts.looking.as_ref() != Some(a))
-            .map(|a| (a.as_str(), home(a)))
+            .map(|a| (a.as_str(), self.home(a)))
             .collect();
         fn name(s: Option<&Space>) -> &str {
             s.map_or("no space", |s| s.name.as_str())
@@ -392,13 +408,11 @@ impl Store {
     /// too, owner ruling), sent when it changes, and at boot (`all`) whatever it is, as the effects of
     /// the loads before boot are not run.
     pub(super) fn badge(&mut self, all: bool, out: &mut Vec<Effect>) {
-        let lens: usize = self.spaces.iter().map(|s| self.needs_you(s)).sum();
-        let homed = |a: &str| self.spaces.iter().any(|s| s.agents().any(|m| m == a));
         let fleet = self.fleet.agents.keys();
         let alone = fleet
-            .filter(|a| !homed(a) && self.agent_needs_you(a))
+            .filter(|a| self.home(a).is_none() && self.agent_needs_you(a))
             .count();
-        let n = lens + alone;
+        let n = self.needs_you_total() + alone;
         if std::mem::replace(&mut self.alerts.badge, n) != n || all {
             out.push(Effect::Badge(n));
         }

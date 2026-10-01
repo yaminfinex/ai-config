@@ -10,5 +10,4 @@ pub mod local;
 pub mod platform_mac;
 pub mod shell;
 pub mod store;
-pub mod terminal;
 pub mod views;

@@ -63,7 +63,7 @@ fn sends(effects: &[Effect]) -> Vec<Vec<StateRow>> {
     effects
         .iter()
         .filter_map(|e| match e {
-            Effect::Send(Write::State { rows, .. }) => Some(rows.clone()),
+            Effect::Post { rows, .. } => Some(rows.clone()),
             _ => None,
         })
         .collect()
@@ -91,12 +91,7 @@ fn queued(store: &Store, ns: Ns) -> Vec<(String, i64)> {
 fn board_event_fills_the_fleet_and_a_drop_keeps_it() {
     let mut store = loaded();
     store.apply(hello("source:abc"));
-    assert_eq!(
-        store.conn,
-        Conn::Live {
-            build: "source:abc".into()
-        }
-    );
+    assert_eq!(store.conn, Conn::Live);
     let effects = store.apply(fleet_frame(board()));
     assert!(effects.contains(&Effect::Persist(Persist::Snapshot)));
     let mupu = &store.fleet.agents["mupu"];
@@ -844,7 +839,6 @@ fn block(b: &mut Board, name: &str, blocked: bool) {
 
 #[test]
 fn a_block_needs_you_until_viewed_and_again_when_it_recurs() {
-    const { assert!(fleet::BLOCKED_ALWAYS_NEEDS_YOU) };
     let mut store = loaded();
     let mut b = board();
     store.apply(fleet_frame(b.clone()));
@@ -987,7 +981,6 @@ mod transcript_pages {
             window: EntriesWindow {
                 mode: mode.into(),
                 from: first,
-                limit: limit as u64,
             },
             entries: all[a..b].to_vec(),
             next_offset: (mode != "before").then(|| offset(b)),
@@ -1044,8 +1037,8 @@ mod transcript_pages {
             let copy = |i: u64, e: &Entry| {
                 let mut e = e.clone();
                 e.byte_offset += i * span;
-                if let Some(id) = e.payload["tool_use_id"].as_str() {
-                    e.payload["tool_use_id"] = json!(format!("{id}-{i}"));
+                if let Some(id) = e.payload.tool_use_id.as_str() {
+                    e.payload.tool_use_id = json!(format!("{id}-{i}"));
                 }
                 e
             };
@@ -1098,10 +1091,7 @@ mod transcript_pages {
         drive(&mut store, effects, early, PAGE as usize);
         let entry = |agent: &str| Event::Stream {
             generation: store.stream,
-            event: StreamEvent::Frame(Wire::Entry {
-                agent: agent.into(),
-                entry: Entry::default(),
-            }),
+            event: StreamEvent::Frame(Wire::Entry(agent.into())),
         };
         let (other, first, second) = (
             entry("mupu"),
@@ -1161,8 +1151,7 @@ mod transcript_pages {
     }
 
     fn wake(store: &Store, agent: &str) -> Event {
-        let (agent, entry) = (agent.into(), Entry::default());
-        frame(store, Wire::Entry { agent, entry })
+        frame(store, Wire::Entry(agent.into()))
     }
 
     fn fail(store: &mut Store, read: &Read) -> Vec<Effect> {
@@ -1458,20 +1447,14 @@ mod transcript_pages {
         let old = store.transcript.open.as_ref().unwrap().generation;
         let wake = store.apply(Event::Stream {
             generation: store.stream,
-            event: StreamEvent::Frame(Wire::Entry {
-                agent: "mupu".into(),
-                entry: Entry::default(),
-            }),
+            event: StreamEvent::Frame(Wire::Entry("mupu".into())),
         });
         let Some(Effect::Fetch(Fetch::Transcript(read))) = wake.into_iter().next() else {
             panic!()
         };
         let reset = Entries {
             session_id: "s2".into(),
-            reset: Some(Reset {
-                reason: "session_changed".into(),
-                session_id: Some("s2".into()),
-            }),
+            reset: Some(Reset {}),
             ..Entries::default()
         };
         let effects = store.apply(Event::Transcript(T::Read(
@@ -1587,15 +1570,13 @@ mod transcript_pages {
             panic!()
         };
         assert_eq!(read.what, What::Resolve("src/x.rs".into(), Some(12), true));
-        let candidate = |tier: &str, score: f64| Candidate {
+        let candidate = |tier: &str| Candidate {
             root: "/home/u/repo/".into(),
             path: "src/x.rs".into(),
             kind: if tier == "prefix" { "dir" } else { "file" }.into(),
             tier: tier.into(),
-            score,
         };
         let root = |status: &str| ResolveRoot {
-            root: "/home/u/repo".into(),
             status: status.into(),
         };
         let answer = |store: &mut Store, candidates, roots| {
@@ -1607,19 +1588,15 @@ mod transcript_pages {
             line: Some(12),
         };
         assert_eq!(
-            answer(
-                &mut store,
-                vec![candidate("exact", 900.)],
-                vec![root("complete")]
-            ),
+            answer(&mut store, vec![candidate("exact")], vec![root("complete")]),
             vec![opened.clone()]
         );
         // Ambiguous, incomplete or merely fuzzy: no guess, a notice.
-        let two = vec![candidate("suffix", 400.), candidate("suffix", 300.)];
+        let two = vec![candidate("suffix"), candidate("suffix")];
         assert!(answer(&mut store, two, vec![root("complete")]).is_empty());
-        let one = || vec![candidate("exact", 900.)];
+        let one = || vec![candidate("exact")];
         assert!(answer(&mut store, one(), vec![root("degraded")]).is_empty());
-        let fuzzy = vec![candidate("fuzzy", 9000.)];
+        let fuzzy = vec![candidate("fuzzy")];
         assert!(answer(&mut store, fuzzy, vec![root("complete")]).is_empty());
         let t = store.transcript.open.as_ref().unwrap();
         assert_eq!(t.notice(), Some("no single file matches src/x.rs"));
@@ -1643,12 +1620,12 @@ mod transcript_pages {
         };
         assert_eq!(answer(&mut store, one()), vec![file(Some(1))]);
         assert_eq!(
-            answer(&mut store, vec![candidate("suffix", 1.)]),
+            answer(&mut store, vec![candidate("suffix")]),
             vec![file(Some(1))]
         );
         let dir = vec![Candidate {
             tier: "exact".into(),
-            ..candidate("prefix", 1.)
+            ..candidate("prefix")
         }];
         assert_eq!(answer(&mut store, dir), vec![file(None)]);
     }
@@ -1802,14 +1779,15 @@ mod transcript_pages {
         let error = Entry {
             byte_offset: u64::MAX - 1,
             kind: Kind::ToolResult,
-            payload: json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
-            ..Entry::default()
+            payload: serde_json::from_value(
+                json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
+            )
+            .unwrap(),
         };
         let call = Entry {
             byte_offset: u64::MAX - 2,
             kind: Kind::ToolUse,
-            payload: json!({"tool_use_id": "x", "name": "Bash", "input": {"command": "false  &&\n true"}}),
-            ..Entry::default()
+            payload: serde_json::from_value(json!({"tool_use_id": "x", "name": "Bash", "input": {"command": "false  &&\n true"}})).unwrap(),
         };
         let page = |entries| Entries {
             session_id: "s1".into(),
@@ -1879,7 +1857,7 @@ mod composer {
 
     fn messages(effects: &[Effect]) -> Vec<(String, String)> {
         let message = |e: &Effect| match e {
-            Effect::Send(Write::Message { agent, text }) => Some((agent.clone(), text.clone())),
+            Effect::Message { agent, text } => Some((agent.clone(), text.clone())),
             _ => None,
         };
         effects.iter().filter_map(message).collect()
@@ -2382,6 +2360,12 @@ mod notes {
         n.quote = Some("x ``` y".into());
         n.text = String::new();
         assert_eq!(transfer_text(&n), "a.rs:3-5 (vs main)\n````\nx ``` y\n````");
+        // A kind this client does not know, with no path, leaves no empty label line.
+        n.source = Some(json!({"kind": "later"}));
+        assert_eq!(transfer_text(&n), "````\nx ``` y\n````");
+        n.quote = None;
+        n.text = "mine".into();
+        assert_eq!(transfer_text(&n), "mine");
     }
 
     #[test]
@@ -2635,7 +2619,7 @@ mod notes {
                 file_back: false,
             };
             let effects = store.apply(Event::Compose(step));
-            let message = |e: &Effect| matches!(e, Effect::Send(Write::Message { .. }));
+            let message = |e: &Effect| matches!(e, Effect::Message { .. });
             effects.iter().any(message)
         };
         // A hand-off: the draft with the notes may still be put back, so it cannot go yet.
@@ -2747,7 +2731,6 @@ mod alerts {
 
     #[test]
     fn a_block_notifies_as_blocked() {
-        const { assert!(fleet::BLOCKED_ALWAYS_NEEDS_YOU) };
         let (mut store, mut b) = live();
         block(&mut b, "mupu", true);
         assert!(store.apply(fleet_frame(b)).contains(&BURST));
@@ -2802,7 +2785,11 @@ mod alerts {
         let effects = store.apply(seen);
         assert!(!store.agent_needs_you(alone), "seen");
         assert_eq!(store.spaces, spaces);
-        assert!(!effects.iter().any(|e| matches!(e, Effect::Send(_))));
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::Post { .. } | Effect::Message { .. }))
+        );
         block(&mut b, alone, true);
         assert!(store.apply(fleet_frame(b)).contains(&BURST));
         let got = notices(store.apply(Event::BurstEnded));

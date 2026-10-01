@@ -167,8 +167,7 @@ fn zoom_to(ui: &mut State, id: &str, agent: Option<String>, swipe: Option<f32>) 
 /// the zoom closes onto the lens, with the summary's space selected.
 pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
     if let Some(agent) = tag.strip_prefix("agent:").filter(|a| !a.is_empty()) {
-        let lens = store.lens();
-        let home = lens.into_iter().find(|s| s.agents().any(|m| m == agent));
+        let home = store.home(agent);
         let to = Zoom {
             space: home.map(|s| s.id.clone()).unwrap_or_default(),
             agent: Some(agent.into()),

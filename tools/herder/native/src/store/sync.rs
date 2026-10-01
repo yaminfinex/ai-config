@@ -13,7 +13,7 @@
 //! `Sync` reports what a step changed (`Changes`), so the store re-derives and persists only then.
 
 use crate::api::{StateRow, StateRows};
-use crate::store::{Effect, Fetch, Write};
+use crate::store::{Effect, Fetch};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -255,7 +255,7 @@ impl Sync {
         }
         let rows: Vec<StateRow> = self.outbox.values().cloned().collect();
         self.sending = Some(rows.clone());
-        out.push(Effect::Send(Write::State { ns: self.ns, rows }));
+        out.push(Effect::Post { ns: self.ns, rows });
     }
 }
 

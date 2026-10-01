@@ -107,7 +107,7 @@ fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
                     };
                     events.push(Event::Sync { ns, step });
                 }
-                Effect::Send(write) => sends.push(write),
+                Effect::Post { ns, rows } => sends.push((ns, rows)),
                 Effect::Transfer { file, agent } => {
                     let (name, bytes) = match file {
                         Persist::Prefs => (local::PREFS, local::encode(&store.prefs)),
@@ -230,7 +230,7 @@ fn reads_and_sends_use_the_documented_shapes() {
     };
     assert_eq!(client.entries("mupu", &page).unwrap().prev_offset, Some(0));
     client.send_message("mupu", "hi").unwrap();
-    assert_eq!(client.fleet().unwrap_err().status(), Some(502));
+    assert_eq!(client.agent("gone").unwrap_err().status(), Some(502));
     let log = log.lock().unwrap().clone();
     assert_eq!(
         log[1],
@@ -352,14 +352,17 @@ fn every_send_saves_the_outbox_it_is_sending_first() {
         .apply(edit("s1", 1))
         .into_iter()
         .filter_map(|e| match e {
-            Effect::Send(w) => Some(w),
+            Effect::Post { ns, rows } => Some((ns, rows)),
             _ => None,
         })
         .collect();
     let (bytes, seq) = (local::encode(&store.outbox()), local::next_seq());
     // v2 arrives before that task runs. It cannot send yet, and its own save never lands.
     let v2 = store.apply(edit("s1", 2));
-    assert!(v2.iter().all(|e| !matches!(e, Effect::Send(_))), "{v2:?}");
+    assert!(
+        v2.iter().all(|e| !matches!(e, Effect::Post { .. })),
+        "{v2:?}"
+    );
 
     let mut events = Vec::new();
     save_then_send(&disk, &client, &bytes, seq, sends, |e| events.push(e));
@@ -388,7 +391,7 @@ fn a_failed_save_posts_nothing_and_retries() {
         .apply(edit("s1", 1))
         .into_iter()
         .filter_map(|e| match e {
-            Effect::Send(w) => Some(w),
+            Effect::Post { ns, rows } => Some((ns, rows)),
             _ => None,
         })
         .collect();
@@ -513,6 +516,43 @@ fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
     };
     assert!(log.lock().unwrap().is_empty(), "nothing reached the server");
     std::fs::remove_file(blocked).unwrap();
+}
+
+/// Any 2xx is a send that landed, whatever its body: a malformed one or a 204's empty one. A state row
+/// is retired by the POST (the pull does not hold it), and each send is posted once.
+#[test]
+fn a_2xx_without_a_json_body_counts_as_sent() {
+    use herder_native::store::composer::Step as C;
+    for (status, body) in [(200, "not json"), (204, "")] {
+        let (base, log) = serve(move |target, _| match target {
+            t if t.starts_with("POST") => Reply::Json(status, body.into()),
+            _ => Reply::Json(200, rows_json(6)),
+        });
+        let client = Client::new(base);
+        let (disk, dir) = scratch(&format!("odd-body-{status}"));
+        let mut store = Store::default();
+        drive(&mut store, &client, &disk, edit("s2", 7));
+        assert!(
+            store.sync[&Ns::Spaces].outbox.is_empty(),
+            "{status}: retired"
+        );
+        assert_eq!(store.sync[&Ns::Spaces].hold, None, "{status}");
+        let message = ("ok".into(), "hi".into());
+        let event = save_then_message(&disk, &client, b"{}", local::next_seq(), message);
+        let Event::Compose(C::Sent { result: Ok(()), .. }) = event else {
+            panic!("{status}: {event:?}")
+        };
+        std::fs::remove_dir_all(dir).unwrap();
+        let log = log.lock().unwrap().clone();
+        let posts: Vec<&str> = (log.iter())
+            .filter_map(|l| l.strip_prefix("POST ")?.split(' ').next())
+            .collect();
+        assert_eq!(
+            posts,
+            ["/api/state/spaces", "/api/agents/ok/message"],
+            "{status}: {log:?}"
+        );
+    }
 }
 
 /// A send nobody answered may have landed: it is reported as such, never retried.

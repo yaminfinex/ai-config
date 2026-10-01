@@ -75,7 +75,7 @@ impl View {
 /// the lens wherever it was in the departing zoom, and a box left focused under another agent hands it
 /// to the zoom.
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
-    let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
+    let agent = ui.zoomed_agent().map(String::from);
     let stranded = ui.composer.agent != agent && ui.composer.focus_handle(cx).is_focused(window);
     if ui.composer.want.take() == Some(false) || stranded {
         window.focus(ui.focus_target(), cx);
@@ -103,7 +103,7 @@ pub fn probe(ui: &Ui, window: &Window, cx: &App) -> String {
 
 /// A composer key: `Focus` from the zoom, the rest from the box itself.
 pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
-    let Some(agent) = ui.zoom.as_ref().and_then(|z| z.agent.clone()) else {
+    let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
     };
     let send = |file_back| {
@@ -133,7 +133,7 @@ pub fn filed_back<H: Host>(
     agent: &str,
     cx: &mut Context<H>,
 ) -> Vec<Event> {
-    if ui.zoom.as_ref().and_then(|z| z.agent.as_deref()) != Some(agent) {
+    if ui.zoomed_agent() != Some(agent) {
         return Vec::new();
     }
     let before = ui.anim.as_ref().map(space::Anim::seq);
@@ -152,8 +152,7 @@ pub fn render<H: Host>(
     cx: &mut Context<H>,
 ) -> Div {
     let (line, color) = status(store, agent);
-    let busy = store.in_flight(agent) || store.transfers.contains_key(agent);
-    let writable = store.can_send(agent).is_ok() && !busy;
+    let writable = store.can_send(agent).is_ok() && !store.busy(agent);
     let input = Textarea::new(&ui.composer.state).disabled(!writable);
     let input = div()
         .key_context("Composer")
@@ -174,8 +173,8 @@ pub fn render<H: Host>(
 
 /// The zoomed agent's line under the box, for the harness's `says:` step.
 pub fn says(store: &Store, ui: &Ui) -> String {
-    let agent = ui.zoom.as_ref().and_then(|z| z.agent.as_deref());
-    agent.map_or_else(String::new, |a| status(store, a).0)
+    ui.zoomed_agent()
+        .map_or_else(String::new, |a| status(store, a).0)
 }
 
 /// The line under the box and its colour: why it is read-only, "sending…", "saving the notes…" (a U5

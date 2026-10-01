@@ -54,11 +54,9 @@ pub enum Wire {
     Fleet(Board),
     /// A pull nudge: `namespace` changed and now stands at `rev`.
     StateChanged(StateChanged),
-    /// One new entry for a subscribed agent; it only means "read forward from `next_offset`".
-    Entry {
-        agent: String,
-        entry: Entry,
-    },
+    /// `entry:<agent>`: a new entry for a subscribed agent; it only means "read forward from
+    /// `next_offset`", so its data is never decoded.
+    Entry(String),
     /// A subscribed agent's session or transcript position reset.
     Rewindow(Rewindow),
     /// An hcom message; its recipients may now have it queued.
@@ -104,10 +102,7 @@ impl Wire {
             "message" => serde_json::from_str(data).map(Wire::Message),
             "ping" => Ok(Wire::Ping),
             _ => match event.strip_prefix("entry:") {
-                Some(agent) => serde_json::from_str(data).map(|entry| Wire::Entry {
-                    agent: agent.to_string(),
-                    entry,
-                }),
+                Some(agent) => Ok(Wire::Entry(agent.to_string())),
                 None => return Wire::Other(event.to_string()),
             },
         };
@@ -120,8 +115,6 @@ impl Wire {
 #[serde(default)]
 pub struct AgentDetail {
     pub name: String,
-    pub tool: String,
-    pub herdr_status: String,
     pub bus_status: String,
     pub cwd: Option<String>,
     pub session_id: Option<String>,
@@ -134,18 +127,14 @@ pub struct AgentDetail {
 #[serde(default)]
 pub struct ContextUsage {
     pub used_tokens: u64,
-    pub window_tokens: Option<u64>,
     pub used_percent: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Queued {
-    pub id: i64,
     pub sender: String,
-    pub intent: Option<String>,
     pub preview: String,
-    pub sent_at: Option<String>,
 }
 
 /// `GET /api/agents/{name}/entries`. The envelope is camelCase; `reset` is snake_case.
@@ -168,56 +157,40 @@ pub struct EntriesWindow {
     /// `tail`, `from` or `before`.
     pub mode: String,
     pub from: u64,
-    pub limit: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
-pub struct Reset {
-    /// `truncated` or `session_changed`.
-    pub reason: String,
-    pub session_id: Option<String>,
-}
+pub struct Reset {}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Entry {
-    pub uuid: Option<String>,
     pub byte_offset: u64,
-    pub timestamp: Option<String>,
     pub kind: Kind,
-    /// Only the fields the compact view reads (`Slim`).
-    #[serde(deserialize_with = "slim")]
-    pub payload: Value,
+    pub payload: Payload,
 }
 
-/// An entry payload's read fields. The rest (`toolUseResult`, `attachment`, compaction histories: about
-/// half the bytes) is skipped while decoding, never built as a `Value`.
-#[derive(Deserialize, Serialize)]
-struct Slim {
+/// An entry payload's read fields, each still any JSON (`Null` when absent), so an odd leaf never fails
+/// a page. The rest (`toolUseResult`, `attachment`, compaction histories: about half the bytes) is
+/// skipped while decoding, never built as a `Value`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Payload {
     #[serde(rename = "compactMetadata")]
-    compact_metadata: Option<Value>,
+    pub compact_metadata: Value,
     #[serde(rename = "fallbackModel")]
-    fallback_model: Option<Value>,
+    pub fallback_model: Value,
     #[serde(rename = "isApiErrorMessage")]
-    is_api_error_message: Option<Value>,
-    message: Option<Value>,
-    deliveries: Option<Value>,
-    name: Option<Value>,
-    input: Option<Value>,
-    tool_use_id: Option<Value>,
-    content: Option<Value>,
-    is_error: Option<Value>,
-    subtype: Option<Value>,
-}
-
-fn slim<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
-    let Value::Object(mut kept) = serde_json::to_value(Slim::deserialize(d)?).unwrap_or_default()
-    else {
-        return Ok(Value::Null);
-    };
-    kept.retain(|_, v| !v.is_null());
-    Ok(Value::Object(kept))
+    pub is_api_error_message: Value,
+    pub message: Value,
+    pub deliveries: Value,
+    pub name: Value,
+    pub input: Value,
+    pub tool_use_id: Value,
+    pub content: Value,
+    pub is_error: Value,
+    pub subtype: Value,
 }
 
 /// The server's entry kinds. Anything newer decodes as `Unknown` rather than failing the page.
@@ -267,15 +240,6 @@ impl StateRow {
     pub fn version_cmp(&self, other: &StateRow) -> std::cmp::Ordering {
         (self.updated, &self.write_id).cmp(&(other.updated, &other.write_id))
     }
-}
-
-/// The reply to `POST /api/state/{ns}`. `accepted` omits idempotent and losing rows, so it is never
-/// used as the acknowledgement (ARCHITECTURE §6).
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(default)]
-pub struct Accepted {
-    pub accepted: Vec<String>,
-    pub rev: u64,
 }
 
 /// `GET /api/viewer`: the web sender this connection is attributed to.
@@ -348,13 +312,11 @@ pub struct Candidate {
     pub path: String,
     pub kind: String,
     pub tier: String,
-    pub score: f64,
 }
 
 /// `status` is `complete`, `degraded` or `failed`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct ResolveRoot {
-    pub root: String,
     pub status: String,
 }
