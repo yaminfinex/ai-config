@@ -476,7 +476,7 @@ mod summon {
 mod wheel {
     use crate::views::theme;
     use crate::views::transcript::sideways;
-    use gpui_kit::component::text::TextView;
+    use gpui_kit::base::TextView;
     use gpui_kit::test::{TestSupportExt as _, TestWindowExt as _};
     use gpui_kit::{
         Context, Empty, InteractiveElement as _, IntoElement, ListAlignment, ListState,
@@ -1218,16 +1218,18 @@ mod layout {
     use crate::store::condense::{self, Row};
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{self, drive, history, items, open, reference};
+    use crate::store::tests::{board, bump, frame};
     use crate::store::transcript::{Key, Step};
     use crate::store::{Event, Store};
     use crate::views::lens::Ui;
     use crate::views::space::Zoom;
     use crate::views::transcript::{self, Mark};
     use crate::views::{Host, theme};
+    use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
         Bounds, Context, Entity, IntoElement, ListOffset, ParentElement as _, Pixels, Render,
-        Styled as _, TestAppContext, VisualTestContext, Window, div, px, size,
+        Styled as _, TestAppContext, VisualTestContext, Window, div, point, px, size,
     };
 
     struct Body {
@@ -1518,15 +1520,24 @@ mod layout {
             panic!("the top row is a run")
         };
         scroll(&body, px(0.), cx);
-        let height = row(&body, 0, cx).size.height;
-        assert!(height > px(60.), "the strip wraps: {height:?}");
-        // A pill on the strip's last line, the viewport's top just above it.
+        // The first pill on the strip's last line (what the viewport's top reads, of a line), the
+        // viewport's top just above it.
         let pills = body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().marks.clone());
         let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
-        let pills = pills.into_iter().filter(|(m, _)| inside(m));
-        let (read, b) = pills
-            .max_by(|a, b| a.1.top().partial_cmp(&b.1.top()).unwrap())
+        let pills: Vec<_> = pills.into_iter().filter(|(m, _)| inside(m)).collect();
+        let (read, b) = *pills
+            .iter()
+            .max_by(|a, b| {
+                (a.1.top(), b.1.left())
+                    .partial_cmp(&(b.1.top(), a.1.left()))
+                    .unwrap()
+            })
             .unwrap();
+        let line = pills
+            .iter()
+            .map(|(_, b)| b.top())
+            .fold(b.top(), Pixels::min);
+        assert!(b.top() > line, "the strip wraps");
         scroll(&body, b.top() - row(&body, 0, cx).top() - px(4.), cx);
         let was = mark(&body, read, cx).unwrap().top();
         let top = screen(&body, cx).top();
@@ -1542,6 +1553,92 @@ mod layout {
                 .any(|r| matches!(*r, Row::Run(f, l) if f < first && l == last))
         );
         held(&body, read, was, cx);
+    }
+
+    #[gpui_kit::test]
+    fn a_page_landing_before_a_scroll_is_painted_keeps_the_scroll(cx: &mut TestAppContext) {
+        // A key (or the harness's `find`) scrolls, and a page lands before the next frame: what is
+        // read is where the list now is, not what was last painted (the tail).
+        let limit = split("mupu");
+        let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
+        let key = rows(&body, cx)[2].first();
+        body.read_with(cx, |b, _| {
+            let list = &b.ui.transcript.list;
+            list.scroll_to(ListOffset {
+                item_ix: 2,
+                offset_in_item: px(0.),
+            });
+        });
+        older(&body, "mupu", (usize::MAX, limit), false, cx);
+        let ix = rows(&body, cx).iter().position(|r| r.first() == key);
+        let ix = ix.expect("the row read is still a row");
+        assert!(ix > 2, "rows went in above it");
+        let (now, top) = (row(&body, ix, cx).top(), screen(&body, cx).top());
+        assert!(
+            (now - top).abs() < px(0.5),
+            "row {ix} at {now:?}, top {top:?}"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_page_landing_before_a_scroll_within_one_row_is_painted_keeps_the_scroll(
+        cx: &mut TestAppContext,
+    ) {
+        // The row painted at the top is still the top row, but the list has moved inside it: the
+        // painted offset is stale too.
+        let limit = split("mupu");
+        let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
+        let to = |ix: usize, y: f32, body: &Entity<Body>, cx: &mut VisualTestContext| {
+            body.read_with(cx, |b, _| {
+                let at = ListOffset {
+                    item_ix: ix,
+                    offset_in_item: px(y),
+                };
+                b.ui.transcript.list.scroll_to(at);
+            });
+        };
+        let count = rows(&body, cx).len();
+        let tall = (1..count).find(|&ix| {
+            to(ix, 0., &body, cx);
+            draw(cx);
+            row(&body, ix, cx).size.height > px(80.)
+        });
+        let ix = tall.expect("a row taller than 80");
+        let key = rows(&body, cx)[ix].first();
+        to(ix, 40., &body, cx);
+        older(&body, "mupu", (usize::MAX, limit), false, cx);
+        let now = rows(&body, cx).iter().position(|r| r.first() == key);
+        let now = now.expect("the row read is still a row");
+        assert!(now > ix, "rows went in above it");
+        let (at, top) = (row(&body, now, cx).top(), screen(&body, cx).top());
+        assert!(
+            (at - (top - px(40.))).abs() < px(0.5),
+            "row {now} at {at:?}, 40 above the top {top:?}"
+        );
+    }
+
+    #[gpui_kit::test]
+    fn the_scrollbar_leaves_the_tail_before_the_next_render(cx: &mut TestAppContext) {
+        let (body, cx) = body(cx, "mupu", (usize::MAX, usize::MAX), (420., 320.));
+        let mut board = board();
+        body.update(cx, |b, _| {
+            let live = frame(&b.store, board.clone());
+            b.store.apply(live);
+            b.store.apply(Event::Front(true));
+            b.store.apply(b.ui.transcript.tail(true));
+            bump(&mut board, "mupu", 1);
+            let landed = frame(&b.store, board.clone());
+            transcript::reduce(&mut b.store, &b.ui, landed);
+            assert!(!b.store.agent_needs_you("mupu"), "watched as it lands");
+            // The scrollbar's handle moves the list without its scroll handler.
+            let list = &b.ui.transcript.list;
+            ScrollbarHandle::set_offset(list, point(px(0.), px(0.)));
+            assert!(!list.is_following_tail(), "dragged to the top");
+            bump(&mut board, "mupu", 1);
+            let landed = frame(&b.store, board.clone());
+            transcript::reduce(&mut b.store, &b.ui, landed);
+            assert!(b.store.agent_needs_you("mupu"), "scrolled off the bottom");
+        });
     }
 
     #[gpui_kit::test]
@@ -1571,5 +1668,150 @@ mod layout {
         );
         body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
         assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
+    }
+}
+
+mod frame {
+    use crate::views::theme::{prose, type_scale};
+    use crate::views::transcript::{Kind, gap};
+    use gpui_kit::px;
+
+    #[test]
+    fn css_lengths_are_web_pixels_at_the_scale() {
+        assert_eq!(type_scale(1.).css(13.), px(13.));
+        assert_eq!(type_scale(1.2).css(10.), px(12.));
+        // The lens's lengths stay the spike's at 0.9.
+        assert_eq!(type_scale(1.).px(10.), px(9.));
+    }
+
+    #[test]
+    fn paragraphs_are_six_web_pixels_apart_at_any_scale() {
+        // The kit's root sets the rem to the theme's body size, not 16.
+        for scale in [0.8, 1., 1.3] {
+            let t = type_scale(scale);
+            let gap = prose(t).paragraph_gap().to_pixels(t.body);
+            assert!((gap - t.css(6.)).abs() < px(0.01), "{scale}: {gap:?}");
+        }
+    }
+
+    #[test]
+    fn kinds_sit_as_far_apart_as_web_measures_them() {
+        use Kind::*;
+        let measured = [
+            (None, Answer, 10.),
+            (Some(Answer), Answer, 10.),
+            (Some(Answer), Strip, 10.),
+            (Some(Answer), Card, 10.),
+            (Some(Strip), Answer, 10.),
+            (Some(Strip), Strip, 5.),
+            (Some(Strip), Card, 9.),
+            (Some(Card), Strip, 9.),
+            (Some(Card), Answer, 10.),
+            (Some(Strip), Divider, 14.),
+            (Some(Divider), Answer, 14.),
+            (Some(Strip), System, 6.),
+        ];
+        for (prev, next, want) in measured {
+            assert_eq!(gap(prev, next), want, "{prev:?} → {next:?}");
+        }
+    }
+}
+
+/// A1 review: the transcript's markdown style, laid out headless, and kept to the transcript.
+mod prose {
+    use crate::views::theme::{self, SANS_T, pal};
+    use gpui_kit::base::TextView;
+    use gpui_kit::component::ActiveTheme as _;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Bounds, Context, IntoElement, ParentElement as _, Pixels, Render, Styled as _,
+        TestAppContext, Window, canvas, div, px, relative,
+    };
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct Md(&'static str, Rc<Cell<Bounds<Pixels>>>);
+
+    impl Render for Md {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let t = theme::type_scale(1.);
+            let text = TextView::markdown("md", self.0).style(theme::prose(t));
+            let at = self.1.clone();
+            let record = canvas(move |b, _, _| at.set(b), |_, _, _, _| {});
+            let el = div().relative().w(px(400.)).font_family(SANS_T);
+            let el = el.text_size(t.css(13.)).line_height(relative(1.55));
+            let el = el
+                .child(text.line_height(relative(1.55)))
+                .child(record.absolute().top_0().left_0().size_full());
+            // Sized by its text, not stretched to the window.
+            div().size_full().flex().flex_col().items_start().child(el)
+        }
+    }
+
+    fn height(src: &'static str, cx: &mut TestAppContext) -> f32 {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+        });
+        let at = Rc::new(Cell::new(Bounds::default()));
+        let seen = at.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| Md(src, seen));
+        for _ in 0..3 {
+            cx.run_until_parked();
+            cx.update(|window, cx| window.render_frame(cx));
+        }
+        f32::from(at.get().size.height)
+    }
+
+    #[gpui_kit::test]
+    fn a_heading_sits_as_far_above_its_paragraph_as_web(cx: &mut TestAppContext) {
+        // Each heading's line (its size × 1.55) and web's margin under it, then the paragraph. Only
+        // the bottom gap: above a heading is the block before's own gap (no collapse by neighbour).
+        let body = height("Body.", cx);
+        let cases = [
+            ("# Title\n\nBody.", 26. * 1.55 + 17.4),
+            ("## Title\n\nBody.", 19.5 * 1.55 + 16.2),
+            ("### Title\n\nBody.", 15.2 * 1.55 + 15.2),
+            ("#### Title\n\nBody.", 13. * 1.55 + 17.3),
+        ];
+        for (src, want) in cases {
+            let got = height(src, cx) - body;
+            assert!(
+                (got - want).abs() < 0.5,
+                "{src:?}: {got} over the paragraph, want {want}"
+            );
+        }
+    }
+
+    #[gpui_kit::test]
+    fn web_s_selection_is_the_transcript_s_only(cx: &mut TestAppContext) {
+        // The composer's and notes' inputs paint the kit theme's selection.
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+            let kit = gpui_kit::Hsla {
+                a: 1.,
+                ..cx.theme().selection
+            };
+            assert_eq!(kit, gpui_kit::rgb(pal::SELECT).into());
+        });
+        // Painted over the ground at its opacity, the transcript's reads as web's.
+        let sel = theme::prose(theme::type_scale(1.)).selection().to_rgb();
+        let ground = gpui_kit::Hsla::from(gpui_kit::rgb(pal::GROUND)).to_rgb();
+        let web = gpui_kit::Hsla::from(gpui_kit::rgb(pal::SELECTION)).to_rgb();
+        let over = |c: f32, g: f32| c * sel.a + g * (1. - sel.a);
+        let seen = [
+            over(sel.r, ground.r),
+            over(sel.g, ground.g),
+            over(sel.b, ground.b),
+        ];
+        for (got, want) in seen.into_iter().zip([web.r, web.g, web.b]) {
+            assert!(
+                (got - want).abs() < 1. / 255.,
+                "{seen:?} on the ground, want {web:?}"
+            );
+        }
     }
 }

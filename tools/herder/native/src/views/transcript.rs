@@ -17,17 +17,18 @@
 
 use crate::store::condense::{self, Pill, Row};
 use crate::store::transcript::{Item, Key, Step, Tone, Transcript};
-use crate::store::{Event, Store};
+use crate::store::{Effect, Event, Store};
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, Mentions};
 use crate::views::space::Zoom;
-use crate::views::theme::{self, TypeScale, pal, type_scale};
+use crate::views::theme::{self, MONO_T, SANS_T, TypeScale, pal, type_scale};
 use crate::views::{Host, dim};
-use gpui_kit::component::text::TextView;
+use gpui_kit::base::TextView;
+use gpui_kit::base::{Scrollbar, ScrollbarMode};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -62,7 +63,7 @@ pub struct View {
     pub(super) list: ListState,
     /// `(agent, generation)` the rows belong to, the item count they were grouped from (items are only
     /// ever inserted, so the count is a complete change signal), and the rows.
-    rows: RefCell<((String, u64), usize, Vec<Row>)>,
+    pub(super) rows: RefCell<((String, u64), usize, Vec<Row>)>,
     /// Unfolded items (a tool's result, thinking, a long delivery), by key.
     open: RefCell<HashSet<Key>>,
     /// Open runs: a run is open while any of its members' keys is here, so it stays open as a page or
@@ -190,14 +191,32 @@ impl View {
     }
 
     /// What the viewport's top shows, as last laid out: in the topmost row on screen, the mark nearest
-    /// the viewport's top, else the row.
+    /// the viewport's top, else the row. A scroll not yet painted has only the list's top to go by.
     fn reading(&self, rows: &[Row]) -> Option<Anchor> {
         let painted = self.painted.borrow();
         let screen = self.list.viewport_bounds();
         let shown = |b: &Bounds<Pixels>| b.bottom() > screen.top() && b.top() < screen.bottom();
         let near = |b: &Bounds<Pixels>| f32::from((b.top() - screen.top()).abs());
         let on = painted.rows.iter().filter(|(_, b)| shown(b));
-        let (ix, at) = on.min_by(|a, b| f32::from(a.1.top()).total_cmp(&f32::from(b.1.top())))?;
+        let first = on.min_by(|a, b| f32::from(a.1.top()).total_cmp(&f32::from(b.1.top())));
+        let top = self.list.logical_scroll_top();
+        // The paint holds only if the list's top is where it painted: the same row, at the same offset.
+        let fresh = |(ix, at): &(&usize, &Bounds<Pixels>)| {
+            let off = at.top() - screen.top() + top.offset_in_item;
+            **ix == top.item_ix && off.abs() < px(0.5)
+        };
+        let Some((ix, at)) = first.filter(fresh) else {
+            // Scrolled since the last frame (a key, the scrollbar, the harness's `find`), even within
+            // one row: the list's top, not the paint.
+            let y = -top.offset_in_item;
+            let row = rows.get(top.item_ix)?;
+            return Some(Anchor {
+                mark: None,
+                key: row.first(),
+                y,
+                row: y,
+            });
+        };
         let row = rows.get(*ix)?;
         let inside = |m: &Mark| row.first() <= m.key() && m.key() <= row.last();
         let marks = painted.marks.iter().filter(|(m, b)| inside(m) && shown(b));
@@ -240,6 +259,11 @@ impl View {
         (rows.len(), runs.len(), open)
     }
 
+    /// Whether jump-to-bottom shows: while the list does not follow the tail.
+    pub(super) fn jumps(&self) -> bool {
+        !self.list.is_following_tail()
+    }
+
     /// Whether the list follows the bottom, tagged with the transcript its rows mirror (`Step::Tail`).
     pub(super) fn tail(&self, tail: bool) -> Event {
         let (agent, generation) = self.rows.borrow().0.clone();
@@ -263,6 +287,53 @@ pub fn plan(old: &[Row], new: &[Row]) -> Option<(usize, usize)> {
     let ends = new.get(b)?.first() <= first.first() && new.get(e)?.last() >= last.last();
     let fits = ends && e + 1 == b + m && (m < 2 || old[1..m - 1] == new[b + 1..e]);
     fits.then(|| (b, new.len() - 1 - e))
+}
+
+/// What a row is, for the space around it (spec §2).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Kind {
+    Answer,
+    Strip,
+    Card,
+    Divider,
+    System,
+}
+
+impl Kind {
+    fn of(row: Row, items: &BTreeMap<Key, Item>) -> Kind {
+        let Row::One(key) = row else {
+            return Kind::Strip;
+        };
+        match items.get(&key) {
+            Some(Item::Prompt(_) | Item::Delivery { .. }) => Kind::Card,
+            Some(Item::CompactDivider(_)) => Kind::Divider,
+            Some(Item::SystemChip(_)) => Kind::System,
+            _ => Kind::Answer,
+        }
+    }
+
+    /// Web's vertical margin around the kind: an assistant block, an activity strip, an entry card,
+    /// the compact divider, a system chip.
+    fn margin(self) -> f32 {
+        match self {
+            Kind::Answer => 10.,
+            Kind::Strip => 5.,
+            Kind::Card => 9.,
+            Kind::Divider => 14.,
+            Kind::System => 6.,
+        }
+    }
+}
+
+/// The transcript's padding under its last row and the first row's offset from its top (web's
+/// padding 8 plus the window note's margin 2).
+const PAD: f32 = 14.;
+const TOP: f32 = 10.;
+
+/// Web's space above a row after `prev` (`None`: the first row): margins collapse, so the larger of
+/// the two kinds' margins.
+pub fn gap(prev: Option<Kind>, next: Kind) -> f32 {
+    prev.map_or(TOP, |p| p.margin().max(next.margin()))
 }
 
 /// `o`: open or close the lowest run on screen.
@@ -307,6 +378,17 @@ fn left(store: &Store, view: &View, following: bool) -> Option<Event> {
     (open.tail && !following).then(|| view.tail(false))
 }
 
+/// Reduce an event as the shell does: a tail the list left by a route that publishes nothing (the
+/// scrollbar's handle moves the list without its scroll handler) is published first, so a fleet frame
+/// that lands before the next render is not seen.
+pub fn reduce(store: &mut Store, ui: &State, event: Event) -> Vec<Effect> {
+    let view = &ui.transcript;
+    let left = left(store, view, view.list.is_following_tail());
+    let mut effects = left.map(|e| store.apply(e)).unwrap_or_default();
+    effects.extend(store.apply(event));
+    effects
+}
+
 /// Herder web's address (the shell's server), for diagram links.
 pub fn set_web(ui: &mut State, base: &str) {
     ui.transcript.web = base.trim_end_matches('/').to_string();
@@ -346,12 +428,14 @@ pub fn render<H: Host>(
 ) -> Div {
     let body = div().flex_1().min_h_0().flex().flex_col();
     let Some(name) = zoom.agent.as_deref() else {
-        return body.p(t.px(24.)).child(dim("No agents in this space."));
+        return body.p(t.css(24.)).child(dim("No agents in this space."));
     };
     let tr = store.transcript.open.as_ref().filter(|tr| tr.agent == name);
     let Some(tr) = tr else {
         // Morphing back to the lens, the transcript is already gone.
-        return body.when(ui.zoom.is_some(), |b| b.p(t.px(24.)).child(dim("loading…")));
+        return body.when(ui.zoom.is_some(), |b| {
+            b.p(t.css(24.)).child(dim("loading…"))
+        });
     };
     let view = &ui.transcript;
     view.sync(tr, store);
@@ -390,19 +474,30 @@ pub fn render<H: Host>(
         };
         view.list.set_scroll_handler(wheel);
     }
-    let note = |s: &'static str| div().flex_1().p(t.px(24.)).child(dim(s)).into_any_element();
+    let note = |s: &'static str| {
+        div()
+            .flex_1()
+            .p(t.css(24.))
+            .child(dim(s))
+            .into_any_element()
+    };
     let rows = if !tr.loaded() {
         note("loading transcript…")
     } else if tr.items.is_empty() {
         note("(nothing readable yet)")
     } else {
         let host = cx.weak_entity();
-        list(view.list.clone(), move |ix, _, cx| match host.upgrade() {
+        let rows = list(view.list.clone(), move |ix, _, cx| match host.upgrade() {
             Some(host) => row::<H>(host.read(cx).view(), ix, t, host.downgrade()),
             None => div().into_any_element(),
-        })
-        .flex_1()
-        .into_any_element()
+        });
+        // With web's overlay scrollbar and jump-to-bottom.
+        let frame = div().relative().flex_1().min_h_0().flex().flex_col();
+        frame
+            .child(rows.flex_1())
+            .child(scrollbar(&view.list, t))
+            .when(view.jumps(), |f| f.child(jump(t)))
+            .into_any_element()
     };
     let head = strip(store, tr, t, cx);
     let queued = tr.detail.as_ref().and_then(|d| d.queued.clone());
@@ -413,12 +508,12 @@ pub fn render<H: Host>(
         .map(|q| {
             let first = q.preview.lines().next().unwrap_or("");
             let line = format!("queued · {}: {first}", q.sender);
-            dim(line).truncate().px(t.px(20.)).text_size(t.small)
+            dim(line).truncate().px(t.css(PAD)).text_size(t.small)
         });
     let notice = tr.notice().map(|n| {
         let dismiss = cx
             .listener(|h, _: &ClickEvent, _, cx| h.dispatch(Event::Transcript(Step::Dismiss), cx));
-        let el = div().id("notice").px(t.px(20.)).py(t.px(4.));
+        let el = div().id("notice").px(t.css(PAD)).py(t.css(4.));
         el.text_size(t.small)
             .text_color(rgb(pal::AMBER))
             .child(format!("{n}  ✕"))
@@ -439,6 +534,49 @@ pub fn render<H: Host>(
         .child(rows)
         .children(queued)
         .children(notice)
+}
+
+/// Web's scrollbar as Chromium draws it (spec §1 "Scrollbar"): a rounded #3a3c45 thumb about 8 wide on
+/// no track, the same under the pointer. An overlay shown while scrolling, as macOS draws them.
+fn scrollbar(list: &ListState, t: TypeScale) -> Scrollbar {
+    let thumb = |s: gpui_kit::base::ScrollbarThumbStyle| {
+        let s = s.bg(rgb(pal::EDGE)).width(t.css(8.)).radius(t.css(4.));
+        s.inset(t.css(3.))
+    };
+    Scrollbar::vertical(list)
+        .mode(ScrollbarMode::Scrolling)
+        .styles(|s| s.thumb(thumb))
+}
+
+/// Web's jump-to-bottom (spec §1 "Jump to bottom"): an accent pill centred 10 above the bottom; a
+/// click goes to the tail at once and follows it, as `G` does.
+fn jump(t: TypeScale) -> impl IntoElement {
+    let shadow = BoxShadow {
+        color: hsla(0., 0., 0., 0.4),
+        offset: point(px(0.), t.css(2.)),
+        blur_radius: t.css(8.),
+        spread_radius: px(0.),
+        inset: false,
+    };
+    let button = div()
+        .id("jump")
+        .cursor_pointer()
+        .px(t.css(9.))
+        .py(t.css(5.));
+    let button = button
+        .font_family(SANS_T)
+        .text_size(t.css(13.))
+        .line_height(relative(1.5))
+        .border_1()
+        .border_color(rgb(pal::BLUE))
+        .bg(rgb(pal::BLUE))
+        .text_color(rgb(0xFFFFFF))
+        .rounded(t.css(14.))
+        .shadow(vec![shadow])
+        .child("↓ Jump to bottom")
+        .on_click(|_, window, cx| window.dispatch_action(Box::new(Scroll::Bottom), cx));
+    let wrap = div().absolute().left_0().right_0().bottom(t.css(10.));
+    wrap.flex().justify_center().child(button)
 }
 
 /// Model and context used, the working directory (opens in VS Code) and a read-only mark.
@@ -495,12 +633,20 @@ fn row<H: Host>(
         host,
         ix,
     };
-    let el = div().relative().w_full().max_w(t.px(980.));
-    let el = el.px(t.px(20.)).pb(t.px(6.));
+    // In web's type (spec §1 "Transcript container"), here rather than on the list so that `hold`, which
+    // lays a row out alone, measures it the same. Spaced as web's margins (spec §2), with the
+    // transcript's padding under the last row.
+    let kind = |ix: usize| Kind::of(rows.2[ix], &tr.items);
+    let last = ix + 1 == rows.2.len();
+    let above = gap(ix.checked_sub(1).map(kind), kind(ix));
+    let below = if last { kind(ix).margin() + PAD } else { 0. };
+    let el = div().relative().w_full().px(t.css(PAD));
+    let el = el.pt(t.css(above)).pb(t.css(below)).font_family(SANS_T);
+    let el = el.text_size(t.css(13.)).line_height(relative(1.5));
     let el = el.child(record(&view.painted, move |p, b| p.rows.insert(ix, b)));
     match r {
         Row::One(key) => el.children(tr.items.get(&key).map(|item| paint.body(key, item))),
-        Row::Run(first, last) => el.child(paint.run((first, last), ix + 1 == rows.2.len())),
+        Row::Run(first, last_key) => el.child(paint.run((first, last_key), last)),
     }
     .into_any_element()
 }
@@ -543,7 +689,7 @@ impl<H: Host> Paint<'_, H> {
                 .flex()
                 .flex_wrap()
                 .items_center()
-                .gap(t.px(5.))
+                .gap(t.css(5.))
                 .child(dim(if open { "⌄" } else { "›" }))
                 .children(pills.iter().enumerate().map(|(i, p)| {
                     let end = pills.get(i + 1).map_or(n, |next| next.at);
@@ -555,25 +701,26 @@ impl<H: Host> Paint<'_, H> {
         let each = members().map(|(&key, item)| {
             let mark = Mark::Member(key);
             let at = record(&view.painted, move |p, b| p.marks.push((mark, b)));
-            let el = div().relative().pb(t.px(4.));
+            let el = div().relative().pb(t.css(4.));
             el.child(self.body(key, item)).child(at)
         });
         let detail = open.then(|| {
             let el = div().border_l_1().border_color(rgb(pal::RULE));
-            el.ml(t.px(4.)).pl(t.px(12.)).pt(t.px(4.)).children(each)
+            el.ml(t.css(4.)).pl(t.css(12.)).pt(t.css(4.)).children(each)
         });
         let latest = latest.map(|(&key, item)| {
             let now = SystemTime::now().duration_since(UNIX_EPOCH);
             let now = now.map_or(0, |d| d.as_secs());
             let age = tr.times.get(&key.0).map(|&at| ago(now.saturating_sub(at)));
             let age = age.unwrap_or_else(|| "time unknown".into());
-            let line = dim(format!("latest · {age}")).text_size(t.small);
+            let line = dim(format!("latest · {age}"));
+            let line = line.font_family(MONO_T).text_size(t.css(9.));
             let mark = Mark::Member(key);
             let at = record(&view.painted, move |p, b| p.marks.push((mark, b)));
-            let el = div().relative().pt(t.px(3.)).child(line);
+            let el = div().relative().pt(t.css(3.)).child(line);
             el.child(self.body(key, item)).child(at)
         });
-        let el = div().flex().flex_col().gap(t.px(2.));
+        let el = div().flex().flex_col().gap(t.css(2.));
         el.children(strip).children(detail).children(latest)
     }
 
@@ -594,7 +741,7 @@ impl<H: Host> Paint<'_, H> {
             });
         };
         let id = |kind: &str| self.id(kind, key);
-        let small = |text: String| dim(text).text_size(t.small);
+        let small = |text: String| dim(text).text_size(t.css(10.));
         let glyph = if open { "▾" } else { "▸" };
         let fold = |text: String| {
             let el = div().id(id("fold")).cursor_pointer();
@@ -611,6 +758,7 @@ impl<H: Host> Paint<'_, H> {
                 cache.entry((key, open)).or_insert_with(link).clone()
             };
             let text = TextView::markdown(id("md"), linked).selectable(true);
+            let text = text.line_height(relative(1.55));
             // No actions are drawn; asking for them gives each fenced block an id, which its sideways
             // scroll keeps its offset under.
             let text = text
@@ -623,16 +771,16 @@ impl<H: Host> Paint<'_, H> {
                 }
                 None => {}
             });
-            sideways(div().child(text))
+            sideways(div().max_w(t.css(900.)).child(text))
         };
         match item {
             Item::Prompt(text) => div()
                 .bg(rgb(pal::ACCW))
-                .border_l(t.px(3.))
+                .border_l(t.css(3.))
                 .border_color(rgb(pal::ACC))
-                .rounded(t.px(4.))
-                .px(t.px(10.))
-                .py(t.px(6.))
+                .rounded(t.css(4.))
+                .px(t.css(10.))
+                .py(t.css(6.))
                 .child(md(text))
                 .into_any_element(),
             Item::Delivery {
@@ -656,7 +804,7 @@ impl<H: Host> Paint<'_, H> {
                     at: 0,
                 };
                 let more = (text != label && !text.is_empty()).then(|| small(text.clone()));
-                let el = div().flex().flex_col().items_start().gap(t.px(2.));
+                let el = div().flex().flex_col().items_start().gap(t.css(2.));
                 el.child(chip(&full, label.clone(), t).max_w_full())
                     .children(more)
                     .into_any_element()
@@ -664,8 +812,8 @@ impl<H: Host> Paint<'_, H> {
             Item::SystemChip(s) => small(format!("· {s}")).into_any_element(),
             Item::CompactDivider(s) => {
                 let rule = || div().flex_1().h(px(1.)).bg(rgb(pal::PURPLE_RULE));
-                let el = div().flex().items_center().gap(t.px(8.)).py(t.px(8.));
-                el.text_size(t.small)
+                let el = div().flex().items_center().gap(t.css(8.));
+                el.text_size(t.css(10.))
                     .text_color(rgb(pal::PURPLE))
                     .child(rule())
                     .child(s.clone())
@@ -711,7 +859,11 @@ fn record<T>(
     let at = move |b, _: &mut Window, _: &mut App| {
         put(&mut painted.borrow_mut(), b);
     };
-    canvas(at, |_, _, _, _| {}).absolute().size_full()
+    canvas(at, |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
 }
 
 /// Keeps what is read in place when a page grows the head (`View::anchor`): before the list lays out,
@@ -764,13 +916,14 @@ fn chip(p: &Pill, text: String, t: TypeScale) -> Div {
         (border, ink)
     };
     div()
-        .px(t.px(7.))
+        .px(t.css(7.))
         .border_1()
         .border_color(rgb(border))
         .bg(rgb(ground))
         .text_color(rgb(ink))
-        .rounded(t.px(10.))
-        .text_size(t.small)
+        .rounded(t.css(10.))
+        .font_family(MONO_T)
+        .text_size(t.css(9.))
         .child(text)
 }
 

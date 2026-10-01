@@ -23,7 +23,9 @@
 //! selected notes' indexes, comma-separated, and the cursor's, `-` for none; F6) · `said:<text>` (the
 //! notes strip's confirmation line contains it) · `click:<card:i|card2:i|tab:i|crumb>` (a click on the lens's card
 //! `i` in lens order, a double-click on it, a click on the zoom's tab `i` or on `lens ›`; F4) ·
-//! `selected:<space>` (the selected card's space name, `+` for a space). Units add `type:` as they need it.
+//! `selected:<space>` (the selected card's space name, `+` for a space) · `jump:<shown|hidden>` and
+//! `click:jump` (jump-to-bottom over the transcript, and a click on it; A1) · `find:<text>` (scrolls the
+//! transcript so the first loaded row holding it is at the top, for side-by-side shots; A1). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
@@ -110,12 +112,14 @@ fn cpu_s() -> f64 {
 
 /// What the harness asks the app; the shell answers from `views::probe`, so the harness knows no views.
 pub trait Probe {
-    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header`, `rows` and `start` (`None`: not yet).
+    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `jump` and `start` (`None`: not yet).
     fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String>;
     /// The action a click dispatches, for `link`, `summon` and `click` (`None`: nothing to click).
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>>;
     /// Stand in for a pointer selection in the transcript, for `select:`.
     fn select(&self, text: &str, cx: &mut App);
+    /// Scroll the transcript to the first row holding `text`, for `find:` (`false`: none does).
+    fn find(&self, text: &str, cx: &mut App) -> bool;
 }
 
 pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext) {
@@ -148,6 +152,10 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 let _ = cx.update(|_, cx| probe.select(&arg.replace('+', " "), cx));
                 metric(format!("select {arg}"));
             }
+            "find" => match cx.update(|_, cx| probe.find(&arg.replace('+', " "), cx)) {
+                Ok(true) => metric(format!("find {arg}")),
+                _ => fail(format!("find {arg}: no row holds it")),
+            },
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
             // `cpu:` idles, counting pointer events (real ones) meanwhile.
             "cpu" => {
@@ -183,7 +191,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
             }
             "expect" | "box" | "has" | "says" | "notes" | "list" | "said" | "header"
-            | "selected" | "rows" => {
+            | "selected" | "rows" | "jump" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");

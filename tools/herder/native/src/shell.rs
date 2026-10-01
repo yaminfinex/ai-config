@@ -143,7 +143,7 @@ impl Host for Shell {
             }
         );
         let scale = self.store.prefs.text_scale;
-        let effects = self.store.apply(event);
+        let effects = transcript_view::reduce(&mut self.store, &self.ui, event);
         if self.store.prefs.text_scale != scale {
             theme::apply(self.store.prefs.text_scale, cx);
         }
@@ -417,6 +417,14 @@ impl harness::Probe for Entity<Shell> {
             probe::select(&mut s.ui, text);
             cx.notify()
         })
+    }
+
+    fn find(&self, text: &str, cx: &mut App) -> bool {
+        let s = self.read(cx);
+        let found = probe::find(&s.store, &s.ui, text);
+        // The list moved with nothing notified: the next frame would reuse the view as it was.
+        self.update(cx, |_, cx| cx.notify());
+        found
     }
 }
 

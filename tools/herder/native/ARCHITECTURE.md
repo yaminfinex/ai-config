@@ -111,7 +111,8 @@ Derived shapes are in `store`:
   marked space none of whose agents already counts. While the owner watches an agent's tail (frontmost,
   zoomed on it, the transcript at the bottom) what lands is seen at once: it neither counts nor alerts.
   Leaving the bottom (a scroll key, the wheel) reaches the store as it happens, before any fleet frame
-  behind it; the view's word on the tail names the transcript's agent and generation, and a stale one
+  behind it; a route that publishes nothing (the scrollbar's drag) is caught as the shell reduces its next
+  event (`transcript::reduce`, which publishes the list's leaving first); the view's word on the tail names the transcript's agent and generation, and a stale one
   (after a zoom switch or a reset) is dropped.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
   orders and pairs them): `Prompt`, `Delivery{sender, text, operator}` (acks and the launcher vanish,
@@ -256,9 +257,31 @@ every window, so inputs, lists, markdown and the code editor follow. The scale p
 restored at boot. The palette (`theme::pal`) is dark only in v0, its neutrals herder web's dark theme (ink
 on ground ~12:1). The kit's own text (markdown, inputs, lists) paints from it too: `theme::dark` sets the kit
 theme's foreground, muted, border, link, selection, table, input, ring and caret colours from `pal`, and transcript markdown takes
-`theme::prose` (paragraph gap, inline code chip, unwrapped fenced code that scrolls sideways; a row
-stops a mostly sideways wheel so the list does not take its vertical part, `transcript::sideways`). Font families are explicit (Menlo /
-Monaco) so the kit never enumerates installed fonts.
+`theme::prose`, a whole base `TextViewStyle` of its own so none of it reaches the kit's other text (paragraph gap, inline code chip, unwrapped fenced code that scrolls sideways; a row
+stops a mostly sideways wheel so the list does not take its vertical part, `transcript::sideways`). Font families are explicit so the
+kit never enumerates installed fonts: the lens, composer and notes are Menlo (`FONT`); the transcript is web's
+`system-ui` and `ui-monospace` (A1), as CoreText's system families `SANS_T` (`.AppleSystemUIFont`) and `MONO_T`
+(`.AppleSystemUIFontMonospaced`, also the kit's mono). "SF Pro" and "SF Mono" do not resolve by name: GPUI
+falls back to Helvetica. The two resolve in ~3 ms and ~1.3 ms on the first transcript open; cold start is
+unchanged (the lens draws neither).
+
+The transcript is set to web's measured styles (A1, `transcript-style-spec.md`), so its lengths are web's CSS
+pixels at the scale, `TypeScale::css(w) = w × scale`, while the lens, composer and notes keep `TypeScale::px`
+(the spike's design pixels × 0.9). Prose is 13 on a 20.15 line; headings 26/19.5/15.2/13 bold with web's
+margins under them (nothing gaps after a heading, so its bottom padding is the whole gap; above one is only
+the block before's own margin, a nearest-layout limit: the renderer cannot collapse margins by neighbour, so
+web's h4 top margin of 17.3 is not modelled); code blocks SF Mono
+11, padding 9, radius 5; tables transparent (a card's ground shows through), cells 4 8, the header semibold on
+the wash; links #a9c4ff (paths too: the kit gives every link the one colour and underline). The selection is
+web's #375576 as seen on the ground: the kit paints it over the glyphs, so it is #538ecb at half opacity; the
+kit theme's #31406b stays for the composer and notes. `theme::prose` gives the paragraph gap in rems of the kit
+root's rem, which is the theme's `font_size` (`body`), not 16. Each row carries its own font, size and line
+height, because `hold` lays a row out alone and must measure it as the list does. Rows are spaced by kind
+(`transcript::Kind`: answer 10, run strip 5, card 9, divider 14, system chip 6): the gap above a row is
+`gap(prev, next)`, the larger of the two kinds' margins, 10 above the first, and the last row adds its margin
+plus 14 below. The frame overlays the kit's `Scrollbar` on the list (a rounded #3a3c45 thumb, 8 wide, shown
+while scrolling) and, while the list is not following the tail, web's accent "Jump to bottom" pill centred 10
+above the bottom; a click is `Scroll::Bottom`.
 
 ## 6. Persistence
 
@@ -320,12 +343,13 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   and any failed step (a bad keystroke, a failed screenshot, an unknown step) exits non-zero. Any
   `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge and the
   summon chord are logged no-ops. The harness knows no views: what it asks of them goes through
-  the `harness::Probe` trait, which the shell implements with `views::probe` (`ask`, `action`, `select`),
+  the `harness::Probe` trait, which the shell implements with `views::probe` (`ask`, `action`, `select`,
+  `find`, which scrolls the first transcript row holding a text to the top, for shots),
   the one file that spells what a script compares against. A scenario that sends anything points
   `HERDER_URL` at `testdata/fake_serve.py` on loopback, never at the real serve (`scripts/scenario.sh`,
   shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Steps live
   in `src/harness.rs`'s module doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`,
-  `check-alerts`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
+  `check-alerts`, `check-mouse`, `check-runs`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
   (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -345,7 +369,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after F2 (F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after A1 (A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -356,19 +380,19 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `api/types.rs` | 324 | `views/mod.rs` | 419 |
 | `api/client.rs` | 206 | `views/lens.rs` | 442 |
 | `api/sse.rs` | 194 | `views/space.rs` | 366 |
-| `store/mod.rs` | 445 | `views/transcript.rs` | 827 |
+| `store/mod.rs` | 445 | `views/transcript.rs` | 980 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 221 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 430 |
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
-| `store/attention.rs` | 281 | `views/probe.rs` | 159 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 186 |
 | `store/transcript.rs` | 585 | `views/markdown.rs` | 238 |
-| `store/condense.rs` | 395 | `views/theme.rs` | 175 |
-| `store/notes.rs` | 432 | `shell.rs` | 433 |
+| `store/condense.rs` | 395 | `views/theme.rs` | 233 |
+| `store/notes.rs` | 432 | `shell.rs` | 441 |
 | `store/composer.rs` | 166 | `shell/io.rs` | 180 |
-| `local.rs` | 95 | `harness.rs` | 274 |
+| `local.rs` | 95 | `harness.rs` | 282 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 
-About 8,720 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
+About 8,970 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
