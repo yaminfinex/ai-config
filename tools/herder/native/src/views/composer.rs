@@ -14,7 +14,7 @@ use crate::store::composer::{Failure, ReadOnly, Sending, Step};
 use crate::store::notes::Step as NoteStep;
 use crate::store::{Attribution, Event, Store};
 use crate::views::lens::{Focus, Ui};
-use crate::views::notes;
+use crate::views::notes_list;
 use crate::views::space::{self, Zoomed};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim, on, settle_later};
@@ -146,8 +146,10 @@ pub fn render<H: Host>(
         ui.composer.state.clone(),
         store.notes_of(agent).next().is_some(),
     );
-    let enter = on(cx, |store, ui, _: &notes::Up| notes::enter(store, ui));
-    let up = move |a: &notes::Up, window: &mut Window, cx: &mut App| {
+    let enter = on(cx, |store, ui, _: &notes_list::Up| {
+        notes_list::enter(store, ui)
+    });
+    let up = move |a: &notes_list::Up, window: &mut Window, cx: &mut App| {
         let s = state.read(cx);
         match notes && (s.value().is_empty() || s.selected_range().end == 0) {
             true => enter(a, window, cx),

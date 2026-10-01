@@ -198,6 +198,13 @@ pub enum Effect {
         to: notes::Dest,
         agent: String,
     },
+    /// A hand-off's draft was saved and `removed` leave `agent`'s notes (`order`, its list before): the
+    /// notes list selects the note after them (`views::notes_list::handed_off`).
+    HandedOff {
+        agent: String,
+        order: Vec<String>,
+        removed: Vec<String>,
+    },
     /// A filed-back send (`cmd-shift-enter`) landed: leave the zoom if it is still on `agent`.
     FiledBack {
         agent: String,

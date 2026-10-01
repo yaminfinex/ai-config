@@ -14,6 +14,7 @@ use crate::views::composer::{self, Compose};
 use crate::views::lens::{self, Nav, State, Ui};
 use crate::views::markdown::{AGENT, PATH};
 use crate::views::notes::{self, Notes};
+use crate::views::notes_list::{self, Card};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::transcript::{self as body, OpenLink, Scroll};
 use crate::views::{Host, dim, glyph, on, pill};
@@ -346,6 +347,7 @@ pub fn render<H: Host>(
             _ => Vec::new(),
         }))
         .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
+        .on_action(on(cx, |store, ui, c: &Card| notes_list::act(store, ui, c)))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
             _ => Vec::new(),

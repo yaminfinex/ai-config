@@ -1879,7 +1879,7 @@ mod transcript_pages {
 }
 
 /// U4: drafts, who can be written to, and each send's lifecycle.
-mod composer {
+pub(crate) mod composer {
     use super::*;
     use crate::api::{AgentDetail, Refusal};
     use crate::store::composer::{Failure, ReadOnly, Sending, Step as C};
@@ -1911,7 +1911,7 @@ mod composer {
     }
 
     /// A live store zoomed on `agent` (in its first space), with its detail answered as `bus_status`.
-    pub(super) fn zoomed(agent: &str, bus_status: Option<&str>) -> Store {
+    pub(crate) fn zoomed(agent: &str, bus_status: Option<&str>) -> Store {
         let mut store = loaded();
         store.apply(fleet_frame(board()));
         let space = store.spaces[0].id.clone();
@@ -2502,6 +2502,13 @@ mod notes {
         let keys: Vec<(&str, bool)> = tombs.iter().map(|r| (&*r.key, r.deleted)).collect();
         assert_eq!(keys, [(&*plain, true)]);
         assert_eq!(texts(&store, "mupu"), ["ask it to split this"]);
+        // The notes list hears which left, and from what order, to select the next note.
+        let handed = Effect::HandedOff {
+            agent: "mupu".into(),
+            order: vec![plain.clone(), quoted.clone()],
+            removed: vec![plain.clone()],
+        };
+        assert!(effects.contains(&handed));
         // Chosen in any order, the draft takes them in list order (newest-updated first).
         let mut store = super::composer::zoomed("mupu", Some("listening"));
         pulled(&mut store, vec![web_row(0), web_row(1)], 1);

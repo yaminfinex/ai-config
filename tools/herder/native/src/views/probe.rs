@@ -5,6 +5,7 @@ use crate::store::Store;
 use crate::views::composer;
 use crate::views::lens::{self, Pick, State, Ui};
 use crate::views::notes::Notes;
+use crate::views::notes_list::Card;
 use crate::views::space::{Summon, Tab, Zoomed, zoomed};
 use crate::views::transcript::OpenLink;
 use gpui_kit::*;
@@ -42,7 +43,7 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
                 .map(|n| n.id.as_str())
                 .collect();
             let at = |id: &String| ids.iter().position(|i| i == id);
-            let picked = &ui.notes.picked;
+            let picked = &ui.notes.list.picked;
             let selected = ids.iter().enumerate();
             let selected = selected.filter(|(_, id)| picked.selected.contains(**id));
             let selected: Vec<String> = selected.map(|(i, _)| i.to_string()).collect();
@@ -50,16 +51,12 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             let cursor = cursor.map_or("-".to_string(), |c| c.to_string());
             format!(
                 "{}:{}@{cursor}",
-                focused(ui.notes.list.clone()),
+                focused(ui.notes.list.focus.clone()),
                 selected.join(",")
             )
         }
         // The strip's confirmation line.
-        "said" => ui
-            .notes
-            .said
-            .as_ref()
-            .map_or_else(String::new, |s| s.1.clone()),
+        "said" => ui.notes.said().unwrap_or_default(),
         "header" => lens::header_line(store),
         // The selected card's space, by name.
         "selected" => ui
@@ -80,6 +77,7 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 /// there is no such thing to click.
 pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {
     let notes = |what: Notes| Some(Box::new(what) as Box<dyn Action>);
+    let card = |what: Card| Some(Box::new(what) as Box<dyn Action>);
     match op {
         "link" => return Some(Box::new(OpenLink(arg.to_string().into()))),
         "summon" => return Some(Box::new(Summon(arg.to_string().into()))),
@@ -126,14 +124,14 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
         ("add", _) => notes(Notes::Add),
         ("note", i) => {
             let (i, held) = i.split_once(':').unwrap_or((i, ""));
-            notes(Notes::Pick {
+            card(Card::Pick {
                 id: note(i)?,
                 command: held == "cmd",
                 shift: held == "shift",
             })
         }
-        ("edit", i) => notes(Notes::Edit(note(i)?)),
-        ("delete", i) => notes(Notes::Delete(note(i)?)),
+        ("edit", i) => card(Card::Edit(note(i)?)),
+        ("delete", i) => card(Card::Delete(note(i)?)),
         _ => None,
     }
 }

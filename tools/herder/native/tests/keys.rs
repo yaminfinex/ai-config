@@ -214,7 +214,8 @@ fn notes_editor_keys_stay_in_the_editor() {
 /// is the way in (it falls through to the caret when it does not enter), and is nothing in the zoom.
 #[test]
 fn the_notes_list_keys_win_in_the_list_and_nothing_else_fires_there() {
-    use views::notes::{Copy, List, Notes, Up};
+    use views::notes::Notes;
+    use views::notes_list::{Copy, List, Up};
     let keymap = Keymap::new(views::bindings());
     let first = |key: &str, stack: &[&str]| {
         let stack: Vec<KeyContext> = stack

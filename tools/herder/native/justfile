@@ -87,10 +87,12 @@ check-composer port="4411":
 #          cmd-a selects all; no lens, zoom or composer key fires there (letters included); escape clears,
 #          then leaves for the box; `up` in a box with text moves the caret, emptied it enters again;
 # picked   clicks pick (cmd toggles, shift a range); enter hands only the selected note into the draft and
-#          deletes only it, which a relaunch keeps;
+#          deletes only it once the draft is saved, the other then selected; a relaunch keeps it;
 # keyed    backspace arms the selection's delete (a move disarms it), a second deletes it and the cursor
 #          lands on the note before; `e` edits the cursor's note in place, enter saves back into the
-#          list; cmd-c copies it (logged, never the owner's clipboard).
+#          list; cmd-c copies it (logged, never the owner's clipboard);
+# armed    cmd-c, or an unbound letter, between two backspaces disarms the first: the second only arms again,
+#          and nothing is deleted; `e` edits the cursor's note when a cmd-click took it out of the selection.
 check-notes port="4412":
     #!/usr/bin/env bash
     . scripts/scenario.sh check-notes {{port}}
@@ -115,14 +117,18 @@ check-notes port="4412":
     run --notes list 0 "$list quit"
     picked="$zoom click:note:0 draw list:focused:0@0 click:note:1:cmd list:focused:0,1@1 click:note:1:cmd list:focused:0@1"
     picked+=" click:note:0:shift list:focused:0,1@0 click:note:1:shift list:focused:1@1 click:note:0 draw list:focused:0@0 shot:f6-picked"
-    picked+=" key:enter wait:800 draw box:focused:check+the+outbox+after+a+409 notes:1:closed said:Moved+1+note+to+mupu’s+composer. shot:f6-handed"
+    picked+=" key:enter wait:800 draw box:focused:check+the+outbox+after+a+409 notes:1:closed said:Moved+1+note+to+mupu’s+composer. list:idle:0@0 shot:f6-handed"
     run --notes picked 1 "$picked quit" "$zoom notes:1:closed box:idle:check+the+outbox+after+a+409 quit"
     keyed="$up key:up key:backspace draw notes:2:closed said:again+to+delete+1+note shot:f6-armed key:down key:up key:backspace draw notes:2:closed"
     keyed+=" key:backspace wait:800 draw notes:1:closed said:Deleted+1+note. list:focused:0@0 key:e draw notes:1:focused:ask+it+to+split+this"
     keyed+=" key:cmd-a key:backspace key:o key:k key:enter wait:800 draw notes:1:closed list:focused:0@0 said:Saved. shot:f6-edited key:cmd-c draw said:Copied+1+note."
     run --notes keyed 2 "$keyed quit"
+    armed="$up key:up key:backspace draw said:again+to+delete+1+note key:cmd-c draw said:Copied+1+note. key:backspace draw said:again+to+delete"
+    armed+=" tap:x draw said:Copied+1+note. key:backspace draw said:again+to+delete notes:2:closed key:escape draw notes:2:closed"
+    armed+=" click:note:0 click:note:1:cmd click:note:1:cmd draw list:focused:0@1 key:e draw notes:2:focused:ask+it+to+split+this"
+    run --notes armed 0 "$armed quit"
     grep -q 'platform: would copy "from mupu.s transcript:\\n> the reducer owns\\n> every mutation\\n\\nok"' "$home/keyed.log" || { echo "check-notes: keyed: not copied"; exit 1; }
-    echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, selection per agent, capture with quote, hand-off into the draft survives a relaunch, alt-enter queues, the list by key and click: move, select, hand off the chosen, delete twice, edit in place, copy, no other key fires there)"
+    echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, selection per agent, capture with quote, hand-off into the draft survives a relaunch, alt-enter queues, the list by key and click: move, select, hand off the chosen and land on the next, delete twice and any other key disarms, edit the cursor's note in place, copy, no other key fires there)"
 
 # Alert scenarios (U6), each through `scripts/scenario.sh`, whose fake serve's `--turn` frames finish agents'
 # turns while the app runs. A scripted run is test mode (`platform_mac::quiet`): nothing is posted, no

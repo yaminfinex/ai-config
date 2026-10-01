@@ -305,7 +305,15 @@ impl Store {
                     .notes
                     .iter()
                     .filter(|n| self.version(&n.id).is_some_and(|v| taken.contains(&v)));
-                return Some(notes.map(|n| tombstone(n, &stamp)).collect());
+                let rows: Vec<StateRow> = notes.map(|n| tombstone(n, &stamp)).collect();
+                let order = self.notes_of(agent).map(|n| n.id.clone()).collect();
+                let removed = rows.iter().map(|r| r.key.clone()).collect();
+                out.push(Effect::HandedOff {
+                    agent: agent.into(),
+                    order,
+                    removed,
+                });
+                return Some(rows);
             }
             (Transfer::HandOff { before, after, .. }, Err(e)) => {
                 if draft == Some(&after) {

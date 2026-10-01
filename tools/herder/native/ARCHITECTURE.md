@@ -26,7 +26,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 |---|---|---|
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
 | `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). `store::cards` holds the lens cards' text (F4). | `api::types` |
-| `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. | `store`, gpui-kit |
+| `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. `views::notes` is the notes strip (header, editor, transfers) and `views::notes_list` its keyboard list (selection, keys, cards; F6). | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
 | `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
 | `platform_mac` | The AppKit calls GPUI lacks: window ordering, dock badge, activation policy, the hotkey bridge. | objc2 |
@@ -180,7 +180,7 @@ composer's box, U4), `NotesList` (the notes strip's list, F6), `Input` (any kit 
 | `alt-enter` | `Composer > Input` | queue as note | U5 |
 | `a` / `c` / `p` | `Space && !Input && !Terminal` | add a note (the transcript selection, if any, as its quote, F6) / capture the transcript selection / every note into the composer | U5 |
 | `enter` `cmd-enter` / `escape` | `Notes > Input` | save the note / cancel | U5 |
-| `up` | `Composer > Input` | into the notes list, every note selected, when the box is empty or its caret at the start; else the kit's caret move (`notes::Up` propagates) | F6 |
+| `up` | `Composer > Input` | into the notes list, every note selected, when the box is empty or its caret at the start; else the kit's caret move (`notes_list::Up` propagates) | F6 |
 | `up` `down` / `shift-up` `shift-down` / `cmd-a` | `NotesList && !Input` | move the cursor / extend the selection from its anchor / select all | F6 |
 | `enter` / `backspace` `delete` / `e` / `cmd-c` / `escape` | `NotesList && !Input` | the selection into the composer / delete it (a second press; any other key disarms) / edit the cursor's note in place / copy (`Host::copy`; a scripted run logs it) / clear the selection, then back to the box | F6 |
 | `cmd-w` `cmd-t` `cmd-1…9` | `Space` | close panel, terminal, switch panel | Rung 2 |
@@ -191,13 +191,22 @@ shows that agent (`space::Tab`); `lens ›` in the breadcrumb is `Zoomed::Out`. 
 same action the harness's `click:card:i`, `card2:i`, `tab:i` and `crumb` do (`just check-mouse`). Hovering
 a card lifts its border, which re-renders the shell on enter and leave only.
 
-**Notes list (F6).** Web's `notesListModel`: `notes::Picked` (selection, anchor, cursor; pure) is view
-state, per zoomed agent. In the list no lens, zoom or composer key fires (the `!NotesList` predicates);
-the kit's Root `tab` still moves focus out, as a browser's does. A click on a card picks it (`cmd`
-toggles, `shift` a range from the anchor) and focuses the list; a double-click edits in place; a note's ✕
-still deletes on a second click. The strip says what each action did for 4 s (`notes::fade_later`).
-A hand-off of the chosen notes is the U5 transfer (destination before source) with only their ids.
-`just check-notes` (`list`, `picked`, `keyed`) drives it.
+**Notes list (F6).** `views::notes_list` is web's `notesListModel` and `NotesList`: `Picked` (selection,
+anchor, cursor; pure) is view state, per zoomed agent, with the list's focus, scroll, keys and cards;
+`views::notes` keeps the strip around it (header, capture and add, the editor, the transfers). In the list
+no lens, zoom or composer key fires (the `!NotesList` predicates); the kit's Root `tab` still moves focus
+out, as a browser's does. A click on a card picks it (`cmd` toggles, `shift` a range from the anchor) and
+focuses the list; a double-click edits in place. A note's ✕ and the editor in a card keep their own
+clicks (the ✕ stops its click; the editor its mouse-down), so neither picks the card. A delete arms on the
+first press and runs on the second; any other key disarms it (a keystroke observer, since GPUI runs an
+element's key listeners only for unbound keys), as do a click and focus leaving the list. `e` edits the
+cursor's note, chosen or not (web's `cursor ?? selectedNotes[0]`). A hand-off of the chosen notes is the
+U5 transfer (destination before source) with only their ids; once it lands, `Effect::HandedOff` names the
+deleted ones and the list selects the note after them, as after a delete (a failed save changes nothing).
+A note web deletes or reassigns while it is open in the editor keeps its card until save or cancel (web's
+`noteEditDisplay`), and the save writes it again (U5). The strip says what each action did for 4 s
+(`notes::fade_later`). `just check-notes` (`list`, `picked`, `keyed`, `armed`) and `views::tests`'
+`notes_events` (real pointer and key events in a headless window) drive it.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -315,7 +324,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after F6 (F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 grew `views/notes` by web's keyboard list: its selection model `Picked`, the list keys and the cards) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after F6 (F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -323,22 +332,22 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 322 | `views/mod.rs` | 411 |
+| `api/types.rs` | 322 | `views/mod.rs` | 417 |
 | `api/client.rs` | 206 | `views/lens.rs` | 442 |
-| `api/sse.rs` | 194 | `views/space.rs` | 363 |
-| `store/mod.rs` | 438 | `views/transcript.rs` | 459 |
-| `store/sync.rs` | 312 | `views/composer.rs` | 219 |
-| `store/fleet.rs` | 117 | `views/notes.rs` | 776 |
-| `store/spaces.rs` | 209 | `views/probe.rs` | 156 |
-| `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
-| `store/transcript.rs` | 552 | `views/theme.rs` | 162 |
-| `store/condense.rs` | 189 | `shell.rs` | 428 |
-| `store/notes.rs` | 423 | `shell/io.rs` | 180 |
-| `store/composer.rs` | 166 | `harness.rs` | 273 |
-| `local.rs` | 95 | `platform_mac.rs` | 92 |
-| `store/cards.rs` | 182 | | |
+| `api/sse.rs` | 194 | `views/space.rs` | 365 |
+| `store/mod.rs` | 445 | `views/transcript.rs` | 459 |
+| `store/sync.rs` | 312 | `views/composer.rs` | 221 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 430 |
+| `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 154 |
+| `store/transcript.rs` | 552 | `views/markdown.rs` | 238 |
+| `store/condense.rs` | 189 | `views/theme.rs` | 162 |
+| `store/notes.rs` | 432 | `shell.rs` | 433 |
+| `store/composer.rs` | 166 | `shell/io.rs` | 180 |
+| `local.rs` | 95 | `harness.rs` | 273 |
+| `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 
-About 6,950 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
+About 8,100 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 

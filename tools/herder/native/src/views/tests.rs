@@ -544,7 +544,7 @@ mod notes_list {
     use crate::store::sync::{Ns, Step};
     use crate::store::tests::loaded;
     use crate::store::{Event, notes::transfer_text};
-    use crate::views::notes::{Picked, copied};
+    use crate::views::notes_list::{Picked, copied};
 
     fn ids() -> Vec<String> {
         ["a", "b", "c", "d"].map(String::from).to_vec()
@@ -635,6 +635,27 @@ mod notes_list {
         assert_eq!(p, Picked::default());
     }
 
+    /// `e`: web's `selection.cursor ?? selectedNotes[0]`, nothing with nothing chosen.
+    #[test]
+    fn e_edits_the_cursor_chosen_or_not_else_the_first_chosen() {
+        let ids = ids();
+        let mut p = Picked::default();
+        assert_eq!(p.editing(&ids), None);
+        p.click(&ids, "a", false, false);
+        p.click(&ids, "b", true, false);
+        p.click(&ids, "b", true, false);
+        assert_eq!(got(&p), want(&["a"], "b"));
+        assert_eq!(p.editing(&ids).as_deref(), Some("b"));
+        p.prune(&ids[..1]);
+        assert_eq!(
+            p.editing(&ids).as_deref(),
+            Some("a"),
+            "the cursor's note went"
+        );
+        p.click(&ids, "a", true, false);
+        assert_eq!(p.editing(&ids), None, "nothing chosen");
+    }
+
     #[test]
     fn copy_is_webs_hand_off_text_of_the_chosen_notes() {
         let web: serde_json::Value =
@@ -663,5 +684,356 @@ mod notes_list {
         want.reverse();
         let both = (want.join("\n\n"), "Copied 2 notes.".to_string());
         assert_eq!(copied(&store, "mupu", &p), Some(both));
+    }
+}
+
+/// F6: the notes list in a headless window, driven by real pointer and key events through the handlers
+/// the zoom installs (`views::space`), so a nested control's click and the key capture are what run.
+mod notes_events {
+    use crate::api::{StateRow, StateRows};
+    use crate::store::notes::Step as N;
+    use crate::store::sync::{Ns, Step as Sync};
+    use crate::store::tests::composer::zoomed;
+    use crate::store::{Effect, Event, Store};
+    use crate::views::lens::Ui;
+    use crate::views::notes::{self, Notes};
+    use crate::views::notes_list::{self, Card};
+    use crate::views::space::Zoom;
+    use crate::views::{Host, bind, composer, on, theme};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Context, ElementId, Entity, InteractiveElement as _, IntoElement, Modifiers,
+        ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext, Window, div,
+    };
+    use serde_json::json;
+
+    struct Shell {
+        store: Store,
+        ui: Ui,
+        copied: Vec<String>,
+    }
+
+    impl Host for Shell {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        /// The store, and the one effect the list answers (as `shell::Shell::run` does).
+        fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+            for effect in self.store.apply(event) {
+                if let Effect::HandedOff {
+                    agent,
+                    order,
+                    removed,
+                } = effect
+                {
+                    notes_list::handed_off(&mut self.ui, &agent, &order, &removed);
+                }
+            }
+            cx.notify();
+        }
+
+        fn copy(&mut self, text: String, _: &mut Context<Self>) {
+            self.copied.push(text);
+        }
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            composer::sync(&mut self.ui, &self.store, window, cx);
+            notes::sync(&mut self.ui, &self.store, window, cx);
+            let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
+            let zoom = div()
+                .id("space")
+                .key_context("Space")
+                .track_focus(&ui.zoom_focus)
+                .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
+                .on_action(on(cx, |store, ui, c: &Card| notes_list::act(store, ui, c)))
+                .size_full()
+                .flex()
+                .flex_col()
+                .children(notes::render(store, ui, "mupu", t, cx))
+                .child(composer::render(store, ui, "mupu", t, cx));
+            div().size_full().key_context("Lens").child(zoom)
+        }
+    }
+
+    /// A note on `group`, `updated` at `at` (the list is newest-updated first).
+    fn row(id: &str, group: &str, at: i64) -> StateRow {
+        let value = json!({"id": id, "group": group, "text": format!("note {id}"), "created": at});
+        StateRow {
+            key: id.into(),
+            value,
+            updated: at,
+            write_id: format!("w-{id}"),
+            deleted: false,
+        }
+    }
+
+    fn pulled(shell: &mut Shell, rows: Vec<StateRow>, rev: u64, cx: &mut Context<Shell>) {
+        let step = Sync::Pulled(StateRows { rows, rev });
+        shell.dispatch(
+            Event::Sync {
+                ns: Ns::Notes,
+                step,
+            },
+            cx,
+        );
+    }
+
+    /// Zoomed on a writable mupu with notes `ids`, listed in that order.
+    fn open<'a>(
+        cx: &'a mut TestAppContext,
+        ids: &[&str],
+    ) -> (Entity<Shell>, &'a mut VisualTestContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+            bind(cx);
+        });
+        let rows: Vec<StateRow> = (ids.iter().rev().enumerate())
+            .map(|(i, id)| row(id, "mupu", 1_000 + i as i64))
+            .collect();
+        let (shell, cx) = cx.add_window_view(move |window, cx| {
+            let store = zoomed("mupu", Some("listening"));
+            let mut ui = Ui::new(window, cx);
+            let space = store.spaces[0].id.clone();
+            ui.zoom = Some(Zoom {
+                space,
+                agent: Some("mupu".into()),
+            });
+            let mut shell = Shell {
+                store,
+                ui,
+                copied: Vec::new(),
+            };
+            pulled(&mut shell, rows, 1, cx);
+            shell
+        });
+        cx.update(|window, cx| window.render_frame(cx));
+        (shell, cx)
+    }
+
+    fn id(name: String) -> ElementId {
+        ElementId::Name(name.into())
+    }
+
+    /// A real click (down and up through hit testing) on note `n`'s card, with `modifiers` held.
+    fn click(cx: &mut VisualTestContext, n: &str, modifiers: Modifiers) {
+        cx.update(|window, cx| window.render_frame(cx));
+        let at = cx.update(|window, _| window.find(id(format!("note-{n}"))).bounds());
+        cx.simulate_click(
+            at.origin + gpui_kit::point(gpui_kit::px(20.), gpui_kit::px(8.)),
+            modifiers,
+        );
+        cx.run_until_parked();
+    }
+
+    /// The list's selection in list order, its cursor, and the strip's line.
+    fn state(
+        shell: &Entity<Shell>,
+        cx: &mut VisualTestContext,
+    ) -> (Vec<String>, Option<String>, Option<String>) {
+        shell.read_with(cx, |s, _| {
+            let ids = notes::ids(&s.store, "mupu");
+            let picked = &s.ui.notes.list.picked;
+            (
+                picked.chosen(&ids),
+                picked.cursor.clone(),
+                s.ui.notes.said(),
+            )
+        })
+    }
+
+    fn texts(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Vec<String> {
+        shell.read_with(cx, |s, _| {
+            s.store.notes_of("mupu").map(|n| n.text.clone()).collect()
+        })
+    }
+
+    #[gpui_kit::test]
+    fn a_click_on_a_notes_x_arms_it_and_the_second_deletes_it_without_picking_the_card(
+        cx: &mut TestAppContext,
+    ) {
+        let (shell, cx) = open(cx, &["a", "b"]);
+        click(cx, "b", Modifiers::none());
+        cx.update(|window, cx| window.click(id("del-a".into()), cx));
+        cx.run_until_parked();
+        let armed = Some("⌫ again to delete 1 note".to_string());
+        assert_eq!(
+            state(&shell, cx),
+            (vec!["b".into()], Some("b".into()), armed),
+            "the card did not pick"
+        );
+        cx.update(|window, cx| window.click(id("del-a".into()), cx));
+        cx.run_until_parked();
+        assert_eq!(texts(&shell, cx), ["note b"]);
+        assert_eq!(state(&shell, cx).2.as_deref(), Some("Deleted 1 note."));
+    }
+
+    #[gpui_kit::test]
+    fn clicks_in_the_card_editor_stay_in_it_and_it_outlives_a_remote_delete(
+        cx: &mut TestAppContext,
+    ) {
+        let (shell, cx) = open(cx, &["a", "b"]);
+        cx.update(|window, cx| window.double_click(id("note-a".into()), cx));
+        cx.run_until_parked();
+        let editing = |cx: &mut VisualTestContext| {
+            cx.update(|window, cx| {
+                let s = shell.read(cx);
+                let focused = s.ui.notes.focus_handle(cx).is_focused(window);
+                (
+                    s.ui.notes.editing.is_some(),
+                    focused,
+                    s.ui.notes.text.clone(),
+                )
+            })
+        };
+        assert_eq!(editing(cx), (true, true, "note a".into()));
+        cx.update(|window, cx| window.press("cmd-a", cx));
+        cx.update(|window, cx| window.input("note a more", cx));
+        // A click, then a double-click, in the editor: no pick takes focus, no reopen reloads the text.
+        cx.update(|window, cx| window.click(id("note-editor".into()), cx));
+        cx.update(|window, cx| window.double_click(id("note-editor".into()), cx));
+        cx.run_until_parked();
+        assert_eq!(editing(cx), (true, true, "note a more".into()));
+        // Web deletes it meanwhile: the editor stays, and a save writes it again, newer than the tombstone.
+        let mut gone = row("a", "mupu", 9_000);
+        (gone.value, gone.deleted) = (json!({"id": "a"}), true);
+        shell.update(cx, |s, cx| pulled(s, vec![gone], 2, cx));
+        cx.update(|window, cx| window.render_frame(cx));
+        assert_eq!(texts(&shell, cx), ["note b"]);
+        assert!(cx.update(|window, _| window.try_find(id("note-editor".into())).is_some()));
+        assert_eq!(editing(cx), (true, true, "note a more".into()));
+        cx.update(|window, cx| window.press("enter", cx));
+        cx.run_until_parked();
+        assert_eq!(texts(&shell, cx), ["note a more", "note b"]);
+        let row = shell.read_with(cx, |s, _| s.store.sync[&Ns::Notes].rows["a"].clone());
+        assert!(!row.deleted && row.updated > 9_000);
+    }
+
+    #[gpui_kit::test]
+    fn the_card_editor_outlives_its_note_moving_to_another_agent(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, &["a", "b"]);
+        cx.update(|window, cx| window.double_click(id("note-b".into()), cx));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.press("cmd-a", cx));
+        cx.update(|window, cx| window.input("note b kept", cx));
+        shell.update(cx, |s, cx| {
+            pulled(s, vec![row("b", "orch-lega", 9_000)], 2, cx)
+        });
+        cx.update(|window, cx| window.render_frame(cx));
+        assert_eq!(texts(&shell, cx), ["note a"]);
+        assert!(cx.update(|window, _| window.try_find(id("note-editor".into())).is_some()));
+        cx.update(|window, cx| window.press("enter", cx));
+        cx.run_until_parked();
+        let saved = shell.read_with(cx, |s, _| {
+            s.store
+                .notes
+                .iter()
+                .find(|n| n.id == "b")
+                .map(|n| n.text.clone())
+        });
+        assert_eq!(saved.as_deref(), Some("note b kept"));
+    }
+
+    #[gpui_kit::test]
+    fn any_other_key_a_copy_or_focus_leaving_disarms_a_delete(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, &["a", "b"]);
+        click(cx, "a", Modifiers::none());
+        let press = |cx: &mut VisualTestContext, key: &str| {
+            cx.update(|window, cx| window.press(key, cx));
+            cx.run_until_parked();
+        };
+        let armed = |shell: &Entity<Shell>, cx: &mut VisualTestContext| {
+            state(shell, cx).2.is_some_and(|s| s.starts_with("⌫ again"))
+        };
+        for between in ["cmd-c", "x", "down"] {
+            click(cx, "a", Modifiers::none());
+            press(cx, "backspace");
+            assert!(armed(&shell, cx), "armed before `{between}`");
+            press(cx, between);
+            assert!(!armed(&shell, cx), "`{between}` disarms");
+            click(cx, "a", Modifiers::none());
+            press(cx, "backspace");
+            assert_eq!(
+                texts(&shell, cx),
+                ["note a", "note b"],
+                "after `{between}`, a fresh confirmation"
+            );
+        }
+        assert_eq!(shell.read_with(cx, |s, _| s.copied.clone()), ["note a"]);
+        // Focus leaving the list disarms too.
+        cx.update(|window, cx| {
+            let box_ = shell.read(cx).ui.composer.focus_handle(cx);
+            window.focus(&box_, cx);
+            window.render_frame(cx);
+        });
+        assert!(!armed(&shell, cx), "focus left");
+        click(cx, "a", Modifiers::none());
+        press(cx, "backspace");
+        press(cx, "backspace");
+        assert_eq!(texts(&shell, cx), ["note b"]);
+    }
+
+    #[gpui_kit::test]
+    fn e_edits_the_cursors_note_even_when_it_is_not_chosen(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, &["a", "b"]);
+        click(cx, "a", Modifiers::none());
+        click(cx, "b", Modifiers::command());
+        click(cx, "b", Modifiers::command());
+        assert_eq!(state(&shell, cx).0, ["a"]);
+        assert_eq!(state(&shell, cx).1.as_deref(), Some("b"));
+        cx.update(|window, cx| window.press("e", cx));
+        cx.run_until_parked();
+        let edited = shell.read_with(cx, |s, _| {
+            let editing = s.ui.notes.editing.as_ref();
+            editing.and_then(|e| e.note.as_ref()).map(|n| n.id.clone())
+        });
+        assert_eq!(edited.as_deref(), Some("b"));
+    }
+
+    #[gpui_kit::test]
+    fn a_partial_hand_off_selects_the_next_note_once_it_lands_and_not_when_it_fails(
+        cx: &mut TestAppContext,
+    ) {
+        let (shell, cx) = open(cx, &["a", "b", "c", "d"]);
+        shell.update(cx, |s, _| s.ui.notes.open = true);
+        let hand_off = |cx: &mut VisualTestContext, saved: Result<(), String>| {
+            click(cx, "b", Modifiers::none());
+            cx.update(|window, cx| window.press("enter", cx));
+            cx.run_until_parked();
+            let landed = N::Landed {
+                agent: "mupu".into(),
+                saved,
+            };
+            shell.update(cx, |s, cx| s.dispatch(Event::Note(landed), cx));
+            cx.update(|window, cx| window.render_frame(cx));
+        };
+        hand_off(cx, Err("disk full".into()));
+        assert_eq!(texts(&shell, cx).len(), 4, "a failed save keeps them");
+        assert_eq!(&state(&shell, cx).0, &["b".to_string()]);
+        shell.update(cx, |s, _| s.store.prefs.drafts.clear());
+        hand_off(cx, Ok(()));
+        assert_eq!(texts(&shell, cx), ["note a", "note c", "note d"]);
+        let (chosen, cursor, _) = state(&shell, cx);
+        assert_eq!(
+            (chosen, cursor.as_deref()),
+            (vec!["c".to_string()], Some("c"))
+        );
+        // Back into the list from the emptied box: the cursor is still on c.
+        shell.update(cx, |s, _| s.store.prefs.drafts.clear());
+        cx.update(|window, cx| {
+            let box_ = shell.read(cx).ui.composer.focus_handle(cx);
+            window.focus(&box_, cx);
+        });
+        cx.update(|window, cx| window.press("up", cx));
+        cx.run_until_parked();
+        assert_eq!(state(&shell, cx).1.as_deref(), Some("c"));
     }
 }

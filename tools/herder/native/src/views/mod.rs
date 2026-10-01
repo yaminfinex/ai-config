@@ -4,14 +4,16 @@
 //! comes from `theme::type_scale`.
 //!
 //! One file per surface, added by the unit that needs it: `lens` (U2, the home rows and cards), `space`
-//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5); `probe` answers the harness. `theme` holds the
-//! palette and the type scale. This file holds what they share: the key table and its help, the
-//! agent chrome (glyph, label, pill), and the window's `Frame` with the working-dot `Pulse`.
+//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5, the strip) and its
+//! keyboard list `notes_list` (F6); `probe` answers the harness. `theme` holds the palette and the type
+//! scale. This file holds what they share: the key table and its help, the agent chrome (glyph, label,
+//! pill), and the window's `Frame` with the working-dot `Pulse`.
 
 pub mod composer;
 pub mod lens;
 pub mod markdown;
 pub mod notes;
+pub mod notes_list;
 pub mod probe;
 pub mod space;
 #[cfg(test)]
@@ -114,7 +116,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("escape", Notes::Cancel),
     ];
     keys.extend(editor.map(|(k, a)| KeyBinding::new(k, a, Some(notes::EDITOR))));
-    use notes::List;
+    use notes_list::List;
     let list = [
         ("up", List::Move(-1, false)),
         ("down", List::Move(1, false)),
@@ -127,12 +129,16 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("e", List::Edit),
         ("escape", List::Leave),
     ];
-    keys.extend(list.map(|(k, a)| KeyBinding::new(k, a, Some(notes::LIST))));
-    keys.push(KeyBinding::new("cmd-c", notes::Copy, Some(notes::LIST)));
+    keys.extend(list.map(|(k, a)| KeyBinding::new(k, a, Some(notes_list::LIST))));
+    keys.push(KeyBinding::new(
+        "cmd-c",
+        notes_list::Copy,
+        Some(notes_list::LIST),
+    ));
     // After the kit's own `Input` bindings (`gpui_kit::init`), so these win in the box (`up` falls
     // through to the kit's when it does not enter the notes).
     keys.extend(compose.map(|(k, a)| KeyBinding::new(k, a, Some(composer::BOX))));
-    keys.push(KeyBinding::new("up", notes::Up, Some(composer::BOX)));
+    keys.push(KeyBinding::new("up", notes_list::Up, Some(composer::BOX)));
     keys
 }
 
@@ -217,7 +223,7 @@ pub fn on<A: Action, H: Host>(
         let target = match (ui.focus.take(), held) {
             (Some(Focus::Box), _) if writable => ui.composer.focus_handle(cx),
             (Some(Focus::Editor), _) => ui.notes.focus_handle(cx),
-            (Some(Focus::List), _) => ui.notes.list.clone(),
+            (Some(Focus::List), _) => ui.notes.list.focus.clone(),
             (None, Some(held)) => held,
             _ => ui.focus_target().clone(),
         };

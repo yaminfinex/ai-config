@@ -23,8 +23,8 @@ use crate::local::{self, Disk};
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, probe,
-    space, theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes,
+    notes_list, probe, space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -183,6 +183,11 @@ impl Shell {
                 Effect::Persist(file) => self.save_later(file, cx),
                 // Taken by the batch (`Batch::take`), as is the outbox's persist.
                 Effect::Post { .. } | Effect::Transfer { .. } => {}
+                Effect::HandedOff {
+                    agent,
+                    order,
+                    removed,
+                } => notes_list::handed_off(&mut self.ui, &agent, &order, &removed),
                 Effect::FiledBack { agent } => {
                     filed.extend(composer::filed_back(&self.store, &mut self.ui, &agent, cx))
                 }
