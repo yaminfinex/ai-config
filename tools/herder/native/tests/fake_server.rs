@@ -5,7 +5,8 @@ use herder_native::api::client::{Client, Page};
 use herder_native::api::sse::Reader;
 use herder_native::api::{StateRow, Wire};
 use herder_native::local::{self, Disk};
-use herder_native::shell::{destination, save_then_land, save_then_message, save_then_send};
+use herder_native::shell::{save_then_land, save_then_message, save_then_send};
+use herder_native::store::notes::Dest;
 use herder_native::store::sync::{Hold, Ns, Step};
 use herder_native::store::{Effect, Event, Fetch, Store, StreamEvent};
 use serde_json::json;
@@ -90,14 +91,14 @@ fn rows_json(rev: u64) -> String {
 }
 
 /// Run the store's effects the way the shell does, synchronously against the fake, until nothing is
-/// left to do. A batch with sends goes through the shell's own `save_then_send`. A batch that only
-/// persists is left unsaved, as if its task were still waiting, so every test also shows that a send
-/// never depends on an earlier save having landed. A note transfer's save goes through the shell's
-/// `save_then_land`.
+/// left to do. A batch with sends or queued notes goes through the shell's own `save_then_send`. A
+/// batch that only persists is left unsaved, as if its task were still waiting, so every test also
+/// shows that a send never depends on an earlier save having landed. A hand-off's draft save goes
+/// through the shell's `save_then_land`.
 fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
     let mut events = vec![first];
     while let Some(event) = events.pop() {
-        let mut sends = Vec::new();
+        let (mut sends, mut lands) = (Vec::new(), Vec::new());
         for effect in store.apply(event) {
             match effect {
                 Effect::Fetch(Fetch::State { ns, since }) => {
@@ -108,16 +109,19 @@ fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
                     events.push(Event::Sync { ns, step });
                 }
                 Effect::Post { ns, rows } => sends.push((ns, rows)),
-                Effect::Transfer { to, agent } => {
-                    let ((name, bytes), seq) = (destination(store, to), local::next_seq());
-                    events.push(save_then_land(disk, name, &bytes, seq, agent));
-                }
+                Effect::Transfer { to, agent } => match to {
+                    Dest::Note => lands.push(agent),
+                    Dest::Draft => {
+                        let (bytes, seq) = (local::encode(&store.prefs), local::next_seq());
+                        events.push(save_then_land(disk, &bytes, seq, agent));
+                    }
+                },
                 _ => {}
             }
         }
-        if !sends.is_empty() {
+        if !sends.is_empty() || !lands.is_empty() {
             let bytes = local::encode(&store.outbox());
-            save_then_send(disk, client, &bytes, local::next_seq(), sends, |e| {
+            save_then_send(disk, client, &bytes, local::next_seq(), sends, lands, |e| {
                 events.push(e)
             });
         }
@@ -361,7 +365,9 @@ fn every_send_saves_the_outbox_it_is_sending_first() {
     );
 
     let mut events = Vec::new();
-    save_then_send(&disk, &client, &bytes, seq, sends, |e| events.push(e));
+    save_then_send(&disk, &client, &bytes, seq, sends, vec![], |e| {
+        events.push(e)
+    });
     for e in events {
         drive(&mut store, &client, &disk, e);
     }
@@ -393,9 +399,15 @@ fn a_failed_save_posts_nothing_and_retries() {
         .collect();
     let bytes = local::encode(&store.outbox());
     let mut events = Vec::new();
-    save_then_send(&disk, &client, &bytes, local::next_seq(), sends, |e| {
-        events.push(e)
-    });
+    save_then_send(
+        &disk,
+        &client,
+        &bytes,
+        local::next_seq(),
+        sends,
+        vec![],
+        |e| events.push(e),
+    );
 
     assert!(log.lock().unwrap().is_empty(), "nothing reached the server");
     let [

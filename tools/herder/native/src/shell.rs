@@ -13,12 +13,14 @@
 //!
 //! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
 //! send was decided (`io::save_then_send`); a save still pending elsewhere cannot be overtaken. A note
-//! transfer's destination is saved at once and reported back (`io::save_then_land`) before its source
-//! changes. The REST reads and those saves run in `io`.
+//! transfer's destination is saved and reported back before its source changes: a draft at once
+//! (`io::save_then_land`), a queued note by that same outbox save, before its posts. The REST reads
+//! and those saves run in `io`.
 
 use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
+use crate::store::notes::Dest;
 use crate::store::sync::Step;
 use crate::store::transcript;
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
@@ -32,7 +34,7 @@ use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use io::run_fetch;
-pub use io::{destination, save_then_land, save_then_message, save_then_send};
+pub use io::{save_then_land, save_then_message, save_then_send};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -151,7 +153,7 @@ impl Host for Shell {
 impl Shell {
     fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
         let mut save_outbox = false;
-        let (mut sends, mut filed) = (Vec::new(), Vec::new());
+        let (mut sends, mut lands, mut filed) = (Vec::new(), Vec::new(), Vec::new());
         for effect in effects {
             match effect {
                 Effect::Stream { generation, agents } => {
@@ -190,12 +192,13 @@ impl Shell {
                 Effect::Persist(Persist::Snapshot) => {
                     self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
                 }
-                Effect::Transfer { to, agent } => {
-                    let ((name, bytes), seq) = (destination(&self.store, to), local::next_seq());
-                    self.background(cx, move |disk, _| {
-                        save_then_land(disk, name, &bytes, seq, agent)
-                    })
-                }
+                Effect::Transfer { to, agent } => match to {
+                    Dest::Note => lands.push(agent),
+                    Dest::Draft => {
+                        let (bytes, seq) = (local::encode(&self.store.prefs), local::next_seq());
+                        self.background(cx, move |disk, _| save_then_land(disk, &bytes, seq, agent))
+                    }
+                },
                 Effect::FiledBack { agent } => {
                     filed.extend(composer::filed_back(&self.store, &mut self.ui, &agent, cx))
                 }
@@ -221,7 +224,7 @@ impl Shell {
         for event in filed {
             self.dispatch(event, cx);
         }
-        if !save_outbox && sends.is_empty() {
+        if !save_outbox && sends.is_empty() && lands.is_empty() {
             return;
         }
         // Saved now even when this batch did not change the outbox: an edit's own save may still be
@@ -230,7 +233,7 @@ impl Shell {
         let (disk, client, tx) = (self.disk.clone(), self.client.clone(), self.tx.clone());
         cx.background_executor()
             .spawn(async move {
-                save_then_send(&disk, &client, &bytes, seq, sends, |event| {
+                save_then_send(&disk, &client, &bytes, seq, sends, lands, |event| {
                     let _ = tx.unbounded_send(event);
                 })
             })

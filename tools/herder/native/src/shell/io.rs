@@ -7,10 +7,10 @@ use crate::api::types::StateRow;
 use crate::harness;
 use crate::local::{self, Disk};
 use crate::store::composer::{self, Failure};
-use crate::store::notes::{self, Dest};
+use crate::store::notes;
 use crate::store::sync::{Ns, Step};
 use crate::store::transcript::{self, Got, What};
-use crate::store::{Event, Fetch, Store};
+use crate::store::{Event, Fetch};
 
 pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     match fetch {
@@ -49,19 +49,26 @@ pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     }
 }
 
-/// Save the outbox, then post each write and report its answer. A failed save posts nothing: every
-/// write comes back as a transport-style failure, which backs off and tries again (saving first again).
+/// Save the outbox; then report the queued notes it holds as landed (`lands`: the agents whose transfer
+/// it is the destination of); then post each write and report its answer. A failed save lands nothing
+/// and posts nothing: every write comes back as a transport-style failure, which backs off and tries
+/// again (saving first again).
 pub fn save_then_send(
     disk: &Disk,
     client: &Client,
     outbox: &[u8],
     seq: u64,
     sends: Vec<(Ns, Vec<StateRow>)>,
+    lands: Vec<String>,
     mut on: impl FnMut(Event),
 ) {
     let saved = disk.write(local::OUTBOX, outbox, seq);
     if let Err(e) = &saved {
         eprintln!("local: could not save outbox.json, not sending: {e}");
+    }
+    for agent in lands {
+        let saved = saved.as_ref().map(|_| ()).map_err(|e| e.to_string());
+        on(Event::Note(notes::Step::Landed { agent, saved }));
     }
     for (ns, rows) in sends {
         let step = match &saved {
@@ -117,24 +124,11 @@ pub fn save_then_message(
     Event::Compose(composer::Step::Sent { agent, result })
 }
 
-/// The file a note transfer's destination `to` is saved in, and its bytes from the store as it is.
-pub fn destination(store: &Store, to: Dest) -> (&'static str, Vec<u8>) {
-    match to {
-        Dest::Draft => (local::PREFS, local::encode(&store.prefs)),
-        Dest::Note => (local::OUTBOX, local::encode(&store.outbox())),
-    }
-}
-
-/// Save one file now, the destination of a note transfer, and report whether it is on disk.
-pub fn save_then_land(
-    disk: &Disk,
-    name: &'static str,
-    bytes: &[u8],
-    seq: u64,
-    agent: String,
-) -> Event {
-    let saved = disk.write(name, bytes, seq).map_err(|e| {
-        eprintln!("local: could not save {name}: {e}");
+/// Save the prefs now, the destination of a hand-off into the draft (`notes::Dest::Draft`), and report
+/// whether they are on disk. A queued note lands with the outbox's save instead (`save_then_send`).
+pub fn save_then_land(disk: &Disk, prefs: &[u8], seq: u64, agent: String) -> Event {
+    let saved = disk.write(local::PREFS, prefs, seq).map_err(|e| {
+        eprintln!("local: could not save prefs.json: {e}");
         e.to_string()
     });
     Event::Note(notes::Step::Landed { agent, saved })
