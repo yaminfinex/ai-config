@@ -122,7 +122,7 @@ Derived shapes are in `store`:
   `Other` or `Status`, web's pill colours), `SystemChip` (model switches; `injected_system`,
   `command_stdout`, `turn_duration` and scheduled-task fires fold or are dropped), `CompactDivider` (with
   its metadata), `CompactSummary` (without: web's folded summary), `Assistant(Vec<Seg>)` (one of only `<status>`/`<internal>` fences is a run's member and pill,
-  `condense::marker`), `Thinking`, `Tool{name, summary, input, result: Option<ToolResult{error, text, at}>}`
+  `condense::marker`), `Thinking`, `Tool{name, summary, input, result: Option<ToolResult{error, text, at, capped, images}>}`
   (the input as pretty JSON and the whole output, as the entries pages carry them, for the open member; A3),
   `Error`.
   An answer's fences parse as web's `fencingModel` (`condense::fence`) into `Seg::Text`, `Status` and
@@ -316,9 +316,11 @@ of mono 11 that scroll sideways; a thinking shows `thinking · 2.7s` (until the 
 text or web's "Thinking content unavailable."; an answer of only statuses and notes is drawn bare, as web,
 with its notes held open; cards and answers as their own rows. Closed and last, a run ends in
 `Latest activity · 8d` and its last member in full. Members open through `Fold(key, 0)`, the same set as
-A2's parts. A chevron that web turns is swapped for `⌄`, raised to the turned glyph's centre. Limits,
-nearest kept: no structured-patch diff, image placeholder or 16 KiB banner in a tool's detail; its text is
-not selectable; a thinking's duration runs to the next item, not the next entry; tasks, slash commands
+A2's parts. A chevron that web turns is swapped for `⌄`, raised to the turned glyph's centre. A capped output ends in web's
+`Output capped at 16 KiB — N bytes total.` and an image result in `▧ N image results present (not served)`
+(the payload's `truncated`, `total_bytes`, `image_count`). The detail's sections are observed under the
+tool's id for the headless test. Limits, nearest kept: no structured-patch diff in a tool's detail; its
+text is not selectable; a thinking's duration runs to the next item, not the next entry; tasks, slash commands
 and unknown entries in an open run stay F2's pill and text; no letter spacing on the section heads.
 
 ## 6. Persistence
@@ -416,23 +418,23 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 328 | `views/mod.rs` | 420 |
+| `api/types.rs` | 332 | `views/mod.rs` | 420 |
 | `api/client.rs` | 206 | `views/lens.rs` | 442 |
 | `api/sse.rs` | 194 | `views/space.rs` | 370 |
-| `store/mod.rs` | 445 | `views/transcript.rs` | 1205 |
+| `store/mod.rs` | 445 | `views/transcript.rs` | 1214 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 221 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 430 |
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
 | `store/attention.rs` | 281 | `views/probe.rs` | 250 |
-| `store/transcript.rs` | 602 | `views/markdown.rs` | 238 |
-| `store/condense.rs` | 429 | `views/theme.rs` | 261 |
+| `store/transcript.rs` | 605 | `views/markdown.rs` | 238 |
+| `store/condense.rs` | 439 | `views/theme.rs` | 261 |
 | `store/notes.rs` | 432 | `shell.rs` | 441 |
 | `store/composer.rs` | 166 | `shell/io.rs` | 180 |
 | `local.rs` | 95 | `harness.rs` | 290 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
-|  |  | `views/entries.rs` | 485 |
+|  |  | `views/entries.rs` | 529 |
 
-About 9,830 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
+About 9,890 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

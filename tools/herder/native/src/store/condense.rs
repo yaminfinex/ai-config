@@ -23,12 +23,22 @@ pub(super) fn tool_call(p: &Payload) -> (String, String, String) {
     (name, summary, input)
 }
 
-/// A `tool_result`: whether it failed, its text (the serve caps it at 16 KiB) and when it came.
+/// A `tool_result`: whether it failed, its text (the serve caps it at 16 KiB, saying so), when it
+/// came, and its image count.
 pub(super) fn tool_result(p: &Payload, timestamp: &str) -> ToolResult {
     let text = text_of(&p.content);
     let error = p.is_error.as_bool().unwrap_or(false);
     let at = epoch_ms(timestamp);
-    ToolResult { error, text, at }
+    let capped = p.truncated.as_bool().unwrap_or(false);
+    let capped = capped.then(|| p.total_bytes.as_u64().unwrap_or(0));
+    let images = p.image_count.as_u64().unwrap_or(0);
+    ToolResult {
+        error,
+        text,
+        at,
+        capped,
+        images,
+    }
 }
 
 /// The items one entry yields in compact mode, as web's clean view (tool pairs are `ingest`'s).

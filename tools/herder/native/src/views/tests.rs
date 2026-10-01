@@ -1403,17 +1403,17 @@ mod layout {
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{self, drive, history, items, open, reference};
     use crate::store::tests::{board, bump, frame};
-    use crate::store::transcript::{Key, Step};
+    use crate::store::transcript::{Item, Key, Step};
     use crate::store::{Event, Store};
     use crate::views::lens::Ui;
     use crate::views::space::Zoom;
-    use crate::views::transcript::{self, Mark};
+    use crate::views::transcript::{self, Fold, Mark};
     use crate::views::{Host, theme};
     use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
-        Bounds, Context, Entity, IntoElement, ListOffset, ParentElement as _, Pixels, Render,
-        Styled as _, TestAppContext, VisualTestContext, Window, div, point, px, size,
+        Bounds, Context, ElementId, Entity, IntoElement, ListOffset, ParentElement as _, Pixels,
+        Render, Styled as _, TestAppContext, VisualTestContext, Window, div, point, px, size,
     };
 
     struct Body {
@@ -1853,6 +1853,57 @@ mod layout {
         body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
         assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
     }
+
+    /// A3: a tool opened in an open run draws its INPUT and OUTPUT with their text, and closed, neither.
+    #[gpui_kit::test]
+    fn an_open_tool_shows_its_input_and_output_and_closed_hides_them(cx: &mut TestAppContext) {
+        let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
+        let opened = body.update(cx, |b, cx| {
+            let tr = b.store.transcript.open.as_ref().unwrap();
+            let rows = condense::rows(&tr.items);
+            let (ix, first, last) = rows.iter().enumerate().rev().find_map(|(ix, r)| match *r {
+                Row::Run(first, last) => Some((ix, first, last)),
+                Row::One(_) => None,
+            })?;
+            let mut tools = tr.items.range(first..=last).rev();
+            let (&key, input, output) = tools.find_map(|(key, item)| match item {
+                Item::Tool {
+                    input,
+                    result: Some(r),
+                    ..
+                } if !r.text.is_empty() => Some((key, input.clone(), r.text.clone())),
+                _ => None,
+            })?;
+            b.ui.transcript.toggle((first, last), ix);
+            b.ui.transcript.fold(Fold(key, 0));
+            cx.notify();
+            Some((
+                transcript::name("tool", tr.generation, key),
+                key,
+                input,
+                output,
+            ))
+        });
+        let (id, key, input, output) = opened.expect("mupu's last run has a finished tool");
+        draw(cx);
+        let label = |part: &str, cx: &mut VisualTestContext| {
+            let id = ElementId::Name(format!("{id}-{part}").into());
+            cx.update(|window, _| window.try_find(id))
+                .map(|s| s.label().unwrap_or_default().to_string())
+        };
+        assert_eq!(label("input", cx).as_deref(), Some("INPUT"));
+        assert_eq!(label("in", cx), Some(input));
+        assert_eq!(label("output", cx).as_deref(), Some("OUTPUT"));
+        assert_eq!(label("out", cx), Some(output));
+        body.update(cx, |b, cx| {
+            b.ui.transcript.fold(Fold(key, 0));
+            cx.notify();
+        });
+        draw(cx);
+        for part in ["input", "in", "output", "out"] {
+            assert_eq!(label(part, cx), None, "{part} drawn closed");
+        }
+    }
 }
 
 mod frame {
@@ -2007,7 +2058,7 @@ mod members {
     use crate::store::tests::transcript_pages::{drive, history, items, open};
     use crate::store::transcript::{Item, Step, ToolResult};
     use crate::store::{Event, Store};
-    use crate::views::entries::{dot, took};
+    use crate::views::entries::{dot, lasted, took};
     use crate::views::theme::pal;
     use crate::views::transcript::{Fold, View};
 
@@ -2057,12 +2108,32 @@ mod members {
     fn a_tool_s_dot_says_how_it_ended() {
         let result = |error| ToolResult {
             error,
-            text: String::new(),
-            at: None,
+            ..ToolResult::default()
         };
         assert_eq!(dot(None), pal::BLUE, "running");
         assert_eq!(dot(Some(&result(false))), pal::OPERATOR, "done");
         assert_eq!(dot(Some(&result(true))), pal::RED, "failed");
+    }
+
+    #[test]
+    fn a_tool_runs_until_its_result_comes_whatever_its_times() {
+        let result = |at| ToolResult {
+            at,
+            ..ToolResult::default()
+        };
+        assert_eq!(lasted(None, Some(1_000)), "running · no result yet");
+        assert_eq!(lasted(None, None), "running · no result yet");
+        assert_eq!(lasted(Some(&result(Some(1_363))), Some(1_000)), "363ms");
+        assert_eq!(
+            lasted(Some(&result(None)), Some(1_000)),
+            "—",
+            "no result time"
+        );
+        assert_eq!(
+            lasted(Some(&result(Some(1_363))), None),
+            "—",
+            "no call time"
+        );
     }
 
     #[test]

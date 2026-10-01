@@ -1838,6 +1838,37 @@ pub(crate) mod transcript_pages {
         assert_eq!(condense::clean("shown<internal>hidden to the end"), "shown");
     }
 
+    /// A result the serve cut at 16 KiB keeps its whole size, so the detail can say so (conductor-line's
+    /// recorded tail holds one: 17,059 bytes).
+    #[test]
+    fn a_capped_result_keeps_its_whole_size() {
+        let all = history("conductor-line");
+        let mut store = loaded();
+        let effects = open(&mut store, "conductor-line");
+        drive(&mut store, effects, &all, PAGE as usize);
+        while !store.transcript.open.as_ref().unwrap().at_start() {
+            let effects = store.apply(Event::Transcript(T::Older));
+            drive(&mut store, effects, &all, PAGE as usize);
+        }
+        let capped: Vec<_> = items(&store)
+            .values()
+            .filter_map(|i| match i {
+                Item::Tool {
+                    result: Some(r), ..
+                } => r.capped.map(|total| (total, r.text.len(), r.images)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(capped.len(), 1, "{capped:?}");
+        let (total, shown, images) = capped[0];
+        assert_eq!(total, 17_059);
+        assert!(
+            shown > 0 && shown <= 16 * 1024 && shown < total as usize,
+            "{shown}"
+        );
+        assert_eq!(images, 0);
+    }
+
     #[test]
     fn tool_results_pair_with_their_calls_across_pages() {
         let all = history("mupu");
@@ -1871,7 +1902,7 @@ pub(crate) mod transcript_pages {
             byte_offset: u64::MAX - 1,
             kind: Kind::ToolResult,
             payload: serde_json::from_value(
-                json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
+                json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore", "image_count": 2}),
             )
             .unwrap(),
             timestamp: "2026-09-30T00:07:17.200Z".into(),
@@ -1912,6 +1943,8 @@ pub(crate) mod transcript_pages {
             error: true,
             text: "boom\nmore".into(),
             at: Some(1_790_726_837_200),
+            capped: None,
+            images: 2,
         });
         let summary = "false && true".to_string();
         let input = "{\n  \"command\": \"false  &&\\n true\"\n}".to_string();

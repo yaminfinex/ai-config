@@ -752,8 +752,12 @@ struct Paint<'a, H> {
 
 impl<H: Host> Paint<'_, H> {
     fn id(&self, kind: &str, key: Key) -> ElementId {
-        let generation = self.tr.generation;
-        ElementId::Name(format!("{kind}-{generation}-{}-{}", key.0, key.1).into())
+        ElementId::Name(self.name(kind, key).into())
+    }
+
+    /// An element's id for `kind` of the item `key`, in this transcript (`name`); harness tests find it.
+    fn name(&self, kind: &str, key: Key) -> String {
+        name(kind, self.tr.generation, key)
     }
 
     /// A run (spec §1 "Activity strip", "Expanded run details", "Latest activity"): its strip of
@@ -977,10 +981,10 @@ impl<H: Host> Paint<'_, H> {
                 input,
                 result,
             } => {
-                let ids = [self.id("pre0", key), self.id("pre1", key)];
+                let id = self.name("tool", key);
                 let call = (name.as_str(), summary.as_str(), input.as_str());
                 let fold = self.fold(key, 0, "fold");
-                entries::tool(fold, open, call, result.as_ref(), at, ids, t)
+                entries::tool(fold, open, call, result.as_ref(), at, &id, t)
             }
             Item::Error(text) => div()
                 .text_color(rgb(pal::PORT))
@@ -1075,6 +1079,11 @@ impl<H: Host> Paint<'_, H> {
             .child(div().flex().child(summary))
             .children(body)
     }
+}
+
+/// The id of `kind` for the item `key` in transcript `generation`.
+pub(super) fn name(kind: &str, generation: u64, (offset, sub): Key) -> String {
+    format!("{kind}-{generation}-{offset}-{sub}")
 }
 
 /// Records where its parent laid out into `painted` (a parent drawn this frame is on screen or in

@@ -95,12 +95,15 @@ impl Item {
     }
 }
 
-/// A tool's result: whether it failed, its text, and when it came (epoch ms).
-#[derive(Clone, Debug, PartialEq)]
+/// A tool's result: whether it failed, its text, when it came (epoch ms), its whole size in bytes
+/// when the serve capped the text, and how many images it held (not served).
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ToolResult {
     pub error: bool,
     pub text: String,
     pub at: Option<u64>,
+    pub capped: Option<u64>,
+    pub images: u64,
 }
 
 /// A read, tagged with the transcript it was made for.

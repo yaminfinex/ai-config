@@ -59,6 +59,16 @@ pub fn took(ms: i64) -> String {
     }
 }
 
+/// A tool's duration from its call at `at` (epoch ms): running until its result comes, `—` when either
+/// time is missing.
+pub fn lasted(result: Option<&ToolResult>, at: Option<u64>) -> String {
+    match (result.map(|r| r.at), at) {
+        (None, _) => "running · no result yet".into(),
+        (Some(Some(done)), Some(at)) => took(done as i64 - at as i64),
+        (Some(_), _) => "—".into(),
+    }
+}
+
 /// A tool's status dot (web's `.tool-status`): green done, red failed, blue still running.
 pub fn dot(result: Option<&ToolResult>) -> u32 {
     match result {
@@ -92,15 +102,16 @@ pub(super) fn thinking(
 }
 
 /// A run's tool (web's `.tool-entry`): its status dot, name, summary cut to the row, duration and
-/// time (the result's, once in); open, its input (pretty JSON) and output, each scrolling sideways
-/// under its id.
+/// time (the result's, once in); open, its input (pretty JSON) and output, each scrolling sideways,
+/// with the serve's notices. Its sections are observed (and labelled) under `id`: `-input`, `-in`,
+/// `-output`, `-out`.
 pub(super) fn tool(
     fold: Stateful<Div>,
     open: bool,
     (name, summary, input): (&str, &str, &str),
     result: Option<&ToolResult>,
     at: Option<u64>,
-    [input_id, output_id]: [ElementId; 2],
+    id: &str,
     t: TypeScale,
 ) -> AnyElement {
     let dot = div().flex_none().size(t.css(7.)).rounded_full();
@@ -116,28 +127,58 @@ pub(super) fn tool(
         .text_color(rgb(pal::INK));
     let what = mono(div(), 11., t).min_w_0().truncate();
     let done = result.and_then(|r| r.at);
-    let lasted = match (done, at) {
-        (Some(done), Some(at)) => took(done as i64 - at as i64),
-        (Some(_), None) => "—".into(),
-        (None, _) => "running · no result yet".into(),
-    };
     let when = stamp(done.or(at).map(|ms| ms / 1000), now());
     let summary = expander(fold, open, t)
         .child(dot)
         .child(name.child(label.to_string()))
         .child(what.child(summary.to_string()))
-        .child(time(lasted, t).ml_auto())
+        .child(time(lasted(result, at), t).ml_auto())
         .child(time(when, t));
     let body = open.then(|| {
-        let el = div().child(heading("Input", true, t));
-        let el = el.child(pre(input_id, input, t));
+        let id = |part: &str| ElementId::Name(format!("{id}-{part}").into());
+        let el = div().child(heading(id("input"), "Input", true, t));
+        let el = el.child(pre(id("in"), input, t));
         let el = el.when_some(result, |el, r| {
-            let output = (!r.text.is_empty()).then(|| pre(output_id, &r.text, t));
-            el.child(heading("Output", false, t)).children(output)
+            let output = (!r.text.is_empty()).then(|| pre(id("out"), &r.text, t));
+            let el = el.child(heading(id("output"), "Output", false, t));
+            // Web's block margins collapse: each notice's top is what the one above leaves.
+            let (text, shown) = (!r.text.is_empty(), r.images > 0);
+            let el = el.children(output).children(images(r.images, text, t));
+            el.children(r.capped.map(|n| capped(n, text || shown, t)))
         });
         detail(el, t)
     });
     div().child(summary).children(body).into_any_element()
+}
+
+/// Web's `.image-placeholder` (margin 6 0): a result's images, which the serve does not send; under
+/// the output's text or its heading.
+fn images(n: u64, under_text: bool, t: TypeScale) -> Option<Div> {
+    let s = if n == 1 { "" } else { "s" };
+    let top = if under_text { 0. } else { 6. - 3. };
+    let el = div()
+        .mt(t.css(top))
+        .mb(t.css(6.))
+        .p(t.css(8.))
+        .border_1()
+        .border_dashed();
+    let el = el.border_color(rgb(pal::EDGE)).rounded(t.css(5.));
+    let el = el.flex().justify_center().text_color(rgb(pal::SLATE));
+    (n > 0).then(|| el.child(format!("▧ {n} image result{s} present (not served)")))
+}
+
+/// Web's `.truncation-banner` (margin-top 5): the serve cut the output at 16 KiB of `total` bytes;
+/// under the text or images, or else the heading.
+fn capped(total: u64, under: bool, t: TypeScale) -> Div {
+    let top = if under { 0. } else { 5. - 3. };
+    let el = div().mt(t.css(top)).px(t.css(8.)).py(t.css(5.)).border_1();
+    let el = el
+        .border_color(rgb(pal::QUEUE_EDGE))
+        .bg(rgb(pal::QUEUE_GROUND));
+    let el = el.rounded(t.css(5.)).text_color(rgb(pal::QUEUE_TITLE));
+    let total = condense::group(total);
+    el.text_size(t.css(10.))
+        .child(format!("Output capped at 16 KiB — {total} bytes total."))
 }
 
 /// The entry cards (spec §1 "Operator / prompt card and delivery card"): another agent's message, an
@@ -380,20 +421,23 @@ pub(super) fn md_detail(body: Div, t: TypeScale) -> Div {
 
 /// A detail's section heading (`.entry-detail h4`): mono 9 capitals, 3 above its text and 8 above
 /// any but the first (no letter spacing in GPUI).
-fn heading(text: &str, first: bool, t: TypeScale) -> Div {
+fn heading(id: ElementId, text: &str, first: bool, t: TypeScale) -> impl IntoElement {
     let el = mono(div(), 9., t).text_color(rgb(pal::SLATE)).mb(t.css(3.));
-    el.when(!first, |el| el.mt(t.css(8.)))
-        .child(text.to_uppercase())
+    let text = text.to_uppercase();
+    let el = el.when(!first, |el| el.mt(t.css(8.))).child(text.clone());
+    el.id(id).aria_label(text).test_support()
 }
 
 /// A detail's preformatted text (`.entry-detail pre`): mono 11, its lines unwrapped, scrolling
 /// sideways, 8 under it.
-fn pre(id: ElementId, text: &str, t: TypeScale) -> Stateful<Div> {
+fn pre(id: ElementId, text: &str, t: TypeScale) -> impl IntoElement {
     let lines = mono(div(), 11., t)
         .whitespace_nowrap()
         .child(text.to_string());
     let el = div().id(id).w_full().overflow_x_scroll().mb(t.css(8.));
     sideways(el.child(lines))
+        .aria_label(text.to_string())
+        .test_support()
 }
 
 /// A pill's border, ground, ink and type in `tone` (web's `.activity-pill`).
