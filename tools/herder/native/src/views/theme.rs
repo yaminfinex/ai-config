@@ -111,12 +111,13 @@ pub fn type_scale(scale: f32) -> TypeScale {
 
 /// Transcript markdown as web sets it (spec §1 "Markdown prose"), as a whole base style so nothing
 /// here reaches the kit's other text (the composer's and notes' inputs keep the app's selection):
-/// ink, links #a9c4ff, selection reading #375576 on the ground; blocks 6 apart; headings at web's sizes, bold, with web's
-/// margins (no paragraph gap follows a heading, so its bottom padding is the whole gap; h4's top
-/// margin collapses with the paragraph's 6 before it); fenced code darker than the ground in SF Mono
-/// 11, unwrapped so aligned columns stay aligned, scrolling sideways under a horizontal swipe only (a
-/// vertical wheel still scrolls the transcript); tables transparent, so a card's ground shows through,
-/// cells padded 4 8 and the header row semibold on the wash. Inline code can only take a ground
+/// ink, links #a9c4ff, selection reading #375576 on the ground; blocks 6 apart; headings at web's
+/// sizes, bold, with web's bottom margins (no paragraph gap follows a heading, so its bottom
+/// padding is the whole gap; above it is only the block before's own gap: the renderer cannot
+/// collapse margins by neighbour); fenced code darker than the ground in SF Mono 11, unwrapped so
+/// aligned columns stay aligned, scrolling sideways under a horizontal swipe only (a vertical wheel
+/// still scrolls the transcript); tables transparent, so a card's ground shows through, cells
+/// padded 4 8 and the header row semibold on the wash. Inline code can only take a ground
 /// (`HighlightStyle`: no padding, border or radius); the kit sets it in mono at 0.875 of the text,
 /// web's 11 of 13.
 pub fn prose(t: TypeScale) -> TextViewStyle {
@@ -145,16 +146,15 @@ pub fn prose(t: TypeScale) -> TextViewStyle {
         .font_weight(FontWeight::SEMIBOLD);
     let cell = StyleRefinement::default().px(t.css(8.)).py(t.css(4.));
     let heading = move |level: u8| {
-        let (size, top, bottom) = match level {
-            1 => (26., 0., 17.4),
-            2 => (19.5, 0., 16.2),
-            3 => (15.2, 0., 15.2),
-            _ => (13., 17.3 - 6., 17.3),
+        let (size, bottom) = match level {
+            1 => (26., 17.4),
+            2 => (19.5, 16.2),
+            3 => (15.2, 15.2),
+            _ => (13., 17.3),
         };
         StyleRefinement::default()
             .text_size(t.css(size))
             .font_weight(FontWeight::BOLD)
-            .pt(t.css(top))
             .pb(t.css(bottom))
     };
     // The gap is in rems, and the kit's root sets the rem to the theme's body size (`apply`).

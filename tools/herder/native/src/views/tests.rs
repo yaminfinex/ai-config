@@ -1766,14 +1766,14 @@ mod prose {
 
     #[gpui_kit::test]
     fn a_heading_sits_as_far_above_its_paragraph_as_web(cx: &mut TestAppContext) {
-        // Each heading's line (its size × 1.55) and web's margin under it, then the paragraph. h4
-        // after a paragraph adds its top margin less the paragraph's 6, which collapses into it.
+        // Each heading's line (its size × 1.55) and web's margin under it, then the paragraph. Only
+        // the bottom gap: above a heading is the block before's own gap (no collapse by neighbour).
         let body = height("Body.", cx);
         let cases = [
             ("# Title\n\nBody.", 26. * 1.55 + 17.4),
             ("## Title\n\nBody.", 19.5 * 1.55 + 16.2),
             ("### Title\n\nBody.", 15.2 * 1.55 + 15.2),
-            ("#### Title\n\nBody.", 13. * 1.55 + 17.3 + 11.3),
+            ("#### Title\n\nBody.", 13. * 1.55 + 17.3),
         ];
         for (src, want) in cases {
             let got = height(src, cx) - body;

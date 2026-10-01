@@ -268,7 +268,9 @@ unchanged (the lens draws neither).
 The transcript is set to web's measured styles (A1, `transcript-style-spec.md`), so its lengths are web's CSS
 pixels at the scale, `TypeScale::css(w) = w × scale`, while the lens, composer and notes keep `TypeScale::px`
 (the spike's design pixels × 0.9). Prose is 13 on a 20.15 line; headings 26/19.5/15.2/13 bold with web's
-margins under them (nothing gaps after a heading, so its bottom padding is the whole gap); code blocks SF Mono
+margins under them (nothing gaps after a heading, so its bottom padding is the whole gap; above one is only
+the block before's own margin, a nearest-layout limit: the renderer cannot collapse margins by neighbour, so
+web's h4 top margin of 17.3 is not modelled); code blocks SF Mono
 11, padding 9, radius 5; tables transparent (a card's ground shows through), cells 4 8, the header semibold on
 the wash; links #a9c4ff (paths too: the kit gives every link the one colour and underline). The selection is
 web's #375576 as seen on the ground: the kit paints it over the glyphs, so it is #538ecb at half opacity; the
