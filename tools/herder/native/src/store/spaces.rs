@@ -271,3 +271,104 @@ pub(super) fn acknowledge(
     }
     changed
 }
+
+/// What one notification says (U6). The tag routes its click: `agent:<name>` zooms into that agent,
+/// `space:<id>` (a burst's summary) selects that space on the lens.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Notice {
+    pub tag: String,
+    pub title: String,
+    pub body: String,
+}
+
+/// A burst of agents turning to need you within this long becomes one notification.
+pub const BURST_MS: u64 = 1000;
+
+/// The needs-you alerts (U6): notifications on a transition into needing you, and the dock count.
+#[derive(Clone, Debug, Default)]
+pub struct Alerts {
+    /// Per agent, the turn and block it stood at on the last board. Only a change of these can be a
+    /// new reason to need you, so the same turn never alerts twice.
+    last: BTreeMap<String, (Option<u64>, bool)>,
+    /// A live board has been applied: boards from here on are transitions (boot and snapshot are not).
+    armed: bool,
+    /// Agents that turned to need you during the burst waiting out `BURST_MS`, in order.
+    burst: Vec<String>,
+    /// The dock count last shown; the dock starts clear.
+    badge: usize,
+    /// The agent zoomed in while the app is frontmost (the shell says, `Event::Looking`): never alerted.
+    pub looking: Option<String>,
+}
+
+impl Store {
+    /// After a board: each agent whose turn or block moved on and that now needs you joins the burst,
+    /// unless the owner is looking at it; the first to join starts the burst's timer. A board that is
+    /// not live (the snapshot) and the first live one only set the baseline.
+    pub(super) fn turns(&mut self, live: bool, out: &mut Vec<Effect>) {
+        let now: BTreeMap<String, (Option<u64>, bool)> = (self.fleet.agents.values())
+            .map(|a| (a.name.clone(), (a.turn_end, a.status() == Status::Blocked)))
+            .collect();
+        if self.alerts.armed {
+            let was_quiet = self.alerts.burst.is_empty();
+            for (name, key) in &now {
+                let moved = self.alerts.last.get(name) != Some(key);
+                if moved && self.alertable(name) && !self.alerts.burst.contains(name) {
+                    self.alerts.burst.push(name.clone());
+                }
+            }
+            if was_quiet && !self.alerts.burst.is_empty() {
+                out.push(Effect::Burst { after_ms: BURST_MS });
+            }
+        }
+        self.alerts.armed |= live;
+        self.alerts.last = now;
+    }
+
+    /// The burst's second is up: one notification for those that still need you, a summary for several.
+    pub(super) fn burst_ended(&mut self, out: &mut Vec<Effect>) {
+        let burst = std::mem::take(&mut self.alerts.burst);
+        let lens = self.lens();
+        let home = |a: &str| lens.iter().copied().find(|s| s.agents().any(|m| m == a));
+        let due: Vec<(&str, &Space)> = (burst.iter())
+            .filter(|a| self.alertable(a))
+            .filter_map(|a| Some((a.as_str(), home(a)?)))
+            .collect();
+        let reason = |a: &str| match self.fleet.agents.get(a).map(|a| a.status()) {
+            Some(Status::Blocked) => "blocked",
+            _ => "your turn",
+        };
+        let notice = match due.as_slice() {
+            [] => return,
+            [(agent, space)] => Notice {
+                tag: format!("agent:{agent}"),
+                title: format!("{agent} · {}", space.name),
+                body: reason(agent).into(),
+            },
+            [(_, first), ..] => Notice {
+                tag: format!("space:{}", first.id),
+                title: format!("{} agents need you", due.len()),
+                body: (due.iter())
+                    .map(|(a, s)| format!("{a} · {} ({})", s.name, reason(a)))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            },
+        };
+        out.push(Effect::Notify(notice));
+    }
+
+    /// Needs you, sits in a space (the lens shows it) and is not the one the owner is looking at.
+    fn alertable(&self, name: &str) -> bool {
+        self.alerts.looking.as_deref() != Some(name)
+            && self.agent_needs_you(name)
+            && self.spaces.iter().any(|s| s.agents().any(|a| a == name))
+    }
+
+    /// The dock badge: the lens's needs-you total, sent when it changes, and at boot (`all`) whatever it
+    /// is, as the effects of the loads before boot are not run.
+    pub(super) fn badge(&mut self, all: bool, out: &mut Vec<Effect>) {
+        let n = self.spaces.iter().map(|s| self.needs_you(s)).sum();
+        if std::mem::replace(&mut self.alerts.badge, n) != n || all {
+            out.push(Effect::Badge(n));
+        }
+    }
+}

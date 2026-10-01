@@ -116,6 +116,11 @@ impl State {
         self.anim.take_if(|a| a.seq() == seq);
     }
 
+    /// The agent zoomed in on, if any.
+    pub fn zoomed_agent(&self) -> Option<String> {
+        self.zoom.as_ref().and_then(|z| z.agent.clone())
+    }
+
     pub fn selected<'a>(&self, store: &'a Store) -> Option<&'a Space> {
         let order = store.lens();
         let id = self.selected.as_deref();

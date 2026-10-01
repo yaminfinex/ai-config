@@ -130,9 +130,63 @@ check-notes port="4412":
     run "" queue 1 "$zoom key:/ draw key:h key:i draw box:focused:hi key:alt-enter wait:800 draw box:focused: notes:1:closed shot:u5-queued quit"
     echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, selection per agent, capture with quote, hand-off into the draft survives a relaunch, alt-enter queues)"
 
-# Build target/herder native.app (ad-hoc signed; notifications need a bundle id).
-bundle *args:
-    scripts/bundle.sh {{args}}
+# Alert scenarios (U6), against testdata/fake_serve.py on loopback, whose `--turn` frames finish agents'
+# turns while the app runs. A scripted run is test mode (`platform_mac::quiet`): nothing is posted, no
+# badge set, no chord taken; the log says what would have been. Each run has its own throwaway HOME:
+# lens    mupu's turn ends with the app on the lens: one notification for mupu, the badge goes to 1;
+# looking zoomed on mupu and frontmost (`HERDER_NATIVE_FRONT=1`), mupu and chief-mihe end a turn in one
+#         frame: only chief-mihe is notified;
+# burst   two frames 0.3 s apart: one summary for both.
+check-alerts port="4413":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build --release
+    home=$(mktemp -d) fake=
+    trap '[ -z "$fake" ] || kill $fake 2>/dev/null; rm -r "$home"' EXIT
+    run() { # NAME FRONT SCRIPT TURNS...
+        local name=$1 front=$2 script=$3
+        shift 3
+        python3 testdata/fake_serve.py {{port}} "$@" 2>"$home/$name.fake" & fake=$!
+        sleep 0.5
+        status=0
+        HOME="$home/$name" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_FRONT=$front \
+            HERDER_NATIVE_SCRIPT="$script" ./target/release/herder-native >"$home/$name.log" 2>&1 || status=$?
+        { kill $fake && wait $fake; } 2>/dev/null || true
+        fake=
+        grep -E "platform|harness|expect" "$home/$name.log" || true
+        [ $status = 0 ] && grep -q '\] quit$' "$home/$name.log" || { echo "check-alerts: $name failed (exit $status)"; exit 1; }
+        grep -q "turn:" "$home/$name.fake" || { echo "check-alerts: $name: no turn was sent"; exit 1; }
+        notified=$(grep "would notify" "$home/$name.log" || true)
+    }
+    want() { # NAME WHAT PATTERN
+        echo "$notified" | grep -q "$3" || { echo "check-alerts: $1: $2"; exit 1; }
+    }
+    once() { # NAME
+        [ "$(echo "$notified" | grep -c .)" = 1 ] || { echo "check-alerts: $1: not exactly one notification"; exit 1; }
+    }
+    run lens 0 "wait:5500 quit" --turn mupu
+    want lens "mupu not notified" "would notify agent:mupu: mupu · "
+    once lens
+    grep -q "platform: badge 1" "$home/lens.log" || { echo "check-alerts: lens: no badge 1"; exit 1; }
+    grep -q "platform: would register ctrl-alt-cmd-h" "$home/lens.log" || { echo "check-alerts: lens: chord not skipped"; exit 1; }
+    run looking 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:3500 quit" --turn mupu,chief-mihe
+    want looking "chief-mihe not notified" "would notify agent:chief-mihe"
+    once looking
+    run burst 0 "wait:6000 quit" --turn mupu --turn support-mifa
+    want burst "no summary" "would notify space:.*2 agents need you"
+    once burst
+    echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, no chord taken)"
+
+# Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
+# the owner opens it, or runs `just install`.
+bundle:
+    scripts/bundle.sh
+
+# Copy the bundle into ~/Applications, replacing an older copy. Only on the owner's say-so; automation
+# never runs it.
+install: bundle
+    mkdir -p "$HOME/Applications"
+    rsync -a --delete "target/herder native.app/" "$HOME/Applications/herder native.app/"
 
 # Re-record testdata/ from the live serve (read-only GETs, staged, scrubbed, then published).
 record:

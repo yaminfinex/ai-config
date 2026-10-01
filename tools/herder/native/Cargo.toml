@@ -39,8 +39,10 @@ uuid = { version = "1.26", features = ["v4"] }
 # Settled decision 2: AppKit calls (dock badge, window ordering, activation policy) go through objc2,
 # the same objc2 line gpui-pre-macos links.
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder", "NSWindow"] }
-objc2-foundation = { version = "0.3", features = ["NSArray"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSDockTile", "NSResponder", "NSWindow"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString"] }
+# Settled decision 2: the summon chord (U6), Carbon `RegisterEventHotKey`, as the spike.
+global-hotkey = "0.7"
 
 [features]
 # Window::render_to_image for harness screenshots (GPUI test-support). Off in the shipped app.

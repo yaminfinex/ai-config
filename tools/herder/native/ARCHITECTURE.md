@@ -128,7 +128,7 @@ Derived shapes are in `store`:
   - `generation` (see §2). `rewindow`/`reset` clears everything and re-reads the tail.
 - **`notes::Note`** — the web record: `{id, group (agent or general), text, quote?, source?, created}`,
   `updated` on the row. **`Draft`** is one string per agent, local only.
-- **`Prefs`** — local owner preferences: `text_scale` now; rows, visible, seen, drafts, hotkey next;
+- **`Prefs`** — local owner preferences: `text_scale`, rows, visible, seen, drafts, `hotkey` (U6);
   `vscode_host`, the Remote-SSH alias file links open on (default `superset`; web asks).
 
 ## 4. Keys
@@ -272,7 +272,11 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   `testdata/notes-web.json`), and `click:<capture|handoff|edit:i|delete:i>` (what a click on the strip
   dispatches, through the focused element as the click does). `just check-notes` runs six scenarios (one
   relaunches on the same HOME after a hand-off), each failing unless it made exactly the notes POSTs it
-  expects and no message. Screenshots and presented-frame timings need an
+  expects and no message. U6: a scripted run is test mode (`platform_mac::quiet`): notifications, the
+  dock badge and the summon chord are logged no-ops (`platform: would notify …`, `platform: badge N`), and
+  `HERDER_NATIVE_FRONT=1` makes it count as frontmost with its window still behind; the fake serve's
+  `--turn` sends fleet frames that end agents' turns, and `just check-alerts` runs three scenarios (a
+  turn on the lens, the agent in view, a burst). Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -310,6 +314,12 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
+
+U6 (asked of review): `store/spaces.rs` 374, where needs-you lives (the brief's placement): `Alerts`, the
+transition rule (an agent's turn or block moving on into needing you), the one-second burst and its
+summary, the badge; `shell.rs` 442 (the effects, the frontmost/zoom sync into the store, the chord and
+notification-click summon); `store/mod.rs` 426 (`Looking`, `BurstEnded`, `Summon`, `Notify`, `Badge`,
+`Burst`); `views/space.rs` 325 (`Summon` and `summon`); `platform_mac.rs` 96, under its 150.
 
 U5 exceptions (agreed at review; the U5 fixes grew the first two): `views/notes.rs` 426, one cohesive view
 (the strip, its count collapse, the editor with its own key context for add, capture and edit and its

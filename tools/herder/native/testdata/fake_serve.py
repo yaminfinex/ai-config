@@ -3,11 +3,14 @@
 scenario sends may reach a real agent. Reads answer from testdata/; POST …/message never delivers.
 
     testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT] [--notes]
+                                [--turn AGENT[,AGENT…]]… [--turn-at SECONDS]
 
 `slow` answers ok after a second, `hold` keeps the POST open (the composer stays "sending"); `409` is a
 sender collision. `POST /api/state/<ns>` keeps the rows in memory, last write wins, and later reads of
 that namespace return them (U5); `--notes` starts the notes namespace with web's two notes on mupu
-(`notes-web.json`). Every request is logged on stderr.
+(`notes-web.json`). Each `--turn` is one more fleet frame on the stream, `--turn-at` seconds after it
+opens and 0.3 s apart, in which those agents have finished another turn (U6). Every request is logged
+on stderr.
 """
 
 import argparse
@@ -47,6 +50,15 @@ class Fake(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(fixture("events.sse").encode())
             self.wfile.flush()
+            board = json.loads(fixture("fleet.json"))
+            for i, agents in enumerate(ARGS.turn):
+                time.sleep(ARGS.turn_at if i == 0 else 0.3)
+                for pane in panes(board):
+                    if pane.get("agent") in agents.split(",") and pane.get("turn_end_id"):
+                        pane["turn_end_id"] += 1
+                self.log_message("turn: %s", agents)
+                self.wfile.write(f"event: fleet\ndata: {json.dumps(board)}\n\n".encode())
+                self.wfile.flush()
             while True:
                 time.sleep(15)
                 self.wfile.write(b"event: ping\ndata: {}\n\n")
@@ -99,6 +111,12 @@ class Fake(BaseHTTPRequestHandler):
         self.reply(200, {"sent": True, "to": parts[2], "from": "web-fake", "intent": "request"})
 
 
+def panes(board):
+    for ws in board["workspaces"]:
+        for tab in ws["tabs"]:
+            yield from tab["panes"]
+
+
 def merge(ns, rows):
     held = STATE.setdefault(ns, {})
     for r in rows:
@@ -113,6 +131,8 @@ if __name__ == "__main__":
     p.add_argument("--message", default="ok", choices=["ok", "slow", "409", "502", "hold"])
     p.add_argument("--retired")
     p.add_argument("--notes", action="store_true")
+    p.add_argument("--turn", action="append", default=[])
+    p.add_argument("--turn-at", type=float, default=3.0)
     ARGS = p.parse_args()
     if ARGS.notes:
         merge("notes", json.loads(fixture("notes-web.json"))["rows"][:2])
