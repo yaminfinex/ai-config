@@ -2239,6 +2239,11 @@ mod notes {
         });
     }
 
+    /// Web's two notes on mupu, as a hand-off of every note names them.
+    fn both() -> Vec<String> {
+        vec![web_row(0).key, web_row(1).key]
+    }
+
     fn texts(store: &Store, agent: &str) -> Vec<String> {
         store.notes_of(agent).map(|n| n.text.clone()).collect()
     }
@@ -2339,7 +2344,7 @@ mod notes {
         assert_eq!(store.refusal(&quote_only), None);
         // A delete is web's tombstone: `{id}` only.
         let delete = N::Delete {
-            id: plain.key.clone(),
+            ids: vec![plain.key.clone()],
             stamp: stamp(gone.updated, "-", &gone.write_id),
         };
         assert_eq!(note(&mut store, delete), [gone]);
@@ -2425,6 +2430,7 @@ mod notes {
         store.prefs.drafts.insert("mupu".into(), "first".into());
         let hand = N::HandOff {
             agent: "mupu".into(),
+            ids: both(),
             stamp: stamp(1, "-", "w-h"),
         };
         let effects = store.apply(Event::Note(hand.clone()));
@@ -2452,9 +2458,65 @@ mod notes {
         // Nothing left: nothing happens.
         let again = N::HandOff {
             agent: "mupu".into(),
+            ids: both(),
             stamp: stamp(2, "-", "w"),
         };
         assert!(store.apply(Event::Note(again)).is_empty());
+    }
+
+    #[test]
+    fn a_partial_hand_off_takes_only_the_chosen_notes_in_list_order() {
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        pulled(&mut store, vec![web_row(0), web_row(1)], 1);
+        let (quoted, plain) = (web_row(0).key, web_row(1).key);
+        let want: Vec<String> = serde_json::from_value(web()["handoff"].clone()).unwrap();
+        let hand = |ids: Vec<String>| N::HandOff {
+            agent: "mupu".into(),
+            ids,
+            stamp: stamp(1, "-", "w-h"),
+        };
+        // Not mupu's (or no note at all): nothing moves.
+        assert!(store.apply(Event::Note(hand(vec!["g".into()]))).is_empty());
+        assert!(!store.prefs.drafts.contains_key("mupu"));
+        // The second note only: the draft is saved first, and nothing is deleted until it lands.
+        let effects = store.apply(Event::Note(hand(vec![plain.clone()])));
+        let save = Effect::Transfer {
+            to: crate::store::notes::Dest::Draft,
+            agent: "mupu".into(),
+        };
+        assert_eq!(effects, [save]);
+        assert_eq!(store.prefs.drafts["mupu"], want[1]);
+        assert_eq!(tombstones(&store.outbox()), 0);
+        assert_eq!(store.notes_of("mupu").count(), 2);
+        // Landed: only the chosen note is tombstoned; the other stays.
+        let effects = landed(&mut store, "mupu", Ok(()));
+        let tombs = sends(&effects).concat();
+        let keys: Vec<(&str, bool)> = tombs.iter().map(|r| (&*r.key, r.deleted)).collect();
+        assert_eq!(keys, [(&*plain, true)]);
+        assert_eq!(texts(&store, "mupu"), ["ask it to split this"]);
+        // Chosen in any order, the draft takes them in list order (oldest first).
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        pulled(&mut store, vec![web_row(0), web_row(1)], 1);
+        store.apply(Event::Note(hand(vec![plain, quoted])));
+        assert_eq!(store.prefs.drafts["mupu"], want.join("\n\n"));
+    }
+
+    #[test]
+    fn a_delete_tombstones_every_chosen_note_and_only_those() {
+        let mut store = loaded();
+        pulled(&mut store, vec![web_row(0), web_row(1)], 1);
+        let delete = |ids: Vec<String>| N::Delete {
+            ids,
+            stamp: stamp(1, "-", "w-d"),
+        };
+        assert!(note(&mut store, delete(vec!["g".into()])).is_empty());
+        let rows = note(&mut store, delete(both()));
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .all(|r| r.deleted && r.value == json!({"id": r.key}))
+        );
+        assert!(store.notes_of("mupu").next().is_none());
     }
 
     #[test]
@@ -2464,6 +2526,7 @@ mod notes {
         store.prefs.drafts.insert("mupu".into(), "first".into());
         let hand = || N::HandOff {
             agent: "mupu".into(),
+            ids: both(),
             stamp: stamp(1, "-", "w-h"),
         };
         store.apply(Event::Note(hand()));
@@ -2515,6 +2578,7 @@ mod notes {
         pulled(&mut store, vec![web_row(1)], 1);
         let hand = || N::HandOff {
             agent: "mupu".into(),
+            ids: both(),
             stamp: stamp(1, "-", "w"),
         };
         assert!(store.apply(Event::Note(hand())).is_empty());
@@ -2647,6 +2711,7 @@ mod notes {
         pulled(&mut store, vec![plain.clone()], 1);
         store.apply(Event::Note(N::HandOff {
             agent: "mupu".into(),
+            ids: both(),
             stamp: stamp(1, "-", "w-h"),
         }));
         // Web's edit lands while the draft is saving: same `updated`, a later writeID, so it wins.
@@ -2678,6 +2743,7 @@ mod notes {
         store.prefs.drafts.insert("mupu".into(), "D".into());
         store.apply(Event::Note(N::HandOff {
             agent: "mupu".into(),
+            ids: both(),
             stamp: stamp(1, "-", "w-h"),
         }));
         assert!(!store.ready("mupu"));

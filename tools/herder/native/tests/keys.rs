@@ -208,3 +208,102 @@ fn notes_editor_keys_stay_in_the_editor() {
         assert!(first(key, &["Lens"]).is_none(), "`{key}` is not a lens key");
     }
 }
+
+/// F6: in the notes list (`NotesList`) its own keys win, and no lens, zoom or composer key fires there,
+/// letters included; in the editor open in one of its cards none of the list's keys fire. `up` in the box
+/// is the way in (it falls through to the caret when it does not enter), and is nothing in the zoom.
+#[test]
+fn the_notes_list_keys_win_in_the_list_and_nothing_else_fires_there() {
+    use views::notes::{Copy, List, Notes, Up};
+    let keymap = Keymap::new(views::bindings());
+    let first = |key: &str, stack: &[&str]| {
+        let stack: Vec<KeyContext> = stack
+            .iter()
+            .map(|c| KeyContext::parse(c).unwrap())
+            .collect();
+        let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse(key).unwrap()], &stack);
+        hits.first().map(|b| b.action().boxed_clone())
+    };
+    let list = ["Lens", "Space", "NotesList"];
+    let keys = [
+        ("up", List::Move(-1, false)),
+        ("down", List::Move(1, false)),
+        ("shift-up", List::Move(-1, true)),
+        ("shift-down", List::Move(1, true)),
+        ("cmd-a", List::All),
+        ("enter", List::HandOff),
+        ("backspace", List::Delete),
+        ("delete", List::Delete),
+        ("e", List::Edit),
+        ("escape", List::Leave),
+    ];
+    for (key, want) in keys {
+        let got = first(key, &list);
+        assert!(
+            got.is_some_and(|a| a.partial_eq(&want)),
+            "`{key}` in the list"
+        );
+    }
+    let copy = first("cmd-c", &list);
+    assert!(
+        copy.is_some_and(|a| a.partial_eq(&Copy)),
+        "`cmd-c` in the list"
+    );
+    for key in [
+        "h",
+        "j",
+        "k",
+        "l",
+        "n",
+        "shift-n",
+        "g",
+        "shift-g",
+        "space",
+        "1",
+        "v",
+        "m",
+        "t",
+        "s",
+        "?",
+        "a",
+        "c",
+        "p",
+        "/",
+        "r",
+        "[",
+        "]",
+        "tab",
+        "shift-tab",
+        "left",
+        "right",
+    ] {
+        assert!(first(key, &list).is_none(), "`{key}` fires in the list");
+    }
+    let editor = ["Lens", "Space", "NotesList", "Notes", "Input"];
+    for key in [
+        "up",
+        "down",
+        "shift-up",
+        "cmd-a",
+        "backspace",
+        "delete",
+        "e",
+        "cmd-c",
+    ] {
+        assert!(first(key, &editor).is_none(), "`{key}` fires in the editor");
+    }
+    for (key, want) in [("enter", Notes::Save), ("escape", Notes::Cancel)] {
+        let got = first(key, &editor);
+        assert!(
+            got.is_some_and(|a| a.partial_eq(&want)),
+            "`{key}` in the editor"
+        );
+    }
+    let boxed = ["Lens", "Space", "Composer", "Input"];
+    let up = first("up", &boxed);
+    assert!(up.is_some_and(|a| a.partial_eq(&Up)), "`up` in the box");
+    assert!(
+        first("up", &["Lens", "Space"]).is_none(),
+        "`up` in the zoom"
+    );
+}

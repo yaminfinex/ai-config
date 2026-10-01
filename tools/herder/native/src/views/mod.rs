@@ -32,9 +32,10 @@ use theme::{TypeScale, pal};
 actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 /// Navigation letters bind here (ARCHITECTURE §4): a predicate sees the whole focus stack, so a
-/// focused Input or Terminal anywhere below turns them off. App-wide chords bind on `Lens` alone.
-pub const HOME: &str = "Lens && !Input && !Terminal";
-pub const SPACE: &str = "Space && !Input && !Terminal";
+/// focused Input, Terminal or notes list anywhere below turns them off. App-wide chords bind on `Lens`
+/// alone.
+pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList";
+pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList";
 
 pub fn bind(cx: &mut App) {
     cx.bind_keys(bindings());
@@ -113,8 +114,25 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("escape", Notes::Cancel),
     ];
     keys.extend(editor.map(|(k, a)| KeyBinding::new(k, a, Some(notes::EDITOR))));
-    // After the kit's own `Input` bindings (`gpui_kit::init`), so these win in the box.
+    use notes::List;
+    let list = [
+        ("up", List::Move(-1, false)),
+        ("down", List::Move(1, false)),
+        ("shift-up", List::Move(-1, true)),
+        ("shift-down", List::Move(1, true)),
+        ("cmd-a", List::All),
+        ("enter", List::HandOff),
+        ("backspace", List::Delete),
+        ("delete", List::Delete),
+        ("e", List::Edit),
+        ("escape", List::Leave),
+    ];
+    keys.extend(list.map(|(k, a)| KeyBinding::new(k, a, Some(notes::LIST))));
+    keys.push(KeyBinding::new("cmd-c", notes::Copy, Some(notes::LIST)));
+    // After the kit's own `Input` bindings (`gpui_kit::init`), so these win in the box (`up` falls
+    // through to the kit's when it does not enter the notes).
     keys.extend(compose.map(|(k, a)| KeyBinding::new(k, a, Some(composer::BOX))));
+    keys.push(KeyBinding::new("up", notes::Up, Some(composer::BOX)));
     keys
 }
 
@@ -145,7 +163,16 @@ g G           top of loaded (reads older) / end
 ⌥⏎            keep the box as a note
 esc (in box)  leave the box
 a / c         add a note / note the selection
-p             notes into the box";
+p             notes into the box
+↑ (in box)    into the notes
+
+notes
+↑ ↓ ⇧↑ ⇧↓     move / extend the selection
+⌘A ⌘C         select all / copy
+⏎             the selection into the box
+⌫ ⌫           delete the selection
+e             edit the note in place
+esc           clear, then back to the box";
 
 pub(super) fn help(t: TypeScale) -> Div {
     let lines = HELP.lines().map(|l| div().min_h(t.line).child(l));
@@ -166,6 +193,8 @@ pub trait Host: Sized + 'static {
     fn parts(&mut self) -> (&Store, &mut lens::Ui);
     fn view(&self) -> (&Store, &lens::Ui);
     fn dispatch(&mut self, event: Event, cx: &mut Context<Self>);
+    /// Put `text` on the clipboard (only said, in a scripted run).
+    fn copy(&mut self, text: String, cx: &mut Context<Self>);
 }
 
 /// An action handler: `f` reads the store, moves the view state and returns the events to dispatch;
@@ -180,6 +209,7 @@ pub fn on<A: Action, H: Host>(
     cx.listener(move |host: &mut H, action: &A, window, cx| {
         let (store, ui) = host.parts();
         let before = ui.anim.as_ref().map(space::Anim::seq);
+        let said = ui.notes.said.as_ref().map(|s| s.0);
         let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
         let events = f(store, ui, action);
         let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
@@ -187,6 +217,7 @@ pub fn on<A: Action, H: Host>(
         let target = match (ui.focus.take(), held) {
             (Some(Focus::Box), _) if writable => ui.composer.focus_handle(cx),
             (Some(Focus::Editor), _) => ui.notes.focus_handle(cx),
+            (Some(Focus::List), _) => ui.notes.list.clone(),
             (None, Some(held)) => held,
             _ => ui.focus_target().clone(),
         };
@@ -194,6 +225,7 @@ pub fn on<A: Action, H: Host>(
             window.focus(&target, cx);
         }
         settle_later(ui, before, cx);
+        notes::fade_later(ui, said, cx);
         for event in events {
             host.dispatch(event, cx);
         }

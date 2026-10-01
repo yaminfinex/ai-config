@@ -537,3 +537,129 @@ mod wheel {
         assert_ne!(top(&state), (0, 0.));
     }
 }
+
+/// F6: the notes list's selection (web's `notesListModel`) and what `cmd-c` copies.
+mod notes_list {
+    use crate::api::{StateRow, StateRows};
+    use crate::store::sync::{Ns, Step};
+    use crate::store::tests::loaded;
+    use crate::store::{Event, notes::transfer_text};
+    use crate::views::notes::{Picked, copied};
+
+    fn ids() -> Vec<String> {
+        ["a", "b", "c", "d"].map(String::from).to_vec()
+    }
+
+    /// The selection, in list order, and the cursor.
+    fn got(p: &Picked) -> (Vec<String>, Option<&str>) {
+        (p.chosen(&ids()), p.cursor.as_deref())
+    }
+
+    fn want(selected: &[&str], cursor: &str) -> (Vec<String>, Option<&'static str>) {
+        let cursor: &'static str = ["a", "b", "c", "d"]
+            .into_iter()
+            .find(|c| *c == cursor)
+            .unwrap();
+        (
+            selected.iter().map(|s| s.to_string()).collect(),
+            Some(cursor),
+        )
+    }
+
+    #[test]
+    fn arrows_move_the_cursor_and_shift_extends_from_the_anchor() {
+        let ids = ids();
+        let mut p = Picked::default();
+        p.step(&ids, -1, false);
+        assert_eq!(got(&p), want(&["d"], "d"), "up with no cursor: the last");
+        let mut p = Picked::default();
+        p.step(&ids, 1, false);
+        assert_eq!(got(&p), want(&["a"], "a"), "down with no cursor: the first");
+        p.step(&ids, -1, false);
+        assert_eq!(got(&p), want(&["a"], "a"), "held at the top");
+        p.step(&ids, 1, false);
+        p.step(&ids, 1, true);
+        p.step(&ids, 1, true);
+        assert_eq!(got(&p), want(&["b", "c", "d"], "d"));
+        p.step(&ids, -1, true);
+        p.step(&ids, -1, true);
+        p.step(&ids, -1, true);
+        assert_eq!(got(&p), want(&["a", "b"], "a"), "back over the anchor");
+        p.step(&ids, 1, false);
+        assert_eq!(got(&p), want(&["b"], "b"), "a plain move collapses it");
+    }
+
+    #[test]
+    fn clicks_pick_one_toggle_with_command_and_take_a_range_with_shift() {
+        let ids = ids();
+        let mut p = Picked::default();
+        p.click(&ids, "c", false, true);
+        assert_eq!(got(&p), want(&["c"], "c"), "shift with no anchor");
+        p.click(&ids, "b", false, false);
+        assert_eq!(got(&p), want(&["b"], "b"));
+        p.click(&ids, "d", true, false);
+        assert_eq!(got(&p), want(&["b", "d"], "d"));
+        p.click(&ids, "b", true, false);
+        assert_eq!(got(&p), want(&["d"], "b"), "toggled off, the cursor there");
+        p.click(&ids, "a", false, true);
+        assert_eq!(
+            got(&p),
+            want(&["a", "b"], "a"),
+            "the range from the last click"
+        );
+    }
+
+    #[test]
+    fn all_keeps_the_cursor_and_a_removal_selects_the_next_note() {
+        let ids = ids();
+        let mut p = Picked::default();
+        p.click(&ids, "c", false, false);
+        p.all(&ids);
+        assert_eq!(got(&p), want(&["a", "b", "c", "d"], "c"));
+        p.prune(&ids[..2]);
+        assert_eq!(p.chosen(&ids), ["a", "b"]);
+        assert_eq!(p.cursor, None, "the cursor's note went");
+        p.all(&ids);
+        assert_eq!(p.cursor.as_deref(), Some("a"), "no cursor: the first");
+        // The selection deleted: the note after the last one removed, else the one before.
+        p.click(&ids, "b", false, false);
+        p.click(&ids, "c", false, true);
+        p.removed(&ids, &["b".into(), "c".into()]);
+        assert_eq!(got(&p), want(&["d"], "d"));
+        p.removed(&ids, &["d".into()]);
+        assert_eq!(got(&p), want(&["c"], "c"));
+        // A note not selected: the selection stays.
+        p.removed(&ids, &["a".into()]);
+        assert_eq!(got(&p), want(&["c"], "c"));
+        p.removed(&ids, &ids);
+        assert_eq!(p, Picked::default());
+    }
+
+    #[test]
+    fn copy_is_webs_hand_off_text_of_the_chosen_notes() {
+        let web: serde_json::Value =
+            serde_json::from_str(include_str!("../../testdata/notes-web.json")).unwrap();
+        let rows: Vec<StateRow> = serde_json::from_value(web["rows"].clone()).unwrap();
+        let mut store = loaded();
+        let rows = StateRows {
+            rows: rows[..2].to_vec(),
+            rev: 1,
+        };
+        let step = Step::Pulled(rows);
+        store.apply(Event::Sync {
+            ns: Ns::Notes,
+            step,
+        });
+        let notes: Vec<_> = store.notes_of("mupu").collect();
+        let ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
+        let mut p = Picked::default();
+        assert_eq!(copied(&store, "mupu", &p), None);
+        p.click(&ids, &ids[1], false, false);
+        let one = (transfer_text(notes[1]), "Copied 1 note.".to_string());
+        assert_eq!(copied(&store, "mupu", &p), Some(one));
+        p.all(&ids);
+        let want: Vec<String> = serde_json::from_value(web["handoff"].clone()).unwrap();
+        let both = (want.join("\n\n"), "Copied 2 notes.".to_string());
+        assert_eq!(copied(&store, "mupu", &p), Some(both));
+    }
+}

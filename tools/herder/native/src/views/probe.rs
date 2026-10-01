@@ -9,7 +9,7 @@ use crate::views::space::{Summon, Tab, Zoomed, zoomed};
 use crate::views::transcript::OpenLink;
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `header` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
     let agent = ui.zoomed_agent();
@@ -35,6 +35,31 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
                 Some(_) => format!("{n}:{focus}:{}", ui.notes.text),
             }
         }
+        // The notes list's focus, its selection (indexes, oldest first) and cursor: `focused:0,1@1`.
+        "list" => {
+            let ids: Vec<&str> = store
+                .notes_of(agent.unwrap_or(""))
+                .map(|n| n.id.as_str())
+                .collect();
+            let at = |id: &String| ids.iter().position(|i| i == id);
+            let picked = &ui.notes.picked;
+            let selected = ids.iter().enumerate();
+            let selected = selected.filter(|(_, id)| picked.selected.contains(**id));
+            let selected: Vec<String> = selected.map(|(i, _)| i.to_string()).collect();
+            let cursor = picked.cursor.as_ref().and_then(at);
+            let cursor = cursor.map_or("-".to_string(), |c| c.to_string());
+            format!(
+                "{}:{}@{cursor}",
+                focused(ui.notes.list.clone()),
+                selected.join(",")
+            )
+        }
+        // The strip's confirmation line.
+        "said" => ui
+            .notes
+            .said
+            .as_ref()
+            .map_or_else(String::new, |s| s.1.clone()),
         "header" => lens::header_line(store),
         // The selected card's space, by name.
         "selected" => ui
@@ -49,8 +74,8 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 }
 
 /// What a click dispatches: `link:<url>` on a transcript link, `summon:<tag>` on a notification,
-/// `click:<capture|handoff|edit:i|delete:i>` on the notes strip (`i` the zoomed agent's note, oldest
-/// first), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
+/// `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` on the notes strip (`i` the zoomed
+/// agent's note, oldest first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
 /// order), `click:tab:i` (the zoom's tab, from the left) and `click:crumb` (`lens ›`); `None` where
 /// there is no such thing to click.
 pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {
@@ -94,9 +119,18 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
             ui.notes.selection.as_ref().filter(|(a, _)| a == agent)?;
             notes(Notes::Capture)
         }
-        ("handoff", _) => {
+        ("sendall", _) => {
             let shown = note("0").is_some() && !store.hand_off_blocked(agent);
             shown.then_some(Notes::HandOff).and_then(notes)
+        }
+        ("add", _) => notes(Notes::Add),
+        ("note", i) => {
+            let (i, held) = i.split_once(':').unwrap_or((i, ""));
+            notes(Notes::Pick {
+                id: note(i)?,
+                command: held == "cmd",
+                shift: held == "shift",
+            })
         }
         ("edit", i) => notes(Notes::Edit(note(i)?)),
         ("delete", i) => notes(Notes::Delete(note(i)?)),

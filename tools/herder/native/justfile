@@ -82,7 +82,15 @@ check-composer port="4411":
 #          saves;
 # handoff  `p` moves both notes into mupu's composer draft (web's hand-off text) and deletes them; after a
 #          relaunch the draft holds them and the notes stay deleted;
-# queue    alt-enter in the composer keeps its draft as a note and clears the box.
+# queue    alt-enter in the composer keeps its draft as a note and clears the box;
+# list     (F6) `up` from the empty box enters the list with both selected; up/down move, shift extends,
+#          cmd-a selects all; no lens, zoom or composer key fires there (letters included); escape clears,
+#          then leaves for the box; `up` in a box with text moves the caret, emptied it enters again;
+# picked   clicks pick (cmd toggles, shift a range); enter hands only the selected note into the draft and
+#          deletes only it, which a relaunch keeps;
+# keyed    backspace arms the selection's delete (a move disarms it), a second deletes it and the cursor
+#          lands on the note before; `e` edits the cursor's note in place, enter saves back into the
+#          list; cmd-c copies it (logged, never the owner's clipboard).
 check-notes port="4412":
     #!/usr/bin/env bash
     . scripts/scenario.sh check-notes {{port}}
@@ -98,7 +106,23 @@ check-notes port="4412":
     run --notes capture 1 "$zoom select:the+reducer+owns+every+mutation draw shot:u5-chip link:herder-agent:chief-mihe wait:600 draw key:c draw notes:0:closed link:herder-agent:mupu wait:1500 draw expect:mupu+preview key:c draw notes:2:closed select:the+reducer+owns+every+mutation key:/ draw box:focused: click:capture draw notes:2:focused: key:o key:k draw shot:u5-capture key:enter wait:800 draw notes:3:closed quit"
     run --notes handoff 1 "$zoom key:p wait:800 draw notes:0:closed has:from+mupu's+transcript: has:check+the+outbox+after+a+409 shot:u5-handoff quit" "$zoom notes:0:closed has:from+mupu's+transcript: has:check+the+outbox+after+a+409 quit"
     run "" queue 1 "$zoom key:/ draw key:h key:i draw box:focused:hi key:alt-enter wait:800 draw box:focused: notes:1:closed shot:u5-queued quit"
-    echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, selection per agent, capture with quote, hand-off into the draft survives a relaunch, alt-enter queues)"
+    up="$zoom key:/ draw key:up draw"
+    list="$up list:focused:0,1@0 shot:f6-list key:down list:focused:1@1 key:shift-up list:focused:0,1@0 key:down key:cmd-a draw list:focused:0,1@1"
+    list+=" key:up draw list:focused:0@0 shot:f6-cursor"
+    for k in j k a c p / r [ ] n shift-n g space 1 v m t s ? h l; do list+=" tap:$k"; done
+    list+=" draw expect:mupu+preview notes:2:closed box:idle: list:focused:0@0 key:escape draw list:focused:@- key:escape draw box:focused: list:idle:@-"
+    list+=" key:h key:i key:up draw box:focused:hi list:idle:@- key:cmd-a key:backspace key:up draw list:focused:0,1@0"
+    run --notes list 0 "$list quit"
+    picked="$zoom click:note:1 draw list:focused:1@1 click:note:0:cmd list:focused:0,1@0 click:note:0:cmd list:focused:1@0"
+    picked+=" click:note:0:shift list:focused:0@0 click:note:1:shift list:focused:0,1@1 click:note:0:cmd draw shot:f6-picked"
+    picked+=" key:enter wait:800 draw box:focused:check+the+outbox+after+a+409 notes:1:closed said:Moved+1+note+to+mupu’s+composer. shot:f6-handed"
+    run --notes picked 1 "$picked quit" "$zoom notes:1:closed box:idle:check+the+outbox+after+a+409 quit"
+    keyed="$up key:down key:backspace draw notes:2:closed said:again+to+delete+1+note shot:f6-armed key:up key:down key:backspace draw notes:2:closed"
+    keyed+=" key:backspace wait:800 draw notes:1:closed said:Deleted+1+note. list:focused:0@0 key:e draw notes:1:focused:ask+it+to+split+this"
+    keyed+=" key:cmd-a key:backspace key:o key:k key:enter wait:800 draw notes:1:closed list:focused:0@0 said:Saved. shot:f6-edited key:cmd-c draw said:Copied+1+note."
+    run --notes keyed 2 "$keyed quit"
+    grep -q 'platform: would copy "from mupu.s transcript:\\n> the reducer owns\\n> every mutation\\n\\nok"' "$home/keyed.log" || { echo "check-notes: keyed: not copied"; exit 1; }
+    echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, selection per agent, capture with quote, hand-off into the draft survives a relaunch, alt-enter queues, the list by key and click: move, select, hand off the chosen, delete twice, edit in place, copy, no other key fires there)"
 
 # Alert scenarios (U6), each through `scripts/scenario.sh`, whose fake serve's `--turn` frames finish agents'
 # turns while the app runs. A scripted run is test mode (`platform_mac::quiet`): nothing is posted, no

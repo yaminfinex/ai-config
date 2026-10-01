@@ -357,7 +357,7 @@ pub fn render<H: Host>(
         .child(bar)
         .child(strip.children(tabs))
         .child(body::render(store, ui, zoom, t, cx))
-        .children(current.and_then(|agent| notes::render(store, ui, agent, t)))
+        .children(current.and_then(|agent| notes::render(store, ui, agent, t, cx)))
         .children(current.map(|agent| composer::render(store, ui, agent, t, cx)))
         .into_any_element()
 }

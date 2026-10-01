@@ -6,13 +6,15 @@
 //!
 //! Keys (ARCHITECTURE §4): `/` or `r` in the zoom focus it; in the box (`Composer > Input`, so no other
 //! input sends) `cmd-enter` sends, `cmd-shift-enter` sends and, once it lands, files the agent back
-//! into the lens (seen), `alt-enter` keeps the draft as a note instead (U5), `escape` leaves the box.
+//! into the lens (seen), `alt-enter` keeps the draft as a note instead (U5), `escape` leaves the box,
+//! and `up` with the box empty or the caret at its start enters the notes list (F6).
 //! The wording under the box is here, the states in `store::composer`.
 
 use crate::store::composer::{Failure, ReadOnly, Sending, Step};
 use crate::store::notes::Step as NoteStep;
 use crate::store::{Attribution, Event, Store};
 use crate::views::lens::{Focus, Ui};
+use crate::views::notes;
 use crate::views::space::{self, Zoomed};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim, on, settle_later};
@@ -140,9 +142,22 @@ pub fn render<H: Host>(
     let (line, color) = status(store, agent);
     let writable = store.can_send(agent).is_ok() && !store.busy(agent);
     let input = Textarea::new(&ui.composer.state).disabled(!writable);
+    let (state, notes) = (
+        ui.composer.state.clone(),
+        store.notes_of(agent).next().is_some(),
+    );
+    let enter = on(cx, |store, ui, _: &notes::Up| notes::enter(store, ui));
+    let up = move |a: &notes::Up, window: &mut Window, cx: &mut App| {
+        let s = state.read(cx);
+        match notes && (s.value().is_empty() || s.selected_range().end == 0) {
+            true => enter(a, window, cx),
+            false => cx.propagate(),
+        }
+    };
     let input = div()
         .key_context("Composer")
         .on_action(on(cx, |_, ui, c: &Compose| act(ui, *c)))
+        .on_action(up)
         .child(input);
     div()
         .flex_none()

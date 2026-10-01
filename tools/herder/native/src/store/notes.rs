@@ -5,8 +5,9 @@
 //! for `store::sync` (its outbox, LWW and tombstones), in web's record shape (`storedNoteToStateRow`), so
 //! both clients read each other's notes. A version is `max(now, previous + 1)`, as web's.
 //!
-//! The hand-off follows web's `noteHandOff`: the notes are appended to the composer draft (`\n\n`
-//! between them, each as web's `noteTransferText`) and deleted, not when a message lands; what the
+//! The hand-off follows web's `noteHandOff`: the chosen notes (the list's selection, or all of them) are
+//! appended to the composer draft (`\n\n` between them, each as web's `noteTransferText`) and deleted,
+//! not when a message lands; what the
 //! owner then sends from it is theirs to edit. A hand-off or a queued draft is a `Transfer`: the
 //! destination (the draft's prefs, the note's outbox) is saved first, and only then is the source
 //! deleted or cleared. Adds, edits and queues over web's 8 KiB are refused in web's words.
@@ -79,20 +80,17 @@ pub enum Step {
         text: String,
         stamp: Stamp,
     },
-    Delete {
-        id: String,
-        stamp: Stamp,
-    },
-    /// Every note of `agent` into its composer draft, deleted once the draft is saved.
+    /// The notes `ids`, as the list's selection.
+    Delete { ids: Vec<String>, stamp: Stamp },
+    /// The notes `ids` of `agent` into its composer draft, in list order, deleted once the draft is
+    /// saved; the others stay.
     HandOff {
         agent: String,
+        ids: Vec<String>,
         stamp: Stamp,
     },
     /// `alt-enter` in the box: `agent`'s draft becomes a note on it; the box clears once it is saved.
-    Queue {
-        agent: String,
-        stamp: Stamp,
-    },
+    Queue { agent: String, stamp: Stamp },
     /// The destination of `agent`'s transfer was saved, or the disk refused (`Effect::Transfer`).
     Landed {
         agent: String,
@@ -217,15 +215,16 @@ impl Store {
                 };
                 vec![row(value, previous, &stamp)]
             }
-            Step::Delete { id, stamp } => {
-                let note = self.notes.iter().find(|n| n.id == id);
-                note.map(|n| tombstone(n, &stamp)).into_iter().collect()
+            Step::Delete { ids, stamp } => {
+                let notes = self.notes.iter().filter(|n| ids.contains(&n.id));
+                notes.map(|n| tombstone(n, &stamp)).collect()
             }
-            Step::HandOff { agent, stamp } => {
+            Step::HandOff { agent, ids, stamp } => {
                 if self.hand_off_blocked(&agent) {
                     return;
                 }
-                let notes: Vec<&Note> = self.notes_of(&agent).collect();
+                let chosen = self.notes_of(&agent).filter(|n| ids.contains(&n.id));
+                let notes: Vec<&Note> = chosen.collect();
                 let texts: Vec<String> = notes.iter().map(|n| transfer_text(n)).collect();
                 let addition = texts.into_iter().filter(|t| !t.trim().is_empty());
                 let addition = addition.collect::<Vec<_>>().join("\n\n");
@@ -401,7 +400,7 @@ pub fn transfer_text(n: &Note) -> String {
 }
 
 /// Web's `noteSourceLabel` for a file or diff source: `path:start-end`, and `(vs base)` for a diff.
-fn source_label(source: &Value) -> String {
+pub fn source_label(source: &Value) -> String {
     let num = |k: &str| Some(source.get(k).filter(|v| v.is_number())?.to_string());
     let (start, end) = (num("start"), num("end"));
     let range = match (&start, &end) {

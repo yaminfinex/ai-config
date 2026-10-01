@@ -155,15 +155,17 @@ predicate. GPUI evaluates a predicate against the whole focus stack, so a bindin
 the composer inside it has focus; single-letter navigation must exclude text surfaces explicitly.
 
 Contexts (identifiers on elements): `Lens` (the root), `Space` (the zoom shell), `Composer` (around the
-composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel). Predicates:
+composer's box, U4), `NotesList` (the notes strip's list, F6), `Input` (any kit text input), `Terminal`
+(a terminal panel). Predicates:
 
 | Predicate | Used for |
 |---|---|
 | `Lens` | app-wide chords only: `cmd-q`, text scale `cmd-=` `cmd-shift-=` `cmd--` `cmd-0` |
-| `Lens && !Input && !Terminal` | home navigation letters |
-| `Space && !Input && !Terminal` | in-space navigation letters and scrolling |
+| `Lens && !Input && !Terminal && !NotesList` | home navigation letters |
+| `Space && !Input && !Terminal && !NotesList` | in-space navigation letters and scrolling |
 | `Composer > Input` | the composer's own chords (`cmd-enter`, `cmd-shift-enter`, `alt-enter`, `escape`); no other input (U5's notes) gets them |
 | `Notes > Input` | the notes editor's own (`enter` and `cmd-enter` save, `escape` cancels, U5); `shift-enter` stays a new line |
+| `NotesList && !Input` | the notes list's keys (F6); not in the editor open in one of its cards |
 | `Terminal` | keys the terminal consumes (Rung 2); `cmd-w` `cmd-t` `cmd-1…9` stay on `Space` |
 
 | Keys | Predicate | Action | Unit |
@@ -176,8 +178,11 @@ composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel)
 | `/` `r` | `Space && !Input && !Terminal` | focus the composer | U4 |
 | `cmd-enter` / `cmd-shift-enter` / `escape` | `Composer > Input` | send / send and file back / leave the box | U4 |
 | `alt-enter` | `Composer > Input` | queue as note | U5 |
-| `a` / `c` / `p` | `Space && !Input && !Terminal` | add a note / capture the transcript selection / notes into the composer | U5 |
+| `a` / `c` / `p` | `Space && !Input && !Terminal` | add a note (the transcript selection, if any, as its quote, F6) / capture the transcript selection / every note into the composer | U5 |
 | `enter` `cmd-enter` / `escape` | `Notes > Input` | save the note / cancel | U5 |
+| `up` | `Composer > Input` | into the notes list, every note selected, when the box is empty or its caret at the start; else the kit's caret move (`notes::Up` propagates) | F6 |
+| `up` `down` / `shift-up` `shift-down` / `cmd-a` | `NotesList && !Input` | move the cursor / extend the selection from its anchor / select all | F6 |
+| `enter` / `backspace` `delete` / `e` / `cmd-c` / `escape` | `NotesList && !Input` | the selection into the composer / delete it (a second press; any other key disarms) / edit the cursor's note in place / copy (`Host::copy`; a scripted run logs it) / clear the selection, then back to the box | F6 |
 | `cmd-w` `cmd-t` `cmd-1…9` | `Space` | close panel, terminal, switch panel | Rung 2 |
 | `ctrl-alt-cmd-h` | global (`global-hotkey`) | summon | U6 |
 
@@ -185,6 +190,14 @@ composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel)
 shows that agent (`space::Tab`); `lens ›` in the breadcrumb is `Zoomed::Out`. Each click dispatches the
 same action the harness's `click:card:i`, `card2:i`, `tab:i` and `crumb` do (`just check-mouse`). Hovering
 a card lifts its border, which re-renders the shell on enter and leave only.
+
+**Notes list (F6).** Web's `notesListModel`: `notes::Picked` (selection, anchor, cursor; pure) is view
+state, per zoomed agent. In the list no lens, zoom or composer key fires (the `!NotesList` predicates);
+the kit's Root `tab` still moves focus out, as a browser's does. A click on a card picks it (`cmd`
+toggles, `shift` a range from the anchor) and focuses the list; a double-click edits in place; a note's ✕
+still deletes on a second click. The strip says what each action did for 4 s (`notes::fade_later`).
+A hand-off of the chosen notes is the U5 transfer (destination before source) with only their ids.
+`just check-notes` (`list`, `picked`, `keyed`) drives it.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -302,7 +315,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after F4 (F4 grew `lens`, `space` and `probe` by the card text and the mouse) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after F6 (F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 grew `views/notes` by web's keyboard list: its selection model `Picked`, the list keys and the cards) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -310,18 +323,18 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 322 | `views/mod.rs` | 379 |
-| `api/client.rs` | 206 | `views/lens.rs` | 441 |
+| `api/types.rs` | 322 | `views/mod.rs` | 411 |
+| `api/client.rs` | 206 | `views/lens.rs` | 442 |
 | `api/sse.rs` | 194 | `views/space.rs` | 363 |
 | `store/mod.rs` | 438 | `views/transcript.rs` | 459 |
-| `store/sync.rs` | 312 | `views/composer.rs` | 204 |
-| `store/fleet.rs` | 117 | `views/notes.rs` | 365 |
-| `store/spaces.rs` | 209 | `views/probe.rs` | 122 |
+| `store/sync.rs` | 312 | `views/composer.rs` | 219 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 776 |
+| `store/spaces.rs` | 209 | `views/probe.rs` | 156 |
 | `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
-| `store/transcript.rs` | 552 | `views/theme.rs` | 157 |
-| `store/condense.rs` | 189 | `shell.rs` | 420 |
-| `store/notes.rs` | 424 | `shell/io.rs` | 180 |
-| `store/composer.rs` | 166 | `harness.rs` | 269 |
+| `store/transcript.rs` | 552 | `views/theme.rs` | 162 |
+| `store/condense.rs` | 189 | `shell.rs` | 428 |
+| `store/notes.rs` | 423 | `shell/io.rs` | 180 |
+| `store/composer.rs` | 166 | `harness.rs` | 273 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
 | `store/cards.rs` | 182 | | |
 

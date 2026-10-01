@@ -46,6 +46,11 @@ pub mod pal {
     pub const SLATE: u32 = 0x8E919C;
     pub const RULE: u32 = 0x2E3037;
     pub const WASH: u32 = 0x26272E;
+    /// Web's `--sidebar` (the notes strip) and `--border2` (a card's edge).
+    pub const SIDEBAR: u32 = 0x17181D;
+    pub const EDGE: u32 = 0x3A3C45;
+    /// Web's `--accent`: a selected note's edge and a quoted note's bar.
+    pub const BLUE: u32 = 0x5B93FF;
     /// Selected text.
     pub const SELECT: u32 = 0x31406B;
     /// Inline code spans.

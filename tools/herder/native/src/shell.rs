@@ -125,6 +125,14 @@ impl Host for Shell {
         (&self.store, &self.ui)
     }
 
+    /// A scripted run never touches the owner's clipboard: it logs what it would have copied.
+    fn copy(&mut self, text: String, cx: &mut Context<Self>) {
+        match platform_mac::quiet() {
+            true => platform_mac::log(format!("would copy {:?}", text)),
+            false => cx.write_to_clipboard(ClipboardItem::new_string(text)),
+        }
+    }
+
     /// The only path to a state change: reduce, then run the effects.
     fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
         let is_live_board = matches!(
@@ -299,7 +307,7 @@ impl Render for Shell {
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         composer::sync(&mut self.ui, &self.store, window, cx);
-        notes::sync(&mut self.ui, window, cx);
+        notes::sync(&mut self.ui, &self.store, window, cx);
         let t = theme::type_scale(self.store.prefs.text_scale);
         let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()
