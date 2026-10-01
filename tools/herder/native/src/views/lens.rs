@@ -6,7 +6,7 @@
 //! persisted and never goes through the store. Rows, the visible agent, seen marks and unread spaces
 //! are the store's, changed by dispatching `Move`s.
 
-use crate::store::spaces::{Move, Row, Space};
+use crate::store::spaces::{Move, Row, Space, Stop};
 use crate::store::{Conn, Event, Store};
 use crate::views::space::{self, Anim, Zoom};
 use crate::views::theme::{TypeScale, pal};
@@ -188,12 +188,19 @@ fn step_row(store: &Store, ui: &mut State, from: &Space, by: isize) {
 }
 
 /// `n` / `N`: select the next space needing you after the current one; zoom into it for `N` or when
-/// already zoomed (a sideways swipe there).
+/// already zoomed (a sideways swipe there). After the spaces, `N` (and `n` zoomed) opens each agent
+/// needing you in no space alone, as its notification's click does; with no card for one on the lens,
+/// `n` there passes them by.
 pub(super) fn next_needing(store: &Store, ui: &mut State, zoom: bool) -> Vec<Event> {
-    let zoomed = ui.zoom.as_ref().map(|z| z.space.clone());
-    let from = zoomed.or_else(|| ui.selected(store).map(|s| s.id.clone()));
-    let Some(next) = store.next_needing(from.as_deref()) else {
-        return Vec::new();
+    let from = match ui.zoom.as_ref() {
+        Some(z) if z.alone() => z.agent.as_deref().map(Stop::Alone),
+        Some(z) => space::zoomed(store, z).map(Stop::Space),
+        None => ui.selected(store).map(Stop::Space),
+    };
+    let next = match store.next_needing(from, zoom || ui.zoom.is_some()) {
+        Some(Stop::Space(next)) => next,
+        Some(Stop::Alone(agent)) => return space::summon(store, ui, &format!("agent:{agent}")),
+        None => return Vec::new(),
     };
     ui.select(&next.id);
     match (zoom, ui.zoom.is_some()) {

@@ -2,7 +2,7 @@
 //! selection and zoom go, and when the selected card is revealed. Drawing is the harness's job.
 
 use crate::api::Entries;
-use crate::store::spaces::{Move, Row, Space};
+use crate::store::spaces::{Move, Row, Space, Stop};
 use crate::store::tests::{board, bump, fleet_frame, frame, loaded, space_of};
 use crate::store::transcript::{Got, Step, What};
 use crate::store::{Effect, Event, Fetch, Store};
@@ -84,12 +84,16 @@ fn n_and_brackets_move_between_spaces_and_swipe_when_zoomed() {
     let mut ui = State::default();
     let events = lens::act(&store, &mut ui, Nav::NextNeeding(false));
     assert!(events.is_empty(), "n only selects");
-    let first = store.next_needing(None).unwrap();
+    let Some(Stop::Space(first)) = store.next_needing(None, false) else {
+        panic!("a space needs you")
+    };
     assert_eq!(ui.selected(&store).map(|s| &s.id), Some(&first.id));
     assert!(ui.reveal.get(), "the selection is revealed");
 
     lens::act(&store, &mut ui, Nav::ZoomIn);
-    let next = store.next_needing(Some(&first.id)).unwrap();
+    let Some(Stop::Space(next)) = store.next_needing(Some(Stop::Space(first)), true) else {
+        panic!("another space needs you")
+    };
     let events = lens::next_needing(&store, &mut ui, true);
     assert_eq!(zoomed(&ui).map(|z| z.0), Some(next.id.as_str()));
     assert!(matches!(
@@ -111,6 +115,41 @@ fn n_and_brackets_move_between_spaces_and_swipe_when_zoomed() {
         Some(&after.id),
         "the lens follows"
     );
+}
+
+/// Owner ruling: after the spaces, `N` (and `n` zoomed) opens an agent needing you in no space alone,
+/// as its notification's click does, then goes round to the first space; `n` on the lens passes it by.
+#[test]
+fn n_reaches_an_agent_in_no_space_after_the_spaces() {
+    let mut store = store();
+    let alone = "risk-framework-gezu";
+    let mut b = board();
+    for agent in ["mupu", "orch-lega", alone] {
+        bump(&mut b, agent, 1);
+    }
+    store.apply(fleet_frame(b));
+    assert!(store.agent_needs_you(alone) && store.home(alone).is_none());
+    let order: Vec<String> = (store.lens().into_iter())
+        .filter(|s| store.needs_you(s) > 0)
+        .map(|s| s.id.clone())
+        .collect();
+    assert_eq!(order.len(), 2);
+    let mut ui = State::default();
+    ui.select(&order[1]);
+    assert!(lens::act(&store, &mut ui, Nav::NextNeeding(false)).is_empty());
+    assert_eq!(
+        ui.selected(&store).map(|s| &s.id),
+        Some(&order[0]),
+        "n passes it by"
+    );
+    ui.select(&order[1]);
+    let events = lens::act(&store, &mut ui, Nav::NextNeeding(true));
+    assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+    assert_eq!(zoomed(&ui), Some(("", Some(alone))));
+    // Zoomed, `n` goes on round: the first space.
+    let events = lens::next_needing(&store, &mut ui, false);
+    assert_eq!(viewed(events).len(), 1);
+    assert_eq!(zoomed(&ui).map(|z| z.0), Some(order[0].as_str()));
 }
 
 #[test]

@@ -161,7 +161,7 @@ composer's box, U4), `Input` (any kit text input), `Terminal` (a terminal panel)
 |---|---|---|---|
 | `cmd-q`; `cmd-=` `cmd-shift-=` / `cmd--` / `cmd-0` | `Lens` | Quit; TextBigger / TextSmaller / TextReset | A0 |
 | `left right h l j k` `1 2 3` `v` `m u` `t s` `?` `enter` | `Lens && !Input && !Terminal` | move, set row, cycle visible, seen/unseen, card text/size, help, zoom in | U2 |
-| `n` / `N` | both navigation predicates | next needing you / and zoom in | U2 |
+| `n` / `N` | both navigation predicates | next needing you / and zoom in; after the spaces, `N` (and `n` zoomed) opens an agent in no space alone | U2, U6 |
 | `escape` `[` `]` `tab` `shift-tab` | `Space && !Input && !Terminal` | zoom out, prev/next space, prev/next agent | U2 |
 | `j k space shift-space g G` | `Space && !Input && !Terminal` | scroll the transcript | U3 |
 | `/` `r` | `Space && !Input && !Terminal` | focus the composer | U4 |
@@ -293,12 +293,12 @@ are restated rather than split: what did not belong in them has moved out (`view
 | File | Budget | File | Budget |
 |---|---|---|---|
 | `api/types.rs` | 322 | `views/mod.rs` | 378 |
-| `api/client.rs` | 206 | `views/lens.rs` | 372 |
+| `api/client.rs` | 206 | `views/lens.rs` | 379 |
 | `api/sse.rs` | 194 | `views/space.rs` | 335 |
 | `store/mod.rs` | 422 | `views/transcript.rs` | 435 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 204 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 365 |
-| `store/spaces.rs` | 193 | `views/probe.rs` | 93 |
+| `store/spaces.rs` | 209 | `views/probe.rs` | 93 |
 | `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
 | `store/transcript.rs` | 552 | `views/theme.rs` | 98 |
 | `store/condense.rs` | 189 | `shell.rs` | 420 |

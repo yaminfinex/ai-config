@@ -151,16 +151,32 @@ impl Store {
         visible(space, &self.fleet, &self.prefs.visible)
     }
 
-    /// The first space after `from` in lens order that needs you, wrapping round to `from` itself
-    /// last. With no `from`, the search starts at the top.
-    pub fn next_needing(&self, from: Option<&str>) -> Option<&Space> {
-        let order = self.lens();
-        let at = from.and_then(|id| order.iter().position(|s| s.id == id));
+    /// The first stop after `from` that needs you, wrapping round to `from` itself last: the spaces in
+    /// lens order, then (with `alone`) the agents in no space, by name. With no `from`, or one that is
+    /// no longer a stop, the search starts at the top.
+    pub fn next_needing(&self, from: Option<Stop>, alone: bool) -> Option<Stop<'_>> {
+        let agents = self.fleet.agents.keys();
+        let loose = agents.filter(|a| alone && self.home(a).is_none());
+        let spaces = self.lens().into_iter().map(Stop::Space);
+        let order: Vec<Stop> = spaces.chain(loose.map(|a| Stop::Alone(a))).collect();
+        let at = order.iter().position(|s| Some(*s) == from);
         let start = at.map_or(0, |i| i + 1);
+        let needs = |s: &Stop| match *s {
+            Stop::Space(s) => self.needs_you(s) > 0,
+            Stop::Alone(a) => self.agent_needs_you(a),
+        };
         (0..order.len())
             .map(|k| order[(start + k) % order.len()])
-            .find(|s| self.needs_you(s) > 0)
+            .find(needs)
     }
+}
+
+/// Where `n` / `N` go: a space, or (owner ruling, after the spaces) an agent that sits in no space,
+/// opened alone.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Stop<'a> {
+    Space(&'a Space),
+    Alone(&'a str),
 }
 
 /// The owner's pick while it is still a member on the board, else the first member on the board.

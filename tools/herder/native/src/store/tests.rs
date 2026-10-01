@@ -3,7 +3,7 @@
 use super::*;
 use crate::api::{Hello, Member, StateChanged, StateRows};
 use crate::store::fleet::Status;
-use crate::store::spaces::Row;
+use crate::store::spaces::{Row, Stop};
 use crate::store::sync::Hold;
 use serde_json::json;
 
@@ -742,7 +742,7 @@ fn next_needing_walks_the_rows_in_order_and_wraps() {
     let mut b = board();
     store.apply(fleet_frame(b.clone()));
     assert_eq!(
-        store.next_needing(None),
+        store.next_needing(None, false),
         None,
         "nothing unread on first sight"
     );
@@ -766,7 +766,13 @@ fn next_needing_walks_the_rows_in_order_and_wraps() {
         space: slack.clone(),
         row: Row::Background,
     }));
-    let next = |store: &Store, from: Option<&str>| store.next_needing(from).map(|s| s.id.clone());
+    let next = |store: &Store, from: Option<&str>| {
+        let from = from.map(|id| Stop::Space(store.spaces.iter().find(|s| s.id == id).unwrap()));
+        match store.next_needing(from, false) {
+            Some(Stop::Space(s)) => Some(s.id.clone()),
+            _ => None,
+        }
+    };
     assert_eq!(next(&store, None), Some(chief.clone()));
     assert_eq!(next(&store, Some(&chief)), Some(herder.clone()));
     assert_eq!(next(&store, Some(&herder)), Some(slack.clone()));
@@ -801,7 +807,7 @@ fn read_and_unread_mark_the_whole_space() {
     assert!(store.apply(unread()).is_empty(), "already unread");
     store.apply(frame(&store, b.clone()));
     assert_eq!(store.needs_you(&slack), 1);
-    assert_eq!(store.next_needing(None).map(|s| &s.id), Some(&slack.id));
+    assert_eq!(store.next_needing(None, false), Some(Stop::Space(&slack)));
     let view = |agent: &str| {
         let agent = Some(agent.to_string());
         lens(spaces::Move::View {
