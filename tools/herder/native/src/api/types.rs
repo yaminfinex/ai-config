@@ -61,8 +61,10 @@ pub enum Wire {
     },
     /// A subscribed agent's session or transcript position reset.
     Rewindow(Rewindow),
+    /// An hcom message; its recipients may now have it queued.
+    Message(Message),
     Ping,
-    /// A type this client does not use (`message`, `substrate`, `file-change`, newer ones), or a frame
+    /// A type this client does not use (`substrate`, `file-change`, newer ones), or a frame
     /// whose data did not decode.
     Other(String),
 }
@@ -79,6 +81,12 @@ pub struct StateChanged {
     pub rev: u64,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Message {
+    pub to: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Rewindow {
     pub agent: String,
@@ -93,6 +101,7 @@ impl Wire {
             "fleet" => serde_json::from_str(data).map(Wire::Fleet),
             "state-changed" => serde_json::from_str(data).map(Wire::StateChanged),
             "rewindow" => serde_json::from_str(data).map(Wire::Rewindow),
+            "message" => serde_json::from_str(data).map(Wire::Message),
             "ping" => Ok(Wire::Ping),
             _ => match event.strip_prefix("entry:") {
                 Some(agent) => serde_json::from_str(data).map(|entry| Wire::Entry {

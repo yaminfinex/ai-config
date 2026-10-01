@@ -928,7 +928,8 @@ mod transcript_pages {
     use super::*;
     use crate::api::client::Page;
     use crate::api::{Candidate, Entries, EntriesWindow, Entry, Reset, ResolveRoot, Resolved};
-    use crate::store::transcript::{Got, Item, PAGE, Read, Step as T, What, condense};
+    use crate::store::condense::{self, condense};
+    use crate::store::transcript::{Got, Item, PAGE, Read, Step as T, What};
     use std::collections::VecDeque;
 
     fn fixture(agent: &str, page: &str) -> Entries {
@@ -1144,6 +1145,228 @@ mod transcript_pages {
         assert_eq!(items(&store), &reference("conductor-line", tail));
     }
 
+    /// The transcript reads among `effects`.
+    fn reads(effects: &[Effect]) -> Vec<Read> {
+        let reads = effects.iter().filter_map(|e| match e {
+            Effect::Fetch(Fetch::Transcript(r)) => Some(r.clone()),
+            _ => None,
+        });
+        reads.collect()
+    }
+
+    fn frame(store: &Store, wire: Wire) -> Event {
+        let generation = store.stream;
+        let event = StreamEvent::Frame(wire);
+        Event::Stream { generation, event }
+    }
+
+    fn wake(store: &Store, agent: &str) -> Event {
+        let (agent, entry) = (agent.into(), Entry::default());
+        frame(store, Wire::Entry { agent, entry })
+    }
+
+    fn fail(store: &mut Store, read: &Read) -> Vec<Effect> {
+        store.apply(Event::Transcript(T::Read(read.clone(), Err("down".into()))))
+    }
+
+    fn notice(store: &Store) -> Option<&str> {
+        store.transcript.open.as_ref().unwrap().notice.as_deref()
+    }
+
+    #[test]
+    fn failed_reads_retry_with_a_bounded_backoff_and_drain_queued_wakes() {
+        let mut store = loaded();
+        let opened = reads(&open(&mut store, "mupu"));
+        let (tail, generation) = (&opened[0], opened[0].generation);
+        assert!(matches!(tail.what, What::Page(Page::Tail { .. })));
+        assert!(
+            reads(&store.apply(wake(&store, "mupu"))).is_empty(),
+            "queued"
+        );
+        let retry = |after_ms| Effect::RetryTranscript {
+            generation,
+            after_ms,
+        };
+        assert_eq!(fail(&mut store, tail), [retry(1000)]);
+        assert_eq!(notice(&store), Some("could not read: down"));
+
+        // Each retry reads once for the failed read and the wake queued behind it; three, then none.
+        let mut tail = tail.clone();
+        for after_ms in [2000, 4000] {
+            let again = reads(&store.apply(Event::Transcript(T::Retry(generation))));
+            assert!(
+                matches!(again.as_slice(), [r] if r.what == tail.what),
+                "{again:?}"
+            );
+            tail = again[0].clone();
+            assert_eq!(fail(&mut store, &tail), [retry(after_ms)]);
+        }
+        let again = reads(&store.apply(Event::Transcript(T::Retry(generation))));
+        assert!(fail(&mut store, &again[0]).is_empty(), "bounded");
+        assert!(
+            store
+                .apply(Event::Transcript(T::Retry(generation + 9)))
+                .is_empty()
+        );
+
+        // A hello clears the notice and reads again; the page lands.
+        let hello = frame(
+            &store,
+            Wire::Hello(Hello {
+                build_identity: "b".into(),
+            }),
+        );
+        let effects = store.apply(hello);
+        assert_eq!(notice(&store), None);
+        drive(&mut store, effects, &history("mupu"), PAGE as usize);
+        assert!(store.transcript.open.as_ref().unwrap().loaded());
+    }
+
+    #[test]
+    fn a_failed_detail_retries_and_showing_a_stuck_transcript_reopens_it() {
+        let mut store = loaded();
+        let opened = reads(&open(&mut store, "mupu"));
+        let generation = opened[0].generation;
+        let effects = fail(&mut store, &opened[1]);
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::RetryTranscript { .. }]
+        ));
+        let again = reads(&store.apply(Event::Transcript(T::Retry(generation))));
+        assert!(matches!(
+            again.as_slice(),
+            [Read {
+                what: What::Detail,
+                ..
+            }]
+        ));
+
+        // The tail failed and nothing is in flight: showing the agent again opens it afresh.
+        fail(&mut store, &opened[0]);
+        let reopened = reads(&open(&mut store, "mupu"));
+        assert!(
+            reopened.iter().all(|r| r.generation > generation),
+            "{reopened:?}"
+        );
+        assert!(matches!(reopened[0].what, What::Page(Page::Tail { .. })));
+    }
+
+    #[test]
+    fn a_failed_page_back_waits_for_the_notice_instead_of_looping() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, PAGE as usize);
+        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        assert!(matches!(back[0].what, What::Page(Page::Before { .. })));
+        assert!(fail(&mut store, &back[0]).is_empty(), "no retry");
+        assert!(
+            store.apply(Event::Transcript(T::Older)).is_empty(),
+            "no hot loop"
+        );
+        store.apply(Event::Transcript(T::Dismiss));
+        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        assert_eq!(back.len(), 1, "dismissing lets it page back again");
+
+        // Any page that lands clears the notice.
+        fail(&mut store, &back[0]);
+        let effects = store.apply(wake(&store, "mupu"));
+        drive(&mut store, effects, &all, PAGE as usize);
+        assert_eq!(notice(&store), None);
+        assert_eq!(reads(&store.apply(Event::Transcript(T::Older))).len(), 1);
+    }
+
+    #[test]
+    fn a_wake_racing_a_page_back_reads_forward_independently() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, PAGE as usize);
+        let next = store.transcript.open.as_ref().unwrap().next_offset;
+        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        let forward = store.apply(wake(&store, "mupu"));
+        assert!(matches!(
+            reads(&forward)[0].what,
+            What::Page(Page::From { .. })
+        ));
+        assert!(
+            reads(&store.apply(wake(&store, "mupu"))).is_empty(),
+            "queued"
+        );
+
+        // The page back lands first: it neither moves the forward cursor nor takes the queued wake.
+        let Read {
+            what: What::Page(page),
+            ..
+        } = &back[0]
+        else {
+            panic!()
+        };
+        let got = Got::Page(Box::new(serve(&all, page, PAGE as usize, "s1")));
+        let effects = store.apply(Event::Transcript(T::Read(back[0].clone(), Ok(got))));
+        assert!(reads(&effects).is_empty(), "{effects:?}");
+        assert_eq!(store.transcript.open.as_ref().unwrap().next_offset, next);
+        let pages = drive(&mut store, forward, &all, PAGE as usize);
+        assert_eq!(pages.len(), 2, "the queued wake reads once more: {pages:?}");
+    }
+
+    #[test]
+    fn a_tail_of_only_hidden_entries_keeps_reading_back() {
+        let mut all = history("mupu");
+        let end = all.last().unwrap().byte_offset;
+        let hidden = (1..=PAGE as u64 * 2).map(|i| Entry {
+            byte_offset: end + i,
+            kind: Kind::TurnDuration,
+            ..Entry::default()
+        });
+        all.extend(hidden);
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        let pages = drive(&mut store, effects, &all, PAGE as usize);
+        let backs = pages.iter().filter(|p| matches!(p, Page::Before { .. }));
+        assert!(backs.count() >= 2, "{pages:?}");
+        assert!(!items(&store).is_empty());
+    }
+
+    #[test]
+    fn a_message_to_the_open_agent_refreshes_its_detail() {
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &history("mupu"), PAGE as usize);
+        let to = |names: &[&str]| {
+            let to = names.iter().map(|n| n.to_string()).collect();
+            Wire::Message(crate::api::Message { to })
+        };
+        assert!(store.apply(frame(&store, to(&["riko"]))).is_empty());
+        let effects = store.apply(frame(&store, to(&["riko", "mupu"])));
+        assert!(matches!(
+            reads(&effects).as_slice(),
+            [Read {
+                what: What::Detail,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn zooming_out_drops_the_transcript_and_its_stream() {
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &history("mupu"), PAGE as usize);
+        let effects = store.apply(Event::Transcript(T::Hide));
+        assert!(store.transcript.open.is_none());
+        let unsubscribed =
+            |e: &Effect| matches!(e, Effect::Stream { agents, .. } if agents.is_empty());
+        assert!(
+            matches!(effects.as_slice(), [e] if unsubscribed(e)),
+            "{effects:?}"
+        );
+        assert!(store.apply(wake(&store, "mupu")).is_empty());
+        assert!(store.apply(Event::Transcript(T::Hide)).is_empty(), "once");
+        let reopened = reads(&open(&mut store, "mupu"));
+        assert!(matches!(reopened[0].what, What::Page(Page::Tail { .. })));
+    }
+
     #[test]
     fn a_reset_rereads_the_tail_and_stale_answers_are_dropped() {
         let all = history("mupu");
@@ -1259,19 +1482,33 @@ mod transcript_pages {
     }
 
     #[test]
-    fn a_path_resolves_and_opens_only_when_confident() {
+    fn a_path_opens_only_on_one_strong_candidate_from_complete_roots() {
         let mut store = loaded();
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &history("mupu"), PAGE as usize);
-        let effects = store.apply(Event::Transcript(T::OpenPath("src/x.rs:12".into())));
-        let Some(Effect::Fetch(Fetch::Transcript(read))) = effects.into_iter().next() else {
+        let lookup = |store: &mut Store| {
+            let effects = store.apply(Event::Transcript(T::OpenPath("src/x.rs:12".into())));
+            effects.into_iter().next()
+        };
+        // Off the board (the serve would reject `agent=`), then on it.
+        let Some(Effect::Fetch(Fetch::Transcript(read))) = lookup(&mut store) else {
             panic!()
         };
-        assert_eq!(read.what, What::Resolve("src/x.rs".into(), Some(12)));
+        assert_eq!(read.what, What::Resolve("src/x.rs".into(), Some(12), false));
+        let (generation, frame) = (store.stream, StreamEvent::Frame(Wire::Fleet(board())));
+        store.apply(Event::Stream {
+            generation,
+            event: frame,
+        });
+        let effects = lookup(&mut store);
+        let Some(Effect::Fetch(Fetch::Transcript(read))) = effects else {
+            panic!()
+        };
+        assert_eq!(read.what, What::Resolve("src/x.rs".into(), Some(12), true));
         let candidate = |tier: &str, score: f64| Candidate {
             root: "/home/u/repo/".into(),
             path: "src/x.rs".into(),
-            kind: "file".into(),
+            kind: if tier == "prefix" { "dir" } else { "file" }.into(),
             tier: tier.into(),
             score,
         };
@@ -1295,16 +1532,42 @@ mod transcript_pages {
             ),
             vec![opened.clone()]
         );
+        // Ambiguous, incomplete or merely fuzzy: no guess, a notice.
         let two = vec![candidate("suffix", 400.), candidate("suffix", 300.)];
-        assert_eq!(
-            answer(&mut store, two, vec![root("complete")]),
-            vec![opened],
-            "a confident top"
-        );
-        let weak = vec![candidate("fuzzy", 20.)];
-        assert!(answer(&mut store, weak, vec![root("failed")]).is_empty());
+        assert!(answer(&mut store, two, vec![root("complete")]).is_empty());
+        let one = || vec![candidate("exact", 900.)];
+        assert!(answer(&mut store, one(), vec![root("degraded")]).is_empty());
+        let fuzzy = vec![candidate("fuzzy", 9000.)];
+        assert!(answer(&mut store, fuzzy, vec![root("complete")]).is_empty());
         let t = store.transcript.open.as_ref().unwrap();
         assert_eq!(t.notice.as_deref(), Some("no single file matches src/x.rs"));
+
+        // VS Code opens a remote path without `:<line>` as a folder: a file gets line 1, a folder none.
+        let read = Read {
+            what: What::Resolve("src/x.rs".into(), None, true),
+            ..read
+        };
+        let answer = |store: &mut Store, candidates| {
+            let got = Got::Resolved(Resolved {
+                candidates,
+                roots: vec![root("complete")],
+            });
+            store.apply(Event::Transcript(T::Read(read.clone(), Ok(got))))
+        };
+        let file = |line| Effect::OpenFile {
+            path: "/home/u/repo/src/x.rs".into(),
+            line,
+        };
+        assert_eq!(answer(&mut store, one()), vec![file(Some(1))]);
+        assert_eq!(
+            answer(&mut store, vec![candidate("suffix", 1.)]),
+            vec![file(Some(1))]
+        );
+        let dir = vec![Candidate {
+            tier: "exact".into(),
+            ..candidate("prefix", 1.)
+        }];
+        assert_eq!(answer(&mut store, dir), vec![file(None)]);
     }
 
     fn all_items() -> Vec<(Kind, Item)> {
@@ -1418,13 +1681,10 @@ mod transcript_pages {
         let many = lubo.iter().find(|e| condense(e).len() == 3);
         assert!(many.is_some(), "several deliveries share an entry");
         assert_eq!(
-            transcript::clean("a <internal>x</internal>b <status>ok</status>"),
+            condense::clean("a <internal>x</internal>b <status>ok</status>"),
             "a b ok"
         );
-        assert_eq!(
-            transcript::clean("shown<internal>hidden to the end"),
-            "shown"
-        );
+        assert_eq!(condense::clean("shown<internal>hidden to the end"), "shown");
     }
 
     #[test]

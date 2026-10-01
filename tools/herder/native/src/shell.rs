@@ -20,7 +20,10 @@ use crate::local::{self, Disk};
 use crate::store::sync::Step;
 use crate::store::transcript::{self, Got, What};
 use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
-use crate::views::{Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, markdown, theme};
+use crate::views::transcript as transcript_view;
+use crate::views::{
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, markdown, space, theme,
+};
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
@@ -73,9 +76,11 @@ impl Shell {
             }
         })
         .detach();
+        let mut ui = lens::Ui::new(cx);
+        transcript_view::set_web(&mut ui, &base_url());
         Shell {
             store,
-            ui: lens::Ui::new(cx),
+            ui,
             client: Client::new(base_url()),
             disk: Arc::new(disk),
             tx,
@@ -106,7 +111,28 @@ impl Host for Shell {
             }
         );
         let scale = self.store.prefs.text_scale;
+        let start = |s: &Store| {
+            s.transcript
+                .open
+                .as_ref()
+                .filter(|t| t.at_start())
+                .is_some()
+        };
+        let paging = !start(&self.store);
         let effects = self.store.apply(event);
+        if let Some(t) = self
+            .store
+            .transcript
+            .open
+            .as_ref()
+            .filter(|t| paging && t.at_start())
+        {
+            harness::metric(format!(
+                "transcript {}: start reached, {} rows",
+                t.agent,
+                t.items.len()
+            ));
+        }
         if self.store.prefs.text_scale != scale {
             theme::apply(self.store.prefs.text_scale, cx);
         }
@@ -150,6 +176,13 @@ impl Shell {
                     self.later(after_ms, Event::Sync { ns, step }, cx)
                 }
                 Effect::RetryViewer { after_ms } => self.later(after_ms, Event::ViewerRetry, cx),
+                Effect::RetryTranscript {
+                    generation,
+                    after_ms,
+                } => {
+                    let step = transcript::Step::Retry(generation);
+                    self.later(after_ms, Event::Transcript(step), cx)
+                }
                 Effect::Persist(Persist::Outbox) => save_outbox = true,
                 Effect::Persist(Persist::Prefs) => {
                     self.save_later(local::PREFS, PREFS_COALESCE, cx)
@@ -247,7 +280,10 @@ fn run_fetch(client: &Client, fetch: Fetch) -> Event {
             let result = match &read.what {
                 What::Page(page) => client.entries(agent, page).map(|e| Got::Page(Box::new(e))),
                 What::Detail => client.agent(agent).map(|d| Got::Detail(Box::new(d))),
-                What::Resolve(query, _) => client.resolve(query, agent).map(Got::Resolved),
+                What::Resolve(query, _, scoped) => {
+                    let scope = scoped.then_some(agent);
+                    client.resolve(query, scope).map(Got::Resolved)
+                }
             };
             if let (What::Page(page), Ok(Got::Page(e))) = (&read.what, &result) {
                 let ms = started.elapsed().as_secs_f64() * 1e3;
@@ -362,8 +398,13 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
+                let s = shell.clone();
+                let probe = harness::Probe {
+                    shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
+                    link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
+                };
                 window
-                    .spawn(cx, async move |cx| harness::run(script, cx).await)
+                    .spawn(cx, async move |cx| harness::run(script, probe, cx).await)
                     .detach();
             }
         });

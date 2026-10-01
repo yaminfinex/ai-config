@@ -6,10 +6,12 @@
 //! `native-kona`) when it is unique and not itself a name, matched as a whole run of letters, digits,
 //! `_`, `@` and `-` equal to `@?alias`, and never beside a path separator or a file extension.
 //! Paths must look like paths (`path_like`); an inline code span that is one path-like token is linked
-//! whole. Nothing inside a fenced
-//! block, an existing link or a URL is linked, and a mention inside code is not either.
+//! whole. Only prose text is linked (see `link`), never code, an existing link or a URL.
 
+use markdown::mdast::Node;
+use markdown::{ParseOptions, to_mdast};
 use std::collections::HashMap;
+use std::ops::Range;
 
 pub const AGENT: &str = "herder-agent:";
 pub const PATH: &str = "herder-path:";
@@ -46,80 +48,70 @@ impl Mentions {
     }
 }
 
-/// `markdown` with mentions and paths turned into `herder-agent:` / `herder-path:` links.
-pub fn link(markdown: &str, mentions: &Mentions) -> String {
-    let mut out = String::with_capacity(markdown.len() + 64);
-    let mut fence: Option<&str> = None;
-    for line in markdown.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let marker = ["```", "~~~"].into_iter().find(|m| trimmed.starts_with(m));
-        let indent = line.len() - trimmed.len();
-        match (fence, marker) {
-            (Some(open), Some(m)) if m == open && indent < 4 => fence = None,
-            (None, Some(m)) if indent < 4 => fence = Some(m),
-            (None, _) if !indented_code(line) => {
-                inline(line, mentions, &mut out);
-                continue;
-            }
-            _ => {}
-        }
-        out.push_str(line);
+/// `markdown` with mentions and paths turned into `herder-agent:` / `herder-path:` links, read off the
+/// parse tree (the `markdown` crate the kit renders with), so only prose text and code spans are touched:
+/// fenced and indented code, existing and reference links, definitions and HTML keep their source. A
+/// mermaid fence becomes a link to the agent in herder web (`web`), which draws it.
+pub fn link(markdown: &str, mentions: &Mentions, web: &str) -> String {
+    let Ok(root) = to_mdast(markdown, &ParseOptions::gfm()) else {
+        return markdown.to_string();
+    };
+    let mut edits = Vec::new();
+    visit(&root, markdown, mentions, web, &mut edits);
+    let (mut out, mut copied) = (String::with_capacity(markdown.len() + 64), 0);
+    for (range, text) in edits {
+        out.push_str(&markdown[copied..range.start]);
+        out.push_str(&text);
+        copied = range.end;
     }
+    out.push_str(&markdown[copied..]);
     out
 }
 
-/// Four spaces or a tab of indent, not continuing a list item.
-fn indented_code(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    let indent = &line[..line.len() - trimmed.len()];
-    let list = trimmed.starts_with(['-', '*', '+'])
-        || trimmed
-            .split_once(". ")
-            .is_some_and(|(n, _)| n.parse::<u32>().is_ok());
-    (indent.contains('\t') || indent.len() >= 4) && !list
-}
-
-/// One prose line: code spans, links and URLs kept as they are; the words between linked.
-fn inline(line: &str, mentions: &Mentions, out: &mut String) {
-    let mut rest = line;
-    while !rest.is_empty() {
-        let at = rest.find(['`', '[', '<']).unwrap_or(rest.len());
-        words(&rest[..at], mentions, out);
-        rest = &rest[at..];
-        let Some(first) = rest.chars().next() else {
-            break;
-        };
-        let end = match first {
-            '`' => code_span(rest, out),
-            '[' => rest
-                .find("](")
-                .and_then(|m| rest[m..].find(')').map(|c| m + c + 1)),
-            _ => rest.find('>').map(|e| e + 1),
-        };
-        let end = end.unwrap_or(1);
-        if first != '`' || end == 1 {
-            out.push_str(&rest[..end]);
+/// Collect `(source range, replacement)` in document order.
+fn visit(node: &Node, src: &str, m: &Mentions, web: &str, edits: &mut Vec<(Range<usize>, String)>) {
+    let Some(range) = node.position().map(|p| p.start.offset..p.end.offset) else {
+        return;
+    };
+    let raw = &src[range.clone()];
+    match node {
+        Node::Text(_) => {
+            let mut out = String::with_capacity(raw.len());
+            words(raw, m, &mut out);
+            if out != raw {
+                edits.push((range, out));
+            }
         }
-        rest = &rest[end..];
+        // A code span that is one path-like token links whole; a mention in code never does.
+        Node::InlineCode(code) => {
+            let token = code.value.trim();
+            if !token.contains(char::is_whitespace) && path_like(token, true) {
+                edits.push((range, format!("[{raw}](<{PATH}{token}>)")));
+            }
+        }
+        Node::Code(code) if code.lang.as_deref() == Some("mermaid") => {
+            edits.push((range, format!("[view diagram in web ↗](<{web}>)")));
+        }
+        Node::Code(_) | Node::Html(_) | Node::Link(_) | Node::LinkReference(_) => {}
+        Node::Definition(_) | Node::Image(_) | Node::ImageReference(_) => {}
+        _ => {
+            for child in node.children().into_iter().flatten() {
+                visit(child, src, m, web, edits);
+            }
+        }
     }
 }
 
-/// A code span at the start of `text`: pushed (linked when it is one path-like token) and its length
-/// returned; `None` when the backticks never close.
-fn code_span(text: &str, out: &mut String) -> Option<usize> {
-    let ticks = text.len() - text.trim_start_matches('`').len();
-    let fence = &text[..ticks];
-    let close = text[ticks..].find(fence)? + ticks;
-    let end = close + ticks;
-    let body = &text[ticks..close];
-    let token = body.trim();
-    let one = !token.is_empty() && !token.contains(char::is_whitespace) && !token.contains('`');
-    if one && path_like(token, true) {
-        out.push_str(&format!("[{}](<{PATH}{token}>)", &text[..end]));
-    } else {
-        out.push_str(&text[..end]);
+/// Where a clicked link goes: a herder link as it is, an authored relative or absolute path (no scheme)
+/// as a path to resolve, a web URL to the browser (`None` here); anything else nowhere.
+pub fn route(url: &str) -> Option<String> {
+    if url.starts_with(AGENT) || url.starts_with(PATH) {
+        return Some(url.to_string());
     }
-    Some(end)
+    let scheme = url
+        .split_once(':')
+        .is_some_and(|(s, _)| !s.contains('/') && s.len() > 1);
+    (!scheme && !url.starts_with('#') && !url.is_empty()).then(|| format!("{PATH}{url}"))
 }
 
 const DELIMITERS: &[char] = &[

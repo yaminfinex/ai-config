@@ -9,21 +9,17 @@
 //! is tagged `(agent, generation)` and a stale answer is dropped; a `reset` or `rewindow` bumps the
 //! generation, clears the rows and reads the tail again.
 //!
-//! One transcript is live at a time, the zoomed agent's. Entry wakes coalesce without a timer: one
+//! One transcript is live at a time, the zoomed agent's, and none on the lens. Entry wakes coalesce without a timer: one
 //! forward read in flight, and a wake meanwhile asks for one more when it lands.
 
-use super::{Effect, Fetch, Store};
+use super::{Effect, Fetch, Store, condense};
 use crate::api::client::Page;
-use crate::api::{AgentDetail, Entries, Entry, Kind, Resolved};
-use serde_json::Value;
+use crate::api::{AgentDetail, Candidate, Entries, Entry, Kind, Resolved};
 use std::collections::{BTreeMap, HashMap};
 use std::mem::{replace, take};
 
 /// Entries per read. The server caps a window at 500; smaller pages keep each request fast.
 pub const PAGE: u32 = 100;
-/// Characters kept per tool line and result, and per thinking pill.
-const LINE: usize = 200;
-const THINKING: usize = 2000;
 
 pub type Key = (u64, u16);
 
@@ -75,8 +71,9 @@ pub struct Read {
 pub enum What {
     Page(Page),
     Detail,
-    /// A mentioned path, its `:line` split off.
-    Resolve(String, Option<u32>),
+    /// A mentioned path, its `:line` split off, and whether to scope it to the agent (`agent=`): only
+    /// for a live agent, as the serve rejects names off the roster.
+    Resolve(String, Option<u32>, bool),
 }
 
 #[derive(Clone, Debug)]
@@ -93,7 +90,9 @@ pub enum Step {
         space: String,
         agent: String,
     },
-    /// The view laid out its first rows: read the page before.
+    /// The zoom closed: drop the transcript and stop streaming its agents.
+    Hide,
+    /// The viewport neared the first rows: read the page before.
     Older,
     Read(Read, Result<Got, String>),
     /// A clicked path (`src/x.rs:12`): resolve it, then open it.
@@ -101,6 +100,8 @@ pub enum Step {
     /// Open the agent's working directory.
     OpenCwd,
     Dismiss,
+    /// A failed tail, forward or detail read's backoff ran out (for this generation): read again.
+    Retry(u64),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -120,9 +121,15 @@ pub struct Transcript {
     detail_reading: bool,
     detail_again: bool,
     pub detail: Option<AgentDetail>,
-    /// The last failed read, or a path that resolved to nothing to open.
+    /// The last failed read, or a path that resolved to nothing to open. While set, paging back
+    /// waits: `Dismiss`, a `hello` or a landed page clear it.
     pub notice: Option<String>,
+    /// Consecutive failed tail, forward or detail reads, each retried after a backoff up to `RETRIES`.
+    failures: u32,
 }
+
+/// Retries of a failed tail, forward or detail read, after 1, 2 and 4 s; then a `hello` or a wake.
+const RETRIES: u32 = 3;
 
 /// The open transcript, the stream's `agents=` set, and the counter behind every generation.
 #[derive(Clone, Debug, Default)]
@@ -149,7 +156,13 @@ impl Store {
             out.push(Effect::Stream { generation, agents });
         }
         let live = &mut self.transcript;
-        if live.open.as_ref().is_none_or(|t| t.agent != agent) {
+        // A transcript whose tail never arrived (and is not being read) opens again.
+        let stuck = |t: &Transcript| !t.loaded() && !t.reading;
+        if live
+            .open
+            .as_ref()
+            .is_none_or(|t| t.agent != agent || stuck(t))
+        {
             live.generations += 1;
             let agent = agent.to_string();
             let mut t = Transcript {
@@ -165,10 +178,22 @@ impl Store {
         if let Step::Show { space, agent } = &step {
             return self.show(space, agent, out);
         }
-        let live = &mut self.transcript;
+        if let Step::Hide = step {
+            self.transcript.open = None;
+            if !take(&mut self.transcript.subscribed).is_empty() {
+                self.stream += 1;
+                let generation = self.stream;
+                out.push(Effect::Stream {
+                    generation,
+                    agents: Vec::new(),
+                });
+            }
+            return;
+        }
+        let (live, agents) = (&mut self.transcript, &self.fleet.agents);
         let Some(t) = live.open.as_mut() else { return };
         match step {
-            Step::Show { .. } => {}
+            Step::Show { .. } | Step::Hide => {}
             Step::Older => t.older(out),
             Step::Read(read, _) if read.agent != t.agent || read.generation != t.generation => {}
             Step::Read(_, Ok(Got::Page(e))) if e.reset.is_some() => {
@@ -178,13 +203,23 @@ impl Store {
             Step::Read(read, result) => t.answer(read.what, result, out),
             Step::OpenPath(mention) => {
                 let (path, line) = split_line(&mention);
-                t.read(What::Resolve(path, line), out);
+                let scoped = agents.contains_key(&t.agent) && !t.retired();
+                t.read(What::Resolve(path, line, scoped), out);
             }
             Step::OpenCwd => {
                 let cwd = t.detail.as_ref().and_then(|d| d.cwd.clone());
                 out.extend(cwd.map(|path| Effect::OpenFile { path, line: None }));
             }
             Step::Dismiss => t.notice = None,
+            Step::Retry(generation) if generation == t.generation => {
+                if take(&mut t.again) {
+                    t.forward(out);
+                }
+                if take(&mut t.detail_again) {
+                    t.refresh(out);
+                }
+            }
+            Step::Retry(_) => {}
         }
     }
 
@@ -192,7 +227,18 @@ impl Store {
     pub(super) fn transcript_wake(&mut self, agent: Option<&str>, out: &mut Vec<Effect>) {
         let open = self.transcript.open.as_mut();
         if let Some(t) = open.filter(|t| agent.is_none_or(|a| a == t.agent)) {
+            if agent.is_none() {
+                (t.notice, t.failures) = (None, 0);
+            }
             t.forward(out);
+            t.refresh(out);
+        }
+    }
+
+    /// A `message` frame: a message addressed to the open agent may now be queued for it.
+    pub(super) fn transcript_message(&mut self, to: &[String], out: &mut Vec<Effect>) {
+        let open = self.transcript.open.as_mut();
+        if let Some(t) = open.filter(|t| to.contains(&t.agent)) {
             t.refresh(out);
         }
     }
@@ -271,7 +317,7 @@ impl Transcript {
         let (Some(session), Some(offset)) = (self.session.clone(), self.prev_offset) else {
             return;
         };
-        if offset > 0 && !replace(&mut self.back, true) {
+        if offset > 0 && self.notice.is_none() && !replace(&mut self.back, true) {
             let page = Page::Before {
                 offset,
                 session,
@@ -294,21 +340,44 @@ impl Transcript {
         match (what, result) {
             (What::Page(page), Ok(Got::Page(e))) => self.page(page, *e, out),
             (What::Detail, Ok(Got::Detail(d))) => {
-                (self.detail, self.detail_reading) = (Some(*d), false);
+                (self.detail, self.detail_reading, self.failures) = (Some(*d), false, 0);
                 if take(&mut self.detail_again) {
                     self.refresh(out);
                 }
             }
-            (What::Resolve(query, line), Ok(Got::Resolved(r))) => match pick(&r, &query) {
-                Some(path) => out.push(Effect::OpenFile { path, line }),
+            (What::Resolve(query, line, _), Ok(Got::Resolved(r))) => match pick(&r) {
+                // VS Code opens a remote path as a folder unless it ends in `:<line>`.
+                Some((path, file)) => {
+                    let line = if file { line.or(Some(1)) } else { None };
+                    out.push(Effect::OpenFile { path, line });
+                }
                 None => self.notice = Some(format!("no single file matches {query}")),
             },
             (what, result) => {
-                match what {
-                    What::Page(Page::Before { .. }) => self.back = false,
-                    What::Page(_) => self.reading = false,
-                    What::Detail => self.detail_reading = false,
-                    What::Resolve(..) => {}
+                // A failed tail, forward or detail read is owed again (with any wake queued behind
+                // it) after a backoff; a failed page back waits until the notice clears.
+                let retry = match what {
+                    What::Page(Page::Before { .. }) => {
+                        self.back = false;
+                        false
+                    }
+                    What::Page(_) => {
+                        (self.reading, self.again) = (false, true);
+                        true
+                    }
+                    What::Detail => {
+                        (self.detail_reading, self.detail_again) = (false, true);
+                        true
+                    }
+                    What::Resolve(..) => false,
+                };
+                if retry && self.failures < RETRIES {
+                    let (generation, after_ms) = (self.generation, 1000 << self.failures);
+                    self.failures += 1;
+                    out.push(Effect::RetryTranscript {
+                        generation,
+                        after_ms,
+                    });
                 }
                 self.notice = result.err().map(|e| format!("could not read: {e}"));
             }
@@ -327,7 +396,12 @@ impl Transcript {
                 (self.back, self.prev_offset) = (false, Some(e.prev_offset.unwrap_or(0)));
             }
         }
+        (self.notice, self.failures) = (None, 0);
         e.entries.into_iter().for_each(|entry| self.ingest(entry));
+        // A window of only hidden entries shows nothing: keep reading back until rows or the start.
+        if self.items.is_empty() && !matches!(page, Page::From { .. }) {
+            self.older(out);
+        }
         if !matches!(page, Page::Before { .. }) {
             self.reading = false;
             // More may be waiting: a wake came meanwhile, or a catch-up filled its window.
@@ -339,17 +413,11 @@ impl Transcript {
 
     fn ingest(&mut self, entry: Entry) {
         let (offset, p) = (entry.byte_offset, &entry.payload);
-        let id = str_at(p, "tool_use_id").to_string();
+        let id = condense::str_at(p, "tool_use_id").to_string();
         match entry.kind {
             Kind::ToolUse => {
-                let name = str_at(p, "name").to_string();
-                let summary = clip(&tool_summary(&name, &p["input"]), LINE);
-                // A page read twice keeps the result it already paired.
-                let kept = match self.items.get(&(offset, 0)) {
-                    Some(Item::Tool { result, .. }) => result.clone(),
-                    _ => None,
-                };
-                let result = self.orphans.remove(&id).or(kept);
+                let (name, summary) = condense::tool_call(p);
+                let result = self.orphans.remove(&id);
                 let tool = Item::Tool {
                     name,
                     summary,
@@ -359,16 +427,14 @@ impl Transcript {
                 self.calls.insert(id, (offset, 0));
             }
             Kind::ToolResult => {
-                let text = clip(first_line(&text_of(&p["content"])), LINE);
-                let error = p["is_error"].as_bool().unwrap_or(false);
-                let result = ToolResult { error, text };
+                let result = condense::tool_result(p);
                 match self.calls.get(&id).and_then(|k| self.items.get_mut(k)) {
                     Some(Item::Tool { result: slot, .. }) => *slot = Some(result),
                     _ => drop(self.orphans.insert(id, result)),
                 }
             }
             _ => {
-                for (sub, item) in condense(&entry).into_iter().enumerate() {
+                for (sub, item) in condense::condense(&entry).into_iter().enumerate() {
                     self.items.insert((offset, sub as u16), item);
                 }
             }
@@ -376,148 +442,17 @@ impl Transcript {
     }
 }
 
-/// The items one entry yields in compact mode, as web's clean view (tool pairs are `ingest`'s).
-pub fn condense(entry: &Entry) -> Vec<Item> {
-    let p = &entry.payload;
-    let text = text_of(&p["message"]["content"]);
-    let item = match entry.kind {
-        Kind::HumanPrompt => Item::Prompt(text),
-        Kind::HcomDelivery => {
-            let deliveries = p["deliveries"].as_array().into_iter().flatten();
-            return deliveries.map(delivery).collect();
-        }
-        Kind::TaskNotification => {
-            let summary = between(&text, "<summary>", "</summary>").unwrap_or(first_line(&text));
-            Item::TaskNotification(summary.trim().to_string())
-        }
-        // A slash command; its output (the next entry) joins it in web, so shows nothing here.
-        Kind::CommandStdout => match between(&text, "<command-name>", "</command-name>") {
-            Some(name) => {
-                let args = between(&text, "<command-args>", "</command-args>").unwrap_or("");
-                Item::SystemChip(format!("{name} {}", clip(args.trim(), 80)))
-            }
-            None => return Vec::new(),
-        },
-        Kind::CompactDivider => {
-            let m = &p["compactMetadata"];
-            let k = |key: &str| m[key].as_u64().map(|n| format!("{}k", n / 1000));
-            Item::CompactDivider(match (k("preTokens"), k("postTokens")) {
-                (Some(pre), Some(post)) => {
-                    let trigger = m["trigger"].as_str().unwrap_or("auto");
-                    format!("context compacted ({trigger}, {pre} → {post} tokens)")
-                }
-                _ => "compaction summary".into(),
-            })
-        }
-        Kind::AssistantText if p["isApiErrorMessage"].as_bool() == Some(true) => Item::Error(text),
-        Kind::AssistantText => Item::Assistant {
-            markdown: clean(&text),
-        },
-        Kind::Thinking => return vec![Item::Thinking(clip(&text, THINKING))],
-        Kind::SystemChip => Item::SystemChip(system_chip(p)),
-        Kind::Unknown => {
-            let label = Some(clip(first_line(&text), 80)).filter(|l| !l.is_empty());
-            Item::SystemChip(label.unwrap_or_else(|| "unrecognized entry".into()))
-        }
-        // Carriers, telemetry, injected context and tool pairs.
-        Kind::HcomDeliveryStub | Kind::InjectedSystem | Kind::TurnDuration => return Vec::new(),
-        Kind::ToolUse | Kind::ToolResult => return Vec::new(),
-    };
-    let empty = match &item {
-        Item::Prompt(s) | Item::SystemChip(s) | Item::Assistant { markdown: s } => {
-            s.trim().is_empty()
-        }
-        _ => false,
-    };
-    if empty { Vec::new() } else { vec![item] }
-}
-
-fn delivery(d: &Value) -> Item {
-    let (sender, raw) = (str_at(d, "sender").to_string(), str_at(d, "text"));
-    let quiet = sender == "[hcom-launcher]" || str_at(d, "intent") == "ack";
-    let (body, operator) = (strip_operator(raw), strip_operator(raw).is_some());
-    let text = body.unwrap_or(raw).trim_end().trim_end_matches(" |");
-    let text = text.trim().to_string();
-    Item::Delivery {
-        sender,
-        text,
-        operator,
-        quiet,
-    }
-}
-
-/// The message inside the web operator envelope, current and prerelease forms.
-fn strip_operator(text: &str) -> Option<&str> {
-    const FORMS: [(&str, &str); 2] = [
-        (
-            "[HERDER_WEB_OPERATOR_NOTE_BEGIN]",
-            "[HERDER_WEB_OPERATOR_NOTE_END]",
-        ),
-        (
-            "<<<HERDER_WEB_OPERATOR_NOTE>>>",
-            "<<<END_HERDER_WEB_OPERATOR_NOTE>>>",
-        ),
-    ];
-    FORMS.iter().find_map(|(begin, end)| {
-        let rest = text.strip_prefix(begin)?;
-        Some(rest[rest.find(end)? + end.len()..].trim_start_matches('\n'))
-    })
-}
-
-/// Web's compact view shows only these system entries (an empty label hides the rest).
-fn system_chip(p: &Value) -> String {
-    let to = p["fallbackModel"].as_str().map(|m| format!(" to {m}"));
-    let to = to.unwrap_or_default();
-    match str_at(p, "subtype") {
-        "scheduled_task_fire" => str_at(p, "content").to_string(),
-        "model_refusal_fallback" => format!("model switched{to} — safeguards flagged a message"),
-        "model_consent_fallback" => format!("model switched{to} — consent required"),
-        _ => String::new(),
-    }
-}
-
-/// `<internal>…</internal>` removed (an unclosed one hides the rest) and `<status>` tags unwrapped.
-pub fn clean(text: &str) -> String {
-    const CLOSE: &str = "</internal>";
-    let (mut out, mut rest) = (String::with_capacity(text.len()), text);
-    while let Some(at) = rest.find("<internal>") {
-        out.push_str(&rest[..at]);
-        let end = rest[at..].find(CLOSE).map(|e| at + e + CLOSE.len());
-        rest = &rest[end.unwrap_or(rest.len())..];
-    }
-    out.push_str(rest);
-    let out = out.replace("<status>", "").replace("</status>", "");
-    out.trim().to_string()
-}
-
-/// Web's one-line tool summary: the command or file when there is one, else the first input value.
-fn tool_summary(name: &str, input: &Value) -> String {
-    let keys: &[&str] = match name {
-        "Bash" => &["command"],
-        "Edit" | "Write" | "Read" => &["file_path", "path", "file"],
-        _ => &[],
-    };
-    let preferred = keys.iter().map(|k| &input[k]);
-    let values = preferred.chain(input.as_object().into_iter().flat_map(|o| o.values()));
-    let mut texts = values.map(|v| text_of(v).split_whitespace().collect::<Vec<_>>().join(" "));
-    let found = texts.find(|t| !t.is_empty());
-    found.unwrap_or_else(|| "no input summary".into())
-}
-
-/// The file to open: the one exact or suffix candidate when every root answered completely, else a
-/// top candidate web calls confident (not fuzzy, or fuzzy scoring 20 per query character).
-fn pick(r: &Resolved, query: &str) -> Option<String> {
+/// What to open, and whether it is a file, as web's auto-open: every root answered completely and there
+/// is exactly one exact or suffix candidate. Anything else is a notice (Rung 1 has no chooser).
+fn pick(r: &Resolved) -> Option<(String, bool)> {
     let complete = r.roots.iter().all(|root| root.status == "complete");
-    let (all, bar) = (&r.candidates, 20.0 * query.chars().count() as f64);
-    let mut strong = all
-        .iter()
-        .filter(|c| c.tier == "exact" || c.tier == "suffix");
-    let only = strong
+    let strong = |c: &&Candidate| c.tier == "exact" || c.tier == "suffix";
+    let mut strong = r.candidates.iter().filter(strong);
+    let c = strong
         .next()
-        .filter(|_| strong.next().is_none() && complete);
-    let top = all.first().filter(|c| c.tier != "fuzzy" || c.score >= bar);
-    let c = only.or(top)?;
-    Some(format!("{}/{}", c.root.trim_end_matches('/'), c.path))
+        .filter(|_| strong.next().is_none() && complete)?;
+    let path = format!("{}/{}", c.root.trim_end_matches('/'), c.path);
+    Some((path, c.kind == "file"))
 }
 
 /// `src/x.rs:12` or `src/x.rs:12:4` → the path and its line.
@@ -530,40 +465,5 @@ pub fn split_line(mention: &str) -> (String, Option<u32>) {
             (path.to_string(), line.parse().ok())
         }
         _ => (mention.to_string(), None),
-    }
-}
-
-/// A message's text: a string, or each block's `text` (or `thinking`), joined.
-fn text_of<'a>(v: &'a Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Array(blocks) => {
-            let text = |b: &'a Value| b["text"].as_str().or(b["thinking"].as_str());
-            let texts: Vec<&str> = blocks.iter().filter_map(text).collect();
-            texts.join("\n")
-        }
-        Value::Null | Value::Object(_) => String::new(),
-        other => other.to_string(),
-    }
-}
-
-fn str_at<'a>(v: &'a Value, key: &str) -> &'a str {
-    v[key].as_str().unwrap_or("")
-}
-
-fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
-    let rest = &text[text.find(open)? + open.len()..];
-    Some(&rest[..rest.find(close)?])
-}
-
-fn first_line(text: &str) -> &str {
-    let mut lines = text.lines().map(str::trim);
-    lines.find(|l| !l.is_empty()).unwrap_or("")
-}
-
-fn clip(text: &str, max: usize) -> String {
-    match text.char_indices().nth(max) {
-        Some((at, _)) => format!("{}…", &text[..at]),
-        None => text.to_string(),
     }
 }

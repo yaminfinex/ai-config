@@ -10,6 +10,7 @@
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
 //! - `transcript`: entries → compact items, paging cursors, tool/result pairing (U3).
 
+pub mod condense;
 pub mod fleet;
 pub mod notes;
 pub mod spaces;
@@ -160,6 +161,11 @@ pub enum Effect {
     /// Dispatch `Event::Sync { ns, step: Step::Retry }` after this long.
     Retry {
         ns: Ns,
+        after_ms: u64,
+    },
+    /// Dispatch `Event::Transcript(Step::Retry(generation))` after this long.
+    RetryTranscript {
+        generation: u64,
         after_ms: u64,
     },
     /// Dispatch `Event::ViewerRetry` after this long.
@@ -338,6 +344,7 @@ impl Store {
             }
             Wire::Entry { agent, .. } => self.transcript_wake(Some(&agent), out),
             Wire::Rewindow(r) => self.transcript_rewindow(&r.agent, out),
+            Wire::Message(m) => self.transcript_message(&m.to, out),
             Wire::Ping | Wire::Other(_) => {}
         }
     }

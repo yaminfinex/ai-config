@@ -61,7 +61,11 @@ fn zooming_in_views_the_agent_needing_you_and_tabs_view_the_next() {
         "wraps"
     );
 
-    assert!(space::act(&store, &mut ui, Zoomed::Out).is_empty());
+    let hide = |events: Vec<Event>| matches!(events.as_slice(), [Event::Transcript(_)]);
+    assert!(
+        hide(space::act(&store, &mut ui, Zoomed::Out)),
+        "the transcript goes"
+    );
     assert_eq!(zoomed(&ui), None);
     let leaving = ui.anim.as_ref().and_then(|a| a.leaving());
     assert_eq!(
@@ -125,7 +129,8 @@ fn membership_changing_while_zoomed() {
 
     // The space itself goes: any zoom key morphs back to the lens.
     store.spaces.remove(at);
-    assert!(space::act(&store, &mut ui, Zoomed::Space(1)).is_empty());
+    let events = space::act(&store, &mut ui, Zoomed::Space(1));
+    assert!(matches!(events.as_slice(), [Event::Transcript(_)]));
     assert_eq!(zoomed(&ui), None);
 }
 
@@ -170,13 +175,13 @@ fn placing_the_implicit_first_selection_keeps_it_selected() {
 }
 
 mod links {
-    use crate::views::markdown::{Mentions, link, path_like, vscode_url};
+    use crate::views::markdown::{Mentions, link, path_like, route, vscode_url};
+
+    const WEB: &str = "http://h:4400/agents/riko";
 
     fn linked(text: &str) -> String {
-        link(
-            text,
-            &Mentions::new(["native-kona", "native-bozo", "riko", "orch-lega"]),
-        )
+        let names = ["native-kona", "native-bozo", "riko", "orch-lega"];
+        link(text, &Mentions::new(names), WEB)
     }
 
     #[test]
@@ -217,6 +222,41 @@ mod links {
             linked("[riko](https://x.y/src/a/b)"),
             "[riko](https://x.y/src/a/b)"
         );
+        // The parser's boundaries: a longer fence holds a shorter one, a code span may span lines, a
+        // reference link keeps its syntax.
+        let long = "````md\n```\nriko src/a/b.rs\n````\nriko\n";
+        assert_eq!(
+            linked(long),
+            "````md\n```\nriko src/a/b.rs\n````\n[riko](herder-agent:riko)\n"
+        );
+        let span = "a `riko\nsrc/a/b.rs` b";
+        assert_eq!(linked(span), span);
+        let reference = "see [riko][ref]\n\n[ref]: https://x.y\n";
+        assert_eq!(linked(reference), reference);
+    }
+
+    #[test]
+    fn mermaid_links_to_web_and_authored_paths_route_to_open_path() {
+        let diagram = "before\n\n```mermaid\ngraph TD; a-->b\n```\n";
+        assert_eq!(
+            linked(diagram),
+            format!("before\n\n[view diagram in web ↗](<{WEB}>)\n")
+        );
+        assert_eq!(
+            route("docs/plan.md").as_deref(),
+            Some("herder-path:docs/plan.md")
+        );
+        assert_eq!(
+            route("/etc/hosts").as_deref(),
+            Some("herder-path:/etc/hosts")
+        );
+        assert_eq!(
+            route("herder-agent:riko").as_deref(),
+            Some("herder-agent:riko")
+        );
+        for elsewhere in ["https://x.y/a", "mailto:a@b", "#heading", ""] {
+            assert_eq!(route(elsewhere), None, "{elsewhere}");
+        }
     }
 
     #[test]

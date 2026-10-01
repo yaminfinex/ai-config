@@ -17,8 +17,8 @@
 
 use crate::views::{POINTER_MOVES, PULSE_PAINTS};
 use gpui_kit::{
-    AsyncWindowContext, Keystroke, Modifiers, MouseMoveEvent, Pixels, PlatformInput, Size, point,
-    px, size,
+    Action, App, AsyncWindowContext, Keystroke, Modifiers, MouseMoveEvent, Pixels, PlatformInput,
+    Size, point, px, size,
 };
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
@@ -94,7 +94,15 @@ fn cpu_s() -> f64 {
     m.parse::<f64>().unwrap_or(0.0) * 60.0 + s.parse::<f64>().unwrap_or(0.0)
 }
 
-pub async fn run(script: String, cx: &mut AsyncWindowContext) {
+/// What the harness asks the app; the shell answers, so the harness knows no views.
+pub struct Probe {
+    /// The zoomed agent (`name`, or `name preview`), for `expect:`.
+    pub shown: Box<dyn Fn(&App) -> String>,
+    /// The action a click on a transcript link dispatches, for `link:`.
+    pub link: fn(&str) -> Box<dyn Action>,
+}
+
+pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
     let shot_dir = std::env::var("HERDER_NATIVE_SHOT_DIR").unwrap_or_else(|_| ".".into());
     let mut failed = false;
     let mut fail = |what: String| {
@@ -159,12 +167,12 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
             // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
             "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
             "link" => {
-                let link = crate::views::transcript::OpenLink(arg.to_string().into());
-                let _ = cx.update(|window, cx| window.dispatch_action(Box::new(link), cx));
+                let link = (probe.link)(arg);
+                let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
                 metric(format!("link {arg}"));
             }
             "expect" => {
-                let shown = crate::views::transcript::SHOWN.lock().unwrap().clone();
+                let shown = cx.update(|_, cx| (probe.shown)(cx)).unwrap_or_default();
                 match shown == arg.replace('+', " ") {
                     true => metric(format!("expect {arg}: ok")),
                     false => fail(format!("expect {arg}: the zoom shows `{shown}`")),

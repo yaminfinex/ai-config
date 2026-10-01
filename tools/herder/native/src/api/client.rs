@@ -163,9 +163,14 @@ impl Client {
         Ok(req.call()?.into_json()?)
     }
 
-    /// `GET /api/resolve?q=&agent=`: where a path mentioned in `agent`'s transcript lives.
-    pub fn resolve(&self, q: &str, agent: &str) -> Result<Resolved, Error> {
-        let req = self.get("/api/resolve").query("q", q).query("agent", agent);
+    /// `GET /api/resolve?q=&agent=`: where a path mentioned in `agent`'s transcript lives (unscoped
+    /// for an agent off the roster).
+    pub fn resolve(&self, q: &str, agent: Option<&str>) -> Result<Resolved, Error> {
+        let req = self.get("/api/resolve").query("q", q);
+        let req = match agent {
+            Some(agent) => req.query("agent", agent),
+            None => req,
+        };
         Ok(req.call()?.into_json()?)
     }
 

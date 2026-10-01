@@ -8,21 +8,19 @@
 //! shell handles: an agent in this space becomes its tab, any other opens as a preview tab (never a
 //! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing.
 
-use crate::harness::metric;
 use crate::store::spaces::Move;
 use crate::store::transcript::{Item, Key, Step, Transcript};
 use crate::store::{Event, Store};
 use crate::views::lens::{State, Ui};
-use crate::views::markdown::{self, AGENT, Mentions, PATH};
+use crate::views::markdown::{self, Mentions};
 use crate::views::space::Zoom;
 use crate::views::theme::{TypeScale, pal, type_scale};
 use crate::views::{Host, dim};
 use gpui_kit::component::text::TextView;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
 
 /// `j k space shift-space g G` (ARCHITECTURE §4).
 #[derive(Clone, Copy, Debug, PartialEq, Action)]
@@ -39,12 +37,12 @@ pub enum Scroll {
 #[action(namespace = transcript, no_json)]
 pub struct OpenLink(pub SharedString);
 
-/// The agent the zoom shows (`name`, or `name preview`), for the harness's `expect:` step.
-pub static SHOWN: Mutex<String> = Mutex::new(String::new());
-/// Rows laid out near the top ask for older history.
-const NEAR_TOP: usize = 4;
+/// Rows above the viewport's top under which the page before is read.
+const PREFETCH: usize = 60;
 /// Linked markdown kept per row; dropped beyond this, as the rows scroll by.
 const MD_CACHE: usize = 1500;
+
+type Linked = HashMap<(Key, bool), SharedString>;
 
 /// The list and what it currently mirrors. Interior mutability: views render from `&Ui`.
 pub struct View {
@@ -52,11 +50,12 @@ pub struct View {
     /// `(agent, generation)` the rows belong to, and their keys in order.
     rows: RefCell<((String, u64), Vec<Key>)>,
     open: RefCell<HashSet<Key>>,
-    md: RefCell<(Mentions, HashMap<Key, SharedString>)>,
+    /// Linked text per row and fold state.
+    md: RefCell<(Mentions, Linked)>,
     /// The agent and turn a "seen at the bottom" was last sent for.
     seen: RefCell<Option<(String, Option<u64>)>>,
-    /// The generation whose first layout was logged, and whether its start was.
-    logged: Cell<(u64, bool)>,
+    /// Herder web, where a mermaid diagram links to.
+    web: String,
 }
 
 impl Default for View {
@@ -69,12 +68,20 @@ impl Default for View {
             open: RefCell::default(),
             md: RefCell::default(),
             seen: RefCell::default(),
-            logged: Cell::new((0, true)),
+            web: String::new(),
         }
     }
 }
 
 impl View {
+    /// Zoomed out: let the rows and their linked text go.
+    pub fn clear(&self) {
+        self.list.reset(0);
+        *self.rows.borrow_mut() = Default::default();
+        self.md.borrow_mut().1 = HashMap::new();
+        self.open.borrow_mut().clear();
+    }
+
     /// Point the list at the transcript's rows: a new transcript resets it, rows before the first or
     /// after the last are splices, anything else (rare) a reset.
     fn sync(&self, t: &Transcript, store: &Store) {
@@ -108,8 +115,13 @@ impl View {
     }
 }
 
-/// A scroll key: lines are three text lines, pages most of the viewport. `g` goes to the first row,
-/// whose layout then pages back.
+/// Herder web's address (the shell's server), for diagram links.
+pub fn set_web(ui: &mut State, base: &str) {
+    ui.transcript.web = base.trim_end_matches('/').to_string();
+}
+
+/// A scroll key: lines are three text lines, pages most of the viewport. `g` goes to the top of the
+/// loaded rows, which reads the page before.
 pub fn scroll(store: &Store, ui: &mut State, s: Scroll) -> Vec<Event> {
     let list = &ui.transcript.list;
     let line = type_scale(store.prefs.text_scale).line * 3.;
@@ -124,10 +136,7 @@ pub fn scroll(store: &Store, ui: &mut State, s: Scroll) -> Vec<Event> {
         Scroll::Lines(n) => by(line * n as f32),
         Scroll::Pages(n) => by(page * n as f32),
         Scroll::Top => list.scroll_to(ListOffset::default()),
-        Scroll::Bottom => {
-            list.scroll_to_end();
-            list.set_follow_mode(FollowMode::Tail);
-        }
+        Scroll::Bottom => list.set_follow_mode(FollowMode::Tail),
     }
     Vec::new()
 }
@@ -146,14 +155,18 @@ pub fn render<H: Host>(
     };
     let tr = store.transcript.open.as_ref().filter(|tr| tr.agent == name);
     let Some(tr) = tr else {
-        return body.p(t.px(24.)).child(dim("loading…"));
+        // Morphing back to the lens, the transcript is already gone.
+        return body.when(ui.zoom.is_some(), |b| b.p(t.px(24.)).child(dim("loading…")));
     };
     let view = &ui.transcript;
     view.sync(tr, store);
-    if tr.at_start() && view.logged.get() == (tr.generation, false) {
-        view.logged.set((tr.generation, true));
-        let n = tr.items.len();
-        metric(format!("transcript {name}: start reached, {n} rows"));
+    // Read the page before while the viewport's top is near the first rows (or there are none).
+    let top = view.list.logical_scroll_top().item_ix.min(tr.items.len());
+    let more = tr.loaded() && !tr.at_start() && !tr.paging() && tr.notice.is_none();
+    if more && top < PREFETCH {
+        let older = Event::Transcript(Step::Older);
+        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(older, cx)))
+            .detach();
     }
     // Reaching the bottom counts as viewing: mark a new turn seen once while following the tail.
     let turn = store.fleet.agents.get(name).and_then(|a| a.turn_end);
@@ -172,17 +185,9 @@ pub fn render<H: Host>(
         note("(nothing readable yet)")
     } else {
         let host = cx.weak_entity();
-        list(view.list.clone(), move |ix, _, cx| {
-            let Some(host) = host.upgrade() else {
-                return div().into_any_element();
-            };
-            let (row, older) = row::<H>(host.read(cx).view(), ix, t, host.downgrade());
-            if older {
-                let host = host.downgrade();
-                let step = Event::Transcript(Step::Older);
-                cx.defer(move |cx| drop(host.update(cx, |h, cx| h.dispatch(step, cx))));
-            }
-            row
+        list(view.list.clone(), move |ix, _, cx| match host.upgrade() {
+            Some(host) => row::<H>(host.read(cx).view(), ix, t, host.downgrade()),
+            None => div().into_any_element(),
         })
         .flex_1()
         .into_any_element()
@@ -252,7 +257,7 @@ fn row<H: Host>(
     ix: usize,
     t: TypeScale,
     host: WeakEntity<H>,
-) -> (AnyElement, bool) {
+) -> AnyElement {
     let view = &ui.transcript;
     let rows = view.rows.borrow();
     let tr = store
@@ -264,14 +269,8 @@ fn row<H: Host>(
         .zip(rows.1.get(ix))
         .and_then(|(tr, &k)| Some((tr, k, tr.items.get(&k)?)));
     let Some((tr, key, item)) = found else {
-        return (div().into_any_element(), false);
+        return div().into_any_element();
     };
-    let older = ix < NEAR_TOP && !tr.at_start() && !tr.paging();
-    if view.logged.get().0 != tr.generation {
-        view.logged.set((tr.generation, false));
-        let n = tr.items.len();
-        metric(format!("transcript {}: tail laid out, {n} rows", tr.agent));
-    }
     let open = view.open.borrow().contains(&key);
     let toggle = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
         let _ = host.update(cx, |h, cx| {
@@ -295,6 +294,22 @@ fn row<H: Host>(
         el.on_click(toggle.clone())
             .child(small(format!("{glyph} {text}")))
     };
+    // Prompts, deliveries and assistant text: linked, selectable markdown (U5's selection seam).
+    let md = |text: &str| {
+        let linked = {
+            let mut md = view.md.borrow_mut();
+            let (mentions, cache) = &mut *md;
+            let web = format!("{}/agents/{}", view.web, tr.agent);
+            let link = || SharedString::from(markdown::link(text, mentions, &web));
+            cache.entry((key, open)).or_insert_with(link).clone()
+        };
+        let text = TextView::markdown(id("md"), linked).selectable(true);
+        text.on_link_click(|url, _, window, cx| match markdown::route(url) {
+            Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
+            None if url.starts_with("http://") || url.starts_with("https://") => cx.open_url(url),
+            None => {}
+        })
+    };
     let body = match item {
         Item::Prompt(text) => div()
             .bg(rgb(pal::ACCW))
@@ -303,7 +318,7 @@ fn row<H: Host>(
             .rounded(t.px(4.))
             .px(t.px(10.))
             .py(t.px(6.))
-            .child(text.clone())
+            .child(md(text))
             .into_any_element(),
         Item::Delivery {
             sender,
@@ -319,7 +334,7 @@ fn row<H: Host>(
             let from = format!("← {sender}{}", if *operator { " · operator" } else { "" });
             let (shown, long) = preview(text, open);
             let more = long.then(|| fold(if open { "less" } else { "more" }.into()));
-            let el = div().child(small(from)).child(shown);
+            let el = div().child(small(from)).child(md(&shown));
             el.children(more).into_any_element()
         }
         Item::TaskNotification(s) => small(format!("⚑ {s}")).into_any_element(),
@@ -329,24 +344,7 @@ fn row<H: Host>(
             .border_color(rgb(pal::RULE))
             .pt(t.px(4.))
             .into_any_element(),
-        Item::Assistant { markdown } => {
-            let linked = {
-                let mut md = view.md.borrow_mut();
-                let (mentions, cache) = &mut *md;
-                let link = || SharedString::from(markdown::link(markdown, mentions));
-                cache.entry(key).or_insert_with(link).clone()
-            };
-            TextView::markdown(id("md"), linked)
-                .selectable(true)
-                .on_link_click(|url, _, window, cx| {
-                    if url.starts_with(AGENT) || url.starts_with(PATH) {
-                        window.dispatch_action(Box::new(OpenLink(url.clone())), cx);
-                    } else if url.starts_with("http://") || url.starts_with("https://") {
-                        cx.open_url(url);
-                    }
-                })
-                .into_any_element()
-        }
+        Item::Assistant { markdown } => md(markdown).into_any_element(),
         Item::Thinking(text) if text.trim().is_empty() => {
             small("∴ thinking".into()).into_any_element()
         }
@@ -372,7 +370,7 @@ fn row<H: Host>(
             .child(format!("✗ {text}"))
             .into_any_element(),
     };
-    (el.child(body).into_any_element(), older)
+    el.child(body).into_any_element()
 }
 
 /// A delivery as shown, and whether it is long: web's preview, tighter, of at most five lines and 420

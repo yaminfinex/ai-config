@@ -168,6 +168,20 @@ fn open(ui: &mut State, url: &str) -> Vec<Event> {
     show(ui, zoom.space, Some(agent.to_string()))
 }
 
+/// What the zoom shows: `name`, or `name preview` for an outsider (the harness's `expect:`).
+pub fn shown(store: &Store, ui: &State) -> String {
+    let Some(zoom) = ui.zoom.as_ref() else {
+        return String::new();
+    };
+    let agent = zoom.agent.clone().unwrap_or_default();
+    let member = zoomed(store, zoom).is_some_and(|s| s.agents().any(|a| a == agent));
+    if member || agent.is_empty() {
+        agent
+    } else {
+        format!("{agent} preview")
+    }
+}
+
 pub(super) fn zoomed<'a>(store: &'a Store, zoom: &Zoom) -> Option<&'a Space> {
     store.spaces.iter().find(|s| s.id == zoom.space)
 }
@@ -177,11 +191,12 @@ pub fn act(store: &Store, ui: &mut State, key: Zoomed) -> Vec<Event> {
         return Vec::new();
     };
     let (Some(space), Zoomed::Space(by) | Zoomed::Agent(by)) = (zoomed(store, &zoom), key) else {
-        // `escape`, or the space has gone: morph back to its card.
+        // `escape`, or the space has gone: morph back to its card, letting the transcript go.
         let card = ui.cards.borrow().get(&zoom.space).copied();
         ui.anim = Some(Anim::new(Kind::Out, card, ui.zoom.take()));
         ui.reveal.set(true);
-        return Vec::new();
+        ui.transcript.clear();
+        return vec![Event::Transcript(transcript::Step::Hide)];
     };
     let wrap = |at: usize, len: usize| (at as isize + by).rem_euclid(len.max(1) as isize) as usize;
     if let Zoomed::Space(by) = key {
@@ -211,10 +226,6 @@ pub fn render<H: Host>(
     let current = zoom.agent.as_deref();
     let members: Vec<&str> = space.into_iter().flat_map(Space::agents).collect();
     let preview = current.filter(|c| !members.contains(c));
-    *body::SHOWN.lock().unwrap() = match (current, preview) {
-        (Some(c), Some(_)) => format!("{c} preview"),
-        (c, _) => c.unwrap_or_default().to_string(),
-    };
     let tabs = members.into_iter().chain(preview).map(|name| {
         let on = Some(name) == current;
         let agent = store.fleet.agents.get(name);
