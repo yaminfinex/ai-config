@@ -10,7 +10,6 @@ import {
   type StoredSpaceRecord,
 } from './spacesModel.ts'
 
-export const defaultMaxSpaces = 16
 const defaultTombstoneRetention = 30 * 24 * 60 * 60 * 1_000
 
 export type SpacesStorage = Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'>
@@ -45,7 +44,6 @@ type Options = {
   schedule?: (callback: () => void, delay: number) => unknown
   cancel?: (handle: unknown) => void
   debounceMs?: number
-  maxSpaces?: number
   tombstoneRetentionMs?: number
   onPurge?: (id: string) => void
 }
@@ -94,7 +92,6 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
   const schedule = options.schedule ?? ((callback, delay) => window.setTimeout(callback, delay))
   const cancel = options.cancel ?? ((handle) => window.clearTimeout(handle as number))
   const debounceMs = options.debounceMs ?? 120
-  const maxSpaces = options.maxSpaces ?? defaultMaxSpaces
   const tombstoneRetentionMs = options.tombstoneRetentionMs ?? defaultTombstoneRetention
   let storage = options.storage === undefined ? browserStorage() : options.storage
   const events = options.events === undefined ? browserEvents() : options.events
@@ -257,8 +254,6 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
     list: live,
     recentlyClosed: closed,
     create: () => guarded(() => {
-      const count = live().length
-      if (count >= maxSpaces) return { ok: false, reason: `There is no room for another space. All ${count} spaces stay visible, but the ${maxSpaces}-space limit refuses new creation until the count is lower.` }
       const usedNames = new Set([...records.values()].map(({ record }) => record.name))
       let number = 2
       while (usedNames.has(`space ${number}`)) number += 1
@@ -305,7 +300,6 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       return { ok: true, value: space }
     }),
     reopen: (id) => guarded(() => {
-      if (live().length >= maxSpaces) return { ok: false, reason: `This space cannot be reopened while the ${maxSpaces}-space limit is full.` }
       const current = reconcile(id)
       if (!current || !current.record.deleted) return { ok: false, reason: 'This space is not recently closed.' }
       const { deleted: _deleted, ...rest } = current.record

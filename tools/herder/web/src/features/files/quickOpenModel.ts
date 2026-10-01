@@ -40,7 +40,6 @@ export function quickOpenActionRows(
   rawQuery: string,
   spaces: SpaceDefinition[],
   agents: string[],
-  atSpaceCap: boolean,
   hasActivePanel = false,
   activeSpaceID: string | null = null,
   reassignSubject?: string,
@@ -61,7 +60,7 @@ export function quickOpenActionRows(
   ], (row) => `${row.label} ${row.subject}`, query) : []
   return [
     ...spaceRows,
-    ...name && !atSpaceCap && !exactSpace
+    ...name && !exactSpace
       ? [{ kind: 'create' as const, name, label: `Create space “${name}”` }]
       : [],
     ...sendRows,

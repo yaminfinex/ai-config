@@ -20,7 +20,7 @@ import { NotesProvider, useNotes, useNotesCount } from './features/notes/NotesPr
 import { NotesRail } from './features/notes/NotesRail'
 import { NoteQuickAdd } from './features/notes/NoteQuickAdd'
 import { shortcutLabels } from './features/layout/shellShortcuts'
-import { browserOnlySpacesMessage, defaultMaxSpaces, serverSpaceLookupMessage, SpacesSection, SpaceSwitcher } from './features/spaces/index.ts'
+import { browserOnlySpacesMessage, serverSpaceLookupMessage, SpacesSection, SpaceSwitcher } from './features/spaces/index.ts'
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
 import { preserveDockTabBrowserHistory } from './features/workspace/dockTabHistoryModel.ts'
 import { ErrorBoundary } from './shared/ErrorBoundary'
@@ -97,7 +97,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   } = workspace
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell"><div className="shell-body">
     <QuickOpen open={workspace.quickOpen} mode={workspace.quickOpenMode} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} board={workspace.board}
-      spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)} atSpaceCap={workspace.spaces.items.length >= defaultMaxSpaces}
+      spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)}
       onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder}
       onMode={(mode) => workspace.actions.showQuickOpen(workspace.quickOpenGroup, mode)}
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />

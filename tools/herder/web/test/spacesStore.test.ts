@@ -158,39 +158,20 @@ test('a pending create can roll back without becoming recently closed', () => {
   assert.equal(subject.storage.getItem(spaceRecordKey(created.value.id)), null)
 })
 
-test('the active cap refuses create and reopen without evicting spaces', () => {
-  const subject = harness({ maxSpaces: 2 })
-  const second = subject.store.create()
-  assert.equal(second.ok, true)
-  const refused = subject.store.create()
-  assert.equal(refused.ok, false)
-  if (!refused.ok) assert.match(refused.reason, /2-space limit/i)
-  assert.equal(subject.store.list().length, 2)
-
-  if (!second.ok) return
-  subject.store.close(second.value.id)
-  subject.store.create()
-  const reopen = subject.store.reopen(second.value.id)
-  assert.equal(reopen.ok, false)
-  assert.equal(subject.store.list().length, 2)
-})
-
-test('a cross-device union above the creation cap stays visible and refuses a new create with the real count', () => {
-  const storage = new FakeStorage()
-  for (let index = 0; index < 17; index++) {
-    const id = `space-${index}`
-    storage.values.set(spaceRecordKey(id), JSON.stringify({
-      version: 1,
-      writeID: `device-${index}`,
-      record: { id, name: id, order: index, created: index, updated: index },
-    }))
+test('spaces have no count limit: create and reopen keep working past sixteen', () => {
+  const subject = harness()
+  const created = []
+  for (let index = 0; index < 20; index++) {
+    const result = subject.store.create()
+    assert.equal(result.ok, true)
+    if (result.ok) created.push(result.value.id)
   }
-  const subject = harness({ storage, maxSpaces: 16 })
-  assert.equal(subject.store.list().length, 17)
-  const result = subject.store.create()
-  assert.equal(result.ok, false)
-  if (!result.ok) assert.match(result.reason, /17 spaces/i)
-  assert.equal(subject.store.list().length, 17)
+  assert.equal(subject.store.list().length, 21)
+  subject.store.close(created[0])
+  subject.store.create()
+  const reopen = subject.store.reopen(created[0])
+  assert.equal(reopen.ok, true)
+  assert.equal(subject.store.list().length, 22)
 })
 
 test('storage events merge per-record LWW tombstones without resurrecting a closed space', () => {

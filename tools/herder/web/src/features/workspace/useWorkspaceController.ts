@@ -47,7 +47,6 @@ import {
   closeSpaceLayout,
   hasRecoverableSpaceLayout,
   initializeSpaces,
-  defaultMaxSpaces,
   moveBeforeActiveClose,
   performSpaceSwitch,
   sendPanelToExistingSpace,
@@ -498,11 +497,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const reopenSpace = useCallback((id: string) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
-    if (store.list().length >= defaultMaxSpaces) {
-      const refusal = { ok: false as const, reason: `This space cannot be reopened while the ${defaultMaxSpaces}-space limit is full.` }
-      setSpaceProblem(refusal.reason)
-      return refusal
-    }
     const restored = reopenSpaceLayout(localStorage, id)
     if (!restored.ok) { setSpaceProblem(restored.reason); return restored }
     const reopened = store.reopen(id)
