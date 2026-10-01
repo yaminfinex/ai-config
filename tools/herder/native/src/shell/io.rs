@@ -31,7 +31,10 @@ pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
         Fetch::Card { agent, turn } => {
             let page = Page::Tail { limit: CARD_TAIL };
             let result = client.entries(&agent, &page);
-            let result = result.map(|e| e.entries).map_err(|e| e.to_string());
+            let result = result.map(|e| e.entries).map_err(|e| {
+                eprintln!("card {agent}: {e}");
+                e.to_string()
+            });
             Event::Card(cards::Got {
                 agent,
                 turn,

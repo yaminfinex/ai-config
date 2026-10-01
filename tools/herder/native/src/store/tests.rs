@@ -3284,6 +3284,53 @@ mod cards {
     }
 
     #[test]
+    fn a_read_overtaken_by_a_newer_turn_is_dropped_and_the_new_turn_read() {
+        for result in [Ok(vec![said("obsolete")]), Err("503".to_string())] {
+            let mut store = loaded();
+            store.apply(fleet_frame(board()));
+            only(&mut store, &["conductor-line"]);
+            let t = turn(&store, "conductor-line");
+            store.apply(got("conductor-line", t, Ok(vec![said("held")])));
+            let mut b = board();
+            bump(&mut b, "conductor-line", 1);
+            let asked = reads(&store.apply(fleet_frame(b.clone())));
+            assert_eq!(asked, [("conductor-line".into(), t.map(|t| t + 1))]);
+            // The fleet moves on again while that read is in flight.
+            bump(&mut b, "conductor-line", 1);
+            assert!(
+                reads(&store.apply(fleet_frame(b))).is_empty(),
+                "one read per agent"
+            );
+            let landed = store.apply(got("conductor-line", t.map(|t| t + 1), result));
+            assert_eq!(store.cards.text("conductor-line"), Some("held"), "dropped");
+            let now = [("conductor-line".into(), t.map(|t| t + 2))];
+            assert_eq!(reads(&landed), now, "the current turn is read");
+        }
+    }
+
+    #[test]
+    fn a_failed_turn_is_not_asked_again_but_a_newer_turn_is() {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        only(&mut store, &["conductor-line"]);
+        let t = turn(&store, "conductor-line");
+        let failed = store.apply(got("conductor-line", t, Err("503".into())));
+        assert!(reads(&failed).is_empty());
+        assert!(
+            reads(&store.apply(fleet_frame(board()))).is_empty(),
+            "not that turn"
+        );
+        let mut b = board();
+        bump(&mut b, "conductor-line", 1);
+        let newer = reads(&store.apply(fleet_frame(b)));
+        assert_eq!(
+            newer,
+            [("conductor-line".into(), t.map(|t| t + 1))],
+            "no hello needed"
+        );
+    }
+
+    #[test]
     fn the_card_shows_the_last_answer_cleaned_as_the_transcript() {
         // conductor-line's tail ends on an answer after its tools.
         let entries = tail("conductor-line", 12);
@@ -3293,10 +3340,11 @@ mod cards {
         assert_eq!(tail("mupu", 12).iter().rev().find_map(answer), None);
         let text = "Done.<internal>scratch</internal> <status>ok</status>\n\nShipped **x**.";
         assert_eq!(answer(&said(text)).as_deref(), Some("Done. Shipped x."));
-        // One plain paragraph for the card's line clamp: no headings, emphasis, ticks, rules or targets.
+        // One plain paragraph for the card's line clamp: no headings, emphasis, ticks, rules or targets;
+        // a table row is its cells.
         let md =
             "## Done\n\nTwo **[PRs](https://x/1)** need you:\n\n| a | b |\n|---|---|\n- `x`  first";
-        let want = "Done Two PRs need you: | a | b | - x first";
+        let want = "Done Two PRs need you: a · b; - x first";
         assert_eq!(answer(&said(md)).as_deref(), Some(want));
         assert_eq!(answer(&said("<status>idle</status>")), None);
         assert_eq!(

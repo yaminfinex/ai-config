@@ -5,8 +5,9 @@
 //! One tail read (`CARD_TAIL` entries) per agent per turn: a read is keyed on the board's
 //! `turn_end_id`, so an agent is read again only once a turn ends. At most `IN_FLIGHT` reads run at
 //! once, one per agent; the rest wait for a slot. A result for an agent no longer on a text card, or
-//! for a turn older than the one already held, is dropped. A failed read keeps the text it had and is
-//! asked again on the next `hello`.
+//! for a turn other than the agent's current one, is dropped, success or failure; the current turn is
+//! then read. A failed read keeps the text it had and is not asked again for that turn until the next
+//! `hello`; a newer turn reads at once.
 
 use super::condense;
 use super::spaces::Row;
@@ -34,8 +35,8 @@ pub struct Cards {
     read: BTreeMap<String, (Option<u64>, Option<String>)>,
     /// Per agent, the turn being read.
     pub(super) flight: BTreeMap<String, Option<u64>>,
-    /// Agents whose last read failed: not asked again until the next `hello`.
-    failed: BTreeSet<String>,
+    /// Per agent, the turn whose read failed: not asked again for it until the next `hello`.
+    failed: BTreeMap<String, Option<u64>>,
 }
 
 impl Cards {
@@ -56,7 +57,8 @@ impl Store {
     }
 
     /// Ask for each text card whose agent's turn has moved past its last read, while slots are free.
-    /// Not before `Boot`: effects of the boot-time loads are not run.
+    /// Not before `Boot`: effects of the boot-time loads are not run. A turn whose read failed waits
+    /// for the next `hello`.
     pub(super) fn card_reads(&mut self, out: &mut Vec<Effect>) {
         if self.stream == 0 {
             return;
@@ -65,7 +67,8 @@ impl Store {
         let due = carded.into_iter().filter_map(|agent| {
             let turn = self.fleet.agents.get(agent)?.turn_end;
             let stale = self.cards.read.get(agent).is_none_or(|(t, _)| *t != turn);
-            let free = !self.cards.flight.contains_key(agent) && !self.cards.failed.contains(agent);
+            let failed = self.cards.failed.get(agent) == Some(&turn);
+            let free = !self.cards.flight.contains_key(agent) && !failed;
             (stale && free).then(|| (agent.to_string(), turn))
         });
         let room = IN_FLIGHT.saturating_sub(self.cards.flight.len());
@@ -76,6 +79,8 @@ impl Store {
         }
     }
 
+    /// A read landed. Dropped, success or failure, when the agent's turn has moved on or its card no
+    /// longer carries text; `card_reads` then asks for what is current.
     pub(super) fn card_read(&mut self, got: Got) {
         let Got {
             agent,
@@ -83,20 +88,19 @@ impl Store {
             result,
         } = got;
         self.cards.flight.remove(&agent);
-        let held = self.cards.read.get(&agent);
-        let older = held.is_some_and(|(t, _)| *t > turn);
-        if older || !self.carded().contains(agent.as_str()) {
+        let current = self.fleet.agents.get(&agent).map(|a| a.turn_end);
+        if current != Some(turn) || !self.carded().contains(agent.as_str()) {
             return;
         }
-        let entries = match result {
-            Ok(entries) => entries,
-            Err(e) => {
-                eprintln!("card {agent}: {e}");
-                self.cards.failed.insert(agent);
-                return;
-            }
+        let Ok(entries) = result else {
+            self.cards.failed.insert(agent, turn);
+            return;
         };
-        let kept = held.and_then(|(_, text)| text.clone());
+        let kept = self
+            .cards
+            .read
+            .get(&agent)
+            .and_then(|(_, text)| text.clone());
         let text = entries.iter().rev().find_map(answer).or(kept);
         self.cards.read.insert(agent, (turn, text));
     }
@@ -142,15 +146,24 @@ fn strip(text: &str, open: &str, close: &str) -> String {
 }
 
 /// The answer as one paragraph for the card: markdown's emphasis, code ticks, heading marks, table rules
-/// and link targets dropped (a link keeps its text), lines and runs of space joined, so the card's line
-/// clamp wraps it.
+/// and link targets dropped (a link keeps its text), each table row its cells joined by `·` and closed
+/// by `;`, lines and runs of space joined, so the card's line clamp wraps it.
 fn flat(markdown: &str) -> String {
     let rule = |l: &&str| !l.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '));
-    let lines = markdown
-        .lines()
-        .map(|l| l.trim().trim_start_matches('#'))
-        .filter(rule);
-    let words = lines.flat_map(str::split_whitespace);
+    let row = |l: &str| match l.starts_with('|') {
+        true => {
+            let cells: Vec<&str> = l
+                .split('|')
+                .map(str::trim)
+                .filter(|c| !c.is_empty())
+                .collect();
+            format!("{};", cells.join(" · "))
+        }
+        false => l.to_string(),
+    };
+    let lines = markdown.lines().map(|l| l.trim().trim_start_matches('#'));
+    let lines: Vec<String> = lines.filter(rule).map(row).collect();
+    let words = lines.iter().flat_map(|l| l.split_whitespace());
     let text = words.collect::<Vec<_>>().join(" ");
     let (mut out, mut rest) = (String::with_capacity(text.len()), text.as_str());
     while let Some(at) = rest.find("](") {
