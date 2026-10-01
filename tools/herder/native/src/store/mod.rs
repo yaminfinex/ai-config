@@ -374,6 +374,7 @@ impl Store {
 
     fn board(&mut self, board: Board, out: &mut Vec<Effect>) {
         self.fleet.ingest(board);
+        self.lapse_blocks();
         if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
             out.push(Effect::Persist(Persist::Prefs));
         }

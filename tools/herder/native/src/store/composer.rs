@@ -93,6 +93,20 @@ impl Store {
         matches!(self.sends.get(agent), Some(Sending::InFlight { .. }))
     }
 
+    /// A fleet frame: a pending file-back's block acknowledgement lapses once its agent is seen
+    /// unblocked or gone, so blocking again at the same turn still needs the owner.
+    pub(super) fn lapse_blocks(&mut self) {
+        for (agent, sending) in &mut self.sends {
+            if let Sending::InFlight {
+                file_back: Some(then),
+                ..
+            } = sending
+            {
+                then.blocked &= spaces::looking(&self.fleet, agent).is_some_and(|now| now.blocked);
+            }
+        }
+    }
+
     pub(super) fn compose(&mut self, step: Step, out: &mut Vec<Effect>) {
         // The box is disabled while a send is in flight; an edit then would race its answer.
         if let Step::Edit { agent, .. } = &step

@@ -2078,6 +2078,40 @@ mod composer {
     }
 
     #[test]
+    fn a_block_that_ends_and_returns_during_a_file_back_still_needs_you() {
+        let mut store = zoomed("mupu", Some("listening"));
+        let space = space_of(&store, "mupu").id.clone();
+        let mut b = board();
+        let mut frame = |store: &mut Store, status: &str| {
+            let panes = b.workspaces.iter_mut().flat_map(|w| &mut w.tabs);
+            for pane in panes
+                .flat_map(|t| &mut t.panes)
+                .filter(|p| p.agent == "mupu")
+            {
+                pane.herdr_status = status.into();
+            }
+            let event = StreamEvent::Frame(Wire::Fleet(b.clone()));
+            let generation = store.stream;
+            store.apply(Event::Stream { generation, event });
+        };
+        frame(&mut store, "blocked");
+        let agent = Some("mupu".to_string());
+        store.apply(Event::Lens(spaces::Move::View { space, agent }));
+        assert!(!store.agent_needs_you("mupu"), "this block is seen");
+        edit(&mut store, "mupu", "unblock yourself");
+        send(&mut store, "mupu", true);
+        // Same turn: the block ends and a new one starts before the send lands.
+        frame(&mut store, "idle");
+        frame(&mut store, "blocked");
+        assert!(store.agent_needs_you("mupu"));
+        sent(&mut store, "mupu", Ok(()));
+        assert!(
+            store.agent_needs_you("mupu"),
+            "the new block was never seen"
+        );
+    }
+
+    #[test]
     fn a_late_viewer_answer_does_not_undo_a_send_refusal() {
         let why = Refusal {
             error: "sender refused".into(),

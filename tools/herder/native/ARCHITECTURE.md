@@ -173,7 +173,7 @@ and gives it back to the zoom on `escape`. A mention that opens another agent mo
 the box never types into an agent the owner did not pick. The composer's chords are handled on its own
 element, so they act only on the focused box. `cmd-shift-enter` leaves the zoom only once the send lands
 (`Effect::FiledBack`), marking seen only the agent as it stood when sent (a later turn still needs you, and
-an unread mark set meanwhile stays); a failure stays on that agent, preview included, saying why. The
+an unread mark set meanwhile stays; a block that ends during the flight is not acknowledged again); a failure stays on that agent, preview included, saying why. The
 landing hands focus to the lens at the next render wherever it was in the departing zoom
 (`composer::sync`), as does a focused box left under another agent (to the zoom). A send refused for
 attribution outlasts any viewer answer already in flight.
@@ -295,7 +295,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held ‚å
 | `store/transcript.rs` | 400 | `shell.rs` | 300 |
 | `store/condense.rs` | 220 | `views/markdown.rs` | 250 |
 | `store/notes.rs` | 250 | `local.rs`, `platform_mac.rs`, `harness.rs` | 120, 150, 200 |
-| `store/composer.rs` | 160 | | |
+| `store/composer.rs` | 175 | | |
 | | | `shell/io.rs` | 100 |
 
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
@@ -303,10 +303,10 @@ report and the reviewer's agreement; the usual answer is a move into the right m
 and never a new module invented to satisfy a cap.
 
 U4 exceptions (agreed at review): `store/composer.rs` is new (drafts, `can_send`, the send lifecycle) at
-160; `views/composer.rs` 217 (the box, its keys, file-back and the wording of every read-only state and
+174; `views/composer.rs` 217 (the box, its keys, file-back and the wording of every read-only state and
 failure, moved from the store at review); `shell/io.rs` 119 (`save_then_message`, the prefs-before-POST
 barrier for a message, beside `save_then_send`); `store/spaces.rs` 273 (`looking` / `acknowledge`, the
-seen mark a file-back bounds to send time); `store/mod.rs` 387, `shell.rs` 358, `views/lens.rs` 353,
+seen mark a file-back bounds to send time); `store/mod.rs` 388, `shell.rs` 358, `views/lens.rs` 353,
 `views/mod.rs` 356 and `harness.rs` 279 carry the composer's event, effects, widget, focus rule and probes.
 
 Documented U3 exceptions (agreed at the U3 reviews): `store/transcript.rs` 539 (one cohesive paging and
