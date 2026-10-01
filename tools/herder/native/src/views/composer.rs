@@ -177,12 +177,10 @@ fn say_read_only(viewer: &Attribution, why: ReadOnly) -> String {
         _ => None,
     };
     match (why, refusal) {
-        (ReadOnly::Refused, Some(r)) if r.error == "sender refused" => {
-            format!(
-                "read-only · sender collision: this Mac's sender name is taken ({})",
-                r.detail
-            )
-        }
+        (ReadOnly::Refused, Some(r)) if r.error == "sender refused" => format!(
+            "read-only · sender collision: this Mac's sender name is taken ({})",
+            r.detail
+        ),
         (ReadOnly::Refused, Some(r)) => format!("read-only · attribution required: {}", r.detail),
         (ReadOnly::Refused, None) => "read-only: the server refused this Mac's attribution".into(),
         (ReadOnly::OffBoard, _) => "read-only: not on the board".into(),
@@ -198,11 +196,9 @@ fn say_failure(failure: &Failure) -> String {
         Failure::Unreachable(why) => format!("unreachable, not sent ({why}) · ⌘⏎ retry"),
         Failure::UnknownAgent => "the server knows no such agent".into(),
         Failure::Rejected(status, why) => format!("rejected ({status}): {why}"),
-        Failure::NoAnswer(why) => {
-            format!(
-                "no answer ({why}): it may have been sent; check the transcript before retrying"
-            )
-        }
+        Failure::NoAnswer(why) => format!(
+            "no answer ({why}): it may have been sent; check the transcript before retrying"
+        ),
         Failure::NotSaved(why) => format!("not sent: the draft could not be saved ({why})"),
     }
 }

@@ -243,15 +243,12 @@ fn line(s: &str) -> String {
 /// Why notes are not being saved or synced, for `agent`'s strip: its editor's refusal, its last
 /// transfer's, and a notes sync the server is holding back.
 fn problems(store: &Store, v: &View, agent: &str) -> Vec<String> {
-    let hold = match store.sync[&Ns::Notes].hold {
-        Some(Hold::TooLarge) => Some(
-            "The server refused the notes as too large (413); unsent notes wait for the next edit.",
-        ),
-        Some(Hold::LocalOnly) => {
-            Some("Notes stay on this Mac: the server refused its attribution (409).")
+    let hold = store.sync[&Ns::Notes].hold.map(|h| match h {
+        Hold::TooLarge => {
+            "The server refused the notes as too large (413); unsent notes wait for the next edit."
         }
-        None => None,
-    };
+        Hold::LocalOnly => "Notes stay on this Mac: the server refused its attribution (409).",
+    });
     let editor = v
         .problem
         .filter(|_| v.editing.as_ref().is_some_and(|e| e.agent == agent));
@@ -275,11 +272,9 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
         return None;
     }
     let (n, open) = (notes.len(), notes.len() <= SHOWN || v.open);
-    let count = format!(
-        "{n} note{} {}",
-        if n == 1 { "" } else { "s" },
-        if open { "▾" } else { "▸" }
-    );
+    let s = if n == 1 { "" } else { "s" };
+    let fold = if open { "▾" } else { "▸" };
+    let count = format!("{n} note{s} {fold}");
     let count = match n > SHOWN {
         true => click(div().id("notes-count"), Notes::Toggle).child(count),
         false => div().id("notes-count").child(count),
@@ -291,12 +286,10 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
         .text_size(t.small);
     let head = head
         .child(count.text_color(rgb(pal::SLATE)))
-        .when(n > 0 && !store.hand_off_blocked(agent), |h| {
-            h.child(chip("handoff", "→ composer  p".into(), Notes::HandOff, t))
-        })
         // Unavailable (the box is read-only or busy; it says why), shown as such rather than hidden.
-        .when(n > 0 && store.hand_off_blocked(agent), |h| {
-            h.child(dim("→ composer unavailable"))
+        .when(n > 0, |h| match store.hand_off_blocked(agent) {
+            true => h.child(dim("→ composer unavailable")),
+            false => h.child(chip("handoff", "→ composer  p".into(), Notes::HandOff, t)),
         })
         .children(selection.map(|(_, s)| {
             chip("capture", format!("❝ {}  c", line(s)), Notes::Capture, t)
@@ -322,11 +315,8 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
         let x = div()
             .id(ElementId::Name(format!("del-{id}").into()))
             .flex_none();
-        let x = click(x, Notes::Delete(id)).text_color(rgb(if armed {
-            pal::AMBER
-        } else {
-            pal::SLATE
-        }));
+        let color = if armed { pal::AMBER } else { pal::SLATE };
+        let x = click(x, Notes::Delete(id)).text_color(rgb(color));
         div()
             .flex()
             .items_center()

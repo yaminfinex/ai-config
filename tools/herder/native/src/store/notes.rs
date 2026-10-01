@@ -250,15 +250,8 @@ impl Store {
                 return;
             }
             Step::Queue { agent, stamp } => {
-                let draft = self
-                    .prefs
-                    .drafts
-                    .get(&agent)
-                    .filter(|d| !d.trim().is_empty());
-                let Some(draft) = draft.cloned() else {
-                    return;
-                };
-                if self.busy(&agent) {
+                let draft = self.prefs.drafts.get(&agent).cloned().unwrap_or_default();
+                if draft.trim().is_empty() || self.busy(&agent) {
                     return;
                 }
                 let add = Step::Add {
@@ -378,11 +371,9 @@ pub fn transfer_text(n: &Note) -> String {
         return n.text.clone();
     };
     let transcript = source["kind"] == "transcript";
+    let agent = source["agent"].as_str().unwrap_or("");
     let label = match transcript {
-        true => format!(
-            "from {}'s transcript:",
-            source["agent"].as_str().unwrap_or("")
-        ),
+        true => format!("from {agent}'s transcript:"),
         false => source_label(source),
     };
     // A source of an unknown kind with no path has no label: no empty line for it.
@@ -411,12 +402,7 @@ pub fn transfer_text(n: &Note) -> String {
 
 /// Web's `noteSourceLabel` for a file or diff source: `path:start-end`, and `(vs base)` for a diff.
 fn source_label(source: &Value) -> String {
-    let num = |k: &str| {
-        source
-            .get(k)
-            .filter(|v| v.is_number())
-            .map(Value::to_string)
-    };
+    let num = |k: &str| Some(source.get(k).filter(|v| v.is_number())?.to_string());
     let (start, end) = (num("start"), num("end"));
     let range = match (&start, &end) {
         (None, _) => String::new(),
