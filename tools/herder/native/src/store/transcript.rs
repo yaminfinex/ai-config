@@ -12,7 +12,7 @@
 //! One transcript is live at a time, the zoomed agent's, and none on the lens. Entry wakes coalesce without a timer: one
 //! forward read in flight, and a wake meanwhile asks for one more when it lands.
 
-use super::{Effect, Fetch, Store, condense};
+use super::{Effect, Fetch, Store, Wake, condense};
 use crate::api::client::Page;
 use crate::api::{AgentDetail, Candidate, Entries, Entry, Kind, Resolved};
 use std::collections::{BTreeMap, HashMap};
@@ -415,7 +415,8 @@ impl Transcript {
                         op,
                         token,
                     };
-                    out.push(Effect::RetryTranscript { timer, after_ms });
+                    let wake = Wake::Transcript(timer);
+                    out.push(Effect::After { after_ms, wake });
                 }
                 self.notice = result.err().map(|e| (op, format!("could not read: {e}")));
             }

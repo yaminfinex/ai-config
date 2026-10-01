@@ -21,8 +21,6 @@ use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::notes::Dest;
-use crate::store::sync::Step;
-use crate::store::transcript;
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
@@ -175,15 +173,7 @@ impl Shell {
                     })
                 }
                 Effect::Post { ns, rows } => sends.push((ns, rows)),
-                Effect::Retry { ns, after_ms } => {
-                    let step = Step::Retry;
-                    self.later(after_ms, Event::Sync { ns, step }, cx)
-                }
-                Effect::RetryViewer { after_ms } => self.later(after_ms, Event::ViewerRetry, cx),
-                Effect::RetryTranscript { timer, after_ms } => {
-                    let step = transcript::Step::Retry(timer);
-                    self.later(after_ms, Event::Transcript(step), cx)
-                }
+                Effect::After { after_ms, wake } => self.later(after_ms, Event::Wake(wake), cx),
                 Effect::Persist(Persist::Outbox) => save_outbox = true,
                 Effect::Persist(file) => self.save_later(file, cx),
                 Effect::Transfer { to, agent } => match to {
@@ -206,7 +196,6 @@ impl Shell {
                     actions: Vec::new(),
                 }),
                 Effect::Badge(n) => platform_mac::badge(n),
-                Effect::Burst { after_ms } => self.later(after_ms, Event::BurstEnded, cx),
                 Effect::OpenFile { path, line } => {
                     match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
                         Some(url) => cx.open_url(&url),

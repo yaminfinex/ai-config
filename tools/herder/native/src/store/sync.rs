@@ -13,7 +13,7 @@
 //! `Sync` reports what a step changed (`Changes`), so the store re-derives and persists only then.
 
 use crate::api::{StateRow, StateRows};
-use crate::store::{Effect, Fetch};
+use crate::store::{Effect, Fetch, Wake};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -234,10 +234,8 @@ impl Sync {
             Some(413) => self.hold = Some(Hold::TooLarge),
             _ if !self.retry_pending => {
                 self.retry_pending = true;
-                out.push(Effect::Retry {
-                    ns: self.ns,
-                    after_ms: self.backoff_ms,
-                });
+                let (after_ms, wake) = (self.backoff_ms, Wake::Sync(self.ns));
+                out.push(Effect::After { after_ms, wake });
                 self.backoff_ms = (self.backoff_ms * 2).min(BACKOFF_MAX_MS);
             }
             _ => {}

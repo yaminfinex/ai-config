@@ -421,7 +421,7 @@ fn a_failed_save_posts_nothing_and_retries() {
     };
     let effects = store.apply(events.pop().unwrap());
     assert!(
-        matches!(effects[..], [Effect::Retry { after_ms: 500, .. }]),
+        matches!(effects[..], [Effect::After { after_ms: 500, .. }]),
         "{effects:?}"
     );
     assert_eq!(

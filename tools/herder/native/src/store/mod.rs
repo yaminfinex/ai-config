@@ -119,8 +119,6 @@ pub enum Event {
     },
     /// `GET /api/viewer`: the attributed name, or the failure's HTTP status (`None`: transport).
     Viewer(Result<String, Option<u16>>),
-    /// The viewer's backoff elapsed.
-    ViewerRetry,
     /// A state namespace's network answer, backoff or local edit.
     Sync {
         ns: Ns,
@@ -134,8 +132,8 @@ pub enum Event {
     Note(notes::Step),
     /// The app became frontmost, or stopped being (U6): the agent zoomed in meanwhile is never notified.
     Front(bool),
-    /// A notification burst's `attention::BURST_MS` is up.
-    BurstEnded,
+    /// A timer set by `Effect::After` is up.
+    Wake(Wake),
     /// The summon hotkey; the shell handles it before the store, which ignores it.
     Summon,
 }
@@ -176,19 +174,10 @@ pub enum Effect {
         agent: String,
         text: String,
     },
-    /// Dispatch `Event::Sync { ns, step: Step::Retry }` after this long.
-    Retry {
-        ns: Ns,
+    /// Dispatch `Event::Wake(wake)` after this long.
+    After {
         after_ms: u64,
-    },
-    /// Dispatch `Event::Transcript(Step::Retry(timer))` after this long.
-    RetryTranscript {
-        timer: transcript::Timer,
-        after_ms: u64,
-    },
-    /// Dispatch `Event::ViewerRetry` after this long.
-    RetryViewer {
-        after_ms: u64,
+        wake: Wake,
     },
     Persist(Persist),
     /// Save the destination `to` now, from the store as it is, then dispatch `notes::Step::Landed` for
@@ -205,15 +194,21 @@ pub enum Effect {
     Notify(attention::Notice),
     /// Show this needs-you count on the dock (0 clears it).
     Badge(usize),
-    /// Dispatch `Event::BurstEnded` after this long.
-    Burst {
-        after_ms: u64,
-    },
     /// Open a file or folder on the agents' host in VS Code (the file panel's seam, Rung 2).
     OpenFile {
         path: String,
         line: Option<u32>,
     },
+}
+
+/// What a timer wakes (`Effect::After`): a namespace's, the transcript's or the viewer's retry, or the
+/// end of a notification burst (`attention::BURST_MS`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Wake {
+    Sync(Ns),
+    Transcript(transcript::Timer),
+    Viewer,
+    Burst,
 }
 
 /// Who this Mac's writes are attributed to (`GET /api/viewer`).
@@ -303,13 +298,18 @@ impl Store {
                         if !std::mem::replace(&mut self.viewer_retry, true) {
                             let after_ms = self.viewer_backoff_ms.max(500);
                             self.viewer_backoff_ms = (after_ms * 2).min(10_000);
-                            out.push(Effect::RetryViewer { after_ms });
+                            let wake = Wake::Viewer;
+                            out.push(Effect::After { after_ms, wake });
                         }
                         Attribution::Unknown
                     }
                 };
             }
-            Event::ViewerRetry => {
+            Event::Wake(Wake::Sync(ns)) => self.sync_step(ns, Step::Retry, &mut out),
+            Event::Wake(Wake::Transcript(t)) => {
+                self.transcript_step(transcript::Step::Retry(t), &mut out)
+            }
+            Event::Wake(Wake::Viewer) => {
                 self.viewer_retry = false;
                 self.ask_viewer(&mut out);
             }
@@ -319,7 +319,7 @@ impl Store {
             Event::Compose(step) => self.compose(step, &mut out),
             Event::Note(step) => self.note(step, &mut out),
             Event::Front(front) => self.alerts.front = front,
-            Event::BurstEnded => self.burst_ended(&mut out),
+            Event::Wake(Wake::Burst) => self.burst_ended(&mut out),
             Event::Summon => {}
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;

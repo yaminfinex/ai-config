@@ -430,9 +430,9 @@ fn failures_back_off_500ms_doubling_to_10s() {
             step: Step::PostFailed(Some(503)),
         });
         let [
-            Effect::Retry {
-                ns: Ns::Spaces,
+            Effect::After {
                 after_ms,
+                wake: Wake::Sync(Ns::Spaces),
             },
         ] = effects[..]
         else {
@@ -465,7 +465,13 @@ fn failures_back_off_500ms_doubling_to_10s() {
         ns: Ns::Spaces,
         step: Step::PostFailed(None),
     });
-    assert!(matches!(effects[..], [Effect::Retry { after_ms: 500, .. }]));
+    assert!(matches!(
+        effects[..],
+        [Effect::After {
+            after_ms: 500,
+            wake: Wake::Sync(_)
+        }]
+    ));
 }
 
 #[test]
@@ -475,7 +481,13 @@ fn a_transport_failure_while_a_retry_waits_schedules_nothing_more() {
         ns: Ns::Notes,
         step: Step::PullFailed(None),
     });
-    assert!(matches!(effects[..], [Effect::Retry { after_ms: 500, .. }]));
+    assert!(matches!(
+        effects[..],
+        [Effect::After {
+            after_ms: 500,
+            wake: Wake::Sync(_)
+        }]
+    ));
     let effects = store.apply(Event::Sync {
         ns: Ns::Notes,
         step: Step::PullFailed(None),
@@ -546,7 +558,10 @@ fn an_unknown_viewer_is_retried_on_a_timer_and_only_409_is_a_refusal() {
     };
     let retry = |effects: &[Effect]| {
         effects.iter().find_map(|e| match e {
-            Effect::RetryViewer { after_ms } => Some(*after_ms),
+            Effect::After {
+                after_ms,
+                wake: Wake::Viewer,
+            } => Some(*after_ms),
             _ => None,
         })
     };
@@ -559,7 +574,7 @@ fn an_unknown_viewer_is_retried_on_a_timer_and_only_409_is_a_refusal() {
     let effects = store.apply(Event::Viewer(Err(None)));
     assert_eq!(store.viewer, Attribution::Unknown);
     assert_eq!(retry(&effects), Some(500));
-    assert_eq!(asks(&store.apply(Event::ViewerRetry)), 1);
+    assert_eq!(asks(&store.apply(Event::Wake(Wake::Viewer))), 1);
     // A server fault is not a refusal either; the backoff grows.
     let effects = store.apply(Event::Viewer(Err(Some(502))));
     assert_eq!(store.viewer, Attribution::Unknown);
@@ -568,12 +583,12 @@ fn an_unknown_viewer_is_retried_on_a_timer_and_only_409_is_a_refusal() {
     assert_eq!(asks(&store.apply(hello("b1"))), 1);
     assert_eq!(retry(&store.apply(Event::Viewer(Err(Some(503))))), None);
     // The timer fires and the server answers, with no further hello.
-    assert_eq!(asks(&store.apply(Event::ViewerRetry)), 1);
+    assert_eq!(asks(&store.apply(Event::Wake(Wake::Viewer))), 1);
     let effects = store.apply(Event::Viewer(Ok("web-me".into())));
     assert!(effects.is_empty(), "{effects:?}");
     assert_eq!(store.viewer, Attribution::Attributed("web-me".into()));
     assert_eq!(asks(&store.apply(hello("b1"))), 0);
-    assert_eq!(asks(&store.apply(Event::ViewerRetry)), 0);
+    assert_eq!(asks(&store.apply(Event::Wake(Wake::Viewer))), 0);
 
     // 409 is the one refusal: never retried, by timer or by hello.
     let mut store = Store::default();
@@ -1181,7 +1196,12 @@ mod transcript_pages {
     /// The one retry timer among `effects`, and its delay.
     fn timer(effects: &[Effect]) -> (Timer, u64) {
         match effects {
-            [Effect::RetryTranscript { timer, after_ms }] => (*timer, *after_ms),
+            [
+                Effect::After {
+                    after_ms,
+                    wake: Wake::Transcript(timer),
+                },
+            ] => (*timer, *after_ms),
             other => panic!("one retry: {other:?}"),
         }
     }
@@ -2015,7 +2035,7 @@ mod composer {
         let space = store.spaces[0].id.clone();
         let mut later = Vec::new();
         later.extend(store.apply(hello("b1")));
-        later.extend(store.apply(Event::ViewerRetry));
+        later.extend(store.apply(Event::Wake(Wake::Viewer)));
         later.extend(store.apply(Event::Sync {
             ns: Ns::Spaces,
             step: Step::Retry,
@@ -2678,7 +2698,10 @@ mod alerts {
     use super::*;
     use crate::store::attention::{BURST_MS, Notice};
 
-    const BURST: Effect = Effect::Burst { after_ms: BURST_MS };
+    const BURST: Effect = Effect::After {
+        after_ms: BURST_MS,
+        wake: Wake::Burst,
+    };
 
     /// A loaded store that has applied its first live board: the baseline.
     fn live() -> (Store, Board) {
@@ -2711,10 +2734,10 @@ mod alerts {
             title: format!("mupu · {slack}"),
             body: "your turn".into(),
         };
-        assert_eq!(notices(store.apply(Event::BurstEnded)), [want]);
+        assert_eq!(notices(store.apply(Event::Wake(Wake::Burst))), [want]);
         // The same turn on the next board, and the burst's timer firing again, say nothing more.
         assert!(!store.apply(fleet_frame(b)).contains(&BURST));
-        assert!(notices(store.apply(Event::BurstEnded)).is_empty());
+        assert!(notices(store.apply(Event::Wake(Wake::Burst))).is_empty());
     }
 
     #[test]
@@ -2753,7 +2776,7 @@ mod alerts {
         bump(&mut b, "support-mifa", 1);
         assert!(store.apply(frame(&store, b)).contains(&BURST));
         store.apply(Event::Front(true));
-        assert!(notices(store.apply(Event::BurstEnded)).is_empty());
+        assert!(notices(store.apply(Event::Wake(Wake::Burst))).is_empty());
     }
 
     #[test]
@@ -2761,7 +2784,7 @@ mod alerts {
         let (mut store, mut b) = live();
         block(&mut b, "mupu", true);
         assert!(store.apply(fleet_frame(b)).contains(&BURST));
-        let got = notices(store.apply(Event::BurstEnded));
+        let got = notices(store.apply(Event::Wake(Wake::Burst)));
         assert_eq!(got.len(), 1);
         assert_eq!(
             (got[0].tag.as_str(), got[0].body.as_str()),
@@ -2786,7 +2809,7 @@ mod alerts {
                 slack.name
             ),
         };
-        assert_eq!(notices(store.apply(Event::BurstEnded)), [want]);
+        assert_eq!(notices(store.apply(Event::Wake(Wake::Burst))), [want]);
     }
 
     /// Owner ruling: an agent in no space alerts too, blocked included, and opens alone (the view's
@@ -2803,7 +2826,7 @@ mod alerts {
             title: format!("{alone} · no space"),
             body: "your turn".into(),
         };
-        assert_eq!(notices(store.apply(Event::BurstEnded)), [want]);
+        assert_eq!(notices(store.apply(Event::Wake(Wake::Burst))), [want]);
         let spaces = store.spaces.clone();
         let seen = Event::Lens(spaces::Move::View {
             space: String::new(),
@@ -2819,7 +2842,7 @@ mod alerts {
         );
         block(&mut b, alone, true);
         assert!(store.apply(frame(&store, b)).contains(&BURST));
-        let got = notices(store.apply(Event::BurstEnded));
+        let got = notices(store.apply(Event::Wake(Wake::Burst)));
         assert_eq!(got.len(), 1);
         assert_eq!(
             (got[0].title.as_str(), got[0].body.as_str()),
@@ -2835,7 +2858,7 @@ mod alerts {
         assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
         bump(&mut b, "mupu", 1);
         store.apply(fleet_frame(b));
-        let got = notices(store.apply(Event::BurstEnded));
+        let got = notices(store.apply(Event::Wake(Wake::Burst)));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].tag, "lens");
         let lines: Vec<&str> = got[0].body.lines().collect();
@@ -2871,7 +2894,7 @@ mod alerts {
             store.apply(fleet_frame(b.clone())).contains(&BURST),
             "same turn, now idle"
         );
-        assert_eq!(notices(store.apply(Event::BurstEnded)).len(), 1);
+        assert_eq!(notices(store.apply(Event::Wake(Wake::Burst))).len(), 1);
         // Working again and back without finishing a turn: that turn is spent.
         herdr(&mut b, "mupu", "working");
         store.apply(fleet_frame(b.clone()));
@@ -2884,7 +2907,7 @@ mod alerts {
         let (mut store, mut b) = live();
         bump(&mut b, "mupu", 1);
         assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
-        assert_eq!(notices(store.apply(Event::BurstEnded)).len(), 1);
+        assert_eq!(notices(store.apply(Event::Wake(Wake::Burst))).len(), 1);
         block(&mut b, "mupu", true);
         assert!(
             !store.apply(fleet_frame(b.clone())).contains(&BURST),
@@ -2902,7 +2925,7 @@ mod alerts {
         let (mut store, mut b) = live();
         block(&mut b, "mupu", true);
         assert!(store.apply(frame(&store, b.clone())).contains(&BURST));
-        store.apply(Event::BurstEnded);
+        store.apply(Event::Wake(Wake::Burst));
         store.apply(view(&store, "mupu"));
         block(&mut b, "mupu", false);
         assert!(!store.apply(frame(&store, b.clone())).contains(&BURST));
@@ -2911,7 +2934,7 @@ mod alerts {
             store.apply(frame(&store, b)).contains(&BURST),
             "a new block"
         );
-        let got = notices(store.apply(Event::BurstEnded));
+        let got = notices(store.apply(Event::Wake(Wake::Burst)));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].body, "blocked");
     }
@@ -2925,7 +2948,7 @@ mod alerts {
         store.apply(fleet_frame(b.clone()));
         block(&mut b, "mupu", true);
         assert!(!store.apply(fleet_frame(b.clone())).contains(&BURST));
-        let got = notices(store.apply(Event::BurstEnded));
+        let got = notices(store.apply(Event::Wake(Wake::Burst)));
         assert_eq!(got.len(), 1);
         assert_eq!(
             (got[0].tag.as_str(), got[0].body.as_str()),
@@ -2937,7 +2960,7 @@ mod alerts {
         block(&mut b, "mupu", true);
         bump(&mut b, "support-mifa", 1);
         assert!(store.apply(fleet_frame(b)).contains(&BURST));
-        let got = notices(store.apply(Event::BurstEnded));
+        let got = notices(store.apply(Event::Wake(Wake::Burst)));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].title, "2 agents need you");
     }

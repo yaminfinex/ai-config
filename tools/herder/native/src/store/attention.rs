@@ -9,7 +9,7 @@
 use super::composer::Sending;
 use super::fleet::{Agent, Fleet, Status};
 use super::spaces::Space;
-use super::{Effect, Persist, Store};
+use super::{Effect, Persist, Store, Wake};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -222,7 +222,8 @@ impl Store {
         alerts.marks.retain(|name, _| fleet.contains_key(name));
         alerts.armed = alerts.live;
         if was_quiet && !alerts.burst.is_empty() {
-            out.push(Effect::Burst { after_ms: BURST_MS });
+            let (after_ms, wake) = (BURST_MS, Wake::Burst);
+            out.push(Effect::After { after_ms, wake });
         }
     }
 
