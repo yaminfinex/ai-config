@@ -20,17 +20,17 @@ use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
 use crate::store::transcript;
-use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
+use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale, Write};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, markdown, space, theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use io::run_fetch;
-pub use io::save_then_send;
+pub use io::{save_then_message, save_then_send};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,7 +58,7 @@ pub struct Shell {
 }
 
 impl Shell {
-    fn new(cx: &mut Context<Self>) -> Self {
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (mut store, disk) = (Store::default(), Disk::home());
         if let Some(prefs) = disk.load_prefs() {
             store.apply(Event::PrefsLoaded(prefs));
@@ -81,7 +81,7 @@ impl Shell {
             }
         })
         .detach();
-        let mut ui = lens::Ui::new(cx);
+        let mut ui = lens::Ui::new(window, cx);
         transcript_view::set_web(&mut ui, &base_url());
         Shell {
             store,
@@ -146,13 +146,13 @@ impl Shell {
                         });
                     self.stream = Some(reader);
                 }
-                Effect::Fetch(fetch) => {
-                    let (client, tx) = (self.client.clone(), self.tx.clone());
-                    cx.background_executor()
-                        .spawn(async move {
-                            let _ = tx.unbounded_send(run_fetch(&client, fetch));
-                        })
-                        .detach();
+                Effect::Fetch(fetch) => self.background(cx, |_, client| run_fetch(client, fetch)),
+                Effect::Send(Write::Message { agent, text }) => {
+                    let (bytes, seq) = (local::encode(&self.store.prefs), local::next_seq());
+                    let send = (agent, text);
+                    self.background(cx, move |disk, client| {
+                        save_then_message(disk, client, &bytes, seq, send)
+                    })
                 }
                 Effect::Send(write) => sends.push(write),
                 Effect::Retry { ns, after_ms } => {
@@ -193,6 +193,17 @@ impl Shell {
                 })
             })
             .detach();
+    }
+
+    /// Run `f` on the background executor and dispatch the event it returns.
+    fn background(
+        &self,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&Disk, &Client) -> Event + Send + 'static,
+    ) {
+        let (disk, client, tx) = (self.disk.clone(), self.client.clone(), self.tx.clone());
+        let task = async move { drop(tx.unbounded_send(f(&disk, &client))) };
+        cx.background_executor().spawn(task).detach();
     }
 
     /// Dispatch `event` after `after_ms`.
@@ -248,6 +259,7 @@ impl Render for Shell {
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        composer::sync(&mut self.ui, &self.store, window, cx);
         let t = theme::type_scale(self.store.prefs.text_scale);
         let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()
@@ -296,8 +308,8 @@ pub fn run() {
             ..Default::default()
         };
         let mut shell = None;
-        let frame = |_: &mut Window, cx: &mut App| {
-            let s = cx.new(Shell::new);
+        let frame = |window: &mut Window, cx: &mut App| {
+            let s = cx.new(|cx| Shell::new(window, cx));
             let dots = s.read(cx).ui.dots.clone();
             shell = Some(s.clone());
             cx.new(|cx| Frame::new(s.into(), dots, cx))
@@ -313,7 +325,7 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
-                let (s, s2) = (shell.clone(), shell.clone());
+                let (s, s2, s3) = (shell.clone(), shell.clone(), shell.clone());
                 let probe = harness::Probe {
                     shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
                     link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
@@ -326,6 +338,7 @@ pub fn run() {
                             t.items.len()
                         ))
                     }),
+                    composer: Box::new(move |w, cx| composer::probe(&s3.read(cx).ui, w, cx)),
                 };
                 window
                     .spawn(cx, async move |cx| harness::run(script, probe, cx).await)

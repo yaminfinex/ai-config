@@ -40,6 +40,34 @@ check-keys: build
     grep -q '"text_scale": 1.1' "$prefs" && echo "check-keys: ok (text_scale 1.1 persisted)"
     rm -rf "$home"
 
+# Composer scenario (U4), against testdata/fake_serve.py on loopback: nothing reaches a real agent.
+# Focus the box, type keys the lens and zoom bind (they must land as text), cmd-enter sends once and clears
+# the draft, escape leaves the box but not the zoom; then a held send shows "sending" and swallows a second
+# cmd-enter. Throwaway HOME; screenshots in shots/ need the `shots` feature (`just harness` builds it).
+check-composer port="4411":
+    #!/usr/bin/env sh
+    set -eu
+    cargo build --release --features shots
+    mkdir -p shots
+    home=$(mktemp -d)
+    zoom="wait:1500 key:enter wait:400 draw link:herder-agent:mupu wait:1500 draw expect:mupu+preview"
+    run() {
+        python3 testdata/fake_serve.py {{port}} --message "$1" 2>"$home/fake.log" & fake=$!
+        sleep 0.5
+        HOME="$home" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_SHOT_DIR=shots \
+            HERDER_NATIVE_SCRIPT="$zoom $2" ./target/release/herder-native 2>&1 | grep -E "harness|box|expect" || true
+        kill $fake
+        grep -c "message to mupu" "$home/fake.log" || true
+    }
+    out=$(run ok "key:/ draw box:focused: key:n key:j key:[ key:] key:1 key:v key:? draw box:focused:nj[]1v? expect:mupu+preview shot:u4-draft key:cmd-enter wait:800 draw box:focused: shot:u4-empty key:escape draw box:idle: expect:mupu+preview quit")
+    echo "$out"
+    held=$(run hold "key:/ draw key:h key:i key:cmd-enter wait:400 draw shot:u4-sending key:x key:cmd-enter wait:300 draw box:focused:hi quit")
+    echo "$held"
+    if echo "$out$held" | grep -q FAILED; then echo "check-composer: FAILED"; exit 1; fi
+    [ "$(echo "$out" | tail -1)" = 1 ] && [ "$(echo "$held" | tail -1)" = 1 ] || { echo "check-composer: expected exactly one POST per run"; exit 1; }
+    rm -r "$home"
+    echo "check-composer: ok (keys typed, one send each, held send not repeated)"
+
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id).
 bundle *args:
     scripts/bundle.sh {{args}}

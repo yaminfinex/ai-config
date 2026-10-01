@@ -5,7 +5,7 @@ use herder_native::api::client::{Client, Page};
 use herder_native::api::sse::Reader;
 use herder_native::api::{StateRow, Wire};
 use herder_native::local::{self, Disk};
-use herder_native::shell::save_then_send;
+use herder_native::shell::{save_then_message, save_then_send};
 use herder_native::store::sync::{Hold, Ns, Step};
 use herder_native::store::{Effect, Event, Fetch, Store, StreamEvent};
 use serde_json::json;
@@ -410,4 +410,116 @@ fn a_failed_save_posts_nothing_and_retries() {
         "the edit stays queued"
     );
     std::fs::remove_file(dir).unwrap();
+}
+
+/// U4: `POST /api/agents/{name}/message` with exactly `{text}`, after the prefs are saved; each
+/// refusal status maps to its failure, and a failed save posts nothing.
+#[test]
+fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
+    use herder_native::store::composer::{Failure, Step as C};
+    let refusal = |status: u16, error: &str| {
+        let body = json!({"error": error, "detail": format!("{error} detail")});
+        Reply::Json(status, body.to_string())
+    };
+    let (base, log) = serve(move |target, _| match target.split('/').nth(3) {
+        Some("ok") => Reply::Json(
+            200,
+            json!({"sent": true, "to": "ok", "from": "web-x", "intent": "request"}).to_string(),
+        ),
+        Some("gone") => refusal(404, "agent not found"),
+        Some("refuse") => refusal(409, "sender refused"),
+        Some("down") => refusal(502, "substrate unreachable"),
+        _ => refusal(400, "bad body"),
+    });
+    let client = Client::new(base);
+    let (disk, dir) = scratch("message");
+    let prefs = br#"{"drafts": {"ok": "hello \"there\""}}"#;
+    let send = |agent: &str| {
+        let text = "hello \"there\"".to_string();
+        match save_then_message(
+            &disk,
+            &client,
+            prefs,
+            local::next_seq(),
+            (agent.into(), text),
+        ) {
+            Event::Compose(C::Sent { agent: a, result }) if a == agent => result,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(send("ok"), Ok(()));
+    assert_eq!(send("gone"), Err(Failure::UnknownAgent));
+    assert_eq!(
+        send("refuse"),
+        Err(Failure::Refused("sender refused detail".into()))
+    );
+    assert_eq!(
+        send("down"),
+        Err(Failure::Unreachable("substrate unreachable detail".into()))
+    );
+    assert_eq!(
+        send("odd"),
+        Err(Failure::Rejected(400, "bad body detail".into()))
+    );
+    let log = log.lock().unwrap().clone();
+    assert_eq!(log.len(), 5, "one POST each: {log:?}");
+    assert_eq!(
+        log[0],
+        r#"POST /api/agents/ok/message {"text":"hello \"there\""}"#
+    );
+    assert_eq!(std::fs::read(dir.join(local::PREFS)).unwrap(), prefs);
+
+    // The prefs cannot be saved: nothing is posted.
+    let (_, blocked) = scratch("message-blocked");
+    std::fs::write(&blocked, "a file where the directory should be").unwrap();
+    let (base, log) = serve(|_, _| Reply::Json(200, "{}".into()));
+    let event = save_then_message(
+        &Disk::at(blocked.join("state")),
+        &Client::new(base),
+        prefs,
+        local::next_seq(),
+        ("ok".into(), "hi".into()),
+    );
+    let Event::Compose(C::Sent {
+        result: Err(Failure::NotSaved(_)),
+        ..
+    }) = event
+    else {
+        panic!("{event:?}")
+    };
+    assert!(log.lock().unwrap().is_empty(), "nothing reached the server");
+    std::fs::remove_file(blocked).unwrap();
+}
+
+/// A send nobody answered may have landed: it is reported as such, never retried.
+#[test]
+fn a_message_without_an_answer_is_not_retried() {
+    use herder_native::store::composer::{Failure, Step as C};
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let accepted = Arc::new(Mutex::new(0));
+    let count = accepted.clone();
+    std::thread::spawn(move || {
+        for sock in listener.incoming().flatten() {
+            *count.lock().unwrap() += 1;
+            drop(sock); // Hang up without an answer.
+        }
+    });
+    let (disk, _) = scratch("message-hangup");
+    let event = save_then_message(
+        &disk,
+        &Client::new(base),
+        b"{}",
+        local::next_seq(),
+        ("a".into(), "hi".into()),
+    );
+    let Event::Compose(C::Sent {
+        result: Err(Failure::NoAnswer(_)),
+        ..
+    }) = event
+    else {
+        panic!("{event:?}")
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(*accepted.lock().unwrap(), 1, "exactly one attempt");
 }

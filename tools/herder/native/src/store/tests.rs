@@ -1852,3 +1852,194 @@ mod transcript_pages {
         );
     }
 }
+
+/// U4: drafts, who can be written to, and each send's lifecycle.
+mod composer {
+    use super::*;
+    use crate::api::AgentDetail;
+    use crate::store::composer::{Failure, ReadOnly, Sending, Step as C};
+    use crate::store::transcript::{Got, Step as T, What};
+
+    fn edit(store: &mut Store, agent: &str, text: &str) -> Vec<Effect> {
+        let (agent, text) = (agent.into(), text.into());
+        store.apply(Event::Compose(C::Edit { agent, text }))
+    }
+
+    fn send(store: &mut Store, agent: &str, file_back: Option<&str>) -> Vec<Effect> {
+        let (agent, file_back) = (agent.into(), file_back.map(String::from));
+        store.apply(Event::Compose(C::Send { agent, file_back }))
+    }
+
+    fn sent(store: &mut Store, agent: &str, result: Result<(), Failure>) -> Vec<Effect> {
+        store.apply(Event::Compose(C::Sent {
+            agent: agent.into(),
+            result,
+        }))
+    }
+
+    fn messages(effects: &[Effect]) -> Vec<(String, String)> {
+        let message = |e: &Effect| match e {
+            Effect::Send(Write::Message { agent, text }) => Some((agent.clone(), text.clone())),
+            _ => None,
+        };
+        effects.iter().filter_map(message).collect()
+    }
+
+    /// A live store zoomed on `agent` (in its first space), with its detail answered as `bus_status`.
+    fn zoomed(agent: &str, bus_status: Option<&str>) -> Store {
+        let mut store = loaded();
+        store.apply(fleet_frame(board()));
+        let space = store.spaces[0].id.clone();
+        let agent_name = agent.to_string();
+        let effects = store.apply(Event::Transcript(T::Show {
+            space,
+            agent: agent_name,
+        }));
+        let detail = effects.into_iter().find_map(|e| match e {
+            Effect::Fetch(Fetch::Transcript(r)) if r.what == What::Detail => Some(r),
+            _ => None,
+        });
+        if let (Some(read), Some(status)) = (detail, bus_status) {
+            let detail = AgentDetail {
+                bus_status: status.into(),
+                ..AgentDetail::default()
+            };
+            let got = Ok(Got::Detail(Box::new(detail)));
+            store.apply(Event::Transcript(T::Read(read, got)));
+        }
+        store
+    }
+
+    #[test]
+    fn drafts_are_kept_per_agent_and_persisted() {
+        let mut store = zoomed("mupu", Some("listening"));
+        assert_eq!(
+            edit(&mut store, "mupu", "hello"),
+            vec![Effect::Persist(Persist::Prefs)]
+        );
+        edit(&mut store, "riko", "other");
+        assert!(
+            edit(&mut store, "mupu", "hello").is_empty(),
+            "no change, no write"
+        );
+        assert_eq!(store.prefs.drafts["mupu"], "hello");
+        assert_eq!(store.prefs.drafts["riko"], "other");
+        // Prefs round-trip through `prefs.json`: the drafts are restored.
+        let back: Prefs = serde_json::from_slice(&crate::local::encode(&store.prefs)).unwrap();
+        assert_eq!(back.drafts, store.prefs.drafts);
+        // Emptying the box drops the draft.
+        edit(&mut store, "mupu", "");
+        assert!(!store.prefs.drafts.contains_key("mupu"));
+        assert_eq!(store.prefs.drafts["riko"], "other");
+    }
+
+    #[test]
+    fn can_send_names_every_read_only_state() {
+        let name = "mupu";
+        assert_eq!(zoomed(name, Some("listening")).can_send(name), Ok(()));
+        assert_eq!(zoomed(name, None).can_send(name), Err(ReadOnly::Pending));
+        assert_eq!(
+            zoomed(name, Some("retired")).can_send(name),
+            Err(ReadOnly::Retired)
+        );
+        let store = zoomed(name, Some("listening"));
+        assert_eq!(store.can_send("gone-agent"), Err(ReadOnly::OffBoard));
+        // Another agent than the open transcript's is pending, not retired.
+        let other = store.fleet.agents.keys().find(|a| *a != name).unwrap();
+        assert_eq!(store.can_send(other), Err(ReadOnly::Pending));
+        let mut refused = zoomed(name, Some("listening"));
+        refused.apply(Event::Viewer(Err(Some(409))));
+        assert_eq!(refused.can_send(name), Err(ReadOnly::Refused));
+        // Unknown attribution (a transport failure) still sends: the server decides.
+        let mut unknown = zoomed(name, Some("listening"));
+        unknown.apply(Event::Viewer(Err(None)));
+        assert_eq!(unknown.viewer, Attribution::Unknown);
+        assert_eq!(unknown.can_send(name), Ok(()));
+    }
+
+    #[test]
+    fn a_send_goes_once_and_success_clears_the_draft() {
+        let mut store = zoomed("mupu", Some("listening"));
+        assert!(send(&mut store, "mupu", None).is_empty(), "nothing to send");
+        edit(&mut store, "mupu", "  ");
+        assert!(
+            send(&mut store, "mupu", None).is_empty(),
+            "a blank draft stays"
+        );
+        edit(&mut store, "mupu", "hi there");
+        let effects = send(&mut store, "mupu", None);
+        assert_eq!(messages(&effects), vec![("mupu".into(), "hi there".into())]);
+        assert!(store.in_flight("mupu"));
+        // In flight: a second press and an edit do nothing.
+        assert!(send(&mut store, "mupu", None).is_empty());
+        assert!(edit(&mut store, "mupu", "changed").is_empty());
+        assert_eq!(store.prefs.drafts["mupu"], "hi there");
+        let effects = sent(&mut store, "mupu", Ok(()));
+        assert_eq!(effects, vec![Effect::Persist(Persist::Prefs)]);
+        assert!(!store.prefs.drafts.contains_key("mupu"));
+        assert!(store.sends.is_empty());
+        // A stray answer with nothing in flight changes nothing.
+        assert!(sent(&mut store, "mupu", Ok(())).is_empty());
+    }
+
+    #[test]
+    fn a_refused_send_keeps_the_text_and_says_why() {
+        let failures = [
+            Failure::Refused("sender refused".into()),
+            Failure::Unreachable("hcom timed out".into()),
+            Failure::UnknownAgent,
+            Failure::NoAnswer("timed out".into()),
+            Failure::NotSaved("disk full".into()),
+        ];
+        for failure in failures {
+            let mut store = zoomed("mupu", Some("listening"));
+            edit(&mut store, "mupu", "hi");
+            send(&mut store, "mupu", None);
+            assert!(sent(&mut store, "mupu", Err(failure.clone())).is_empty());
+            assert_eq!(store.prefs.drafts["mupu"], "hi");
+            assert_eq!(store.sends["mupu"], Sending::Failed(failure));
+            // The owner can try again; editing clears the notice.
+            assert!(store.ready("mupu"));
+            edit(&mut store, "mupu", "hi!");
+            assert!(store.sends.is_empty());
+        }
+    }
+
+    #[test]
+    fn nothing_resends_on_reconnect_or_retry_timers() {
+        let mut store = zoomed("mupu", Some("listening"));
+        edit(&mut store, "mupu", "once");
+        assert_eq!(messages(&send(&mut store, "mupu", None)).len(), 1);
+        let space = store.spaces[0].id.clone();
+        let mut later = Vec::new();
+        later.extend(store.apply(hello("b1")));
+        later.extend(store.apply(Event::ViewerRetry));
+        later.extend(store.apply(Event::Sync {
+            ns: Ns::Spaces,
+            step: Step::Retry,
+        }));
+        later.extend(store.apply(fleet_frame(board())));
+        sent(&mut store, "mupu", Err(Failure::Unreachable("down".into())));
+        later.extend(store.apply(hello("b1")));
+        later.extend(store.apply(Event::Transcript(T::Show {
+            space,
+            agent: "mupu".into(),
+        })));
+        assert!(
+            messages(&later).is_empty(),
+            "only the owner sends: {later:?}"
+        );
+    }
+
+    #[test]
+    fn a_filed_back_send_that_fails_marks_its_space_unread() {
+        let mut store = zoomed("mupu", Some("listening"));
+        let space = store.spaces[0].id.clone();
+        edit(&mut store, "mupu", "done here");
+        send(&mut store, "mupu", Some(&space));
+        assert!(!store.prefs.unread.contains(&space));
+        let effects = sent(&mut store, "mupu", Err(Failure::Refused("no".into())));
+        assert!(store.prefs.unread.contains(&space));
+        assert_eq!(effects, vec![Effect::Persist(Persist::Prefs)]);
+    }
+}

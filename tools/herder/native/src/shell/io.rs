@@ -2,8 +2,10 @@
 //! client (and disk) and reports back as `Event`s; nothing here touches GPUI or view state.
 
 use crate::api::client::Client;
+use crate::api::client::Error;
 use crate::harness;
 use crate::local::{self, Disk};
+use crate::store::composer::{self, Failure};
 use crate::store::sync::Step;
 use crate::store::transcript::{self, Got, What};
 use crate::store::{Event, Fetch, Write};
@@ -59,7 +61,10 @@ pub fn save_then_send(
     if let Err(e) = &saved {
         eprintln!("local: could not save outbox.json, not sending: {e}");
     }
-    for Write::State { ns, rows } in sends {
+    for write in sends {
+        let Write::State { ns, rows } = write else {
+            continue;
+        };
         let step = match &saved {
             Err(_) => Step::PostFailed(None),
             Ok(()) => match client.post_state(ns.name(), &rows) {
@@ -72,4 +77,37 @@ pub fn save_then_send(
         };
         on(Event::Sync { ns, step });
     }
+}
+
+/// Save the prefs (the draft as it stood), then post the message once and report its answer. Never
+/// retried here: a message must not land twice, so only the owner sends again.
+pub fn save_then_message(
+    disk: &Disk,
+    client: &Client,
+    prefs: &[u8],
+    seq: u64,
+    (agent, text): (String, String),
+) -> Event {
+    let result = match disk.write(local::PREFS, prefs, seq) {
+        Err(e) => Err(Failure::NotSaved(e.to_string())),
+        Ok(()) => client.send_message(&agent, &text).map_err(|e| {
+            eprintln!("message {agent}: {e}");
+            match e {
+                Error::Transport(why) => Failure::NoAnswer(why),
+                Error::Refused { status, refusal } => {
+                    let why = [refusal.detail, refusal.error]
+                        .into_iter()
+                        .find(|w| !w.is_empty());
+                    let why = why.unwrap_or_default();
+                    match status {
+                        404 => Failure::UnknownAgent,
+                        409 => Failure::Refused(why),
+                        502 => Failure::Unreachable(why),
+                        _ => Failure::Rejected(status, why),
+                    }
+                }
+            }
+        }),
+    };
+    Event::Compose(composer::Step::Sent { agent, result })
 }

@@ -166,6 +166,11 @@ Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and chec
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
 no navigation happened.
 
+Focus follows the zoom after every action (`views::on`), with one exception (U4): the composer keeps
+focus while the zoom stays on the same agent (a clicked path or mention of that agent), takes it on `/` `r`
+(only when the agent can be written to) and gives it back to the zoom on `escape`. A mention that opens
+another agent moves focus to the zoom, so the box never types into an agent the owner did not pick.
+
 ## 5. Type scale and theme
 
 One app-wide **text scale** (`Prefs::text_scale`, range 0.7–1.8 in ×1.1 steps; 1.0 is the spike's sizes × 0.9,
@@ -246,7 +251,10 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   `expect:<agent>` / `expect:<agent>+preview` (what the zoom shows; the shell answers through
   `harness::Probe`, so the harness knows no views), `cpuscroll:<key>x<n>` (`n` keystrokes, each with a
   timed `Window::draw`) and `start:<ms>` (draws until the open transcript has paged back to its start,
-  logging its rows; also a `Probe` query). Screenshots and presented-frame timings need an
+  logging its rows; also a `Probe` query). U4 added `box:<focused|idle>:<text>` (the composer's focus
+  and text) and `testdata/fake_serve.py`, a loopback serve over the fixtures whose `POST …/message`
+  answers ok, 409, 502 or holds: any scenario that presses `cmd-enter` points `HERDER_URL` at it, never at
+  the real serve (`just check-composer`). Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -278,11 +286,17 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 | `store/transcript.rs` | 400 | `shell.rs` | 300 |
 | `store/condense.rs` | 220 | `views/markdown.rs` | 250 |
 | `store/notes.rs` | 250 | `local.rs`, `platform_mac.rs`, `harness.rs` | 120, 150, 200 |
+| `store/composer.rs` | 170 | | |
 | | | `shell/io.rs` | 100 |
 
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
+
+U4 (pending review): `store/composer.rs` is new (drafts, `can_send`, the send lifecycle and the wording
+of each refusal); `shell/io.rs` 113 (`save_then_message`, the prefs-before-POST barrier for a message,
+beside `save_then_send`); `store/mod.rs` 378, `shell.rs` 351, `views/lens.rs` 353 and `harness.rs` 274
+carry the composer's event, effect, widget and probe.
 
 Documented U3 exceptions (agreed at the U3 reviews): `store/transcript.rs` 539 (one cohesive paging and
 request lifecycle: cursors, pairing, wake coalescing and each read's own retries; the condenser moved to
