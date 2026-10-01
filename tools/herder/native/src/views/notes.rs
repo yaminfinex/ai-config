@@ -12,7 +12,8 @@
 use crate::store::notes::{Note, Stamp, Step};
 use crate::store::sync::{Hold, Ns};
 use crate::store::{Event, Store};
-use crate::views::lens::Ui;
+use crate::views::composer;
+use crate::views::lens::{Focus, Ui};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
@@ -53,8 +54,6 @@ pub struct View {
     problem: Option<&'static str>,
     armed: Option<SharedString>,
     open: bool,
-    /// The last action's focus request: `Some(true)` into the editor, `Some(false)` out of it.
-    pub(super) want: Option<bool>,
 }
 
 pub(super) struct Editing {
@@ -85,28 +84,11 @@ impl View {
             problem: None,
             armed: None,
             open: false,
-            want: None,
         }
     }
 
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.read(cx).focus_handle(cx)
-    }
-
-    fn begin(&mut self, agent: &str, note: Option<Note>, quote: Option<String>) {
-        let text = note.as_ref().map_or(String::new(), |n| n.text.clone());
-        let agent = agent.to_string();
-        self.editing = Some(Editing { agent, note, quote });
-        self.load = Some(text);
-        self.armed = None;
-        self.problem = None;
-        self.want = Some(true);
-    }
-
-    fn close(&mut self) {
-        self.editing = None;
-        self.problem = None;
-        self.want = Some(false);
     }
 
     /// The pointer let go on `agent`'s transcript with `text` selected (blank: none). Whether it changed.
@@ -155,6 +137,22 @@ pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// Open the editor on `agent`'s `note` (a new one: `None`, with its captured `quote`), and focus it.
+fn begin(ui: &mut Ui, agent: &str, note: Option<Note>, quote: Option<String>) {
+    let text = note.as_ref().map_or(String::new(), |n| n.text.clone());
+    let agent = agent.to_string();
+    let notes = &mut ui.notes;
+    notes.editing = Some(Editing { agent, note, quote });
+    notes.load = Some(text);
+    (notes.armed, notes.problem) = (None, None);
+    ui.focus = Some(Focus::Editor);
+}
+
+fn close(ui: &mut Ui) {
+    (ui.notes.editing, ui.notes.problem) = (None, None);
+    ui.focus = Some(Focus::Out);
+}
+
 pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
     let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
@@ -162,13 +160,13 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
     let notes = &mut ui.notes;
     let event = |step| vec![Event::Note(step)];
     match key {
-        Notes::Add => notes.begin(&agent, None, None),
+        Notes::Add => begin(ui, &agent, None, None),
         Notes::Capture => match notes.selection.take_if(|(a, _)| *a == agent) {
-            Some((_, quote)) => notes.begin(&agent, None, Some(quote)),
+            Some((_, quote)) => begin(ui, &agent, None, Some(quote)),
             None => return Vec::new(),
         },
         Notes::HandOff => {
-            ui.composer.want = Some(store.can_send(&agent).is_ok());
+            ui.focus = Some(composer::into_box(store, &agent));
             return event(Step::HandOff {
                 agent,
                 stamp: stamp(),
@@ -197,15 +195,15 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
             if notes.problem.is_some() {
                 return Vec::new();
             }
-            notes.close();
+            close(ui);
             return event(step);
         }
-        Notes::Cancel => notes.close(),
+        Notes::Cancel => close(ui),
         Notes::Toggle => notes.open = !notes.open,
         Notes::Edit(id) => {
             let note = store.notes.iter().find(|n| n.id == id.as_ref());
             if let Some(n) = note {
-                notes.begin(&agent, Some(n.clone()), n.quote.clone());
+                begin(ui, &agent, Some(n.clone()), n.quote.clone());
             }
         }
         Notes::Delete(id) if notes.armed.as_ref() == Some(id) => {

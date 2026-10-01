@@ -39,6 +39,15 @@ pub enum Nav {
 /// Card sizes (`s`): width in design pixels and text lines, as the prototype; the first is the default.
 const SIZES: [(f32, usize); 4] = [(284., 5), (360., 8), (440., 12), (240., 3)];
 
+/// Where an action asks focus to go: into the composer's box, into the notes editor, or out of them
+/// to the zoom (or the lens).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Focus {
+    Box,
+    Editor,
+    Out,
+}
+
 /// The lens's focus handles around its view state.
 pub struct Ui {
     home: FocusHandle,
@@ -54,6 +63,9 @@ pub struct State {
     /// The selected space's id; `None` is the first card.
     selected: Option<String>,
     pub(super) zoom: Option<Zoom>,
+    /// The last action's focus request, taken by `views::on` as it returns; or a landed file-back's,
+    /// taken at the next render (`composer::sync`).
+    pub(super) focus: Option<Focus>,
     /// A zoom transition in flight (`space::Anim`), cleared when it lands.
     pub(super) anim: Option<Anim>,
     help: bool,
