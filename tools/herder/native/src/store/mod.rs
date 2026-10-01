@@ -5,7 +5,7 @@
 //! the foreground thread only. Views read `&Store`; they never hold `&mut`.
 //!
 //! - `fleet`: agents and their status, derived from the board.
-//! - `spaces`: spaces and their members, in lens order; the lens row type.
+//! - `spaces`: spaces and their members, in lens order; the lens row type; needs-you alerts (U6).
 //! - `notes`: note records and the owner's note edits, hand-off and queueing (U5).
 //! - `composer`: drafts, who can be written to, and each message send (U4).
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
@@ -54,6 +54,8 @@ pub struct Prefs {
     pub drafts: BTreeMap<String, String>,
     /// The SSH host alias VS Code's Remote-SSH opens files on (web asks; this Mac defaults to it).
     pub vscode_host: String,
+    /// The global summon chord (U6), in GPUI's syntax; no UI, edit `prefs.json`.
+    pub hotkey: String,
 }
 
 impl Default for Prefs {
@@ -66,6 +68,7 @@ impl Default for Prefs {
             unread: BTreeSet::new(),
             drafts: BTreeMap::new(),
             vscode_host: "superset".into(),
+            hotkey: "ctrl-alt-cmd-h".into(),
         }
     }
 }
@@ -128,6 +131,12 @@ pub enum Event {
     Transcript(transcript::Step),
     Compose(composer::Step),
     Note(notes::Step),
+    /// The agent zoomed in while the app is frontmost, or none (U6): it is never notified.
+    Looking(Option<String>),
+    /// A notification burst's `spaces::BURST_MS` is up.
+    BurstEnded,
+    /// The summon hotkey; the shell handles it before the store, which ignores it.
+    Summon,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -195,6 +204,14 @@ pub enum Effect {
     FiledBack {
         agent: String,
     },
+    /// Post a notification (U6); on the foreground, through `platform_mac`'s test-mode switch.
+    Notify(spaces::Notice),
+    /// Show this needs-you count on the dock (0 clears it).
+    Badge(usize),
+    /// Dispatch `Event::BurstEnded` after this long.
+    Burst {
+        after_ms: u64,
+    },
     /// Open a file or folder on the agents' host in VS Code (the file panel's seam, Rung 2).
     OpenFile {
         path: String,
@@ -233,6 +250,7 @@ pub struct Store {
     pub transfers: BTreeMap<String, notes::Transfer>,
     /// Per agent, why its last queue or transfer did not happen; until its next transfer.
     pub note_problems: BTreeMap<String, String>,
+    pub alerts: spaces::Alerts,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
@@ -246,14 +264,14 @@ pub struct Store {
 impl Store {
     /// Reduce one event. Returns the effects it implies, in order.
     pub fn apply(&mut self, event: Event) -> Vec<Effect> {
-        let mut out = Vec::new();
+        let (mut out, boot) = (Vec::new(), matches!(event, Event::Boot));
         match event {
             Event::PrefsLoaded(p) => self.prefs = p,
             Event::Snapshot(snap) => {
                 if !self.live {
                     self.sync.restore(snap.rows, false);
                     self.derive();
-                    self.board(snap.board, &mut out);
+                    self.board(snap.board, false, &mut out);
                 }
             }
             Event::OutboxLoaded(outbox) => {
@@ -303,6 +321,9 @@ impl Store {
             Event::Transcript(step) => self.transcript_step(step, &mut out),
             Event::Compose(step) => self.compose(step, &mut out),
             Event::Note(step) => self.note(step, &mut out),
+            Event::Looking(agent) => self.alerts.looking = agent,
+            Event::BurstEnded => self.burst_ended(&mut out),
+            Event::Summon => {}
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
                 let next = match step {
@@ -315,6 +336,8 @@ impl Store {
                 out.push(Effect::Persist(Persist::Prefs));
             }
         }
+        self.transitions(&mut out);
+        self.badge(boot, &mut out);
         out
     }
 
@@ -359,7 +382,7 @@ impl Store {
             }
             Wire::Fleet(board) => {
                 self.live = true;
-                self.board(board, out);
+                self.board(board, true, out);
                 out.push(Effect::Persist(Persist::Snapshot));
             }
             Wire::StateChanged(c) => {
@@ -374,9 +397,10 @@ impl Store {
         }
     }
 
-    fn board(&mut self, board: Board, out: &mut Vec<Effect>) {
+    fn board(&mut self, board: Board, live: bool, out: &mut Vec<Effect>) {
         self.fleet.ingest(board);
         self.lapse_blocks();
+        self.alerts.live |= live;
         if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
             out.push(Effect::Persist(Persist::Prefs));
         }

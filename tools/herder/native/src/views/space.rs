@@ -1,6 +1,7 @@
 //! The zoom shell (`Space` context): one space's agents as tabs over the zoomed agent's transcript
 //! (`transcript`), plus a preview tab for an outsider opened from a mention (local only, never a
-//! member). Zooming into an agent marks it seen and clears the space's unread mark.
+//! member). Zooming into an agent marks it seen and clears the space's unread mark. A notified agent in
+//! no space opens alone, as a preview in a zoom of no space (`Zoom::alone`); nothing joins a space.
 //!
 //! Transitions, as the spike: `enter` morphs the card's bounds to the window (280 ms) and `escape`
 //! morphs back (200 ms); `[` `]` and `n` swipe sideways (240 ms). Each is one-shot, and the lens is
@@ -32,11 +33,24 @@ pub enum Zoomed {
     Agent(isize),
 }
 
-/// Which space and agent are zoomed.
+/// Bring the app to a notification's agent (`agent:<name>`) or space (`space:<id>`), or to the lens
+/// (`""`, the summon chord); U6.
+#[derive(Clone, Debug, PartialEq, Action)]
+#[action(namespace = space, no_json)]
+pub struct Summon(pub SharedString);
+
+/// Which space and agent are zoomed. `space` is empty in a zoom of no space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Zoom {
     pub space: String,
     pub agent: Option<String>,
+}
+
+impl Zoom {
+    /// The zoom of no space (U6): a notified agent that sits in no space, alone as a preview.
+    pub fn alone(&self) -> bool {
+        self.space.is_empty()
+    }
 }
 
 /// A zoom transition: morph in from the card, morph out to it (drawing the zoom being left), or a
@@ -130,15 +144,51 @@ pub fn zoom_into(store: &Store, ui: &mut State, space: &Space, swipe: Option<f32
         .agents()
         .find(|a| store.agent_needs_you(a))
         .or_else(|| store.visible(space));
+    zoom_to(ui, &space.id, agent.map(str::to_string), swipe)
+}
+
+/// Zoom into the space `id` (empty: no space) at `agent`.
+fn zoom_to(ui: &mut State, id: &str, agent: Option<String>, swipe: Option<f32>) -> Vec<Event> {
     let kind = match (swipe, &ui.zoom) {
         (Some(dir), _) => Kind::Swipe(dir),
         (None, None) => Kind::In,
         (None, Some(_)) => Kind::Swipe(0.0),
     };
-    let card = ui.cards.borrow().get(&space.id).copied();
+    let card = ui.cards.borrow().get(id).copied();
     ui.anim = Some(Anim::new(kind, card, None));
-    ui.select(&space.id);
-    show(ui, space.id.clone(), agent.map(str::to_string))
+    if !id.is_empty() {
+        ui.select(id);
+    }
+    show(ui, id.to_string(), agent)
+}
+
+/// A summon (`Summon`): a notified agent is zoomed into in the first space holding it, or alone in a
+/// zoom of no space when no space holds it, and seen even when that zoom is already open; otherwise
+/// the zoom closes onto the lens, with the summary's space selected.
+pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
+    if let Some(agent) = tag.strip_prefix("agent:").filter(|a| !a.is_empty()) {
+        let lens = store.lens();
+        let home = lens.into_iter().find(|s| s.agents().any(|m| m == agent));
+        let to = Zoom {
+            space: home.map(|s| s.id.clone()).unwrap_or_default(),
+            agent: Some(agent.into()),
+        };
+        if ui.zoom.as_ref() == Some(&to) {
+            if !to.alone() {
+                ui.select(&to.space);
+            }
+            return vec![Event::Lens(Move::View {
+                space: to.space,
+                agent: to.agent,
+            })];
+        }
+        return zoom_to(ui, &to.space, to.agent, None);
+    }
+    let out = act(store, ui, Zoomed::Out);
+    if let Some(id) = tag.strip_prefix("space:") {
+        ui.select(id);
+    }
+    out
 }
 
 pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<Event> {
@@ -192,6 +242,10 @@ pub fn act(store: &Store, ui: &mut State, key: Zoomed) -> Vec<Event> {
     let Some(zoom) = ui.zoom.clone() else {
         return Vec::new();
     };
+    // Alone, there is no space to move through: only `escape` does anything.
+    if zoom.alone() && key != Zoomed::Out {
+        return Vec::new();
+    }
     let (Some(space), Zoomed::Space(by) | Zoomed::Agent(by)) = (zoomed(store, &zoom), key) else {
         // `escape`, or the space has gone: morph back to its card, letting the transcript go.
         let card = ui.cards.borrow().get(&zoom.space).copied();
@@ -247,9 +301,14 @@ pub fn render<H: Host>(
             })
             .when(store.agent_needs_you(name), |el| el.child(pill(1, t)))
     });
+    let gone = if zoom.alone() {
+        "no space"
+    } else {
+        "(space gone)"
+    };
     let crumb = format!(
         "lens › {} › {}",
-        space.map_or("(space gone)", |s| s.name.as_str()),
+        space.map_or(gone, |s| s.name.as_str()),
         current.unwrap_or("no agents")
     );
     let bar = div()
@@ -261,7 +320,13 @@ pub fn render<H: Host>(
         .border_b_1()
         .border_color(rgb(pal::RULE))
         .child(div().flex_1().font_weight(FontWeight::BOLD).child(crumb))
-        .child(dim("esc lens · [ ] spaces · tab agents").text_size(t.small));
+        .child(
+            dim(match zoom.alone() {
+                true => "esc lens",
+                false => "esc lens · [ ] spaces · tab agents",
+            })
+            .text_size(t.small),
+        );
     let strip = div().flex().gap(t.px(4.)).px(t.px(12.)).py(t.px(6.));
     div()
         .id("space")

@@ -57,6 +57,8 @@ pub struct Shell {
     saves: HashSet<&'static str>,
     painted: bool,
     live_painted: bool,
+    /// The window is the key window: the app is frontmost (U6).
+    front: bool,
 }
 
 impl Shell {
@@ -77,12 +79,25 @@ impl Shell {
         let (tx, mut rx) = unbounded();
         cx.spawn(async move |this, cx| {
             while let Some(event) = rx.next().await {
-                if this.update(cx, |s, cx| s.dispatch(event, cx)).is_err() {
+                let ok = match event {
+                    // The chord toggles: hide when frontmost, else come forward on the lens.
+                    Event::Summon => this.read_with(cx, |s, _| s.front).map(|front| {
+                        cx.update(|cx| if front { cx.hide() } else { summon("", cx) })
+                    }),
+                    event => this.update(cx, |s, cx| s.dispatch(event, cx)),
+                };
+                if ok.is_err() {
                     break;
                 }
             }
         })
         .detach();
+        if !platform_mac::assume_front() {
+            cx.observe_window_activation(window, |s: &mut Self, window, _| {
+                s.front = window.is_window_active()
+            })
+            .detach();
+        }
         let mut ui = lens::Ui::new(window, cx);
         transcript_view::set_web(&mut ui, &base_url());
         Shell {
@@ -95,6 +110,7 @@ impl Shell {
             saves: HashSet::new(),
             painted: false,
             live_painted: false,
+            front: platform_mac::assume_front(),
         }
     }
 }
@@ -117,6 +133,12 @@ impl Host for Shell {
                 ..
             }
         );
+        // Whom the owner is looking at, as the store last heard: a notification never interrupts that.
+        let looking = self.front.then(|| self.ui.zoomed_agent()).flatten();
+        if looking != self.store.alerts.looking {
+            let effects = self.store.apply(Event::Looking(looking));
+            self.run(effects, cx);
+        }
         let scale = self.store.prefs.text_scale;
         let effects = self.store.apply(event);
         if self.store.prefs.text_scale != scale {
@@ -189,6 +211,17 @@ impl Shell {
                 Effect::FiledBack { agent } => {
                     filed.extend(composer::filed_back(&self.store, &mut self.ui, &agent, cx))
                 }
+                Effect::Notify(n) if platform_mac::quiet() => {
+                    platform_mac::log(format!("would notify {}: {} / {}", n.tag, n.title, n.body))
+                }
+                Effect::Notify(n) => cx.show_system_notification(SystemNotification {
+                    tag: n.tag.into(),
+                    title: n.title.into(),
+                    body: n.body.into(),
+                    actions: Vec::new(),
+                }),
+                Effect::Badge(n) => platform_mac::badge(n),
+                Effect::Burst { after_ms } => self.later(after_ms, Event::BurstEnded, cx),
                 Effect::OpenFile { path, line } => {
                     match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
                         Some(url) => cx.open_url(&url),
@@ -288,6 +321,9 @@ impl Render for Shell {
             .id("root")
             .key_context("Lens")
             .on_action(|_: &Quit, _, cx| cx.quit())
+            .on_action(crate::views::on(cx, |store, ui, s: &space::Summon| {
+                space::summon(store, ui, &s.0)
+            }))
             .on_action(cx.listener(|s, _: &TextBigger, _, cx| {
                 s.dispatch(Event::TextScale(TextScale::Bigger), cx)
             }))
@@ -309,7 +345,10 @@ impl Render for Shell {
 
 pub fn run() {
     harness::start_clock();
-    let script = harness::script();
+    let script = harness::script().unwrap_or_else(|e| {
+        eprintln!("harness: {e}");
+        std::process::exit(2)
+    });
     gpui_kit::application().run(move |cx| {
         theme::seed(cx);
         gpui_kit::init(cx);
@@ -351,6 +390,7 @@ pub fn run() {
                 let probe = harness::Probe {
                     shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
                     link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
+                    summon: |tag| Box::new(space::Summon(tag.to_string().into())),
                     start: Box::new(move |cx| {
                         let open = s2.read(cx).store.transcript.open.as_ref();
                         let t = open.filter(|t| t.at_start())?;
@@ -384,5 +424,23 @@ pub fn run() {
         });
         harness::metric("window opened");
         shell.update(cx, |s, cx| s.dispatch(Event::Boot, cx));
+        // The run loop has started: the chord and notification clicks can be wired (U6).
+        let (chord, tx) = shell.read_with(cx, |s, _| (s.store.prefs.hotkey.clone(), s.tx.clone()));
+        platform_mac::summon_chord(&chord, move || drop(tx.unbounded_send(Event::Summon)));
+        if !platform_mac::quiet() {
+            cx.on_system_notification_response(|response, cx| summon(&response.tag, cx));
+        }
+    });
+}
+
+/// Bring the app forward, to a notification's agent or space (`space::summon`); `""` is the lens.
+fn summon(tag: &str, cx: &mut App) {
+    cx.activate(true);
+    let Some(window) = cx.windows().into_iter().next() else {
+        return;
+    };
+    let _ = window.update(cx, |_, window, cx| {
+        window.activate_window();
+        window.dispatch_action(Box::new(space::Summon(tag.to_string().into())), cx);
     });
 }

@@ -305,3 +305,88 @@ mod links {
         assert_eq!(vscode_url("superset", "relative", None), None);
     }
 }
+
+/// A notification's click (`space::summon`, U6).
+mod summon {
+    use super::*;
+    use crate::views::space::Zoom;
+
+    #[test]
+    fn an_agent_opens_in_its_first_space_from_anywhere() {
+        let store = store();
+        let slack = space_of(&store, "mupu").clone();
+        let chief = space_of(&store, "chief-mihe").clone();
+        let mut ui = State::default();
+        let events = space::summon(&store, &mut ui, "agent:mupu");
+        assert_eq!(viewed(events), [view(&slack, "mupu")]);
+        assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
+
+        // Open elsewhere (a preview in another space): it moves to its own space.
+        ui.zoom = Some(Zoom {
+            space: chief.id.clone(),
+            agent: Some("mupu".into()),
+        });
+        let events = space::summon(&store, &mut ui, "agent:mupu");
+        assert_eq!(viewed(events), [view(&slack, "mupu")]);
+        assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
+    }
+
+    #[test]
+    fn an_agent_already_open_is_still_seen() {
+        let store = store();
+        let slack = space_of(&store, "mupu").clone();
+        let mut ui = State::default();
+        space::summon(&store, &mut ui, "agent:mupu");
+        let events = space::summon(&store, &mut ui, "agent:mupu");
+        assert_eq!(
+            viewed(events),
+            [view(&slack, "mupu")],
+            "its new turn is seen"
+        );
+        assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
+    }
+
+    /// Owner ruling: an agent in no space opens alone, a preview in a zoom of no space; only `escape`
+    /// does anything there, back to the lens, and no space gains a member.
+    #[test]
+    fn an_agent_in_no_space_opens_alone() {
+        let store = store();
+        let alone = "risk-framework-gezu";
+        let mut ui = State::default();
+        let before = ui.selected(&store).map(|s| s.id.clone());
+        let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));
+        assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+        assert_eq!(zoomed(&ui), Some(("", Some(alone))));
+        assert!(ui.zoom.as_ref().is_some_and(Zoom::alone));
+        assert_eq!(space::shown(&store, &ui), format!("{alone} preview"));
+        assert_eq!(ui.selected(&store).map(|s| s.id.clone()), before);
+        // Summoned again while open: still seen.
+        let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));
+        assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+        for key in [Zoomed::Agent(1), Zoomed::Space(1), Zoomed::Space(-1)] {
+            assert!(space::act(&store, &mut ui, key).is_empty());
+            assert_eq!(zoomed(&ui), Some(("", Some(alone))));
+        }
+        space::act(&store, &mut ui, Zoomed::Out);
+        assert_eq!(zoomed(&ui), None);
+        assert!(store.spaces.iter().all(|s| s.agents().all(|a| a != alone)));
+    }
+
+    #[test]
+    fn a_summary_or_the_chord_comes_back_to_the_lens() {
+        let store = store();
+        let herder = space_of(&store, "orch-lega").clone();
+        let mut ui = State::default();
+        space::summon(&store, &mut ui, "agent:mupu");
+        let events = space::summon(&store, &mut ui, &format!("space:{}", herder.id));
+        assert!(viewed(events).is_empty());
+        assert_eq!(zoomed(&ui), None);
+        assert_eq!(ui.selected(&store).map(|s| &s.id), Some(&herder.id));
+        space::summon(&store, &mut ui, "agent:mupu");
+        space::summon(&store, &mut ui, "");
+        assert_eq!(zoomed(&ui), None);
+        space::summon(&store, &mut ui, "agent:risk-framework-gezu");
+        space::summon(&store, &mut ui, "lens");
+        assert_eq!(zoomed(&ui), None);
+    }
+}

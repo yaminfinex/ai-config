@@ -7,6 +7,7 @@
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
 //! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) · `draw` (one
 //! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches) ·
+//! `summon:<tag>` (what clicking a notification tagged so dispatches, without activating the app; U6) ·
 //! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) ·
 //! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
 //! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
@@ -57,11 +58,27 @@ pub fn visible() -> bool {
     std::env::var("HERDER_NATIVE_VISIBLE").is_ok_and(|v| v == "1")
 }
 
-/// The script, if this is a harness run.
-pub fn script() -> Option<String> {
-    std::env::var("HERDER_NATIVE_SCRIPT")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
+/// The script, if this is a harness run. `HERDER_NATIVE_SCRIPT` set at all makes the run automation
+/// (`platform_mac::quiet`), so a script that is empty or blank is refused before the app opens.
+pub fn script() -> Result<Option<String>, String> {
+    script_of(std::env::var_os("HERDER_NATIVE_SCRIPT").map(|v| v.to_string_lossy().into_owned()))
+}
+
+fn script_of(var: Option<String>) -> Result<Option<String>, String> {
+    match var {
+        Some(s) if s.trim().is_empty() => Err("HERDER_NATIVE_SCRIPT is set but empty".into()),
+        var => Ok(var),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_set_script_must_have_steps() {
+    assert_eq!(script_of(None), Ok(None));
+    assert!(script_of(Some(String::new())).is_err());
+    assert!(script_of(Some(" \t ".into())).is_err());
+    let steps = Some("wait:1 quit".to_string());
+    assert_eq!(script_of(steps.clone()), Ok(steps));
 }
 
 /// One metric line on stderr, stamped with milliseconds since `start_clock`.
@@ -113,6 +130,8 @@ pub struct Probe {
     pub shown: Box<dyn Fn(&App) -> String>,
     /// The action a click on a transcript link dispatches, for `link:`.
     pub link: fn(&str) -> Box<dyn Action>,
+    /// The action a click on a notification dispatches, for `summon:`.
+    pub summon: fn(&str) -> Box<dyn Action>,
     /// The open transcript once it holds every entry back to the start, for `start:`.
     pub start: Box<dyn Fn(&App) -> Reached>,
     /// The composer's focus and text (`focused:text` or `idle:text`), for `box:`.
@@ -217,6 +236,11 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 let link = (probe.link)(arg);
                 let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
                 metric(format!("link {arg}"));
+            }
+            "summon" => {
+                let summon = (probe.summon)(arg);
+                let _ = cx.update(|window, cx| window.dispatch_action(summon, cx));
+                metric(format!("summon {arg}"));
             }
             "expect" | "box" | "has" | "says" | "notes" => {
                 let got = cx.update(|window, cx| match op {
