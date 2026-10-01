@@ -14,7 +14,7 @@ use crate::store::{Event, Store};
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, Mentions};
 use crate::views::space::Zoom;
-use crate::views::theme::{TypeScale, pal, type_scale};
+use crate::views::theme::{self, TypeScale, pal, type_scale};
 use crate::views::{Host, dim};
 use gpui_kit::component::text::TextView;
 use gpui_kit::prelude::FluentBuilder as _;
@@ -331,7 +331,7 @@ fn row<H: Host>(
     let id = |kind: &str| {
         ElementId::Name(format!("{kind}-{}-{}-{}", tr.generation, key.0, key.1).into())
     };
-    let el = div().w_full().max_w(t.px(980.)).px(t.px(20.)).pb(t.px(10.));
+    let el = div().w_full().max_w(t.px(980.)).px(t.px(20.)).pb(t.px(6.));
     let small = |text: String| dim(text).text_size(t.small);
     let glyph = if open { "▾" } else { "▸" };
     let fold = |text: String| {
@@ -349,6 +349,11 @@ fn row<H: Host>(
             cache.entry((key, open)).or_insert_with(link).clone()
         };
         let text = TextView::markdown(id("md"), linked).selectable(true);
+        // No actions are drawn; asking for them gives each fenced block an id, which its sideways
+        // scroll keeps its offset under.
+        let text = text
+            .style(theme::prose(t))
+            .code_block_actions(|_, _, _| Empty);
         text.on_link_click(|url, _, window, cx| match markdown::route(url) {
             Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
             None if url.starts_with("http://") || url.starts_with("https://") => cx.open_url(url),
@@ -384,11 +389,16 @@ fn row<H: Host>(
         }
         Item::TaskNotification(s) => small(format!("⚑ {s}")).into_any_element(),
         Item::SystemChip(s) => small(format!("· {s}")).into_any_element(),
-        Item::CompactDivider(s) => small(s.clone())
-            .border_t_1()
-            .border_color(rgb(pal::RULE))
-            .pt(t.px(4.))
-            .into_any_element(),
+        Item::CompactDivider(s) => {
+            let rule = || div().flex_1().h(px(1.)).bg(rgb(pal::PURPLE_RULE));
+            let el = div().flex().items_center().gap(t.px(8.)).py(t.px(8.));
+            el.text_size(t.small)
+                .text_color(rgb(pal::PURPLE))
+                .child(rule())
+                .child(s.clone())
+                .child(rule())
+                .into_any_element()
+        }
         Item::Assistant { markdown } => md(markdown).into_any_element(),
         Item::Thinking(text) if text.trim().is_empty() => {
             small("∴ thinking".into()).into_any_element()
