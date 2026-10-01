@@ -324,7 +324,7 @@ mod tests {
         ));
         assert!(matches!(
             wire("entry:mupu", r#"{"byteOffset":42,"kind":"assistant_text","payload":{}}"#),
-            Wire::Entry { agent, entry } if agent == "mupu" && entry.byte_offset == 42
+            Wire::Entry(agent) if agent == "mupu"
         ));
         assert!(
             matches!(wire("rewindow", r#"{"agent":"mupu"}"#), Wire::Rewindow(r) if r.agent == "mupu")

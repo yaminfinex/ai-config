@@ -32,8 +32,7 @@ use sync::{Ns, Step, Syncs};
 pub enum Conn {
     #[default]
     Offline,
-    /// Live; `build` is the server's `hello.buildIdentity`.
-    Live { build: String },
+    Live,
 }
 
 /// Owner preferences that live on this Mac (`local::prefs.json`).
@@ -146,19 +145,6 @@ pub enum Fetch {
     Transcript(transcript::Read),
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Write {
-    State {
-        ns: Ns,
-        rows: Vec<StateRow>,
-    },
-    /// `POST /api/agents/{agent}/message`, once, after the prefs (with the draft) are saved.
-    Message {
-        agent: String,
-        text: String,
-    },
-}
-
 /// A file the shell writes from the store's current state; it coalesces bursts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Persist {
@@ -176,9 +162,18 @@ pub enum Effect {
         agents: Vec<String>,
     },
     Fetch(Fetch),
-    /// The shell saves the current outbox (a message: the prefs) first and posts only once that save
-    /// succeeded; a failed save comes back as `Step::PostFailed(None)` (`Failure::NotSaved`).
-    Send(Write),
+    /// `POST /api/state/{ns}`. The shell saves the current outbox first and posts only once that save
+    /// succeeded; a failed save comes back as `Step::PostFailed(None)`.
+    Post {
+        ns: Ns,
+        rows: Vec<StateRow>,
+    },
+    /// `POST /api/agents/{agent}/message`, once, after the prefs (with the draft) are saved; a failed
+    /// save comes back as `Failure::NotSaved`.
+    Message {
+        agent: String,
+        text: String,
+    },
     /// Dispatch `Event::Sync { ns, step: Step::Retry }` after this long.
     Retry {
         ns: Ns,
@@ -374,9 +369,7 @@ impl Store {
             Wire::Hello(hello) => {
                 let first = self.first_build.get_or_insert(hello.build_identity.clone());
                 self.server_updated |= *first != hello.build_identity;
-                self.conn = Conn::Live {
-                    build: hello.build_identity,
-                };
+                self.conn = Conn::Live;
                 self.catch_up(out);
                 self.transcript_wake(None, out);
             }
@@ -390,7 +383,7 @@ impl Store {
                     self.sync.get_mut(ns).changed(c.rev, out);
                 }
             }
-            Wire::Entry { agent, .. } => self.transcript_wake(Some(&agent), out),
+            Wire::Entry(agent) => self.transcript_wake(Some(&agent), out),
             Wire::Rewindow(r) => self.transcript_rewindow(&r.agent, out),
             Wire::Message(m) => self.transcript_message(&m.to, out),
             Wire::Ping | Wire::Other(_) => {}

@@ -47,7 +47,7 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   `Shell::dispatch` on the foreground thread. Views take `&Store` and dispatch `Event`s; they never hold
   `&mut Store`. Each view owns the GPUI widget entities it renders with (`ListState`, `TextareaState`,
   `EditorState`) as plain GPUI state; those are not domain state and never go through the store.
-- **Effects.** `apply` returns what must happen next. Network and disk effects (`Fetch`, `Send`, `Persist`)
+- **Effects.** `apply` returns what must happen next. Network and disk effects (`Fetch`, `Post`, `Message`, `Persist`)
   run off the main thread and their results come back as events. `Notify` and `Badge` are AppKit calls and
   run on the foreground inside `dispatch`. A fixture test checks both the state and the effects a reduction
   produces.

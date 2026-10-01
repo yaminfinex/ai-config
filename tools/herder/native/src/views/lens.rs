@@ -259,7 +259,7 @@ fn home<H: Host>(store: &Store, ui: &Ui, t: TypeScale, cx: &mut Context<H>) -> A
 fn header(store: &Store, t: TypeScale) -> Div {
     let conn = match &store.conn {
         Conn::Offline => "offline",
-        Conn::Live { .. } => "live",
+        Conn::Live => "live",
     };
     let needs: usize = store.spaces.iter().map(|s| store.needs_you(s)).sum();
     let fresh = store.server_updated;

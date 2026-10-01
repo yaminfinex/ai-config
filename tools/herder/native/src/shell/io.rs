@@ -3,13 +3,14 @@
 
 use crate::api::client::Client;
 use crate::api::client::Error;
+use crate::api::types::StateRow;
 use crate::harness;
 use crate::local::{self, Disk};
 use crate::store::composer::{self, Failure};
 use crate::store::notes;
-use crate::store::sync::Step;
+use crate::store::sync::{Ns, Step};
 use crate::store::transcript::{self, Got, What};
-use crate::store::{Event, Fetch, Write};
+use crate::store::{Event, Fetch};
 
 pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     match fetch {
@@ -55,17 +56,14 @@ pub fn save_then_send(
     client: &Client,
     outbox: &[u8],
     seq: u64,
-    sends: Vec<Write>,
+    sends: Vec<(Ns, Vec<StateRow>)>,
     mut on: impl FnMut(Event),
 ) {
     let saved = disk.write(local::OUTBOX, outbox, seq);
     if let Err(e) = &saved {
         eprintln!("local: could not save outbox.json, not sending: {e}");
     }
-    for write in sends {
-        let Write::State { ns, rows } = write else {
-            continue;
-        };
+    for (ns, rows) in sends {
         let step = match &saved {
             Err(_) => Step::PostFailed(None),
             Ok(()) => match client.post_state(ns.name(), &rows) {

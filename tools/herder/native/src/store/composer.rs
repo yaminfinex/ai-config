@@ -4,7 +4,7 @@
 //! key and a message must never land twice.
 
 use super::spaces::{self, Seen};
-use super::{Attribution, Effect, Persist, Store, Write};
+use super::{Attribution, Effect, Persist, Store};
 use crate::api::Refusal;
 
 #[derive(Clone, Debug)]
@@ -141,7 +141,7 @@ impl Store {
                     file_back,
                 };
                 self.sends.insert(agent.clone(), flight);
-                out.push(Effect::Send(Write::Message { agent, text }));
+                out.push(Effect::Message { agent, text });
             }
             Step::Sent { agent, result } => {
                 let Some(Sending::InFlight { text, file_back }) = self.sends.remove(&agent) else {

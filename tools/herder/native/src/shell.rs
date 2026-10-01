@@ -21,7 +21,7 @@ use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
 use crate::store::transcript;
-use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale, Write};
+use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
     Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, space,
@@ -171,14 +171,14 @@ impl Shell {
                     self.stream = Some(reader);
                 }
                 Effect::Fetch(fetch) => self.background(cx, |_, client| run_fetch(client, fetch)),
-                Effect::Send(Write::Message { agent, text }) => {
+                Effect::Message { agent, text } => {
                     let (bytes, seq) = (local::encode(&self.store.prefs), local::next_seq());
                     let send = (agent, text);
                     self.background(cx, move |disk, client| {
                         save_then_message(disk, client, &bytes, seq, send)
                     })
                 }
-                Effect::Send(write) => sends.push(write),
+                Effect::Post { ns, rows } => sends.push((ns, rows)),
                 Effect::Retry { ns, after_ms } => {
                     let step = Step::Retry;
                     self.later(after_ms, Event::Sync { ns, step }, cx)
