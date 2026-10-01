@@ -110,6 +110,9 @@ Derived shapes are in `store`:
   (owner rulings, 2026-10-01): each agent that needs you once, in one space, several or none, plus each
   marked space none of whose agents already counts. While the owner watches an agent's tail (frontmost,
   zoomed on it, the transcript at the bottom) what lands is seen at once: it neither counts nor alerts.
+  Leaving the bottom (a scroll key, the wheel) reaches the store as it happens, before any fleet frame
+  behind it; the view's word on the tail names the transcript's agent and generation, and a stale one
+  (after a zoom switch or a reset) is dropped.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
   orders and pairs them): `Prompt`, `Delivery{sender, text, operator, quiet}` (`quiet`: an ack or the
   launcher, a one-line chip),
@@ -292,18 +295,18 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `api/types.rs` | 322 | `views/mod.rs` | 378 |
 | `api/client.rs` | 206 | `views/lens.rs` | 372 |
 | `api/sse.rs` | 194 | `views/space.rs` | 335 |
-| `store/mod.rs` | 422 | `views/transcript.rs` | 391 |
+| `store/mod.rs` | 422 | `views/transcript.rs` | 435 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 204 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 365 |
 | `store/spaces.rs` | 193 | `views/probe.rs` | 93 |
 | `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
-| `store/transcript.rs` | 541 | `views/theme.rs` | 98 |
-| `store/condense.rs` | 189 | `shell.rs` | 416 |
-| `store/notes.rs` | 424 | `shell/io.rs` | 134 |
+| `store/transcript.rs` | 552 | `views/theme.rs` | 98 |
+| `store/condense.rs` | 189 | `shell.rs` | 420 |
+| `store/notes.rs` | 424 | `shell/io.rs` | 166 |
 | `store/composer.rs` | 166 | `harness.rs` | 267 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
 
-About 6,850 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
+About 6,950 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 

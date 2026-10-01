@@ -6,10 +6,10 @@ use crate::api::types::StateRow;
 use crate::harness;
 use crate::local::{self, Disk};
 use crate::store::composer::{self, Failure};
-use crate::store::notes;
+use crate::store::notes::{self, Dest};
 use crate::store::sync::{Ns, Step};
 use crate::store::transcript::{self, Got, What};
-use crate::store::{Event, Fetch};
+use crate::store::{Effect, Event, Fetch, Persist};
 
 pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
     match fetch {
@@ -45,6 +45,38 @@ pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
             let result = result.map_err(|e| e.to_string());
             Event::Transcript(transcript::Step::Read(read, result))
         }
+    }
+}
+
+/// One batch of effects' writes, as the shell gathers them (and the fake-serve tests' driver, so both
+/// route alike): whether the outbox changed, the posts and the queued notes (`Dest::Note`) that wait on
+/// its save, and the hand-offs into the draft (`Dest::Draft`) that wait on the prefs'.
+#[derive(Default)]
+pub struct Batch {
+    pub save: bool,
+    pub sends: Vec<(Ns, Vec<StateRow>)>,
+    pub lands: Vec<String>,
+    pub drafts: Vec<String>,
+}
+
+impl Batch {
+    /// Keep `effect` when it is one of the batch's; anything else goes back to the caller.
+    pub fn take(&mut self, effect: Effect) -> Option<Effect> {
+        match effect {
+            Effect::Persist(Persist::Outbox) => self.save = true,
+            Effect::Post { ns, rows } => self.sends.push((ns, rows)),
+            Effect::Transfer { to, agent } => match to {
+                Dest::Note => self.lands.push(agent),
+                Dest::Draft => self.drafts.push(agent),
+            },
+            effect => return Some(effect),
+        }
+        None
+    }
+
+    /// A post or a queued note waits on the outbox's save (`save_then_send`).
+    pub fn waits(&self) -> bool {
+        !self.sends.is_empty() || !self.lands.is_empty()
     }
 }
 

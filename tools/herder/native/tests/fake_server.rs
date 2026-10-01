@@ -5,11 +5,11 @@ use herder_native::api::client::{Client, Page};
 use herder_native::api::sse::Reader;
 use herder_native::api::{StateRow, Wire};
 use herder_native::local::{self, Disk};
-use herder_native::shell::{save_then_land, save_then_message, save_then_send};
-use herder_native::store::notes::Dest;
+use herder_native::shell::{Batch, save_then_land, save_then_message, save_then_send};
 use herder_native::store::sync::{Hold, Ns, Step};
 use herder_native::store::{Effect, Event, Fetch, Store, StreamEvent};
 use serde_json::json;
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write as _};
 use std::net::TcpListener;
 use std::path::PathBuf;
@@ -91,41 +91,38 @@ fn rows_json(rev: u64) -> String {
 }
 
 /// Run the store's effects the way the shell does, synchronously against the fake, until nothing is
-/// left to do. A batch with sends or queued notes goes through the shell's own `save_then_send`. A
-/// batch that only persists is left unsaved, as if its task were still waiting, so every test also
-/// shows that a send never depends on an earlier save having landed. A hand-off's draft save goes
-/// through the shell's `save_then_land`.
-fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
-    let mut events = vec![first];
-    while let Some(event) = events.pop() {
-        let (mut sends, mut lands) = (Vec::new(), Vec::new());
-        for effect in store.apply(event) {
-            match effect {
-                Effect::Fetch(Fetch::State { ns, since }) => {
-                    let step = match client.state(ns.name(), since) {
-                        Ok(rows) => Step::Pulled(rows),
-                        Err(e) => Step::PullFailed(e.status()),
-                    };
-                    events.push(Event::Sync { ns, step });
-                }
-                Effect::Post { ns, rows } => sends.push((ns, rows)),
-                Effect::Transfer { to, agent } => match to {
-                    Dest::Note => lands.push(agent),
-                    Dest::Draft => {
-                        let (bytes, seq) = (local::encode(&store.prefs), local::next_seq());
-                        events.push(save_then_land(disk, &bytes, seq, agent));
-                    }
-                },
-                _ => {}
+/// left to do; the events applied, in order (first in, first out, as they reach the shell's channel).
+/// Writes are gathered by the shell's own `Batch`; the posts and queued notes waiting on the outbox go
+/// through its `save_then_send`, a hand-off's draft through its `save_then_land`. A batch that only
+/// persists is left unsaved, as if its task were still waiting, so every test also shows that a send
+/// never depends on an earlier save having landed.
+fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) -> Vec<Event> {
+    let (mut events, mut applied) = (VecDeque::from([first]), Vec::new());
+    while let Some(event) = events.pop_front() {
+        let mut batch = Batch::default();
+        let effects = store.apply(event.clone());
+        applied.push(event);
+        for effect in effects.into_iter().filter_map(|e| batch.take(e)) {
+            if let Effect::Fetch(Fetch::State { ns, since }) = effect {
+                let step = match client.state(ns.name(), since) {
+                    Ok(rows) => Step::Pulled(rows),
+                    Err(e) => Step::PullFailed(e.status()),
+                };
+                events.push_back(Event::Sync { ns, step });
             }
         }
-        if !sends.is_empty() || !lands.is_empty() {
-            let bytes = local::encode(&store.outbox());
-            save_then_send(disk, client, &bytes, local::next_seq(), sends, lands, |e| {
-                events.push(e)
+        for agent in std::mem::take(&mut batch.drafts) {
+            let (bytes, seq) = (local::encode(&store.prefs), local::next_seq());
+            events.push_back(save_then_land(disk, &bytes, seq, agent));
+        }
+        if batch.waits() {
+            let (bytes, seq) = (local::encode(&store.outbox()), local::next_seq());
+            save_then_send(disk, client, &bytes, seq, batch.sends, batch.lands, |e| {
+                events.push_back(e)
             });
         }
     }
+    applied
 }
 
 /// A fresh local state directory for one test.
@@ -650,8 +647,9 @@ fn a_note_is_saved_then_posted_in_webs_shape_then_retired() {
     assert_eq!(store.notes_of("mupu").count(), 1);
 }
 
-/// U5: alt-enter's note is in `outbox.json` before the draft clears; a disk that refuses keeps the
-/// draft, says why and posts nothing.
+/// U5: alt-enter's note is in `outbox.json` before the draft clears (it lands before the POST's answer,
+/// and is on disk when the POST arrives); a disk that refuses keeps the draft, says why and posts
+/// nothing.
 #[test]
 fn a_queued_draft_clears_only_once_its_note_is_saved() {
     use herder_native::store::notes::{Stamp, Step as N};
@@ -664,8 +662,14 @@ fn a_queued_draft_clears_only_once_its_note_is_saved() {
                 Disk::at(dir.join("state"))
             }
         };
-        let (base, log) = serve(|target, _| match target.starts_with("POST") {
-            true => Reply::Json(200, json!({"accepted": ["q1"], "rev": 2}).to_string()),
+        let (outbox, at_post) = (dir.join(local::OUTBOX), Arc::new(Mutex::new(Vec::new())));
+        let at = at_post.clone();
+        let (base, log) = serve(move |target, _| match target.starts_with("POST") {
+            true => {
+                let on_disk = std::fs::read_to_string(&outbox).unwrap_or_default();
+                at.lock().unwrap().push(on_disk);
+                Reply::Json(200, json!({"accepted": ["q1"], "rev": 2}).to_string())
+            }
             false => Reply::Json(200, json!({"rows": [], "rev": 1}).to_string()),
         });
         let client = Client::new(base);
@@ -680,7 +684,19 @@ fn a_queued_draft_clears_only_once_its_note_is_saved() {
             agent: "mupu".into(),
             stamp,
         };
-        drive(&mut store, &client, &disk, Event::Note(queue));
+        let applied = drive(&mut store, &client, &disk, Event::Note(queue));
+        let landed = applied
+            .iter()
+            .position(|e| matches!(e, Event::Note(N::Landed { saved: Ok(()), .. })));
+        let posted = applied.iter().position(|e| {
+            matches!(
+                e,
+                Event::Sync {
+                    ns: Ns::Notes,
+                    step: Step::Posted
+                }
+            )
+        });
         let posts = log
             .lock()
             .unwrap()
@@ -692,16 +708,63 @@ fn a_queued_draft_clears_only_once_its_note_is_saved() {
         match refused {
             false => {
                 assert_eq!(posts, 1);
+                assert!(landed < posted && landed.is_some(), "{applied:?}");
+                let at_post = at_post.lock().unwrap();
+                assert!(at_post[0].contains("\"q1\""), "saved before the POST");
                 assert!(!store.prefs.drafts.contains_key("mupu"));
                 assert!(store.note_problems.is_empty());
                 std::fs::remove_dir_all(dir).unwrap();
             }
             true => {
                 assert_eq!(posts, 0, "nothing reached the server");
+                assert!(landed.is_none() && posted.is_none(), "{applied:?}");
                 assert_eq!(store.prefs.drafts["mupu"], "later");
                 assert!(store.note_problems["mupu"].contains("the draft stays"));
                 std::fs::remove_file(dir).unwrap();
             }
         }
     }
+}
+
+/// U5: with a notes POST already in flight, alt-enter's batch posts nothing, and its note still lands
+/// only with the outbox's save: on disk before the draft clears.
+#[test]
+fn a_queued_note_lands_with_the_outbox_while_a_post_is_in_flight() {
+    use herder_native::store::notes::{Stamp, Step as N};
+    let (disk, dir) = scratch("queue-busy");
+    let (base, log) = serve(|_, _| Reply::Json(200, json!({"rows": [], "rev": 1}).to_string()));
+    let client = Client::new(base);
+    let mut store = Store::default();
+    store.prefs.drafts.insert("mupu".into(), "later".into());
+    let stamp = |id: &str| Stamp {
+        now: 7,
+        id: id.into(),
+        write: format!("w-{id}"),
+    };
+    let add = N::Add {
+        group: "mupu".into(),
+        text: "first".into(),
+        quote: None,
+        stamp: stamp("n1"),
+    };
+    let effects = store.apply(Event::Note(add));
+    assert!(
+        effects.iter().any(|e| matches!(e, Effect::Post { .. })),
+        "n1's POST, never answered"
+    );
+    let queue = N::Queue {
+        agent: "mupu".into(),
+        stamp: stamp("q1"),
+    };
+    let applied = drive(&mut store, &client, &disk, Event::Note(queue));
+    let on_disk = std::fs::read_to_string(dir.join(local::OUTBOX)).unwrap_or_default();
+    std::fs::remove_dir_all(dir).unwrap();
+    let landed = |e: &Event| matches!(e, Event::Note(N::Landed { saved: Ok(()), .. }));
+    assert!(applied.iter().any(landed), "{applied:?}");
+    assert!(
+        on_disk.contains("\"q1\""),
+        "landed with the outbox: {on_disk}"
+    );
+    assert!(!store.prefs.drafts.contains_key("mupu"));
+    assert!(log.lock().unwrap().iter().all(|l| !l.starts_with("POST")));
 }

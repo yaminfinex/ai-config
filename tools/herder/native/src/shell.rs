@@ -20,7 +20,6 @@
 use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
-use crate::store::notes::Dest;
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
@@ -32,7 +31,7 @@ use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use io::run_fetch;
-pub use io::{save_then_land, save_then_message, save_then_send};
+pub use io::{Batch, save_then_land, save_then_message, save_then_send};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -92,9 +91,10 @@ impl Shell {
             }
         })
         .detach();
-        if platform_mac::assume_front() {
-            store.apply(Event::Front(true));
-        } else {
+        // Seeded from the window: a first activation missed must not leave a frontmost app in the back.
+        let assume = platform_mac::assume_front();
+        store.apply(Event::Front(assume || window.is_window_active()));
+        if !assume {
             cx.observe_window_activation(window, |s: &mut Self, window, cx| {
                 s.dispatch(Event::Front(window.is_window_active()), cx)
             })
@@ -150,9 +150,8 @@ impl Host for Shell {
 
 impl Shell {
     fn run(&mut self, effects: Vec<Effect>, cx: &mut Context<Self>) {
-        let mut save_outbox = false;
-        let (mut sends, mut lands, mut filed) = (Vec::new(), Vec::new(), Vec::new());
-        for effect in effects {
+        let (mut batch, mut filed) = (Batch::default(), Vec::new());
+        for effect in effects.into_iter().filter_map(|e| batch.take(e)) {
             match effect {
                 Effect::Stream { generation, agents } => {
                     self.stream = None; // Dropping a reader closes it.
@@ -172,17 +171,10 @@ impl Shell {
                         save_then_message(disk, client, &bytes, seq, send)
                     })
                 }
-                Effect::Post { ns, rows } => sends.push((ns, rows)),
                 Effect::After { after_ms, wake } => self.later(after_ms, Event::Wake(wake), cx),
-                Effect::Persist(Persist::Outbox) => save_outbox = true,
                 Effect::Persist(file) => self.save_later(file, cx),
-                Effect::Transfer { to, agent } => match to {
-                    Dest::Note => lands.push(agent),
-                    Dest::Draft => {
-                        let (_, bytes, seq) = self.bytes(Persist::Prefs);
-                        self.background(cx, move |disk, _| save_then_land(disk, &bytes, seq, agent))
-                    }
-                },
+                // Taken by the batch (`Batch::take`), as is the outbox's persist.
+                Effect::Post { .. } | Effect::Transfer { .. } => {}
                 Effect::FiledBack { agent } => {
                     filed.extend(composer::filed_back(&self.store, &mut self.ui, &agent, cx))
                 }
@@ -204,10 +196,14 @@ impl Shell {
                 }
             }
         }
+        for agent in std::mem::take(&mut batch.drafts) {
+            let (_, bytes, seq) = self.bytes(Persist::Prefs);
+            self.background(cx, move |disk, _| save_then_land(disk, &bytes, seq, agent))
+        }
         for event in filed {
             self.dispatch(event, cx);
         }
-        if !save_outbox && sends.is_empty() && lands.is_empty() {
+        if !batch.save && !batch.waits() {
             return;
         }
         // Saved now even when this batch did not change the outbox: an edit's own save may still be
@@ -216,9 +212,17 @@ impl Shell {
         let (disk, client, tx) = (self.disk.clone(), self.client.clone(), self.tx.clone());
         cx.background_executor()
             .spawn(async move {
-                save_then_send(&disk, &client, &bytes, seq, sends, lands, |event| {
-                    let _ = tx.unbounded_send(event);
-                })
+                save_then_send(
+                    &disk,
+                    &client,
+                    &bytes,
+                    seq,
+                    batch.sends,
+                    batch.lands,
+                    |event| {
+                        let _ = tx.unbounded_send(event);
+                    },
+                )
             })
             .detach();
     }
