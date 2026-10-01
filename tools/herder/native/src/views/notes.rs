@@ -116,7 +116,7 @@ pub(super) struct Editing {
 }
 
 /// The list's selection, as web's `NoteSelection`: the chosen notes, the anchor a range extends from,
-/// and the cursor. `ids` is always the zoomed agent's notes in list order (oldest first).
+/// and the cursor. `ids` is always the zoomed agent's notes in list order (newest-updated first).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Picked {
     pub selected: BTreeSet<String>,

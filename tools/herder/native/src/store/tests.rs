@@ -2239,6 +2239,14 @@ mod notes {
         });
     }
 
+    /// Web's hand-off text of each of its two notes on mupu, in web's list order (newest-updated
+    /// first); the fixture holds them in row order.
+    fn handoff() -> Vec<String> {
+        let mut texts: Vec<String> = serde_json::from_value(web()["handoff"].clone()).unwrap();
+        texts.reverse();
+        texts
+    }
+
     /// Web's two notes on mupu, as a hand-off of every note names them.
     fn both() -> Vec<String> {
         vec![web_row(0).key, web_row(1).key]
@@ -2374,7 +2382,7 @@ mod notes {
         pulled(&mut store, vec![general], 2);
         assert_eq!(
             texts(&store, "mupu"),
-            ["ask it to split this", "check the outbox after a 409"]
+            ["check the outbox after a 409", "ask it to split this"]
         );
         assert!(store.notes_of("riko").next().is_none());
         assert!(store.notes_of("general").count() == 1);
@@ -2391,13 +2399,13 @@ mod notes {
         web_edit.updated += 20;
         web_edit.value["text"] = "web's".into();
         pulled(&mut store, vec![web_edit], 3);
-        assert_eq!(texts(&store, "mupu"), ["ask it to split this", "web's"]);
+        assert_eq!(texts(&store, "mupu"), ["web's", "ask it to split this"]);
         assert!(queued(&store, Ns::Notes).is_empty());
         // An older remote row loses to the local edit.
         let mine = stamp(quoted.updated + 50, "-", "w-native");
         store.apply(Event::Note(edit(opened(&store, &quoted.key), "mine", mine)));
         pulled(&mut store, vec![quoted], 4);
-        assert_eq!(texts(&store, "mupu")[0], "mine");
+        assert_eq!(texts(&store, "mupu"), ["web's", "mine"]);
         assert_eq!(queued(&store, Ns::Notes).len(), 1);
     }
 
@@ -2406,7 +2414,7 @@ mod notes {
         let mut store = loaded();
         pulled(&mut store, vec![web_row(0), web_row(1)], 1);
         let got: Vec<String> = store.notes_of("mupu").map(transfer_text).collect();
-        let want: Vec<String> = serde_json::from_value(web()["handoff"].clone()).unwrap();
+        let want = handoff();
         assert_eq!(got, want);
         // File and diff sources (web's file panes can file notes on an agent) fence the quote.
         let mut n = store.notes_of("mupu").next().unwrap().clone();
@@ -2434,7 +2442,7 @@ mod notes {
             stamp: stamp(1, "-", "w-h"),
         };
         let effects = store.apply(Event::Note(hand.clone()));
-        let want: Vec<String> = serde_json::from_value(web()["handoff"].clone()).unwrap();
+        let want = handoff();
         let draft = format!("first\n\n{}", want.join("\n\n"));
         assert_eq!(store.prefs.drafts["mupu"], draft);
         // Only the draft's save, at once: no tombstone is queued, saved or sent until it lands.
@@ -2469,7 +2477,7 @@ mod notes {
         let mut store = super::composer::zoomed("mupu", Some("listening"));
         pulled(&mut store, vec![web_row(0), web_row(1)], 1);
         let (quoted, plain) = (web_row(0).key, web_row(1).key);
-        let want: Vec<String> = serde_json::from_value(web()["handoff"].clone()).unwrap();
+        let want = handoff();
         let hand = |ids: Vec<String>| N::HandOff {
             agent: "mupu".into(),
             ids,
@@ -2478,14 +2486,14 @@ mod notes {
         // Not mupu's (or no note at all): nothing moves.
         assert!(store.apply(Event::Note(hand(vec!["g".into()]))).is_empty());
         assert!(!store.prefs.drafts.contains_key("mupu"));
-        // The second note only: the draft is saved first, and nothing is deleted until it lands.
+        // The newer note only: the draft is saved first, and nothing is deleted until it lands.
         let effects = store.apply(Event::Note(hand(vec![plain.clone()])));
         let save = Effect::Transfer {
             to: crate::store::notes::Dest::Draft,
             agent: "mupu".into(),
         };
         assert_eq!(effects, [save]);
-        assert_eq!(store.prefs.drafts["mupu"], want[1]);
+        assert_eq!(store.prefs.drafts["mupu"], want[0]);
         assert_eq!(tombstones(&store.outbox()), 0);
         assert_eq!(store.notes_of("mupu").count(), 2);
         // Landed: only the chosen note is tombstoned; the other stays.
@@ -2494,7 +2502,7 @@ mod notes {
         let keys: Vec<(&str, bool)> = tombs.iter().map(|r| (&*r.key, r.deleted)).collect();
         assert_eq!(keys, [(&*plain, true)]);
         assert_eq!(texts(&store, "mupu"), ["ask it to split this"]);
-        // Chosen in any order, the draft takes them in list order (oldest first).
+        // Chosen in any order, the draft takes them in list order (newest-updated first).
         let mut store = super::composer::zoomed("mupu", Some("listening"));
         pulled(&mut store, vec![web_row(0), web_row(1)], 1);
         store.apply(Event::Note(hand(vec![plain, quoted])));

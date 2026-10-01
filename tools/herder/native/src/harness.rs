@@ -17,7 +17,7 @@
 //! notes editor; U5) · `header:<text>` (the lens header contains it; U6) · `select:<text>` (as if the pointer had selected it in the transcript) ·
 //! `tap:<keystroke>` (as `key:`, but bound to nothing is fine) ·
 //! `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` (what a click on the notes strip
-//! dispatches, `i` the zoomed agent's note, oldest first, `edit` a double-click on it; it fails when
+//! dispatches, `i` the zoomed agent's note, newest-updated first, `edit` a double-click on it; it fails when
 //! there is no such thing to click) · `list:<focused|idle>:<selected>@<cursor>` (the notes list: the
 //! selected notes' indexes, comma-separated, and the cursor's, `-` for none; F6) · `said:<text>` (the
 //! notes strip's confirmation line contains it) · `click:<card:i|card2:i|tab:i|crumb>` (a click on the lens's card

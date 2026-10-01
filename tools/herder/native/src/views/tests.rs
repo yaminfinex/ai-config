@@ -658,7 +658,9 @@ mod notes_list {
         let one = (transfer_text(notes[1]), "Copied 1 note.".to_string());
         assert_eq!(copied(&store, "mupu", &p), Some(one));
         p.all(&ids);
-        let want: Vec<String> = serde_json::from_value(web["handoff"].clone()).unwrap();
+        // Web's per-note texts are in row order; its list (and copy) is newest-updated first.
+        let mut want: Vec<String> = serde_json::from_value(web["handoff"].clone()).unwrap();
+        want.reverse();
         let both = (want.join("\n\n"), "Copied 2 notes.".to_string());
         assert_eq!(copied(&store, "mupu", &p), Some(both));
     }

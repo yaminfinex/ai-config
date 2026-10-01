@@ -35,7 +35,7 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
                 Some(_) => format!("{n}:{focus}:{}", ui.notes.text),
             }
         }
-        // The notes list's focus, its selection (indexes, oldest first) and cursor: `focused:0,1@1`.
+        // The notes list's focus, its selection (indexes, newest-updated first) and cursor: `focused:0,1@1`.
         "list" => {
             let ids: Vec<&str> = store
                 .notes_of(agent.unwrap_or(""))
@@ -75,7 +75,7 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 
 /// What a click dispatches: `link:<url>` on a transcript link, `summon:<tag>` on a notification,
 /// `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` on the notes strip (`i` the zoomed
-/// agent's note, oldest first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
+/// agent's note, newest-updated first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
 /// order), `click:tab:i` (the zoom's tab, from the left) and `click:crumb` (`lens ›`); `None` where
 /// there is no such thing to click.
 pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {

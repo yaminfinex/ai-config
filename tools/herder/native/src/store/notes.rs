@@ -30,7 +30,7 @@ pub struct Note {
     pub updated: i64,
 }
 
-/// The live notes, oldest first. A row whose value does not decode is skipped.
+/// The live notes, newest-updated first, as web lists them. A row whose value does not decode is skipped.
 pub fn derive(rows: &BTreeMap<String, StateRow>) -> Vec<Note> {
     let mut out: Vec<Note> = rows
         .values()
@@ -48,7 +48,8 @@ pub fn derive(rows: &BTreeMap<String, StateRow>) -> Vec<Note> {
             })
         })
         .collect();
-    out.sort_by(|a, b| (a.created, &a.id).cmp(&(b.created, &b.id)));
+    // Web's list order (`notesStore.currentNotes`): the latest edit first, then by id.
+    out.sort_by(|a, b| b.updated.cmp(&a.updated).then_with(|| a.id.cmp(&b.id)));
     out
 }
 
@@ -127,7 +128,7 @@ pub const MAX_BYTES: usize = 8 * 1024;
 const TOO_LONG: &str = "This note is too long to save. Shorten it and try again.";
 
 impl Store {
-    /// `agent`'s notes, oldest first.
+    /// `agent`'s notes, newest-updated first.
     pub fn notes_of<'a>(&'a self, agent: &'a str) -> impl Iterator<Item = &'a Note> {
         self.notes.iter().filter(move |n| n.group == agent)
     }
