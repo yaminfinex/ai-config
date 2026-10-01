@@ -3,7 +3,7 @@
 //! `transcript`'s. This changes with web's cleanView, cleanRows and fencingModel, `transcript` with the
 //! entries API.
 
-use super::transcript::{Item, Key, Tone, ToolResult};
+use super::transcript::{Head, Item, Key, Tone, ToolResult};
 use crate::api::{Entry, Kind, Payload};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -52,27 +52,26 @@ pub fn condense(entry: &Entry) -> Vec<Item> {
             }
             None => return Vec::new(),
         },
-        Kind::CompactDivider => {
-            let m = &p.compact_metadata;
-            let k = |key: &str| m[key].as_u64().map(|n| format!("{}k", n / 1000));
-            Item::CompactDivider(match (k("preTokens"), k("postTokens")) {
-                (Some(pre), Some(post)) => {
-                    let trigger = m["trigger"].as_str().unwrap_or("auto");
-                    format!("context compacted ({trigger}, {pre} → {post} tokens)")
-                }
-                _ => "compaction summary".into(),
-            })
-        }
+        // With its metadata, web's divider; without, the summary folded.
+        Kind::CompactDivider => match p.compact_metadata.as_object().filter(|m| !m.is_empty()) {
+            Some(m) => {
+                let n = |key: &str| m.get(key).and_then(Value::as_u64).map_or("?".into(), group);
+                let trigger = m.get("trigger").and_then(Value::as_str);
+                let trigger = trigger.filter(|t| !t.is_empty()).unwrap_or("unknown");
+                let (pre, post) = (n("preTokens"), n("postTokens"));
+                Item::CompactDivider(format!(
+                    "context compacted ({trigger}, {pre} → {post} tokens)"
+                ))
+            }
+            None if text.is_empty() => Item::CompactSummary(text_of(&p.content)),
+            None => Item::CompactSummary(text),
+        },
         Kind::AssistantText if p.is_api_error_message.as_bool() == Some(true) => Item::Error(text),
         // Only statuses and internal notes, no visible text: a pill in the run. Unfenced or malformed,
-        // the answer is literal, tags and all (web's fail-open); fenced with text, cleaned until F3.
+        // the answer is literal, tags and all (web's fail-open).
         Kind::AssistantText => match fence(&text) {
-            Some(segs) => marker(&segs).unwrap_or_else(|| Item::Assistant {
-                markdown: clean(&text),
-            }),
-            None => Item::Assistant {
-                markdown: text.trim().into(),
-            },
+            Some(segs) => marker(&segs).unwrap_or(Item::Assistant(segs)),
+            None => Item::Assistant(vec![Seg::Text(text.trim().into())]),
         },
         Kind::Thinking => return vec![Item::Thinking(clip(&text, THINKING))],
         Kind::SystemChip => Item::SystemChip(system_chip(p)),
@@ -82,9 +81,8 @@ pub fn condense(entry: &Entry) -> Vec<Item> {
         Kind::ToolUse | Kind::ToolResult => return Vec::new(),
     };
     let empty = match &item {
-        Item::Prompt(s) | Item::SystemChip(s) | Item::Assistant { markdown: s } => {
-            s.trim().is_empty()
-        }
+        Item::Prompt(s) | Item::SystemChip(s) => s.trim().is_empty(),
+        Item::Assistant(segs) => segs == &[Seg::Text(String::new())],
         _ => false,
     };
     if empty { Vec::new() } else { vec![item] }
@@ -101,10 +99,17 @@ fn delivery(d: &Value) -> Item {
     let operator = body.is_some();
     let text = body.unwrap_or(raw).trim_end().trim_end_matches(" |");
     let text = text.trim().to_string();
+    let head = Head {
+        to: str_at(d, "recipient").into(),
+        intent: str_at(d, "intent").into(),
+        thread: str_at(d, "thread").into(),
+        id: str_at(d, "message_id").into(),
+    };
     Item::Delivery {
         sender,
         text,
         operator,
+        head: Box::new(head),
     }
 }
 
@@ -329,20 +334,35 @@ pub fn pills<'a>(members: impl IntoIterator<Item = &'a Item>) -> Vec<Pill> {
     pills
 }
 
-/// Epoch seconds of the serve's RFC 3339 UTC timestamps (`2026-09-30T00:07:16.868Z`); `None` for
+/// Epoch seconds of an RFC 3339 timestamp: the serve's entries' (`2026-09-30T00:07:16.868Z`) and
+/// hcom's queued messages' (`2026-09-30T00:07:16.868123+00:00`). The fraction is dropped; `None` for
 /// any other form. The store reads no clock: the view says how long ago.
 pub fn epoch(ts: &str) -> Option<u64> {
     let n = |from: usize, to: usize| ts.get(from..to)?.parse::<i64>().ok();
-    let utc = ts.ends_with('Z') && ts.get(10..11) == Some("T");
+    if ts.get(10..11) != Some("T") {
+        return None;
+    }
+    let zone = ts.get(19..)?;
+    let zone = zone
+        .strip_prefix('.')
+        .map_or(zone, |f| f.trim_start_matches(|c: char| c.is_ascii_digit()));
+    let offset = match zone.as_bytes() {
+        b"Z" => 0,
+        [sign @ (b'+' | b'-'), _, _, b':', _, _] => {
+            let at = |from: usize| zone.get(from..from + 2)?.parse::<i64>().ok();
+            let offset = at(1)? * 3600 + at(4)? * 60;
+            if *sign == b'+' { offset } else { -offset }
+        }
+        _ => return None,
+    };
     let (y, m, d) = (n(0, 4)?, n(5, 7)?, n(8, 10)?);
-    let secs = n(11, 13)? * 3600 + n(14, 16)? * 60 + n(17, 19)?;
+    let secs = n(11, 13)? * 3600 + n(14, 16)? * 60 + n(17, 19)? - offset;
     // Days from 1970-01-01 to the civil date (Hinnant's algorithm), years starting in March.
     let y = if m <= 2 { y - 1 } else { y };
     let (era, yoe) = (y.div_euclid(400), y.rem_euclid(400));
     let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
     let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
-    utc.then(|| u64::try_from(days * 86_400 + secs).ok())
-        .flatten()
+    u64::try_from(days * 86_400 + secs).ok()
 }
 
 /// Web's one-line tool summary: the command or file when there is one, else the first input value.
@@ -385,6 +405,19 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
 fn first_line(text: &str) -> &str {
     let mut lines = text.lines().map(str::trim);
     lines.find(|l| !l.is_empty()).unwrap_or("")
+}
+
+/// A count as web's `toLocaleString` writes it in English: `167,432`.
+pub fn group(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 fn clip(text: &str, max: usize) -> String {

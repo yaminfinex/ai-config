@@ -15,9 +15,12 @@
 //! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing. Text
 //! selected here with the pointer is offered to the notes strip for capture (U5).
 
-use crate::store::condense::{self, Pill, Row};
+use crate::store::condense::{self, Pill, Row, Seg};
 use crate::store::transcript::{Item, Key, Step, Tone, Transcript};
 use crate::store::{Effect, Event, Store};
+use crate::views::entries::{
+    answer, bits, card, detail, expander, header, now, queued, stamp, system, time, toned,
+};
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, Mentions};
 use crate::views::space::Zoom;
@@ -30,7 +33,6 @@ use gpui_kit::*;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `j k space shift-space g G` (ARCHITECTURE §4).
 #[derive(Clone, Copy, Debug, PartialEq, Action)]
@@ -47,6 +49,11 @@ pub enum Scroll {
 #[action(namespace = transcript, no_json)]
 pub struct OpenLink(pub SharedString);
 
+/// Open or close an item's part (`View::open`): a click on a fold, a status chip or an internal note.
+#[derive(Clone, Copy, Debug, PartialEq, Action)]
+#[action(namespace = transcript, no_json)]
+pub struct Fold(pub Key, pub usize);
+
 actions!(transcript, [ToggleRun]);
 
 /// Rows above the viewport's top under which the page before is read. A row holds about four entries.
@@ -56,7 +63,8 @@ const STATUS: usize = 26;
 /// Linked markdown kept per row; dropped beyond this, as the rows scroll by.
 const MD_CACHE: usize = 1500;
 
-type Linked = HashMap<(Key, bool), SharedString>;
+/// By item key and part: an answer's segment, a delivery cut (0) or whole (1), a summary (1).
+type Linked = HashMap<(Key, usize), SharedString>;
 
 /// The list and what it currently mirrors. Interior mutability: views render from `&Ui`.
 pub struct View {
@@ -64,8 +72,10 @@ pub struct View {
     /// `(agent, generation)` the rows belong to, the item count they were grouped from (items are only
     /// ever inserted, so the count is a complete change signal), and the rows.
     pub(super) rows: RefCell<((String, u64), usize, Vec<Row>)>,
-    /// Unfolded items (a tool's result, thinking, a long delivery), by key.
-    open: RefCell<HashSet<Key>>,
+    /// Unfolded parts, by item key and part: an item's own fold is part 0 (a tool's result, thinking,
+    /// a long delivery, a compaction's summary), an answer's are its fenced segments (a status chip,
+    /// an internal note). By key, so they stay open as pages regroup the rows.
+    open: RefCell<HashSet<(Key, usize)>>,
     /// Open runs: a run is open while any of its members' keys is here, so it stays open as a page or
     /// an entry grows it at either end. Apart from `open`, so a member's own fold never closes its run.
     runs: RefCell<BTreeSet<Key>>,
@@ -79,6 +89,9 @@ pub struct View {
     pub(super) painted: Rc<RefCell<Painted>>,
     /// What was read when a page grew the head, for `hold`.
     anchor: Cell<Option<Anchor>>,
+    /// The list's width as last laid out, which cards indent by a share of (rows cannot ask the list
+    /// while it lays them out).
+    width: Cell<Pixels>,
 }
 
 #[derive(Default)]
@@ -136,6 +149,7 @@ impl Default for View {
             wheel: Cell::default(),
             painted: Rc::default(),
             anchor: Cell::default(),
+            width: Cell::default(),
         }
     }
 }
@@ -243,6 +257,28 @@ impl View {
         self.list.remeasure_items(ix..ix + 1);
     }
 
+    /// Open or close an item's part, remeasuring the row that holds it.
+    pub(super) fn fold(&self, Fold(key, part): Fold) {
+        let mut open = self.open.borrow_mut();
+        if !open.remove(&(key, part)) {
+            open.insert((key, part));
+        }
+        let ix = self.rows.borrow().2.partition_point(|r| r.last() < key);
+        self.list.remeasure_items(ix..ix + 1);
+    }
+
+    /// How many answer parts are open of each kind, status chips and internal notes, for the harness.
+    pub(super) fn parts(&self, items: &BTreeMap<Key, Item>) -> (usize, usize) {
+        let open = self.open.borrow();
+        let seg = |&(key, part): &(Key, usize)| match items.get(&key) {
+            Some(Item::Assistant(segs)) => segs.get(part),
+            _ => None,
+        };
+        let segs: Vec<&Seg> = open.iter().filter_map(seg).collect();
+        let status = segs.iter().filter(|s| matches!(s, Seg::Status(_))).count();
+        (status, segs.len() - status)
+    }
+
     fn opened(&self, first: Key, last: Key) -> bool {
         self.runs.borrow().range(first..=last).next().is_some()
     }
@@ -307,13 +343,13 @@ impl Kind {
         match items.get(&key) {
             Some(Item::Prompt(_) | Item::Delivery { .. }) => Kind::Card,
             Some(Item::CompactDivider(_)) => Kind::Divider,
-            Some(Item::SystemChip(_)) => Kind::System,
+            Some(Item::SystemChip(_) | Item::CompactSummary(_)) => Kind::System,
             _ => Kind::Answer,
         }
     }
 
     /// Web's vertical margin around the kind: an assistant block, an activity strip, an entry card,
-    /// the compact divider, a system chip.
+    /// the compact divider, a system chip or a fold (`.entry-expander`, a compaction's summary).
     fn margin(self) -> f32 {
         match self {
             Kind::Answer => 10.,
@@ -327,7 +363,7 @@ impl Kind {
 
 /// The transcript's padding under its last row and the first row's offset from its top (web's
 /// padding 8 plus the window note's margin 2).
-const PAD: f32 = 14.;
+pub(super) const PAD: f32 = 14.;
 const TOP: f32 = 10.;
 
 /// Web's space above a row after `prev` (`None`: the first row): margins collapse, so the larger of
@@ -441,6 +477,7 @@ pub fn render<H: Host>(
     view.sync(tr, store);
     let hold = hold(view, t, cx.weak_entity());
     *view.painted.borrow_mut() = Painted::default();
+    view.width.set(view.list.viewport_bounds().size.width);
     // Read the page before while the viewport's top is near the first rows (or there are none).
     let top = top(&view.list);
     let more = tr.loaded() && !tr.at_start() && !tr.paging() && !tr.blocked();
@@ -500,16 +537,8 @@ pub fn render<H: Host>(
             .into_any_element()
     };
     let head = strip(store, tr, t, cx);
-    let queued = tr.detail.as_ref().and_then(|d| d.queued.clone());
-    let queued = queued
-        .filter(|_| !tr.retired())
-        .into_iter()
-        .flatten()
-        .map(|q| {
-            let first = q.preview.lines().next().unwrap_or("");
-            let line = format!("queued · {}: {first}", q.sender);
-            dim(line).truncate().px(t.css(PAD)).text_size(t.small)
-        });
+    let waiting = tr.detail.as_ref().and_then(|d| d.queued.as_deref());
+    let waiting = waiting.filter(|_| !tr.retired()).and_then(|q| queued(q, t));
     let notice = tr.notice().map(|n| {
         let dismiss = cx
             .listener(|h, _: &ClickEvent, _, cx| h.dispatch(Event::Transcript(Step::Dismiss), cx));
@@ -532,7 +561,7 @@ pub fn render<H: Host>(
         .child(head)
         .children(hold)
         .child(rows)
-        .children(queued)
+        .children(waiting)
         .children(notice)
 }
 
@@ -626,12 +655,14 @@ fn row<H: Host>(
     let (Some(tr), Some(&r)) = (tr, rows.2.get(ix)) else {
         return div().into_any_element();
     };
+    let width = view.width.get() - t.css(PAD) * 2.;
     let paint = Paint {
         view,
         tr,
         t,
         host,
         ix,
+        width,
     };
     // In web's type (spec §1 "Transcript container"), here rather than on the list so that `hold`, which
     // lays a row out alone, measures it the same. Spaced as web's margins (spec §2), with the
@@ -658,6 +689,8 @@ struct Paint<'a, H> {
     t: TypeScale,
     host: WeakEntity<H>,
     ix: usize,
+    /// The row's width inside its padding, which cards indent by a share of.
+    width: Pixels,
 }
 
 impl<H: Host> Paint<'_, H> {
@@ -709,8 +742,7 @@ impl<H: Host> Paint<'_, H> {
             el.ml(t.css(4.)).pl(t.css(12.)).pt(t.css(4.)).children(each)
         });
         let latest = latest.map(|(&key, item)| {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH);
-            let now = now.map_or(0, |d| d.as_secs());
+            let now = now();
             let age = tr.times.get(&key.0).map(|&at| ago(now.saturating_sub(at)));
             let age = age.unwrap_or_else(|| "time unknown".into());
             let line = dim(format!("latest · {age}"));
@@ -724,76 +756,89 @@ impl<H: Host> Paint<'_, H> {
         el.children(strip).children(detail).children(latest)
     }
 
+    /// Linked, selectable markdown (U5's selection seam) in `ink`: an item's part, cached by part.
+    fn md(&self, key: Key, part: usize, text: &str, ink: u32) -> Div {
+        let (view, t) = (self.view, self.t);
+        let linked = {
+            let mut md = view.md.borrow_mut();
+            let (mentions, cache) = &mut *md;
+            let web = format!("{}/agents/{}", view.web, self.tr.agent);
+            let link = || SharedString::from(markdown::link(text, mentions, &web));
+            cache.entry((key, part)).or_insert_with(link).clone()
+        };
+        let id = self.id(&format!("md{part}"), key);
+        let text = TextView::markdown(id, linked).selectable(true);
+        let text = text.line_height(relative(1.55));
+        // No actions are drawn; asking for them gives each fenced block an id, which its sideways
+        // scroll keeps its offset under.
+        let style = theme::prose(t).with_foreground(rgb(ink).into());
+        let text = text.style(style).code_block_actions(|_, _, _| Empty);
+        let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
+            Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
+            None if url.starts_with("http://") || url.starts_with("https://") => cx.open_url(url),
+            None => {}
+        });
+        sideways(div().w_full().max_w(t.css(900.)).child(text))
+    }
+
+    /// A click that opens or closes the item's `part` (`Fold`).
+    fn fold(&self, key: Key, part: usize, kind: &str) -> Stateful<Div> {
+        let fold = Fold(key, part);
+        let el = div()
+            .id(self.id(&format!("{kind}{part}"), key))
+            .cursor_pointer();
+        el.on_click(move |_, window, cx| window.dispatch_action(Box::new(fold), cx))
+    }
+
+    fn opened(&self, key: Key, part: usize) -> bool {
+        self.view.open.borrow().contains(&(key, part))
+    }
+
     /// One item as its own row, or as a member of an open run or the latest.
     fn body(&self, key: Key, item: &Item) -> AnyElement {
-        let (view, tr, t, ix) = (self.view, self.tr, self.t, self.ix);
-        let open = view.open.borrow().contains(&key);
-        let host = self.host.clone();
-        let toggle = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-            let _ = host.update(cx, |h, cx| {
-                let v = &h.parts().1.transcript;
-                let mut o = v.open.borrow_mut();
-                if !o.remove(&key) {
-                    o.insert(key);
-                }
-                v.list.remeasure_items(ix..ix + 1);
-                cx.notify();
-            });
-        };
-        let id = |kind: &str| self.id(kind, key);
+        let t = self.t;
+        let open = self.opened(key, 0);
         let small = |text: String| dim(text).text_size(t.css(10.));
         let glyph = if open { "▾" } else { "▸" };
-        let fold = |text: String| {
-            let el = div().id(id("fold")).cursor_pointer();
-            el.on_click(toggle.clone())
+        let line = |text: String| {
+            self.fold(key, 0, "fold")
                 .child(small(format!("{glyph} {text}")))
         };
-        // Prompts, deliveries and assistant text: linked, selectable markdown (U5's selection seam).
-        let md = |text: &str| {
-            let linked = {
-                let mut md = view.md.borrow_mut();
-                let (mentions, cache) = &mut *md;
-                let web = format!("{}/agents/{}", view.web, tr.agent);
-                let link = || SharedString::from(markdown::link(text, mentions, &web));
-                cache.entry((key, open)).or_insert_with(link).clone()
-            };
-            let text = TextView::markdown(id("md"), linked).selectable(true);
-            let text = text.line_height(relative(1.55));
-            // No actions are drawn; asking for them gives each fenced block an id, which its sideways
-            // scroll keeps its offset under.
-            let text = text
-                .style(theme::prose(t))
-                .code_block_actions(|_, _, _| Empty);
-            let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
-                Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
-                None if url.starts_with("http://") || url.starts_with("https://") => {
-                    cx.open_url(url)
-                }
-                None => {}
-            });
-            sideways(div().max_w(t.css(900.)).child(text))
-        };
+        let when = stamp(self.tr.times.get(&key.0).copied(), now());
+        let head = |operator| header(bits(item, &self.tr.agent), when.clone(), operator, t);
         match item {
-            Item::Prompt(text) => div()
-                .bg(rgb(pal::ACCW))
-                .border_l(t.css(3.))
-                .border_color(rgb(pal::ACC))
-                .rounded(t.css(4.))
-                .px(t.css(10.))
-                .py(t.css(6.))
-                .child(md(text))
-                .into_any_element(),
-            Item::Delivery {
-                sender,
-                text,
-                operator,
-            } => {
-                let from = format!("← {sender}{}", if *operator { " · operator" } else { "" });
-                let (shown, long) = preview(text, open);
-                let more = long.then(|| fold(if open { "less" } else { "more" }.into()));
-                let el = div().child(small(from)).child(md(&shown));
-                el.children(more).into_any_element()
+            Item::Prompt(text) => {
+                let body = self.md(key, 0, text, pal::INK);
+                card(item, self.width, head(false), body, t)
             }
+            Item::Delivery { text, operator, .. } => {
+                // An operator's note in full, as web; another agent's cut, with web's toggle.
+                let (shown, long) = if *operator {
+                    (text.clone(), false)
+                } else {
+                    preview(text, open)
+                };
+                let hidden = text.lines().count().saturating_sub(shown.lines().count());
+                let label = match (open, hidden) {
+                    (true, _) => "Show less".to_string(),
+                    (false, 0) => "Show full message".to_string(),
+                    (false, 1) => "Show full message · 1 more line".to_string(),
+                    (false, n) => format!("Show full message · {n} more lines"),
+                };
+                let more = long.then(|| {
+                    let el = self.fold(key, 0, "more").mt(t.css(8.)).font_family(MONO_T);
+                    el.text_size(t.css(10.))
+                        .line_height(t.css(12.))
+                        .text_color(rgb(pal::LINK))
+                        .hover(|s| s.underline())
+                        .child(label)
+                });
+                // The last paragraph's margin, under the text when nothing follows it.
+                let body = self.md(key, usize::from(open), &shown, pal::INK);
+                let body = div().when(!long, |b| b.pb(t.css(6.))).child(body);
+                card(item, self.width, head(*operator), body.children(more), t)
+            }
+            Item::Assistant(segs) => answer(head(false), self.segments(key, segs), t),
             // The pill uncut, then what it stands for when that says more.
             Item::Chip { tone, label, text } => {
                 let full = Pill {
@@ -809,7 +854,7 @@ impl<H: Host> Paint<'_, H> {
                     .children(more)
                     .into_any_element()
             }
-            Item::SystemChip(s) => small(format!("· {s}")).into_any_element(),
+            Item::SystemChip(s) => system(s, when, t),
             Item::CompactDivider(s) => {
                 let rule = || div().flex_1().h(px(1.)).bg(rgb(pal::PURPLE_RULE));
                 let el = div().flex().items_center().gap(t.css(8.));
@@ -817,15 +862,24 @@ impl<H: Host> Paint<'_, H> {
                     .text_color(rgb(pal::PURPLE))
                     .child(rule())
                     .child(s.clone())
+                    .child(time(when, t))
                     .child(rule())
                     .into_any_element()
             }
-            Item::Assistant { markdown } => md(markdown).into_any_element(),
+            Item::CompactSummary(text) => {
+                let summary = expander(self.fold(key, 0, "fold"), open, t);
+                let summary = summary
+                    .text_color(rgb(pal::PURPLE))
+                    .child("compaction summary")
+                    .child(time(when, t).ml_auto());
+                let body = open.then(|| detail(self.md(key, 1, text, pal::CODE_INK), t));
+                div().child(summary).children(body).into_any_element()
+            }
             Item::Thinking(text) if text.trim().is_empty() => {
                 small("∴ thinking".into()).into_any_element()
             }
             Item::Thinking(text) => div()
-                .child(fold("thinking".into()))
+                .child(line("thinking".into()))
                 .when(open, |el| el.child(small(text.clone())))
                 .into_any_element(),
             Item::Tool {
@@ -835,17 +889,94 @@ impl<H: Host> Paint<'_, H> {
             } => {
                 let err = result.as_ref().is_some_and(|r| r.error);
                 let mark = if err { " ✗" } else { "" };
-                let line = fold(format!("{name} {summary}{mark}")).truncate();
-                let line = line.when(err, |el| el.text_color(rgb(pal::PORT)));
+                let head = line(format!("{name} {summary}{mark}")).truncate();
+                let head = head.when(err, |el| el.text_color(rgb(pal::PORT)));
                 let detail = result.as_ref().filter(|_| open);
                 let detail = detail.map(|r| small(format!("→ {}", r.text)));
-                div().child(line).children(detail).into_any_element()
+                div().child(head).children(detail).into_any_element()
             }
             Item::Error(text) => div()
                 .text_color(rgb(pal::PORT))
                 .child(format!("✗ {text}"))
                 .into_any_element(),
         }
+    }
+
+    /// An answer's markdown, or its fenced parts in a column 4 apart (spec §1 "Assistant block"):
+    /// text, a status chip, an internal note. A flex item keeps its paragraphs' margins, so fenced
+    /// text sits 6 inside its own box.
+    fn segments(&self, key: Key, segs: &[Seg]) -> Div {
+        let t = self.t;
+        let fenced = segs.iter().any(|s| !matches!(s, Seg::Text(_)));
+        let parts = segs.iter().enumerate().filter_map(|(part, seg)| match seg {
+            Seg::Text(s) if s.trim().is_empty() => None,
+            Seg::Text(s) if !fenced => Some(self.md(key, part, s, pal::INK).pb(t.css(6.))),
+            Seg::Text(s) => Some(div().w_full().py(t.css(6.)).child(self.md(
+                key,
+                part,
+                s,
+                pal::INK,
+            ))),
+            Seg::Status(s) => Some(self.status(key, part, s)),
+            Seg::Internal(s) => Some(self.internal(key, part, s)),
+        });
+        let column = div().flex().flex_col().items_start();
+        column
+            .when(fenced, |c| c.gap(t.css(4.)).mb(t.css(5.)))
+            .children(parts)
+    }
+
+    /// An inline status (spec §1 "Status chip"): cut at web's 26 characters, a click opens it in
+    /// full, wrapping, and its `‹` closes it again; a short one is only the chip.
+    fn status(&self, key: Key, part: usize, text: &str) -> Div {
+        let t = self.t;
+        let long = long(text);
+        let open = long && self.opened(key, part);
+        let pill = |el: Div| toned(el, Tone::Status, t);
+        if !long {
+            return pill(div()).line_height(t.css(10.)).child(text.to_string());
+        }
+        if !open {
+            // A button: it takes the row's line height, as web's does.
+            let el = toned(self.fold(key, part, "status"), Tone::Status, t);
+            let el = el.hover(|s| s.border_color(rgb(pal::BLUE)));
+            return div().child(el.child(cut(text, STATUS)));
+        }
+        let close = self.fold(key, part, "status").ml(t.css(5.)).px(t.css(3.));
+        let close = close.rounded(t.css(4.)).child("‹");
+        let el = pill(div())
+            .max_w_full()
+            .line_height(t.css(10.))
+            .flex()
+            .items_end();
+        el.child(div().flex_1().child(text.to_string()))
+            .child(close)
+    }
+
+    /// An internal note (spec §1 "Internal note"): a thinking pill, `› internal note · N words`; a
+    /// click opens its body under it.
+    fn internal(&self, key: Key, part: usize, text: &str) -> Div {
+        let t = self.t;
+        let open = self.opened(key, part);
+        let words = text.split_whitespace().count();
+        let unit = if words == 1 { "word" } else { "words" };
+        let chevron = div().text_size(t.css(12.)).line_height(t.css(12.));
+        let chevron = chevron.child(if open { "⌄" } else { "›" });
+        let summary = toned(self.fold(key, part, "note"), Tone::Thinking, t);
+        let summary = summary
+            .flex()
+            .items_center()
+            .gap(t.css(4.))
+            .line_height(t.css(10.));
+        let summary = summary
+            .child(chevron)
+            .child(format!("internal note · {words} {unit}"));
+        let body = self.md(key, part, text, pal::CODE_INK);
+        let body = open.then(|| detail(body, t).mt(t.css(3.)).max_w(t.css(900.)));
+        div()
+            .w_full()
+            .child(div().flex().child(summary))
+            .children(body)
     }
 }
 
@@ -925,6 +1056,12 @@ fn chip(p: &Pill, text: String, t: TypeScale) -> Div {
         .font_family(MONO_T)
         .text_size(t.css(9.))
         .child(text)
+}
+
+/// Whether a status is cut, so its chip opens (web's `statusChipTruncates`).
+pub fn long(text: &str) -> bool {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    flat.chars().count() > STATUS
 }
 
 /// `text` with its whitespace collapsed, cut to `max` characters with an ellipsis.

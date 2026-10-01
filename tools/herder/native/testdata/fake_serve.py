@@ -2,7 +2,7 @@
 """A fake herder serve over the recorded fixtures, for harness runs that press cmd-enter: nothing a
 scenario sends may reach a real agent. Reads answer from testdata/; POST …/message never delivers.
 
-    testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT] [--notes]
+    testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT] [--queued AGENT] [--notes]
                                 [--turn AGENT[,AGENT…] | --block AGENT[,AGENT…]]… [--turn-at SECONDS]
                                 [--share AGENT]
 
@@ -11,7 +11,7 @@ sender collision. `POST /api/state/<ns>` keeps the rows in memory, last write wi
 that namespace return them (U5); `--notes` starts the notes namespace with web's two notes on mupu
 (`notes-web.json`). Each `--turn` is one more fleet frame on the stream, `--turn-at` seconds after it
 opens and 0.3 s apart, in which those agents have finished another turn (U6); a `--block` frame, in
-the same order, shows them blocked. `--share` adds the agent to the first space's members too (an agent
+the same order, shows them blocked. `--queued` gives the agent two queued messages in its detail. `--share` adds the agent to the first space's members too (an agent
 in two spaces). Every request is logged on stderr.
 """
 
@@ -25,6 +25,21 @@ from urllib.parse import parse_qs, urlparse
 DATA = pathlib.Path(__file__).resolve().parent
 ARGS = None
 STATE = {}  # namespace -> {key: row}, what was posted (and --notes)
+
+
+def ago(seconds):
+    """A time `seconds` back in hcom's wire form (`hcomevents` keeps its `ts`): microseconds, +00:00."""
+    at = time.time() - seconds
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(at)) + f".{int(at % 1 * 1e6):06d}+00:00"
+
+
+# --queued: an operator's request and another agent's inform, waiting for the agent's next turn.
+QUEUED = [
+    {"id": 371204, "sender": "web-yamen-core-infinex-gg", "intent": "request", "operator": True,
+     "preview": "When you're back, check the riko walk numbers\nand say if RSS moved.", "sent_at": ago(95)},
+    {"id": 371210, "sender": "chief-mihe", "intent": "inform", "preview": "A2 merged; A3 is next.",
+     "sent_at": ago(12)},
+]
 
 
 def fixture(name):
@@ -85,6 +100,8 @@ class Fake(BaseHTTPRequestHandler):
             detail = json.loads(path.read_text()) if path.exists() else {"name": parts[2]}
             if parts[2] == ARGS.retired:
                 detail["bus_status"] = "retired"
+            if parts[2] == ARGS.queued:
+                detail["queued"] = QUEUED
             self.reply(200, detail)
         elif parts[:2] == ["api", "agents"] and parts[3:] == ["entries"]:
             page = "before" if "before" in q else "tail"
@@ -139,6 +156,7 @@ if __name__ == "__main__":
     p.add_argument("port", type=int)
     p.add_argument("--message", default="ok", choices=["ok", "slow", "409", "502", "hold"])
     p.add_argument("--retired")
+    p.add_argument("--queued")
     p.add_argument("--notes", action="store_true")
     frame = lambda kind: lambda agents: (kind, agents)
     p.add_argument("--turn", action="append", dest="frames", type=frame("turn"), default=[])

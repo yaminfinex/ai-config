@@ -22,7 +22,7 @@ scenario() {
         status=0
         HOME="$home/$name" HERDER_URL=http://127.0.0.1:$port HERDER_NATIVE_SHOT_DIR=shots \
             HERDER_NATIVE_SCRIPT="$script" ./target/release/herder-native >"$home/$name.log" 2>&1 || status=$?
-        grep -E "platform|harness|expect|box|says|has|header|notes|list|said|rows|jump|tap|select|click|summon" "$home/$name.log" || true
+        grep -E "platform|harness|expect|box|says|has|header|notes|list|said|rows|parts|jump|tap|select|click|summon" "$home/$name.log" || true
         [ $status = 0 ] && grep -q '\] quit$' "$home/$name.log" || { echo "$recipe: $name failed (exit $status)"; exit 1; }
     done
     { kill $fake && wait $fake; } 2>/dev/null || true

@@ -1,3 +1,4 @@
 target/
 testdata/big/
 shots/
+__pycache__/

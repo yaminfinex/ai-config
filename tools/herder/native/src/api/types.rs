@@ -133,8 +133,12 @@ pub struct ContextUsage {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Queued {
+    pub id: u64,
     pub sender: String,
+    pub intent: String,
     pub preview: String,
+    pub sent_at: String,
+    pub operator: bool,
 }
 
 /// `GET /api/agents/{name}/entries`. The envelope is camelCase; `reset` is snake_case.

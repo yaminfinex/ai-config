@@ -115,14 +115,15 @@ Derived shapes are in `store`:
   event (`transcript::reduce`, which publishes the list's leaving first); the view's word on the tail names the transcript's agent and generation, and a stale one
   (after a zoom switch or a reset) is dropped.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
-  orders and pairs them): `Prompt`, `Delivery{sender, text, operator}` (acks and the launcher vanish,
+  orders and pairs them): `Prompt`, `Delivery{sender, text, operator, head}` (`head`: recipient, intent,
+  thread and message id, for the card's header; acks and the launcher vanish,
   owner ruling F2), `Chip{tone, label, text}` (a run pill: a task notification, a slash command, an unknown
   entry, or an answer that is only `<status>`/`<internal>` fences; `Tone` is `Tool`, `Thinking`, `Message`,
   `Other` or `Status`, web's pill colours), `SystemChip` (model switches; `injected_system`,
-  `command_stdout`, `turn_duration` and scheduled-task fires fold or are dropped), `CompactDivider`,
-  `Assistant{markdown}`, `Thinking`, `Tool{name, summary, result: Option<ToolResult{error, text}>}`, `Error`.
-  An answer's fences parse as web's `fencingModel` (`condense::fence`); a malformed one stays literal. Answers
-  with visible text still have `<internal>…</internal>` removed and `<status>` unwrapped (F3 draws them). The
+  `command_stdout`, `turn_duration` and scheduled-task fires fold or are dropped), `CompactDivider` (with
+  its metadata), `CompactSummary` (without: web's folded summary), `Assistant(Vec<Seg>)`, `Thinking`, `Tool{name, summary, result: Option<ToolResult{error, text}>}`, `Error`.
+  An answer's fences parse as web's `fencingModel` (`condense::fence`) into `Seg::Text`, `Status` and
+  `Internal`; an unfenced or malformed one is a single literal `Text`. The
   operator envelope (`[HERDER_WEB_OPERATOR_NOTE_BEGIN]…END]`) is stripped from deliveries.
 - **Rows** (F2) — `condense::rows` groups the items, in key order, into `Row::One(key)` or
   `Row::Run(first, last)`: a run is consecutive activity (`Item::activity`: tools, thinking, chips, agents'
@@ -283,6 +284,24 @@ plus 14 below. The frame overlays the kit's `Scrollbar` on the list (a rounded #
 while scrolling) and, while the list is not following the tail, web's accent "Jump to bottom" pill centred 10
 above the bottom; a click is `Scroll::Bottom`.
 
+Entries are drawn as web's (A2, spec §1; `views::entries` builds them, `transcript` decides what is open).
+An answer is a 3px #3a3c45 rule, padding 3 0 3 12, a header (the agent in SF Mono 11/600, the time `8h ago`
+in mono 9 at the right, 6 above the text), then its markdown, or its fenced parts in a column 4 apart:
+text, a status chip cut at 26 characters that a click opens in full (`‹` closes it), an internal note as a
+thinking pill `› internal note · N words` that opens to a body on the code ground. One card builder serves
+the three cards (`entries::Card`): another agent's message (blue edge), an operator's note (green edge on
+#1b2420, indented min(6%, 54), at most 820 wide) and the owner's prompt (green edge on the right, #1d2320,
+min(10%, 90), 790); radius 8, padding 9 12, a header of the sender, `web operator`, `→ recipient`, the
+intent, `#id`, the thread and the time. GPUI draws one border colour, so the edge is the outer box's
+ground past the inner box. Another agent's message keeps the 5-line cut, with web's `Show full message`
+toggle; an operator's is whole. The compact divider carries its time and web's token counts; a summary
+without metadata is a fold (`.entry-expander`, 6 apart like a system chip); a model switch is a status-tone
+chip; queued messages are web's amber box under the list. What is open is `View::open`, by item key and
+part (0 an item's own fold, else an answer's segment), so it survives regrouping; every fold toggles
+through the `Fold` action, which the harness clicks too. Limits, nearest kept: no local clock time (the
+owner's prompt and a queued message past an hour show an age), no fade on a cut message, no letter spacing
+on the queued title, the owner's prompt as markdown on a 1.55 line (web: plain text, 1.5).
+
 ## 6. Persistence
 
 | Where | What | Owner |
@@ -349,7 +368,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   `HERDER_URL` at `testdata/fake_serve.py` on loopback, never at the real serve (`scripts/scenario.sh`,
   shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Steps live
   in `src/harness.rs`'s module doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`,
-  `check-alerts`, `check-mouse`, `check-runs`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
+  `check-alerts`, `check-mouse`, `check-runs`, `check-entries`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
   (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -369,7 +388,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after A1 (A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after A2 (A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -377,22 +396,23 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 324 | `views/mod.rs` | 419 |
+| `api/types.rs` | 328 | `views/mod.rs` | 420 |
 | `api/client.rs` | 206 | `views/lens.rs` | 442 |
-| `api/sse.rs` | 194 | `views/space.rs` | 366 |
-| `store/mod.rs` | 445 | `views/transcript.rs` | 980 |
+| `api/sse.rs` | 194 | `views/space.rs` | 370 |
+| `store/mod.rs` | 445 | `views/transcript.rs` | 1117 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 221 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 430 |
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
-| `store/attention.rs` | 281 | `views/probe.rs` | 186 |
-| `store/transcript.rs` | 585 | `views/markdown.rs` | 238 |
-| `store/condense.rs` | 395 | `views/theme.rs` | 233 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 210 |
+| `store/transcript.rs` | 597 | `views/markdown.rs` | 238 |
+| `store/condense.rs` | 428 | `views/theme.rs` | 257 |
 | `store/notes.rs` | 432 | `shell.rs` | 441 |
 | `store/composer.rs` | 166 | `shell/io.rs` | 180 |
-| `local.rs` | 95 | `harness.rs` | 282 |
+| `local.rs` | 95 | `harness.rs` | 284 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
+|  |  | `views/entries.rs` | 356 |
 
-About 8,970 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
+About 9,560 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
