@@ -12,8 +12,9 @@
 //! task drains into `dispatch`.
 //!
 //! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
-//! send was decided (`io::save_then_send`); a save still pending elsewhere cannot be overtaken. The
-//! REST reads and that save run in `io`.
+//! send was decided (`io::save_then_send`); a save still pending elsewhere cannot be overtaken. A note
+//! transfer's destination is saved at once and reported back (`io::save_then_land`) before its source
+//! changes. The REST reads and those saves run in `io`.
 
 use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
@@ -23,14 +24,15 @@ use crate::store::transcript;
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale, Write};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, space, theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, space,
+    theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
 use io::run_fetch;
-pub use io::{save_then_message, save_then_send};
+pub use io::{save_then_land, save_then_message, save_then_send};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -171,6 +173,19 @@ impl Shell {
                 Effect::Persist(Persist::Snapshot) => {
                     self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
                 }
+                Effect::Transfer { file, agent } => {
+                    let (name, bytes) = match file {
+                        Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
+                        Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
+                        Persist::Snapshot => {
+                            (local::SNAPSHOT, local::encode(&self.store.snapshot()))
+                        }
+                    };
+                    let seq = local::next_seq();
+                    self.background(cx, move |disk, _| {
+                        save_then_land(disk, name, &bytes, seq, agent)
+                    })
+                }
                 Effect::FiledBack { agent } => {
                     filed.extend(composer::filed_back(&self.store, &mut self.ui, &agent, cx))
                 }
@@ -266,6 +281,7 @@ impl Render for Shell {
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         composer::sync(&mut self.ui, &self.store, window, cx);
+        notes::sync(&mut self.ui, window, cx);
         let t = theme::type_scale(self.store.prefs.text_scale);
         let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()
@@ -331,7 +347,7 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
-                let [s, s2, s3, s4] = [(); 4].map(|_| shell.clone());
+                let [s, s2, s3, s4, s5, s6, s7] = [(); 7].map(|_| shell.clone());
                 let probe = harness::Probe {
                     shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
                     link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
@@ -346,6 +362,20 @@ pub fn run() {
                     }),
                     composer: Box::new(move |w, cx| composer::probe(&s3.read(cx).ui, w, cx)),
                     says: Box::new(move |cx| composer::says(&s4.read(cx).store, &s4.read(cx).ui)),
+                    notes: Box::new(move |w, cx| {
+                        notes::probe(&s5.read(cx).store, &s5.read(cx).ui, w, cx)
+                    }),
+                    select: Box::new(move |text, cx| {
+                        s6.update(cx, |s, cx| {
+                            notes::select(&mut s.ui, text);
+                            cx.notify()
+                        })
+                    }),
+                    click: Box::new(move |what, cx| {
+                        let s = s7.read(cx);
+                        let action = notes::clicked(&s.store, &s.ui, what)?;
+                        Some(Box::new(action) as Box<dyn Action>)
+                    }),
                 };
                 window
                     .spawn(cx, async move |cx| harness::run(script, probe, cx).await)

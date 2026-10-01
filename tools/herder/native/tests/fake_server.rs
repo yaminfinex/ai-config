@@ -5,9 +5,9 @@ use herder_native::api::client::{Client, Page};
 use herder_native::api::sse::Reader;
 use herder_native::api::{StateRow, Wire};
 use herder_native::local::{self, Disk};
-use herder_native::shell::{save_then_message, save_then_send};
+use herder_native::shell::{save_then_land, save_then_message, save_then_send};
 use herder_native::store::sync::{Hold, Ns, Step};
-use herder_native::store::{Effect, Event, Fetch, Store, StreamEvent};
+use herder_native::store::{Effect, Event, Fetch, Persist, Store, StreamEvent};
 use serde_json::json;
 use std::io::{BufRead, BufReader, Read, Write as _};
 use std::net::TcpListener;
@@ -92,7 +92,8 @@ fn rows_json(rev: u64) -> String {
 /// Run the store's effects the way the shell does, synchronously against the fake, until nothing is
 /// left to do. A batch with sends goes through the shell's own `save_then_send`. A batch that only
 /// persists is left unsaved, as if its task were still waiting, so every test also shows that a send
-/// never depends on an earlier save having landed.
+/// never depends on an earlier save having landed. A note transfer's save goes through the shell's
+/// `save_then_land`.
 fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
     let mut events = vec![first];
     while let Some(event) = events.pop() {
@@ -107,6 +108,14 @@ fn drive(store: &mut Store, client: &Client, disk: &Disk, first: Event) {
                     events.push(Event::Sync { ns, step });
                 }
                 Effect::Send(write) => sends.push(write),
+                Effect::Transfer { file, agent } => {
+                    let (name, bytes) = match file {
+                        Persist::Prefs => (local::PREFS, local::encode(&store.prefs)),
+                        _ => (local::OUTBOX, local::encode(&store.outbox())),
+                    };
+                    let seq = local::next_seq();
+                    events.push(save_then_land(disk, name, &bytes, seq, agent));
+                }
                 _ => {}
             }
         }
@@ -537,4 +546,114 @@ fn a_message_without_an_answer_is_not_retried() {
     };
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(*accepted.lock().unwrap(), 1, "exactly one attempt");
+}
+
+/// U5: a note added here is saved to `outbox.json` before its POST (the barrier), posted in web's
+/// record shape, then pulled back and retired from the outbox.
+#[test]
+fn a_note_is_saved_then_posted_in_webs_shape_then_retired() {
+    use herder_native::store::notes::{Stamp, Step as N};
+    let (disk, dir) = scratch("note");
+    let outbox = dir.join(local::OUTBOX);
+    let posted: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let p2 = posted.clone();
+    let (base, log) = serve(move |target, body| {
+        if target.starts_with("POST /api/state/notes") {
+            let on_disk = std::fs::read_to_string(&outbox).unwrap_or_default();
+            p2.lock().unwrap().push((body.to_string(), on_disk));
+            Reply::Json(200, json!({"accepted": ["n1"], "rev": 3}).to_string())
+        } else if target.starts_with("GET /api/state/notes") {
+            let rows = p2.lock().unwrap().last().map(|(b, _)| b.clone());
+            let rows: serde_json::Value = serde_json::from_str(&rows.unwrap_or_default()).unwrap();
+            Reply::Json(200, json!({"rows": rows["rows"], "rev": 3}).to_string())
+        } else {
+            Reply::Json(404, r#"{"error":"nope","detail":""}"#.into())
+        }
+    });
+    let client = Client::new(base);
+    let mut store = Store::default();
+    let stamp = Stamp {
+        now: 1_790_000_000_000,
+        id: "n1".into(),
+        write: "w1".into(),
+    };
+    let add = N::Add {
+        group: "mupu".into(),
+        text: "ask about the tests".into(),
+        quote: Some("cargo test".into()),
+        stamp,
+    };
+    drive(&mut store, &client, &disk, Event::Note(add));
+    std::fs::remove_dir_all(dir).unwrap();
+
+    let posted = posted.lock().unwrap().clone();
+    assert_eq!(posted.len(), 1, "{:?}", log.lock().unwrap());
+    let (body, on_disk) = &posted[0];
+    let body: serde_json::Value = serde_json::from_str(body).unwrap();
+    let want = json!({"key": "n1", "updated": 1_790_000_000_000i64, "writeID": "w1", "deleted": false,
+        "value": {"id": "n1", "group": "mupu", "text": "ask about the tests", "quote": "cargo test",
+                  "source": {"kind": "transcript", "agent": "mupu"}, "created": 1_790_000_000_000i64}});
+    assert_eq!(body["rows"], json!([want]));
+    assert!(
+        on_disk.contains("\"n1\""),
+        "saved before the POST: {on_disk}"
+    );
+    assert!(store.sync[&Ns::Notes].outbox.is_empty());
+    assert_eq!(store.notes_of("mupu").count(), 1);
+}
+
+/// U5: alt-enter's note is in `outbox.json` before the draft clears; a disk that refuses keeps the
+/// draft, says why and posts nothing.
+#[test]
+fn a_queued_draft_clears_only_once_its_note_is_saved() {
+    use herder_native::store::notes::{Stamp, Step as N};
+    for refused in [false, true] {
+        let (_, dir) = scratch(&format!("queue-{refused}"));
+        let disk = match refused {
+            false => Disk::at(dir.clone()),
+            true => {
+                std::fs::write(&dir, "a file where the directory should be").unwrap();
+                Disk::at(dir.join("state"))
+            }
+        };
+        let (base, log) = serve(|target, _| match target.starts_with("POST") {
+            true => Reply::Json(200, json!({"accepted": ["q1"], "rev": 2}).to_string()),
+            false => Reply::Json(200, json!({"rows": [], "rev": 1}).to_string()),
+        });
+        let client = Client::new(base);
+        let mut store = Store::default();
+        store.prefs.drafts.insert("mupu".into(), "later".into());
+        let stamp = Stamp {
+            now: 7,
+            id: "q1".into(),
+            write: "w1".into(),
+        };
+        let queue = N::Queue {
+            agent: "mupu".into(),
+            stamp,
+        };
+        drive(&mut store, &client, &disk, Event::Note(queue));
+        let posts = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|l| l.starts_with("POST"))
+            .count();
+        let note: Vec<_> = store.notes_of("mupu").map(|n| n.text.as_str()).collect();
+        assert_eq!(note, ["later"], "the note is kept here either way");
+        match refused {
+            false => {
+                assert_eq!(posts, 1);
+                assert!(!store.prefs.drafts.contains_key("mupu"));
+                assert!(store.note_problems.is_empty());
+                std::fs::remove_dir_all(dir).unwrap();
+            }
+            true => {
+                assert_eq!(posts, 0, "nothing reached the server");
+                assert_eq!(store.prefs.drafts["mupu"], "later");
+                assert!(store.note_problems["mupu"].contains("the draft stays"));
+                std::fs::remove_file(dir).unwrap();
+            }
+        }
+    }
 }

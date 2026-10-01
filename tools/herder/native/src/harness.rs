@@ -11,8 +11,12 @@
 //! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
 //! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
 //! its start; fails after `ms`) · `box:<focused|idle>:<text>` (the composer's focus and text, `+` for a
-//! space; U4) · `says:<text>` (the line under the composer contains it). Units add `type:` as they need
-//! it.
+//! space; U4) · `says:<text>` (the line under the composer contains it) · `has:<text>` (the composer's
+//! `box:` contains it) · `notes:<n>:<closed|focused:text|idle:text>` (the zoomed agent's notes and the
+//! notes editor; U5) · `select:<text>` (as if the pointer had selected it in the transcript) ·
+//! `tap:<keystroke>` (as `key:`, but bound to nothing is fine) · `click:<capture|handoff|edit:i|delete:i>`
+//! (what a click on the notes strip dispatches, `i` the zoomed agent's note, oldest first; it fails when
+//! there is no such thing to click). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
@@ -100,6 +104,8 @@ fn cpu_s() -> f64 {
 /// `start:`'s answer: the open transcript and its rows, once it reaches its start.
 type Reached = Option<String>;
 type Ask = Box<dyn Fn(&Window, &App) -> String>;
+type Set = Box<dyn Fn(&str, &mut App)>;
+type Click = Box<dyn Fn(&str, &App) -> Option<Box<dyn Action>>>;
 
 /// What the harness asks the app; the shell answers, so the harness knows no views.
 pub struct Probe {
@@ -113,6 +119,12 @@ pub struct Probe {
     pub composer: Ask,
     /// The line under the composer, for `says:`.
     pub says: Box<dyn Fn(&App) -> String>,
+    /// The zoomed agent's note count and the notes editor (`n:closed`, `n:focused:text`), for `notes:`.
+    pub notes: Ask,
+    /// Stand in for a pointer selection in the transcript, for `select:`.
+    pub select: Set,
+    /// The action a click on the notes strip dispatches, for `click:`.
+    pub click: Click,
 }
 
 pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
@@ -130,6 +142,18 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 cx.background_executor()
                     .timer(Duration::from_millis(ms))
                     .await;
+            }
+            // `tap:` presses a key that may be bound to nothing (a guard checks what did not happen).
+            "tap" => match Keystroke::parse(arg) {
+                Ok(keystroke) => {
+                    let handled = cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
+                    metric(format!("tap {arg}: handled {}", handled.unwrap_or(false)));
+                }
+                Err(e) => fail(format!("tap {arg}: {e}")),
+            },
+            "select" => {
+                let _ = cx.update(|_, cx| (probe.select)(&arg.replace('+', " "), cx));
+                metric(format!("select {arg}"));
             }
             "key" => match Keystroke::parse(arg) {
                 Ok(keystroke) => {
@@ -179,19 +203,30 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
             }
             // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
             "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
+            "click" => {
+                let ok = cx.update(|window, cx| {
+                    let action = (probe.click)(arg, cx);
+                    action.map(|a| window.dispatch_action(a, cx)).is_some()
+                });
+                match ok {
+                    Ok(true) => metric(format!("click {arg}")),
+                    _ => fail(format!("click {arg}: nothing to click")),
+                }
+            }
             "link" => {
                 let link = (probe.link)(arg);
                 let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
                 metric(format!("link {arg}"));
             }
-            "expect" | "box" | "says" => {
+            "expect" | "box" | "has" | "says" | "notes" => {
                 let got = cx.update(|window, cx| match op {
                     "expect" => (probe.shown)(cx),
-                    "box" => (probe.composer)(window, cx),
+                    "box" | "has" => (probe.composer)(window, cx),
+                    "notes" => (probe.notes)(window, cx),
                     _ => (probe.says)(cx),
                 });
                 let (got, want) = (got.unwrap_or_default(), arg.replace('+', " "));
-                match got == want || op == "says" && got.contains(&want) {
+                match got == want || matches!(op, "says" | "has") && got.contains(&want) {
                     true => metric(format!("{op} {arg}: ok")),
                     false => fail(format!("{op} {arg}: got `{got}`")),
                 }

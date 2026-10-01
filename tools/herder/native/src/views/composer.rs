@@ -6,10 +6,11 @@
 //!
 //! Keys (ARCHITECTURE §4): `/` or `r` in the zoom focus it; in the box (`Composer > Input`, so no other
 //! input sends) `cmd-enter` sends, `cmd-shift-enter` sends and, once it lands, files the agent back
-//! into the lens (seen), `escape` leaves the box. The wording under the box is here, the states in
-//! `store::composer`.
+//! into the lens (seen), `alt-enter` keeps the draft as a note instead (U5), `escape` leaves the box.
+//! The wording under the box is here, the states in `store::composer`.
 
 use crate::store::composer::{Failure, ReadOnly, Sending, Step};
+use crate::store::notes::Step as NoteStep;
 use crate::store::{Attribution, Event, Store};
 use crate::views::lens::Ui;
 use crate::views::space::{self, Zoomed};
@@ -25,13 +26,15 @@ pub enum Compose {
     Send,
     FileBack,
     Leave,
+    /// `alt-enter`: keep the draft as a note on the agent instead (U5).
+    Queue,
 }
 
 /// Where the box's chords bind: its own Input, not any Input in the zoom.
 pub const BOX: &str = "Composer > Input";
 /// Rows the box grows to before it scrolls.
 const ROWS: (usize, usize) = (1, 8);
-const HINT: &str = "⌘⏎ send · ⌘⇧⏎ send and back to the lens · esc leave";
+const HINT: &str = "⌘⏎ send · ⌘⇧⏎ send and back to the lens · ⌥⏎ keep as a note · esc leave";
 
 pub struct View {
     state: Entity<TextareaState>,
@@ -115,6 +118,10 @@ pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
         Compose::Send => return send(false),
         // The zoom stays, "sending", until it lands (`Effect::FiledBack`); a failure stays to say why.
         Compose::FileBack => return send(true),
+        Compose::Queue => {
+            let stamp = crate::views::notes::stamp();
+            return vec![Event::Note(NoteStep::Queue { agent, stamp })];
+        }
     }
     Vec::new()
 }
@@ -145,7 +152,8 @@ pub fn render<H: Host>(
     cx: &mut Context<H>,
 ) -> Div {
     let (line, color) = status(store, agent);
-    let writable = store.can_send(agent).is_ok() && !store.in_flight(agent);
+    let busy = store.in_flight(agent) || store.transfers.contains_key(agent);
+    let writable = store.can_send(agent).is_ok() && !busy;
     let input = Textarea::new(&ui.composer.state).disabled(!writable);
     let input = div()
         .key_context("Composer")
@@ -170,10 +178,14 @@ pub fn says(store: &Store, ui: &Ui) -> String {
     agent.map_or_else(String::new, |a| status(store, a).0)
 }
 
-/// The line under the box and its colour: why it is read-only, "sending…", the last failure or the keys.
+/// The line under the box and its colour: why it is read-only, "sending…", "saving the notes…" (a U5
+/// transfer), the last failure or the keys.
 fn status(store: &Store, agent: &str) -> (String, u32) {
     match (store.can_send(agent), store.sends.get(agent)) {
         (Err(why), _) => (say_read_only(&store.viewer, why), pal::AMBER),
+        (Ok(()), _) if store.transfers.contains_key(agent) => {
+            ("saving the notes…".to_string(), pal::SLATE)
+        }
         (Ok(()), Some(Sending::InFlight { .. })) => ("sending…".to_string(), pal::SLATE),
         (Ok(()), Some(Sending::Failed(failure))) => (say_failure(failure), pal::AMBER),
         (Ok(()), None) => (HINT.to_string(), pal::SLATE),

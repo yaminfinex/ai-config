@@ -316,7 +316,10 @@ pub struct NoteValue {
     pub id: String,
     pub group: String,
     pub text: String,
+    /// Absent, not null, when unset: web's record omits them.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub quote: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<Value>,
     pub created: i64,
 }

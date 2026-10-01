@@ -44,6 +44,7 @@ pub struct Ui {
     home: FocusHandle,
     pub(super) zoom_focus: FocusHandle,
     pub(super) composer: crate::views::composer::View,
+    pub(super) notes: crate::views::notes::View,
     state: State,
 }
 
@@ -90,6 +91,7 @@ impl Ui {
             home,
             zoom_focus,
             composer: crate::views::composer::View::new(window, cx),
+            notes: crate::views::notes::View::new(window, cx),
             state: State::default(),
         }
     }

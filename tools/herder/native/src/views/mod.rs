@@ -11,6 +11,7 @@
 pub mod composer;
 pub mod lens;
 pub mod markdown;
+pub mod notes;
 pub mod space;
 #[cfg(test)]
 mod tests;
@@ -74,6 +75,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("cmd-enter", Compose::Send),
         ("cmd-shift-enter", Compose::FileBack),
         ("escape", Compose::Leave),
+        ("alt-enter", Compose::Queue),
     ];
     let zoom = [
         ("escape", Zoomed::Out),
@@ -96,6 +98,19 @@ pub fn bindings() -> Vec<KeyBinding> {
     keys.extend(scroll.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     let focus = [("/", Compose::Focus), ("r", Compose::Focus)];
     keys.extend(focus.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
+    use notes::Notes;
+    let note = [
+        ("a", Notes::Add),
+        ("c", Notes::Capture),
+        ("p", Notes::HandOff),
+    ];
+    keys.extend(note.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
+    let editor = [
+        ("enter", Notes::Save),
+        ("cmd-enter", Notes::Save),
+        ("escape", Notes::Cancel),
+    ];
+    keys.extend(editor.map(|(k, a)| KeyBinding::new(k, a, Some(notes::EDITOR))));
     // After the kit's own `Input` bindings (`gpui_kit::init`), so these win in the box.
     keys.extend(compose.map(|(k, a)| KeyBinding::new(k, a, Some(composer::BOX))));
     keys
@@ -124,7 +139,10 @@ space ⇧space  page down / up
 g G           top of loaded (reads older) / end
 / r           write to the agent
 ⌘⏎ / ⌘⇧⏎      send / send and back to the lens
-esc (in box)  leave the box";
+⌥⏎            keep the box as a note
+esc (in box)  leave the box
+a / c         add a note / note the selection
+p             notes into the box";
 
 pub(super) fn help(t: TypeScale) -> Div {
     let lines = HELP.lines().map(|l| div().min_h(t.line).child(l));
@@ -149,8 +167,8 @@ pub trait Host: Sized + 'static {
 
 /// An action handler: `f` reads the store, moves the view state and returns the events to dispatch;
 /// then focus follows the zoom (the `Space` context is live only while its element has focus), except
-/// that an input in the zoom (the composer, U5's notes) keeps it while the zoom stays put (a clicked
-/// link) and the composer takes or leaves it when asked; a transition that started gets its end
+/// that an input in the zoom (the composer, the notes editor) keeps it while the zoom stays put (a
+/// clicked link) and either takes or leaves it when asked; a transition that started gets its end
 /// scheduled.
 pub fn on<A: Action, H: Host>(
     cx: &mut Context<H>,
@@ -162,9 +180,10 @@ pub fn on<A: Action, H: Host>(
         let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
         let events = f(store, ui, action);
         let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
-        let target = match (ui.composer.want.take(), held) {
-            (Some(true), _) => ui.composer.focus_handle(cx),
-            (None, Some(held)) => held,
+        let target = match (ui.composer.want.take(), ui.notes.want.take(), held) {
+            (Some(true), _, _) => ui.composer.focus_handle(cx),
+            (_, Some(true), _) => ui.notes.focus_handle(cx),
+            (None, None, Some(held)) => held,
             _ => ui.focus_target().clone(),
         };
         if !target.is_focused(window) {

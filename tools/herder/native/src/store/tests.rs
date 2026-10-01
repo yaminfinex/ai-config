@@ -1886,7 +1886,7 @@ mod composer {
     }
 
     /// A live store zoomed on `agent` (in its first space), with its detail answered as `bus_status`.
-    fn zoomed(agent: &str, bus_status: Option<&str>) -> Store {
+    pub(super) fn zoomed(agent: &str, bus_status: Option<&str>) -> Store {
         let mut store = loaded();
         store.apply(fleet_frame(board()));
         let space = store.spaces[0].id.clone();
@@ -2168,5 +2168,499 @@ mod composer {
         );
         assert_eq!(store.viewer, Attribution::Attributed("web-me".into()));
         assert!(store.ready("mupu"));
+    }
+}
+
+mod notes {
+    use super::*;
+    use crate::store::notes::{MAX_BYTES, Note, Stamp, Step as N, transfer_text};
+
+    /// `testdata/notes-web.json`: rows and hand-off text made by web's own code.
+    fn web() -> serde_json::Value {
+        serde_json::from_str(include_str!("../../testdata/notes-web.json")).unwrap()
+    }
+
+    fn web_row(i: usize) -> StateRow {
+        serde_json::from_value(web()["rows"][i].clone()).unwrap()
+    }
+
+    fn stamp(now: i64, id: &str, write: &str) -> Stamp {
+        Stamp {
+            now,
+            id: id.into(),
+            write: write.into(),
+        }
+    }
+
+    /// The rows a step queued (sent at once or after the POST in flight).
+    fn note(store: &mut Store, step: N) -> Vec<StateRow> {
+        let before = store.sync[&Ns::Notes].outbox.clone();
+        store.apply(Event::Note(step));
+        let after = store.sync[&Ns::Notes].outbox.values();
+        after
+            .filter(|r| before.get(&r.key) != Some(r))
+            .cloned()
+            .collect()
+    }
+
+    fn pulled(store: &mut Store, rows: Vec<StateRow>, rev: u64) {
+        let step = Step::Pulled(StateRows { rows, rev });
+        store.apply(Event::Sync {
+            ns: Ns::Notes,
+            step,
+        });
+    }
+
+    fn texts(store: &Store, agent: &str) -> Vec<String> {
+        store.notes_of(agent).map(|n| n.text.clone()).collect()
+    }
+
+    /// The note `id` as an editor opened on it now holds it.
+    fn opened(store: &Store, id: &str) -> Note {
+        store.notes.iter().find(|n| n.id == id).cloned().unwrap()
+    }
+
+    fn edit(original: Note, text: &str, stamp: Stamp) -> N {
+        let text = text.into();
+        N::Edit {
+            original,
+            text,
+            stamp,
+        }
+    }
+
+    /// The shell's answer to `Effect::Transfer`: the destination saved, or the disk's refusal.
+    fn landed(store: &mut Store, agent: &str, saved: Result<(), &str>) -> Vec<Effect> {
+        let saved = saved.map_err(str::to_string);
+        let agent = agent.into();
+        store.apply(Event::Note(N::Landed { agent, saved }))
+    }
+
+    /// What a relaunch reads: `prefs` and `outbox` as they were saved, and the last snapshot.
+    fn relaunch(prefs: &Prefs, outbox: Outbox, snapshot: Snapshot) -> Store {
+        let mut store = Store::default();
+        let prefs = serde_json::from_slice(&crate::local::encode(prefs)).unwrap();
+        store.apply(Event::PrefsLoaded(prefs));
+        store.apply(Event::Snapshot(snapshot));
+        store.apply(Event::OutboxLoaded(outbox));
+        store
+    }
+
+    fn tombstones(outbox: &Outbox) -> usize {
+        let rows = outbox.get(&Ns::Notes).into_iter().flatten();
+        rows.filter(|r| r.deleted).count()
+    }
+
+    #[test]
+    fn add_capture_edit_and_delete_write_webs_record_shape() {
+        let mut store = loaded();
+        let (quoted, plain, gone) = (web_row(0), web_row(1), web_row(2));
+        // A capture: the quote trimmed, the source this agent's transcript, as web's capture writes it.
+        let capture = N::Add {
+            group: "mupu".into(),
+            text: " ask it to split this ".into(),
+            quote: Some("\nthe reducer owns\nevery mutation  ".into()),
+            stamp: stamp(quoted.updated, &quoted.key, &quoted.write_id),
+        };
+        let mut got = note(&mut store, capture);
+        // Web's record was edited once (`updated` > `created`); a fresh one has them equal.
+        got[0].value["created"] = quoted.value["created"].clone();
+        assert_eq!(got, [quoted]);
+        // A typed note has no quote or source keys at all.
+        let add = N::Add {
+            group: "mupu".into(),
+            text: plain.value["text"].as_str().unwrap().into(),
+            quote: None,
+            stamp: stamp(plain.updated, &plain.key, &plain.write_id),
+        };
+        assert_eq!(note(&mut store, add), std::slice::from_ref(&plain));
+        assert_eq!(store.outbox()[&Ns::Notes].len(), 2);
+        // An edit supersedes the version it saw, even with a clock behind it.
+        let first = edit(
+            opened(&store, &plain.key),
+            "check it twice",
+            stamp(5, "-", "w-edit"),
+        );
+        let edited = note(&mut store, first).pop().unwrap();
+        assert_eq!(
+            (edited.updated, &*edited.write_id),
+            (plain.updated + 1, "w-edit")
+        );
+        assert_eq!(edited.value["text"], "check it twice");
+        assert_eq!(edited.value["created"], plain.value["created"]);
+        // Unchanged: nothing written. Emptied without a quote: refused in web's words (the editor
+        // keeps it), and nothing written either.
+        for (text, why) in [
+            ("check it twice", None),
+            ("  ", Some("A note cannot be empty.")),
+        ] {
+            let again = edit(
+                opened(&store, &plain.key),
+                text,
+                stamp(9e12 as i64, "-", "w"),
+            );
+            assert_eq!(store.refusal(&again), why);
+            assert!(note(&mut store, again).is_empty(), "{text:?}");
+        }
+        // A captured note may lose its comment: the quote is still a note.
+        let quote_only = edit(
+            opened(&store, &web_row(0).key),
+            "",
+            stamp(9e12 as i64, "-", "w"),
+        );
+        assert_eq!(store.refusal(&quote_only), None);
+        // A delete is web's tombstone: `{id}` only.
+        let delete = N::Delete {
+            id: plain.key.clone(),
+            stamp: stamp(gone.updated, "-", &gone.write_id),
+        };
+        assert_eq!(note(&mut store, delete), [gone]);
+        assert_eq!(texts(&store, "mupu"), ["ask it to split this"]);
+        // Blank adds are refused and write nothing.
+        let blank = N::Add {
+            group: "mupu".into(),
+            text: " ".into(),
+            quote: Some("\n".into()),
+            stamp: stamp(1, "n", "w"),
+        };
+        let why = Some("Write something before saving this note.");
+        assert_eq!(store.refusal(&blank), why);
+        assert!(note(&mut store, blank).is_empty());
+    }
+
+    #[test]
+    fn notes_are_filtered_per_agent_and_a_newer_web_row_wins() {
+        let mut store = loaded();
+        let (quoted, plain) = (web_row(0), web_row(1));
+        pulled(&mut store, vec![quoted.clone(), plain.clone()], 1);
+        let general = StateRow {
+            key: "g".into(),
+            value: json!({"id": "g", "group": "general", "text": "for the rail", "created": 1}),
+            ..row("g", 1, "w")
+        };
+        pulled(&mut store, vec![general], 2);
+        assert_eq!(
+            texts(&store, "mupu"),
+            ["ask it to split this", "check the outbox after a 409"]
+        );
+        assert!(store.notes_of("riko").next().is_none());
+        assert!(store.notes_of("general").count() == 1);
+
+        // Edited here, then web's later edit of the same note arrives: web's wins, and the queued
+        // row is dropped rather than sent over it.
+        let native = stamp(plain.updated + 10, "-", "w-native");
+        store.apply(Event::Note(edit(
+            opened(&store, &plain.key),
+            "native's",
+            native,
+        )));
+        let mut web_edit = plain.clone();
+        web_edit.updated += 20;
+        web_edit.value["text"] = "web's".into();
+        pulled(&mut store, vec![web_edit], 3);
+        assert_eq!(texts(&store, "mupu"), ["ask it to split this", "web's"]);
+        assert!(queued(&store, Ns::Notes).is_empty());
+        // An older remote row loses to the local edit.
+        let mine = stamp(quoted.updated + 50, "-", "w-native");
+        store.apply(Event::Note(edit(opened(&store, &quoted.key), "mine", mine)));
+        pulled(&mut store, vec![quoted], 4);
+        assert_eq!(texts(&store, "mupu")[0], "mine");
+        assert_eq!(queued(&store, Ns::Notes).len(), 1);
+    }
+
+    #[test]
+    fn transfer_text_is_webs() {
+        let mut store = loaded();
+        pulled(&mut store, vec![web_row(0), web_row(1)], 1);
+        let got: Vec<String> = store.notes_of("mupu").map(transfer_text).collect();
+        let want: Vec<String> = serde_json::from_value(web()["handoff"].clone()).unwrap();
+        assert_eq!(got, want);
+        // File and diff sources (web's file panes can file notes on an agent) fence the quote.
+        let mut n = store.notes_of("mupu").next().unwrap().clone();
+        n.source =
+            Some(json!({"kind": "diff", "path": "a.rs", "base": "main", "start": 3, "end": 5}));
+        n.quote = Some("x ``` y".into());
+        n.text = String::new();
+        assert_eq!(transfer_text(&n), "a.rs:3-5 (vs main)\n````\nx ``` y\n````");
+    }
+
+    #[test]
+    fn hand_off_saves_the_draft_then_deletes_the_notes() {
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        pulled(&mut store, vec![web_row(0), web_row(1)], 1);
+        store.prefs.drafts.insert("mupu".into(), "first".into());
+        let hand = N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(1, "-", "w-h"),
+        };
+        let effects = store.apply(Event::Note(hand.clone()));
+        let want: Vec<String> = serde_json::from_value(web()["handoff"].clone()).unwrap();
+        let draft = format!("first\n\n{}", want.join("\n\n"));
+        assert_eq!(store.prefs.drafts["mupu"], draft);
+        // Only the draft's save, at once: no tombstone is queued, saved or sent until it lands.
+        let save = Effect::Transfer {
+            file: Persist::Prefs,
+            agent: "mupu".into(),
+        };
+        assert_eq!(effects, [save]);
+        assert_eq!(tombstones(&store.outbox()), 0);
+        assert_eq!(store.notes_of("mupu").count(), 2);
+        // A second hand-off waits for the first.
+        assert!(store.apply(Event::Note(hand)).is_empty());
+        assert_eq!(store.prefs.drafts["mupu"], draft);
+
+        let effects = landed(&mut store, "mupu", Ok(()));
+        let tombs = sends(&effects).concat();
+        assert_eq!(tombs.len(), 2);
+        assert!(tombs.iter().all(|r| r.deleted && r.write_id == "w-h"));
+        assert!(effects.contains(&Effect::Persist(Persist::Outbox)));
+        assert!(store.notes_of("mupu").next().is_none());
+        // Nothing left: nothing happens.
+        let again = N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(2, "-", "w"),
+        };
+        assert!(store.apply(Event::Note(again)).is_empty());
+    }
+
+    #[test]
+    fn a_hand_off_whose_draft_is_not_saved_keeps_its_notes_through_a_failure_or_a_restart() {
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        pulled(&mut store, vec![web_row(0), web_row(1)], 1);
+        store.prefs.drafts.insert("mupu".into(), "first".into());
+        let hand = || N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(1, "-", "w-h"),
+        };
+        store.apply(Event::Note(hand()));
+        // Quit or crash with the draft's save landed and nothing after it: the next launch has the
+        // draft and every note (a duplicate, never a loss); the outbox never held a deletion.
+        let draft = store.prefs.drafts["mupu"].clone();
+        let back = relaunch(&store.prefs, store.outbox(), store.snapshot());
+        assert_eq!(back.prefs.drafts["mupu"], draft);
+        assert_eq!(back.notes_of("mupu").count(), 2);
+        // Or with the save never landed: the old draft and every note.
+        let mut old = store.prefs.clone();
+        old.drafts.insert("mupu".into(), "first".into());
+        let back = relaunch(&old, store.outbox(), store.snapshot());
+        assert_eq!(back.prefs.drafts["mupu"], "first");
+        assert_eq!(back.notes_of("mupu").count(), 2);
+
+        // The disk refused the draft: it is put back, the notes stay and the strip says why.
+        let effects = landed(&mut store, "mupu", Err("disk full"));
+        assert_eq!(effects, [Effect::Persist(Persist::Prefs)]);
+        assert_eq!(store.prefs.drafts["mupu"], "first");
+        assert_eq!(store.notes_of("mupu").count(), 2);
+        assert_eq!(tombstones(&store.outbox()), 0);
+        let why = &store.note_problems["mupu"];
+        assert!(why.contains("the notes stay: disk full"), "{why}");
+        // A draft typed into meanwhile is the owner's: kept as it is. The next hand-off clears the
+        // problem.
+        store.apply(Event::Note(hand()));
+        assert!(store.note_problems.is_empty());
+        store.prefs.drafts.insert("mupu".into(), "typed".into());
+        landed(&mut store, "mupu", Err("disk full"));
+        assert_eq!(store.prefs.drafts["mupu"], "typed");
+        // A note edited after it went into the draft is not the one handed off: it survives the save.
+        store.apply(Event::Note(hand()));
+        let (id, now) = (web_row(1).key, 9e12 as i64);
+        store.apply(Event::Note(edit(
+            opened(&store, &id),
+            "newer",
+            stamp(now, "-", "w"),
+        )));
+        landed(&mut store, "mupu", Ok(()));
+        assert_eq!(tombstones(&store.outbox()), 1);
+        assert_eq!(texts(&store, "mupu"), ["newer"]);
+    }
+
+    #[test]
+    fn hand_off_waits_for_a_box_that_can_take_it() {
+        // A retired agent's box is read-only, and a send in flight holds its draft: the notes stay.
+        let mut store = super::composer::zoomed("mupu", Some("retired"));
+        pulled(&mut store, vec![web_row(1)], 1);
+        let hand = || N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(1, "-", "w"),
+        };
+        assert!(store.apply(Event::Note(hand())).is_empty());
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        pulled(&mut store, vec![web_row(1)], 1);
+        store.prefs.drafts.insert("mupu".into(), "hi".into());
+        store.apply(Event::Compose(crate::store::composer::Step::Send {
+            agent: "mupu".into(),
+            file_back: false,
+        }));
+        assert!(store.apply(Event::Note(hand())).is_empty());
+        assert_eq!(store.notes_of("mupu").count(), 1);
+    }
+
+    #[test]
+    fn alt_enter_saves_the_draft_as_a_note_then_clears_the_box() {
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        store
+            .prefs
+            .drafts
+            .insert("mupu".into(), "  later: ask about tests ".into());
+        let queue = |s: &str| N::Queue {
+            agent: s.into(),
+            stamp: stamp(7, "q1", "w-q"),
+        };
+        let effects = store.apply(Event::Note(queue("mupu")));
+        // The note first, with the outbox it is in saved now; the draft stays until that landed.
+        let save = Effect::Transfer {
+            file: Persist::Outbox,
+            agent: "mupu".into(),
+        };
+        assert!(effects.contains(&save));
+        assert!(!effects.contains(&Effect::Persist(Persist::Prefs)));
+        assert_eq!(store.prefs.drafts["mupu"], "  later: ask about tests ");
+        let rows = sends(&effects).concat();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].value,
+            json!({"id": "q1", "group": "mupu", "text": "later: ask about tests", "created": 7})
+        );
+        assert_eq!(texts(&store, "mupu"), ["later: ask about tests"]);
+        // A restart before it landed has both: the note (in the outbox) and the draft.
+        let back = relaunch(&store.prefs, store.outbox(), store.snapshot());
+        assert_eq!(texts(&back, "mupu"), ["later: ask about tests"]);
+        assert!(back.prefs.drafts.contains_key("mupu"));
+        assert_eq!(
+            landed(&mut store, "mupu", Ok(())),
+            [Effect::Persist(Persist::Prefs)]
+        );
+        assert!(!store.prefs.drafts.contains_key("mupu"));
+
+        // A blank draft queues nothing.
+        store.prefs.drafts.insert("mupu".into(), "  ".into());
+        assert!(store.apply(Event::Note(queue("mupu"))).is_empty());
+        assert_eq!(store.prefs.drafts["mupu"], "  ");
+        // The outbox not saved: the draft stays, and the strip says why.
+        store.prefs.drafts.insert("mupu".into(), "again".into());
+        let q2 = N::Queue {
+            agent: "mupu".into(),
+            stamp: stamp(8, "q2", "w-q2"),
+        };
+        store.apply(Event::Note(q2));
+        assert!(landed(&mut store, "mupu", Err("read-only volume")).is_empty());
+        assert_eq!(store.prefs.drafts["mupu"], "again");
+        assert!(store.note_problems["mupu"].contains("the draft stays"));
+    }
+
+    #[test]
+    fn notes_over_webs_8_kib_are_refused_and_the_text_kept() {
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        // Text and quote count together, in UTF-8 bytes: 2049 four-byte characters is 8196.
+        let long = "🦀".repeat(MAX_BYTES / 4 + 1);
+        let half = "x".repeat(MAX_BYTES / 2 + 1);
+        let too_long = "This note is too long to save. Shorten it and try again.";
+        let add = |text: &str, quote: Option<&str>| N::Add {
+            group: "mupu".into(),
+            text: text.into(),
+            quote: quote.map(str::to_string),
+            stamp: stamp(1, "n1", "w"),
+        };
+        for step in [add(&long, None), add(&half, Some(&half))] {
+            assert_eq!(store.refusal(&step), Some(too_long));
+            assert!(store.apply(Event::Note(step)).is_empty());
+        }
+        let fits = "x".repeat(MAX_BYTES);
+        assert_eq!(store.refusal(&add(&fits, None)), None);
+        store.apply(Event::Note(add("short", None)));
+        let grown = edit(opened(&store, "n1"), &long, stamp(2, "-", "w"));
+        assert_eq!(store.refusal(&grown), Some(too_long));
+        assert!(store.apply(Event::Note(grown)).is_empty());
+        assert_eq!(texts(&store, "mupu"), ["short"]);
+        // A queued draft over the limit stays in the box, and the strip says why.
+        store.prefs.drafts.insert("mupu".into(), long.clone());
+        let queue = N::Queue {
+            agent: "mupu".into(),
+            stamp: stamp(3, "q", "w"),
+        };
+        assert!(store.apply(Event::Note(queue)).is_empty());
+        assert_eq!(store.prefs.drafts["mupu"], long);
+        assert_eq!(store.note_problems["mupu"], too_long);
+    }
+
+    #[test]
+    fn an_edit_to_a_note_web_deleted_meanwhile_writes_it_again_newer_than_the_tombstone() {
+        let mut store = loaded();
+        let plain = web_row(1);
+        pulled(&mut store, vec![plain.clone()], 1);
+        let original = opened(&store, &plain.key);
+        // Web deletes it while the editor is open here; its tombstone is far ahead of this clock.
+        let mut gone = web_row(2);
+        gone.updated = 9e12 as i64;
+        pulled(&mut store, vec![gone.clone()], 2);
+        assert!(store.notes_of("mupu").next().is_none());
+        let saved = note(
+            &mut store,
+            edit(original, "still wanted", stamp(5, "-", "w-e")),
+        );
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].updated, gone.updated + 1);
+        assert!(!saved[0].deleted);
+        assert_eq!(saved[0].value["created"], plain.value["created"]);
+        assert_eq!(texts(&store, "mupu"), ["still wanted"]);
+    }
+
+    #[test]
+    fn a_note_web_changed_at_the_same_time_with_a_later_write_survives_the_hand_off() {
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        let mut plain = web_row(1);
+        plain.write_id = "w1".into();
+        pulled(&mut store, vec![plain.clone()], 1);
+        store.apply(Event::Note(N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(1, "-", "w-h"),
+        }));
+        // Web's edit lands while the draft is saving: same `updated`, a later writeID, so it wins.
+        let mut changed = plain.clone();
+        changed.write_id = "w2".into();
+        changed.value["text"] = "changed on web".into();
+        pulled(&mut store, vec![changed], 2);
+        assert_eq!(texts(&store, "mupu"), ["changed on web"]);
+        landed(&mut store, "mupu", Ok(()));
+        assert_eq!(tombstones(&store.outbox()), 0);
+        assert_eq!(texts(&store, "mupu"), ["changed on web"]);
+    }
+
+    #[test]
+    fn no_message_goes_while_a_transfer_waits_on_its_save() {
+        use crate::store::composer::Step as C;
+        let send = |store: &mut Store| {
+            let step = C::Send {
+                agent: "mupu".into(),
+                file_back: false,
+            };
+            let effects = store.apply(Event::Compose(step));
+            let message = |e: &Effect| matches!(e, Effect::Send(Write::Message { .. }));
+            effects.iter().any(message)
+        };
+        // A hand-off: the draft with the notes may still be put back, so it cannot go yet.
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        pulled(&mut store, vec![web_row(1)], 1);
+        store.prefs.drafts.insert("mupu".into(), "D".into());
+        store.apply(Event::Note(N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(1, "-", "w-h"),
+        }));
+        assert!(!store.ready("mupu"));
+        assert!(!send(&mut store));
+        landed(&mut store, "mupu", Ok(()));
+        assert!(send(&mut store), "once landed, the draft sends as usual");
+        // A queue: the draft is about to clear, so it cannot go either.
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        store.prefs.drafts.insert("mupu".into(), "later".into());
+        store.apply(Event::Note(N::Queue {
+            agent: "mupu".into(),
+            stamp: stamp(2, "q", "w-q"),
+        }));
+        assert!(!send(&mut store));
+        landed(&mut store, "mupu", Ok(()));
+        assert!(!store.prefs.drafts.contains_key("mupu"));
+        store.prefs.drafts.insert("mupu".into(), "now".into());
+        assert!(send(&mut store), "a new draft sends after the queue landed");
     }
 }

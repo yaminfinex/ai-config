@@ -81,11 +81,13 @@ impl Store {
         }
     }
 
-    /// `agent`'s draft can go now: writable, not blank, and no send of it in flight.
+    /// `agent`'s draft can go now: writable, not blank, no send of it in flight and no note transfer
+    /// (U5) waiting on a save that may still change the draft.
     pub fn ready(&self, agent: &str) -> bool {
         let draft = self.prefs.drafts.get(agent);
         self.can_send(agent).is_ok()
             && !self.in_flight(agent)
+            && !self.transfers.contains_key(agent)
             && draft.is_some_and(|d| !d.trim().is_empty())
     }
 
