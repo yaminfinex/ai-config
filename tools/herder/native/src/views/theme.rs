@@ -106,6 +106,10 @@ pub mod pal {
     pub const QUEUE_OPERATOR: u32 = 0x152519;
     /// A queued message: web's 8% black (`--overlay-subtle`) over the box's ground.
     pub const QUEUE_ROW: u32 = 0x382A11;
+    /// Web's `--red`: a failed tool's status dot.
+    pub const RED: u32 = 0xF47067;
+    /// Web's `--thinking-detail`: an opened thinking's text.
+    pub const THINKING_INK: u32 = 0x9A8FB8;
 
     use crate::store::transcript::Tone;
 

@@ -1,13 +1,14 @@
 //! What one transcript entry looks like, as web's compact view draws it (spec §1, A2): the header of
 //! an answer or a card, the entry cards (another agent's message, an operator's note, the owner's
-//! prompt), the fold summary and its body, the system chip and the queued box. The list, its rows and
-//! what is open are `transcript`'s; these only build elements.
+//! prompt), the fold summary and its body, the system chip, the queued box, and a run member's status
+//! dot, duration and detail sections (spec §1 "Expanded run details", A3). The list, its rows and what
+//! is open are `transcript`'s; these only build elements.
 
 use crate::api::Queued;
 use crate::store::condense;
-use crate::store::transcript::{Item, Tone};
+use crate::store::transcript::{Item, Tone, ToolResult};
 use crate::views::theme::{MONO_T, TypeScale, pal};
-use crate::views::transcript::{PAD, ago};
+use crate::views::transcript::{PAD, ago, sideways};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -41,6 +42,102 @@ pub fn waited(secs: u64) -> String {
 pub fn queued_age(sent_at: &str, now: u64) -> String {
     let at = condense::epoch(sent_at);
     at.map_or_else(|| sent_at.to_string(), |at| waited(now.saturating_sub(at)))
+}
+
+/// How long a tool or a thinking took, as web's `formatDuration`: `883ms`, `2.7s`, `14s`, `3m 5s`;
+/// `—` when negative. Halves round up, as `toFixed`.
+pub fn took(ms: i64) -> String {
+    match ms {
+        ..0 => "—".into(),
+        0..1000 => format!("{ms}ms"),
+        1000..10_000 => {
+            let tenths = (ms + 50) / 100;
+            format!("{}.{}s", tenths / 10, tenths % 10)
+        }
+        10_000..60_000 => format!("{}s", (ms + 500) / 1000),
+        _ => format!("{}m {}s", ms / 60_000, (ms % 60_000 + 500) / 1000),
+    }
+}
+
+/// A tool's status dot (web's `.tool-status`): green done, red failed, blue still running.
+pub fn dot(result: Option<&ToolResult>) -> u32 {
+    match result {
+        None => pal::BLUE,
+        Some(r) if r.error => pal::RED,
+        Some(_) => pal::OPERATOR,
+    }
+}
+
+/// A run's thinking (web's `.thinking-entry`, spec §1 "Expanded run details"): `thinking · 2.7s` in
+/// purple italics and its time; open, its text in the thinking ink, or web's note when redacted.
+pub(super) fn thinking(
+    fold: Stateful<Div>,
+    open: bool,
+    text: &str,
+    took: String,
+    when: String,
+    t: TypeScale,
+) -> AnyElement {
+    let what = div().italic().text_color(rgb(pal::PURPLE));
+    let summary = expander(fold, open, t)
+        .child(what.child(format!("thinking · {took}")))
+        .child(time(when, t).ml_auto());
+    let text = match text.trim() {
+        "" => "Thinking content unavailable.",
+        text => text,
+    };
+    let body = div().italic().text_color(rgb(pal::THINKING_INK));
+    let body = open.then(|| detail(body.child(text.to_string()), t));
+    div().child(summary).children(body).into_any_element()
+}
+
+/// A run's tool (web's `.tool-entry`): its status dot, name, summary cut to the row, duration and
+/// time (the result's, once in); open, its input (pretty JSON) and output, each scrolling sideways
+/// under its id.
+pub(super) fn tool(
+    fold: Stateful<Div>,
+    open: bool,
+    (name, summary, input): (&str, &str, &str),
+    result: Option<&ToolResult>,
+    at: Option<u64>,
+    [input_id, output_id]: [ElementId; 2],
+    t: TypeScale,
+) -> AnyElement {
+    let dot = div().flex_none().size(t.css(7.)).rounded_full();
+    let dot = dot.bg(rgb(self::dot(result)));
+    let label = if name.is_empty() {
+        "unknown tool"
+    } else {
+        name
+    };
+    let name = mono(div(), 11., t).flex_none();
+    let name = name
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(pal::INK));
+    let what = mono(div(), 11., t).min_w_0().truncate();
+    let done = result.and_then(|r| r.at);
+    let lasted = match (done, at) {
+        (Some(done), Some(at)) => took(done as i64 - at as i64),
+        (Some(_), None) => "—".into(),
+        (None, _) => "running · no result yet".into(),
+    };
+    let when = stamp(done.or(at).map(|ms| ms / 1000), now());
+    let summary = expander(fold, open, t)
+        .child(dot)
+        .child(name.child(label.to_string()))
+        .child(what.child(summary.to_string()))
+        .child(time(lasted, t).ml_auto())
+        .child(time(when, t));
+    let body = open.then(|| {
+        let el = div().child(heading("Input", true, t));
+        let el = el.child(pre(input_id, input, t));
+        let el = el.when_some(result, |el, r| {
+            let output = (!r.text.is_empty()).then(|| pre(output_id, &r.text, t));
+            el.child(heading("Output", false, t)).children(output)
+        });
+        detail(el, t)
+    });
+    div().child(summary).children(body).into_any_element()
 }
 
 /// The entry cards (spec §1 "Operator / prompt card and delivery card"): another agent's message, an
@@ -232,10 +329,6 @@ pub(super) fn system(s: &str, when: String, t: TypeScale) -> AnyElement {
 /// A fold's summary (web's `.entry-expander`): a chevron, then the caller's children, 8 apart; a
 /// ruled panel under the pointer or while open.
 pub(super) fn expander(el: Stateful<Div>, open: bool, t: TypeScale) -> Stateful<Div> {
-    let chevron = div().text_size(t.css(14.)).line_height(t.css(14.));
-    let chevron = chevron
-        .text_color(rgb(pal::DIMMER))
-        .child(if open { "⌄" } else { "›" });
     let el = el.flex().items_center().gap(t.css(8.)).min_h(t.css(27.));
     let el = el
         .px(t.css(9.))
@@ -250,21 +343,57 @@ pub(super) fn expander(el: Stateful<Div>, open: bool, t: TypeScale) -> Stateful<
             .border_color(transparent_black())
             .hover(|s| s.border_color(rgb(pal::RULE)).bg(rgb(pal::PANEL))),
     };
-    el.child(chevron)
+    el.child(chevron(open, t))
 }
 
-/// An opened fold's body (web's `.entry-detail`): the code ground, ruled but for its top, its
-/// markdown's paragraph margins inside its padding.
+/// A fold's chevron (web's `summary::before`): `›` 14 in the dimmer ink, `⌄` open (web turns it), on
+/// the `›`'s width (6.1, web's box) so that what follows stays put, and raised 4 to the turned `›`'s centre (px.md).
+pub(super) fn chevron(open: bool, t: TypeScale) -> Div {
+    let el = div().flex_none().flex().justify_center().w(t.css(6.1));
+    let el = el.text_size(t.css(14.)).line_height(t.css(14.));
+    let el = el.text_color(rgb(pal::DIMMER));
+    match open {
+        true => el.relative().top(t.css(-4.)).child("⌄"),
+        false => el.child("›"),
+    }
+}
+
+/// An opened fold's body (web's `.entry-detail`): the code ground and ink, ruled but for its top.
+/// Markdown keeps its paragraphs' margins inside (`md_detail`).
 pub(super) fn detail(body: Div, t: TypeScale) -> Div {
     let el = div()
         .bg(rgb(pal::CODE))
+        .text_color(rgb(pal::CODE_INK))
         .border_1()
         .border_t_0()
         .border_color(rgb(pal::RULE));
     el.rounded_b(t.css(6.))
         .px(t.css(12.))
-        .py(t.css(8. + 6.))
+        .py(t.css(8.))
         .child(body)
+}
+
+/// `detail` around markdown, whose first and last paragraphs keep their 6 margins.
+pub(super) fn md_detail(body: Div, t: TypeScale) -> Div {
+    detail(body.py(t.css(6.)), t)
+}
+
+/// A detail's section heading (`.entry-detail h4`): mono 9 capitals, 3 above its text and 8 above
+/// any but the first (no letter spacing in GPUI).
+fn heading(text: &str, first: bool, t: TypeScale) -> Div {
+    let el = mono(div(), 9., t).text_color(rgb(pal::SLATE)).mb(t.css(3.));
+    el.when(!first, |el| el.mt(t.css(8.)))
+        .child(text.to_uppercase())
+}
+
+/// A detail's preformatted text (`.entry-detail pre`): mono 11, its lines unwrapped, scrolling
+/// sideways, 8 under it.
+fn pre(id: ElementId, text: &str, t: TypeScale) -> Stateful<Div> {
+    let lines = mono(div(), 11., t)
+        .whitespace_nowrap()
+        .child(text.to_string());
+    let el = div().id(id).w_full().overflow_x_scroll().mb(t.css(8.));
+    sideways(el.child(lines))
 }
 
 /// A pill's border, ground, ink and type in `tone` (web's `.activity-pill`).

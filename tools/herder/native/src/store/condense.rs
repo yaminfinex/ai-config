@@ -8,22 +8,27 @@ use crate::api::{Entry, Kind, Payload};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// Characters kept per tool line and result, and per thinking pill.
+/// Characters kept per tool summary line.
 const LINE: usize = 200;
-const THINKING: usize = 2000;
 
-/// A `tool_use`'s name and web's one-line summary of its input.
-pub(super) fn tool_call(p: &Payload) -> (String, String) {
+/// A `tool_use`: its name, web's one-line summary of its input, and the input as web's detail shows it
+/// (`JSON.stringify(input, null, 2)`).
+pub(super) fn tool_call(p: &Payload) -> (String, String, String) {
     let name = p.name.as_str().unwrap_or("").to_string();
     let summary = clip(&tool_summary(&name, &p.input), LINE);
-    (name, summary)
+    let input = match &p.input {
+        Value::Object(_) => serde_json::to_string_pretty(&p.input).unwrap_or_default(),
+        _ => "{}".into(),
+    };
+    (name, summary, input)
 }
 
-/// A `tool_result`: whether it failed, and its first line.
-pub(super) fn tool_result(p: &Payload) -> ToolResult {
-    let text = clip(first_line(&text_of(&p.content)), LINE);
+/// A `tool_result`: whether it failed, its text (the serve caps it at 16 KiB) and when it came.
+pub(super) fn tool_result(p: &Payload, timestamp: &str) -> ToolResult {
+    let text = text_of(&p.content);
     let error = p.is_error.as_bool().unwrap_or(false);
-    ToolResult { error, text }
+    let at = epoch_ms(timestamp);
+    ToolResult { error, text, at }
 }
 
 /// The items one entry yields in compact mode, as web's clean view (tool pairs are `ingest`'s).
@@ -67,13 +72,13 @@ pub fn condense(entry: &Entry) -> Vec<Item> {
             None => Item::CompactSummary(text),
         },
         Kind::AssistantText if p.is_api_error_message.as_bool() == Some(true) => Item::Error(text),
-        // Only statuses and internal notes, no visible text: a pill in the run. Unfenced or malformed,
-        // the answer is literal, tags and all (web's fail-open).
+        // Unfenced or malformed, the answer is literal, tags and all (web's fail-open). One of only
+        // statuses and internal notes is a run's member (`marker`).
         Kind::AssistantText => match fence(&text) {
-            Some(segs) => marker(&segs).unwrap_or(Item::Assistant(segs)),
+            Some(segs) => Item::Assistant(segs),
             None => Item::Assistant(vec![Seg::Text(text.trim().into())]),
         },
-        Kind::Thinking => return vec![Item::Thinking(clip(&text, THINKING))],
+        Kind::Thinking => return vec![Item::Thinking(text)],
         Kind::SystemChip => Item::SystemChip(system_chip(p)),
         Kind::Unknown => chip(Tone::Other, "unknown", &clip(first_line(&text), 80)),
         // Carriers, telemetry, injected context and tool pairs.
@@ -208,25 +213,18 @@ pub fn fence(text: &str) -> Option<Vec<Seg>> {
     Some(segs)
 }
 
-/// A fenced answer with no visible text, as web's run pill: its statuses (and `internal note`) joined,
-/// toned as a status, or as thinking when it holds only internal notes; the text is every body.
-fn marker(segs: &[Seg]) -> Option<Item> {
+/// A fenced answer with no visible text is a run's member, and its pill, as web's: its statuses (and
+/// `internal note`) joined, toned as a status, or as thinking when it holds only internal notes.
+pub fn marker(segs: &[Seg]) -> Option<(Tone, String)> {
     let mut statuses = Vec::new();
-    let (mut internal, mut bodies) = (false, Vec::new());
+    let mut internal = false;
     for seg in segs {
-        let body = match seg {
+        match seg {
             Seg::Text(t) if t.trim().is_empty() => continue,
             Seg::Text(_) => return None,
-            Seg::Status(s) => {
-                statuses.push(if s.trim().is_empty() { "status" } else { s });
-                s
-            }
-            Seg::Internal(s) => {
-                internal = true;
-                s
-            }
-        };
-        bodies.extend(Some(body.trim()).filter(|b| !b.is_empty()));
+            Seg::Status(s) => statuses.push(if s.trim().is_empty() { "status" } else { s }),
+            Seg::Internal(_) => internal = true,
+        }
     }
     let tone = if statuses.is_empty() {
         Tone::Thinking
@@ -234,13 +232,7 @@ fn marker(segs: &[Seg]) -> Option<Item> {
         Tone::Status
     };
     statuses.extend(internal.then_some("internal note"));
-    let label = statuses.join(" · ");
-    let text = if bodies.is_empty() {
-        label.clone()
-    } else {
-        bodies.join("\n")
-    };
-    Some(Item::Chip { tone, label, text })
+    Some((tone, statuses.join(" · ")))
 }
 
 /// One row of the compact list: a standalone item, or a run of consecutive activity items (tools,
@@ -305,18 +297,16 @@ pub fn pills<'a>(members: impl IntoIterator<Item = &'a Item>) -> Vec<Pill> {
             }
             Item::Thinking(_) => (Tone::Thinking, "thinking".into(), false),
             Item::Chip { tone, label, .. } => (*tone, label.clone(), false),
+            Item::Assistant(segs) => match marker(segs) {
+                Some((tone, label)) => (tone, label, false),
+                None => continue,
+            },
             Item::Delivery { sender, .. } => (Tone::Message, format!("✉ {sender}"), false),
             _ => continue,
         };
         let merges = match (prev, item) {
             (Some(Item::Tool { name: a, .. }), Item::Tool { name: b, .. }) => a == b,
-            (
-                Some(a),
-                Item::Chip {
-                    tone: Tone::Status | Tone::Thinking,
-                    ..
-                },
-            ) => a == item,
+            (Some(a), Item::Assistant(_)) => a == item,
             _ => false,
         };
         match pills.last_mut().filter(|_| merges) {
@@ -334,18 +324,29 @@ pub fn pills<'a>(members: impl IntoIterator<Item = &'a Item>) -> Vec<Pill> {
     pills
 }
 
-/// Epoch seconds of an RFC 3339 timestamp: the serve's entries' (`2026-09-30T00:07:16.868Z`) and
-/// hcom's queued messages' (`2026-09-30T00:07:16.868123+00:00`). The fraction is dropped; `None` for
-/// any other form. The store reads no clock: the view says how long ago.
+/// Epoch seconds of an RFC 3339 timestamp (`epoch_ms`, floored).
 pub fn epoch(ts: &str) -> Option<u64> {
+    epoch_ms(ts).map(|ms| ms / 1000)
+}
+
+/// Epoch milliseconds of an RFC 3339 timestamp: the serve's entries' (`2026-09-30T00:07:16.868Z`) and
+/// hcom's queued messages' (`2026-09-30T00:07:16.868123+00:00`), the fraction to the millisecond;
+/// `None` for any other form. The store reads no clock: the view says how long ago.
+pub fn epoch_ms(ts: &str) -> Option<u64> {
     let n = |from: usize, to: usize| ts.get(from..to)?.parse::<i64>().ok();
     if ts.get(10..11) != Some("T") {
         return None;
     }
     let zone = ts.get(19..)?;
-    let zone = zone
-        .strip_prefix('.')
-        .map_or(zone, |f| f.trim_start_matches(|c: char| c.is_ascii_digit()));
+    let fraction = zone.strip_prefix('.').unwrap_or("");
+    let digits = fraction.len()
+        - fraction
+            .trim_start_matches(|c: char| c.is_ascii_digit())
+            .len();
+    let ms = format!("{:0<3}", &fraction[..digits.min(3)])
+        .parse::<i64>()
+        .ok()?;
+    let zone = zone.strip_prefix('.').map_or(zone, |f| &f[digits..]);
     let offset = match zone.as_bytes() {
         b"Z" => 0,
         [sign @ (b'+' | b'-'), _, _, b':', _, _] => {
@@ -362,7 +363,7 @@ pub fn epoch(ts: &str) -> Option<u64> {
     let (era, yoe) = (y.div_euclid(400), y.rem_euclid(400));
     let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
     let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
-    u64::try_from(days * 86_400 + secs).ok()
+    u64::try_from((days * 86_400 + secs) * 1000 + ms).ok()
 }
 
 /// Web's one-line tool summary: the command or file when there is one, else the first input value.

@@ -1999,3 +1999,92 @@ mod prose {
         }
     }
 }
+
+/// A3: a run's members.
+mod members {
+    use crate::store::condense;
+    use crate::store::tests::loaded;
+    use crate::store::tests::transcript_pages::{drive, history, items, open};
+    use crate::store::transcript::{Item, Step, ToolResult};
+    use crate::store::{Event, Store};
+    use crate::views::entries::{dot, took};
+    use crate::views::theme::pal;
+    use crate::views::transcript::{Fold, View};
+
+    fn tool_row(store: &Store, key: crate::store::transcript::Key) -> usize {
+        let rows = condense::rows(items(store));
+        rows.partition_point(|r| r.last() < key)
+    }
+
+    #[test]
+    fn an_open_member_stays_open_as_pages_regroup_the_rows() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, 7);
+        let view = View::default();
+        view.sync(store.transcript.open.as_ref().unwrap(), &store);
+        let tools = items(&store).iter().rev();
+        let mut tools = tools.filter(|(_, i)| {
+            matches!(
+                i,
+                Item::Tool {
+                    result: Some(_),
+                    ..
+                }
+            )
+        });
+        let key = *tools.next().expect("mupu's tail has a finished tool").0;
+        view.fold(Fold(key, 0));
+        let was = tool_row(&store, key);
+        let mut regrouped = false;
+        loop {
+            view.sync(store.transcript.open.as_ref().unwrap(), &store);
+            assert_eq!(view.tools(items(&store)), (1, 1), "open with its output");
+            regrouped |= tool_row(&store, key) != was;
+            let effects = store.apply(Event::Transcript(Step::Older));
+            if effects.is_empty() {
+                break;
+            }
+            drive(&mut store, effects, &all, 7);
+        }
+        assert!(regrouped, "pages before moved the member's row");
+        view.fold(Fold(key, 0));
+        assert_eq!(view.tools(items(&store)), (0, 0), "a second click closes");
+    }
+
+    #[test]
+    fn a_tool_s_dot_says_how_it_ended() {
+        let result = |error| ToolResult {
+            error,
+            text: String::new(),
+            at: None,
+        };
+        assert_eq!(dot(None), pal::BLUE, "running");
+        assert_eq!(dot(Some(&result(false))), pal::OPERATOR, "done");
+        assert_eq!(dot(Some(&result(true))), pal::RED, "failed");
+    }
+
+    #[test]
+    fn durations_read_as_web_s() {
+        let cases = [
+            (-1, "—"),
+            (0, "0ms"),
+            (883, "883ms"),
+            (999, "999ms"),
+            (1000, "1.0s"),
+            (2_749, "2.7s"),
+            (2_750, "2.8s"),
+            (9_960, "10.0s"),
+            (14_499, "14s"),
+            (14_500, "15s"),
+            (59_499, "59s"),
+            (60_000, "1m 0s"),
+            (185_400, "3m 5s"),
+            (3_600_000, "60m 0s"),
+        ];
+        for (ms, want) in cases {
+            assert_eq!(took(ms), want, "{ms}ms");
+        }
+    }
+}
