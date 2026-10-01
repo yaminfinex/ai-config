@@ -25,7 +25,7 @@ register_event() {
     return 0
   fi
   set +e
-  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" "${attrib[@]}" 2>&1)
+  REGISTER_OUTPUT=$(timeout --foreground 10s "$herder_bin" register "$kind" "$@" ${attrib[@]+"${attrib[@]}"} 2>&1)
   rc=$?
   set -e
   if ((rc != 0)); then

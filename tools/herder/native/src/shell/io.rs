@@ -1,0 +1,180 @@
+//! The shell's background I/O: a REST read, or the outbox save and the posts it guards. Each takes the
+//! client (and disk) and reports back as `Event`s; nothing here touches GPUI or view state.
+
+use crate::api::client::{Client, Error, Page};
+use crate::api::types::StateRow;
+use crate::harness;
+use crate::local::{self, Disk};
+use crate::store::cards::{self, CARD_TAIL};
+use crate::store::composer::{self, Failure};
+use crate::store::notes::{self, Dest};
+use crate::store::sync::{Ns, Step};
+use crate::store::transcript::{self, Got, What};
+use crate::store::{Effect, Event, Fetch, Persist};
+
+pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
+    match fetch {
+        Fetch::Viewer => Event::Viewer(client.viewer().map(|v| v.viewer).map_err(|e| {
+            eprintln!("viewer: {e}");
+            e.status()
+        })),
+        Fetch::State { ns, since } => {
+            let step = match client.state(ns.name(), since) {
+                Ok(rows) => Step::Pulled(rows),
+                Err(e) => {
+                    eprintln!("state {}: {e}", ns.name());
+                    Step::PullFailed(e.status())
+                }
+            };
+            Event::Sync { ns, step }
+        }
+        Fetch::Card { agent, turn } => {
+            let page = Page::Tail { limit: CARD_TAIL };
+            let result = client.entries(&agent, &page);
+            let result = result.map(|e| e.entries).map_err(|e| {
+                eprintln!("card {agent}: {e}");
+                e.to_string()
+            });
+            Event::Card(cards::Got {
+                agent,
+                turn,
+                result,
+            })
+        }
+        Fetch::Transcript(read) => {
+            let (started, agent) = (std::time::Instant::now(), read.agent.as_str());
+            let result = match &read.what {
+                What::Page(page) => client.entries(agent, page).map(|e| Got::Page(Box::new(e))),
+                What::Detail => client.agent(agent).map(|d| Got::Detail(Box::new(d))),
+                What::Resolve(query, _, scoped) => {
+                    let scope = scoped.then_some(agent);
+                    client.resolve(query, scope).map(Got::Resolved)
+                }
+            };
+            if let (What::Page(page), Ok(Got::Page(e))) = (&read.what, &result) {
+                let ms = started.elapsed().as_secs_f64() * 1e3;
+                let n = e.entries.len();
+                harness::metric(format!("read {agent} {page:?}: {n} entries in {ms:.1} ms"));
+            }
+            let result = result.map_err(|e| e.to_string());
+            Event::Transcript(transcript::Step::Read(read, result))
+        }
+    }
+}
+
+/// One batch of effects' writes, as the shell gathers them (and the fake-serve tests' driver, so both
+/// route alike): whether the outbox changed, the posts and the queued notes (`Dest::Note`) that wait on
+/// its save, and the hand-offs into the draft (`Dest::Draft`) that wait on the prefs'.
+#[derive(Default)]
+pub struct Batch {
+    pub save: bool,
+    pub sends: Vec<(Ns, Vec<StateRow>)>,
+    pub lands: Vec<String>,
+    pub drafts: Vec<String>,
+}
+
+impl Batch {
+    /// Keep `effect` when it is one of the batch's; anything else goes back to the caller.
+    pub fn take(&mut self, effect: Effect) -> Option<Effect> {
+        match effect {
+            Effect::Persist(Persist::Outbox) => self.save = true,
+            Effect::Post { ns, rows } => self.sends.push((ns, rows)),
+            Effect::Transfer { to, agent } => match to {
+                Dest::Note => self.lands.push(agent),
+                Dest::Draft => self.drafts.push(agent),
+            },
+            effect => return Some(effect),
+        }
+        None
+    }
+
+    /// A post or a queued note waits on the outbox's save (`save_then_send`).
+    pub fn waits(&self) -> bool {
+        !self.sends.is_empty() || !self.lands.is_empty()
+    }
+}
+
+/// Save the outbox; then report the queued notes it holds as landed (`lands`: the agents whose transfer
+/// it is the destination of); then post each write and report its answer. A failed save lands nothing
+/// and posts nothing: every write comes back as a transport-style failure, which backs off and tries
+/// again (saving first again).
+pub fn save_then_send(
+    disk: &Disk,
+    client: &Client,
+    outbox: &[u8],
+    seq: u64,
+    sends: Vec<(Ns, Vec<StateRow>)>,
+    lands: Vec<String>,
+    mut on: impl FnMut(Event),
+) {
+    let saved = disk.write(local::OUTBOX, outbox, seq);
+    if let Err(e) = &saved {
+        eprintln!("local: could not save outbox.json, not sending: {e}");
+    }
+    for agent in lands {
+        let saved = saved.as_ref().map(|_| ()).map_err(|e| e.to_string());
+        on(Event::Note(notes::Step::Landed { agent, saved }));
+    }
+    for (ns, rows) in sends {
+        let step = match &saved {
+            Err(_) => Step::PostFailed(None),
+            Ok(()) => match client.post_state(ns.name(), &rows) {
+                Ok(_) => Step::Posted,
+                Err(e) => {
+                    eprintln!("state {} post: {e}", ns.name());
+                    Step::PostFailed(e.status())
+                }
+            },
+        };
+        on(Event::Sync { ns, step });
+    }
+}
+
+/// Save the prefs (the draft as it stood), then post the message once and report its answer. Never
+/// retried here: a message must not land twice, so only the owner sends again.
+pub fn save_then_message(
+    disk: &Disk,
+    client: &Client,
+    prefs: &[u8],
+    seq: u64,
+    (agent, text): (String, String),
+) -> Event {
+    let result = match disk.write(local::PREFS, prefs, seq) {
+        Err(e) => Err(Failure::NotSaved(e.to_string())),
+        Ok(()) => client.send_message(&agent, &text).map_err(|e| {
+            eprintln!("message {agent}: {e}");
+            match e {
+                Error::Transport(why) => Failure::NoAnswer(why),
+                Error::Refused {
+                    status: 409,
+                    refusal,
+                } if ["attribution required", "sender refused"].contains(&&*refusal.error) => {
+                    Failure::Unattributed(refusal)
+                }
+                Error::Refused { status, refusal } => {
+                    let why = [refusal.detail, refusal.error]
+                        .into_iter()
+                        .find(|w| !w.is_empty());
+                    let why = why.unwrap_or_default();
+                    match status {
+                        404 => Failure::UnknownAgent,
+                        409 => Failure::Refused(why),
+                        502 => Failure::Unreachable(why),
+                        _ => Failure::Rejected(status, why),
+                    }
+                }
+            }
+        }),
+    };
+    Event::Compose(composer::Step::Sent { agent, result })
+}
+
+/// Save the prefs now, the destination of a hand-off into the draft (`notes::Dest::Draft`), and report
+/// whether they are on disk. A queued note lands with the outbox's save instead (`save_then_send`).
+pub fn save_then_land(disk: &Disk, prefs: &[u8], seq: u64, agent: String) -> Event {
+    let saved = disk.write(local::PREFS, prefs, seq).map_err(|e| {
+        eprintln!("local: could not save prefs.json: {e}");
+        e.to_string()
+    });
+    Event::Note(notes::Step::Landed { agent, saved })
+}

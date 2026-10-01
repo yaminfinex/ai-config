@@ -1,0 +1,56 @@
+[package]
+name = "herder-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "herder native: the macOS client (GPUI)"
+
+[lib]
+name = "herder_native"
+path = "src/lib.rs"
+
+[[bin]]
+name = "herder-native"
+path = "src/main.rs"
+
+[dependencies]
+# Settled decision 1: gpui-kit pinned; no fork of GPUI or Zed.
+# Tree-sitter grammars for the transcript's fenced code blocks (U3), as the spike.
+markdown = "=1.0.0"
+gpui-kit = { version = "=0.7.0", features = [
+    "tree-sitter-markdown",
+    "tree-sitter-markdown-inline",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "tree-sitter-tsx",
+    "tree-sitter-javascript",
+    "tree-sitter-go",
+    "tree-sitter-python",
+    "tree-sitter-bash",
+    "tree-sitter-toml",
+    "tree-sitter-yaml",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", default-features = false, features = ["json"] }
+futures = "0.3"
+# Note ids and write ids (U5), v4 as web's; already in the tree through GPUI.
+uuid = { version = "1.26", features = ["v4"] }
+# Settled decision 2: AppKit calls (dock badge, window ordering, activation policy) go through objc2,
+# the same objc2 line gpui-pre-macos links.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSDockTile", "NSResponder", "NSWindow"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSString"] }
+# Settled decision 2: the summon chord (U6), Carbon `RegisterEventHotKey`, as the spike.
+global-hotkey = "0.7"
+
+[dev-dependencies]
+# Headless UI tests (a synthetic wheel over a transcript row); never in the shipped app.
+gpui-kit = { version = "=0.7.0", features = ["test-support"] }
+
+[features]
+# Window::render_to_image for harness screenshots (GPUI test-support). Off in the shipped app.
+shots = ["gpui-kit/test-support"]
+
+[profile.release]
+debug = 1
