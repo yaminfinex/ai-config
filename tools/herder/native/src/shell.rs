@@ -24,8 +24,8 @@ use crate::store::transcript;
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, space,
-    theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes, probe,
+    space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -387,37 +387,7 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
-                let [s, s2, s3, s4, s5, s6, s7] = [(); 7].map(|_| shell.clone());
-                let probe = harness::Probe {
-                    shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
-                    link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
-                    summon: |tag| Box::new(space::Summon(tag.to_string().into())),
-                    start: Box::new(move |cx| {
-                        let open = s2.read(cx).store.transcript.open.as_ref();
-                        let t = open.filter(|t| t.at_start())?;
-                        Some(format!(
-                            "{}: start reached, {} rows",
-                            t.agent,
-                            t.items.len()
-                        ))
-                    }),
-                    composer: Box::new(move |w, cx| composer::probe(&s3.read(cx).ui, w, cx)),
-                    says: Box::new(move |cx| composer::says(&s4.read(cx).store, &s4.read(cx).ui)),
-                    notes: Box::new(move |w, cx| {
-                        notes::probe(&s5.read(cx).store, &s5.read(cx).ui, w, cx)
-                    }),
-                    select: Box::new(move |text, cx| {
-                        s6.update(cx, |s, cx| {
-                            notes::select(&mut s.ui, text);
-                            cx.notify()
-                        })
-                    }),
-                    click: Box::new(move |what, cx| {
-                        let s = s7.read(cx);
-                        let action = notes::clicked(&s.store, &s.ui, what)?;
-                        Some(Box::new(action) as Box<dyn Action>)
-                    }),
-                };
+                let probe = shell.clone();
                 window
                     .spawn(cx, async move |cx| harness::run(script, probe, cx).await)
                     .detach();
@@ -432,6 +402,25 @@ pub fn run() {
             cx.on_system_notification_response(|response, cx| summon(&response.tag, cx));
         }
     });
+}
+
+impl harness::Probe for Entity<Shell> {
+    fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String> {
+        let s = self.read(cx);
+        probe::ask(&s.store, &s.ui, op, window, cx)
+    }
+
+    fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>> {
+        let s = self.read(cx);
+        probe::action(&s.store, &s.ui, op, arg)
+    }
+
+    fn select(&self, text: &str, cx: &mut App) {
+        self.update(cx, |s, cx| {
+            probe::select(&mut s.ui, text);
+            cx.notify()
+        })
+    }
 }
 
 /// Bring the app forward, to a notification's agent or space (`space::summon`); `""` is the lens.

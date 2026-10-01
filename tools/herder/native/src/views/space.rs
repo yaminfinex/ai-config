@@ -219,20 +219,6 @@ fn open(ui: &mut State, url: &str) -> Vec<Event> {
     show(ui, zoom.space, Some(agent.to_string()))
 }
 
-/// What the zoom shows: `name`, or `name preview` for an outsider (the harness's `expect:`).
-pub fn shown(store: &Store, ui: &State) -> String {
-    let Some(zoom) = ui.zoom.as_ref() else {
-        return String::new();
-    };
-    let agent = zoom.agent.clone().unwrap_or_default();
-    let member = zoomed(store, zoom).is_some_and(|s| s.agents().any(|a| a == agent));
-    if member || agent.is_empty() {
-        agent
-    } else {
-        format!("{agent} preview")
-    }
-}
-
 pub(super) fn zoomed<'a>(store: &'a Store, zoom: &Zoom) -> Option<&'a Space> {
     store.spaces.iter().find(|s| s.id == zoom.space)
 }

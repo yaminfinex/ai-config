@@ -358,7 +358,10 @@ mod summon {
         assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
         assert_eq!(zoomed(&ui), Some(("", Some(alone))));
         assert!(ui.zoom.as_ref().is_some_and(Zoom::alone));
-        assert_eq!(space::shown(&store, &ui), format!("{alone} preview"));
+        assert_eq!(
+            crate::views::probe::shown(&store, &ui),
+            format!("{alone} preview")
+        );
         assert_eq!(ui.selected(&store).map(|s| s.id.clone()), before);
         // Summoned again while open: still seen.
         let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));

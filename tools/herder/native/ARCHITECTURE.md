@@ -252,10 +252,12 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held ‚å
   and any failed step (a bad keystroke, a failed screenshot, an unknown step) exits non-zero. Any
   `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge and the
   summon chord are logged no-ops. The harness knows no views: what it asks of them goes through
-  `harness::Probe`, which the shell builds. A scenario that sends anything points `HERDER_URL` at
-  `testdata/fake_serve.py` on loopback, never at the real serve. Steps live in `src/harness.rs`'s module
-  doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`, `check-alerts`) in the
-  justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
+  the `harness::Probe` trait, which the shell implements with `views::probe` (`ask`, `action`, `select`),
+  the one file that spells what a script compares against. A scenario that sends anything points
+  `HERDER_URL` at `testdata/fake_serve.py` on loopback, never at the real serve (`scripts/scenario.sh`,
+  shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Steps live
+  in `src/harness.rs`'s module doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`,
+  `check-alerts`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
   (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ‚âà 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on

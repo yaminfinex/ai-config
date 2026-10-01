@@ -4,7 +4,7 @@
 //! comes from `theme::type_scale`.
 //!
 //! One file per surface, added by the unit that needs it: `lens` (U2, the home rows and cards), `space`
-//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5). `theme` holds the
+//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5); `probe` answers the harness. `theme` holds the
 //! palette and the type scale. This file holds what they share: the key table and its help, the
 //! agent chrome (glyph, label, pill), and the window's `Frame` with the working-dot `Pulse`.
 
@@ -12,6 +12,7 @@ pub mod composer;
 pub mod lens;
 pub mod markdown;
 pub mod notes;
+pub mod probe;
 pub mod space;
 #[cfg(test)]
 mod tests;

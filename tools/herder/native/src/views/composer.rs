@@ -37,7 +37,7 @@ const ROWS: (usize, usize) = (1, 8);
 const HINT: &str = "⌘⏎ send · ⌘⇧⏎ send and back to the lens · ⌥⏎ keep as a note · esc leave";
 
 pub struct View {
-    state: Entity<TextareaState>,
+    pub(super) state: Entity<TextareaState>,
     /// The agent whose draft the box holds.
     agent: Option<String>,
     /// The last action's focus request: `Some(true)` into the box, `Some(false)` out of it; or a landed
@@ -92,13 +92,6 @@ pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
         view.state
             .update(cx, |s, cx| s.set_value(draft, window, cx));
     }
-}
-
-/// `focused:text` or `idle:text`, for the harness's `box:` step.
-pub fn probe(ui: &Ui, window: &Window, cx: &App) -> String {
-    let focused = ui.composer.focus_handle(cx).is_focused(window);
-    let text = ui.composer.state.read(cx).value();
-    format!("{}:{text}", if focused { "focused" } else { "idle" })
 }
 
 /// A composer key: `Focus` from the zoom, the rest from the box itself.
@@ -171,15 +164,9 @@ pub fn render<H: Host>(
         .child(dim(line).text_size(t.small).text_color(rgb(color)))
 }
 
-/// The zoomed agent's line under the box, for the harness's `says:` step.
-pub fn says(store: &Store, ui: &Ui) -> String {
-    ui.zoomed_agent()
-        .map_or_else(String::new, |a| status(store, a).0)
-}
-
 /// The line under the box and its colour: why it is read-only, "sending…", "saving the notes…" (a U5
 /// transfer), the last failure or the keys.
-fn status(store: &Store, agent: &str) -> (String, u32) {
+pub(super) fn status(store: &Store, agent: &str) -> (String, u32) {
     match (store.can_send(agent), store.sends.get(agent)) {
         (Err(why), _) => (say_read_only(&store.viewer, why), pal::AMBER),
         (Ok(()), _) if store.transfers.contains_key(agent) => {

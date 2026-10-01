@@ -42,13 +42,13 @@ const SHOWN: usize = 3;
 pub struct View {
     editor: Entity<TextareaState>,
     /// The editor's text, mirrored as it changes so a save needs no window.
-    text: String,
-    editing: Option<Editing>,
+    pub(super) text: String,
+    pub(super) editing: Option<Editing>,
     /// Text for the editor at the next render.
     load: Option<String>,
     /// The transcript selection when the pointer last let go, trimmed, with the agent it was made on;
     /// what `c` captures. Gone once the zoom leaves that agent.
-    selection: Option<(String, String)>,
+    pub(super) selection: Option<(String, String)>,
     /// Why the editor's text was not saved.
     problem: Option<&'static str>,
     armed: Option<SharedString>,
@@ -57,7 +57,7 @@ pub struct View {
     pub(super) want: Option<bool>,
 }
 
-struct Editing {
+pub(super) struct Editing {
     agent: String,
     /// A note being edited, as it was when the editor opened, or a new one (with its captured quote).
     note: Option<Note>,
@@ -152,49 +152,6 @@ pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
         ui.notes
             .editor
             .update(cx, |s, cx| s.set_value(text, window, cx));
-    }
-}
-
-/// `notes:` for the harness: the zoomed agent's note count, then the editor (`closed`, or its focus and
-/// text).
-pub fn probe(store: &Store, ui: &Ui, window: &Window, cx: &App) -> String {
-    let n = store.notes_of(ui.zoomed_agent().unwrap_or("")).count();
-    let editor = match &ui.notes.editing {
-        None => "closed".to_string(),
-        Some(_) if ui.notes.focus_handle(cx).is_focused(window) => {
-            format!("focused:{}", ui.notes.text)
-        }
-        Some(_) => format!("idle:{}", ui.notes.text),
-    };
-    format!("{n}:{editor}")
-}
-
-/// What the pointer selected in the zoomed transcript, for the harness's `select:` (it cannot drag).
-pub fn select(ui: &mut Ui, text: &str) {
-    let agent = ui.zoomed_agent().map(String::from);
-    ui.notes.selected(agent, text);
-}
-
-/// What a click on the strip dispatches, for the harness's `click:` (`capture`, `handoff`, or `edit:i`
-/// and `delete:i` on the zoomed agent's note `i`, oldest first); `None` where the strip has no such thing.
-pub fn clicked(store: &Store, ui: &Ui, what: &str) -> Option<Notes> {
-    let agent = ui.zoomed_agent()?;
-    let note = |i: &str| {
-        let note = store.notes_of(agent).nth(i.parse().ok()?)?;
-        Some(SharedString::from(note.id.clone()))
-    };
-    match what.split_once(':').unwrap_or((what, "")) {
-        ("capture", _) => {
-            ui.notes.selection.as_ref().filter(|(a, _)| a == agent)?;
-            Some(Notes::Capture)
-        }
-        ("handoff", _) => {
-            let shown = note("0").is_some() && !store.hand_off_blocked(agent);
-            shown.then_some(Notes::HandOff)
-        }
-        ("edit", i) => note(i).map(Notes::Edit),
-        ("delete", i) => note(i).map(Notes::Delete),
-        _ => None,
     }
 }
 

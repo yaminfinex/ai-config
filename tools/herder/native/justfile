@@ -40,8 +40,8 @@ check-keys: build
     grep -q '"text_scale": 1.1' "$prefs" && echo "check-keys: ok (text_scale 1.1 persisted)"
     rm -rf "$home"
 
-# Composer scenarios (U4), against testdata/fake_serve.py on loopback: nothing reaches a real agent. Each run
-# has its own throwaway HOME and must exit 0 having reached `quit`, with exactly the POSTs it expects:
+# Composer scenarios (U4), each through `scripts/scenario.sh` (fake serve, own HOME, must reach `quit`) and
+# with exactly the POSTs it expects:
 # keys    focus the box, type keys the lens and zoom bind (they land as text), cmd-enter sends once and
 #         clears the draft, escape leaves the box but not the zoom;
 # held    a held send shows "sending" and swallows a second cmd-enter;
@@ -51,28 +51,14 @@ check-keys: build
 # fileback cmd-shift-enter stays "sending" until the (slow) send lands, then leaves for the lens, which
 #         takes focus even though escape moved it from the box to the zoom meanwhile (enter zooms in);
 # collide a 409 sender collision makes every box read-only.
-# Screenshots in shots/ need the `shots` feature (`just harness` builds it).
 check-composer port="4411":
     #!/usr/bin/env bash
-    set -euo pipefail
-    cargo build --release --features shots
-    mkdir -p shots
-    home=$(mktemp -d) fake=
-    trap '[ -z "$fake" ] || kill $fake 2>/dev/null; rm -r "$home"' EXIT
+    . scripts/scenario.sh check-composer {{port}}
     zoom="wait:1500 key:enter wait:400 draw link:herder-agent:mupu wait:1500 draw expect:mupu+preview"
     typed="$zoom key:/ draw key:h key:i draw"
     run() { # MODE NAME POSTS SCRIPT
-        python3 testdata/fake_serve.py {{port}} --message "$1" 2>"$home/$2.fake" & fake=$!
-        sleep 0.5
-        status=0
-        HOME="$home/$2" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_SHOT_DIR=shots \
-            HERDER_NATIVE_SCRIPT="$4" ./target/release/herder-native >"$home/$2.log" 2>&1 || status=$?
-        { kill $fake && wait $fake; } 2>/dev/null || true
-        fake=
-        grep -E "harness|box|expect|says" "$home/$2.log" || true
-        [ $status = 0 ] && grep -q '\] quit$' "$home/$2.log" || { echo "check-composer: $2 failed (exit $status)"; exit 1; }
-        posts=$(grep -c "message to" "$home/$2.fake" || true)
-        [ "$posts" = "$3" ] || { echo "check-composer: $2 made $posts POSTs, expected $3"; exit 1; }
+        scenario "$2" "--message $1" "$4"
+        seen "$2" "message to" "$3"
     }
     run ok keys 1 "$zoom key:/ draw box:focused: key:n key:j key:[ key:] key:1 key:v key:? draw box:focused:nj[]1v? expect:mupu+preview shot:u4-draft key:cmd-enter wait:800 draw box:focused: shot:u4-empty key:escape draw box:idle: expect:mupu+preview quit"
     run hold held 1 "$typed key:cmd-enter wait:400 draw says:sending shot:u4-sending key:x key:cmd-enter wait:300 draw box:focused:hi quit"
@@ -82,9 +68,9 @@ check-composer port="4411":
     run 409 collide 1 "$typed key:cmd-enter wait:600 draw box:focused:hi says:sender+collision shot:u4-collision key:escape link:herder-agent:chief-mihe wait:400 draw says:read-only quit"
     echo "check-composer: ok (keys typed, one send each, held send not repeated, drafts per agent, link focus, file-back on success only, collision read-only)"
 
-# Notes scenarios (U5), against testdata/fake_serve.py on loopback, so no note reaches the real serve (web
-# would show it). Each run has its own throwaway HOME and must exit 0 at `quit` with exactly the notes POSTs
-# it expects and no message sent; a run with a second script relaunches on the same HOME and fake serve:
+# Notes scenarios (U5), each through `scripts/scenario.sh`, so no note reaches the real serve (web would show
+# it), with exactly the notes POSTs it expects and no message sent; a second script relaunches on the same
+# HOME and fake serve:
 # empty    the strip of an agent without notes is not drawn;
 # editor   web's two notes on mupu; `a` opens the editor, the lens, zoom and composer keys type there, and
 #          neither alt-enter nor cmd-shift-enter sends or queues anything; an empty save is refused with the
@@ -99,28 +85,12 @@ check-composer port="4411":
 # queue    alt-enter in the composer keeps its draft as a note and clears the box.
 check-notes port="4412":
     #!/usr/bin/env bash
-    set -euo pipefail
-    cargo build --release --features shots
-    mkdir -p shots
-    home=$(mktemp -d) fake=
-    trap '[ -z "$fake" ] || kill $fake 2>/dev/null; rm -r "$home"' EXIT
+    . scripts/scenario.sh check-notes {{port}}
     zoom="wait:1500 key:enter wait:400 draw link:herder-agent:mupu wait:1500 draw expect:mupu+preview"
     run() { # NOTES NAME POSTS SCRIPT [RELAUNCH-SCRIPT]
-        python3 testdata/fake_serve.py {{port}} $1 2>"$home/$2.fake" & fake=$!
-        sleep 0.5
-        for script in "$4" "${5:-}"; do
-            [ -n "$script" ] || continue
-            status=0
-            HOME="$home/$2" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_SHOT_DIR=shots \
-                HERDER_NATIVE_SCRIPT="$script" ./target/release/herder-native >"$home/$2.log" 2>&1 || status=$?
-            grep -E "harness|notes|box|has|tap|select|click" "$home/$2.log" || true
-            [ $status = 0 ] && grep -q '\] quit$' "$home/$2.log" || { echo "check-notes: $2 failed (exit $status)"; exit 1; }
-        done
-        { kill $fake && wait $fake; } 2>/dev/null || true
-        fake=
-        posts=$(grep -c "state notes:" "$home/$2.fake" || true)
-        [ "$posts" = "$3" ] || { echo "check-notes: $2 made $posts notes POSTs, expected $3"; exit 1; }
-        ! grep -q "message to" "$home/$2.fake" || { echo "check-notes: $2 sent a message"; exit 1; }
+        scenario "$2" "$1" "$4" ${5:+"$5"}
+        seen "$2" "state notes:" "$3"
+        seen "$2" "message to" 0
     }
     run "" empty 0 "$zoom notes:0:closed shot:u5-empty quit"
     run --notes editor 1 "$zoom notes:2:closed shot:u5-notes key:a draw notes:2:focused: key:enter draw notes:2:focused: key:n key:j key:[ key:] key:a key:c key:p key:/ draw notes:2:focused:nj[]acp/ tap:alt-enter tap:cmd-shift-enter draw box:idle: notes:2:focused:nj[]acp/ shot:u5-editing key:cmd-enter wait:800 draw notes:3:closed box:idle: quit"
@@ -130,9 +100,9 @@ check-notes port="4412":
     run "" queue 1 "$zoom key:/ draw key:h key:i draw box:focused:hi key:alt-enter wait:800 draw box:focused: notes:1:closed shot:u5-queued quit"
     echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, selection per agent, capture with quote, hand-off into the draft survives a relaunch, alt-enter queues)"
 
-# Alert scenarios (U6), against testdata/fake_serve.py on loopback, whose `--turn` frames finish agents'
+# Alert scenarios (U6), each through `scripts/scenario.sh`, whose fake serve's `--turn` frames finish agents'
 # turns while the app runs. A scripted run is test mode (`platform_mac::quiet`): nothing is posted, no
-# badge set, no chord taken; the log says what would have been. Each run has its own throwaway HOME:
+# badge set, no chord taken; the log says what would have been:
 # lens    mupu's turn ends with the app on the lens: one notification for mupu, the badge goes to 1;
 # looking zoomed on mupu and frontmost (`HERDER_NATIVE_FRONT=1`), mupu and chief-mihe end a turn in one
 #         frame: only chief-mihe is notified;
@@ -143,25 +113,11 @@ check-notes port="4412":
 # A blank script (set, so automation) is refused with exit 2 before the app opens.
 check-alerts port="4413":
     #!/usr/bin/env bash
-    set -euo pipefail
-    cargo build --release --features shots
-    mkdir -p shots
-    home=$(mktemp -d) fake=
-    trap '[ -z "$fake" ] || kill $fake 2>/dev/null; rm -r "$home"' EXIT
-    run() { # NAME FRONT SCRIPT TURNS...
-        local name=$1 front=$2 script=$3
-        shift 3
-        python3 testdata/fake_serve.py {{port}} "$@" 2>"$home/$name.fake" & fake=$!
-        sleep 0.5
-        status=0
-        HOME="$home/$name" HERDER_URL=http://127.0.0.1:{{port}} HERDER_NATIVE_FRONT=$front HERDER_NATIVE_SHOT_DIR=shots \
-            HERDER_NATIVE_SCRIPT="$script" ./target/release/herder-native >"$home/$name.log" 2>&1 || status=$?
-        { kill $fake && wait $fake; } 2>/dev/null || true
-        fake=
-        grep -E "platform|harness|expect|box|notes|summon" "$home/$name.log" || true
-        [ $status = 0 ] && grep -q '\] quit$' "$home/$name.log" || { echo "check-alerts: $name failed (exit $status)"; exit 1; }
-        grep -q "turn:" "$home/$name.fake" || { echo "check-alerts: $name: no turn was sent"; exit 1; }
-        notified=$(grep "would notify" "$home/$name.log" || true)
+    . scripts/scenario.sh check-alerts {{port}}
+    run() { # NAME FRONT SCRIPT TURNS
+        HERDER_NATIVE_FRONT=$2 scenario "$1" "$4" "$3"
+        grep -q "turn:" "$home/$1.fake" || { echo "check-alerts: $1: no turn was sent"; exit 1; }
+        notified=$(grep "would notify" "$home/$1.log" || true)
     }
     want() { # NAME WHAT PATTERN
         echo "$notified" | grep -q "$3" || { echo "check-alerts: $1: $2"; exit 1; }
@@ -174,25 +130,25 @@ check-alerts port="4413":
         HERDER_NATIVE_SCRIPT="$blank" ./target/release/herder-native >"$home/blank.log" 2>&1 || status=$?
         [ $status = 2 ] && ! grep -q "platform:" "$home/blank.log" || { echo "check-alerts: blank script ran (exit $status)"; exit 1; }
     done
-    run lens 0 "wait:5500 quit" --turn mupu
+    run lens 0 "wait:5500 quit" "--turn mupu"
     want lens "mupu not notified" "would notify agent:mupu: mupu · "
     once lens
     grep -q "platform: badge 1" "$home/lens.log" || { echo "check-alerts: lens: no badge 1"; exit 1; }
     grep -q "platform: would register ctrl-alt-cmd-h" "$home/lens.log" || { echo "check-alerts: lens: chord not skipped"; exit 1; }
-    run looking 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:3500 quit" --turn mupu,chief-mihe
+    run looking 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:3500 quit" "--turn mupu,chief-mihe"
     want looking "chief-mihe not notified" "would notify agent:chief-mihe"
     once looking
-    run burst 0 "wait:6000 quit" --turn mupu --turn support-mifa
+    run burst 0 "wait:6000 quit" "--turn mupu --turn support-mifa"
     want burst "no summary" "would notify space:.*2 agents need you"
     once burst
     alone="summon:agent:risk-framework-gezu wait:1500 draw expect:risk-framework-gezu+preview notes:0:closed"
     alone+=" key:/ draw key:h key:i draw box:focused:hi key:alt-enter wait:800 draw box:focused: notes:1:closed"
-    run alone 0 "wait:5500 $alone shot:u6-no-space key:escape draw box:idle: key:escape wait:400 draw expect: quit" --turn risk-framework-gezu
+    run alone 0 "wait:5500 $alone shot:u6-no-space key:escape draw box:idle: key:escape wait:400 draw expect: quit" "--turn risk-framework-gezu"
     want alone "no notice for the agent in no space" "would notify agent:risk-framework-gezu: risk-framework-gezu · no space / your turn"
     once alone
     grep -q "platform: badge 1" "$home/alone.log" || { echo "check-alerts: alone: not badged"; exit 1; }
-    [ "$(grep -c "state notes:" "$home/alone.fake")" = 1 ] || { echo "check-alerts: alone: the note was not saved"; exit 1; }
-    ! grep -q "state spaces" "$home/alone.fake" || { echo "check-alerts: alone: a space was written"; exit 1; }
+    seen alone "state notes:" 1
+    seen alone "state spaces" 0
     echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, an agent in no space alerts and opens alone, no chord taken)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
