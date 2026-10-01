@@ -518,6 +518,43 @@ fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
     std::fs::remove_file(blocked).unwrap();
 }
 
+/// Any 2xx is a send that landed, whatever its body: a malformed one or a 204's empty one. A state row
+/// is retired by the POST (the pull does not hold it), and each send is posted once.
+#[test]
+fn a_2xx_without_a_json_body_counts_as_sent() {
+    use herder_native::store::composer::Step as C;
+    for (status, body) in [(200, "not json"), (204, "")] {
+        let (base, log) = serve(move |target, _| match target {
+            t if t.starts_with("POST") => Reply::Json(status, body.into()),
+            _ => Reply::Json(200, rows_json(6)),
+        });
+        let client = Client::new(base);
+        let (disk, dir) = scratch(&format!("odd-body-{status}"));
+        let mut store = Store::default();
+        drive(&mut store, &client, &disk, edit("s2", 7));
+        assert!(
+            store.sync[&Ns::Spaces].outbox.is_empty(),
+            "{status}: retired"
+        );
+        assert_eq!(store.sync[&Ns::Spaces].hold, None, "{status}");
+        let message = ("ok".into(), "hi".into());
+        let event = save_then_message(&disk, &client, b"{}", local::next_seq(), message);
+        let Event::Compose(C::Sent { result: Ok(()), .. }) = event else {
+            panic!("{status}: {event:?}")
+        };
+        std::fs::remove_dir_all(dir).unwrap();
+        let log = log.lock().unwrap().clone();
+        let posts: Vec<&str> = (log.iter())
+            .filter_map(|l| l.strip_prefix("POST ")?.split(' ').next())
+            .collect();
+        assert_eq!(
+            posts,
+            ["/api/state/spaces", "/api/agents/ok/message"],
+            "{status}: {log:?}"
+        );
+    }
+}
+
 /// A send nobody answered may have landed: it is reported as such, never retried.
 #[test]
 fn a_message_without_an_answer_is_not_retried() {

@@ -286,7 +286,7 @@ Current budgets, at each file's size after D1 (tests excluded: `store/tests.rs`,
 | `store/mod.rs` | 420 | `views/transcript.rs` | 401 |
 | `store/sync.rs` | 314 | `views/composer.rs` | 228 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 421 |
-| `store/spaces.rs` | 421 | `views/markdown.rs` | 238 |
+| `store/spaces.rs` | 420 | `views/markdown.rs` | 238 |
 | `store/transcript.rs` | 539 | `views/theme.rs` | 100 |
 | `store/condense.rs` | 189 | `shell.rs` | 447 |
 | `store/notes.rs` | 430 | `shell/io.rs` | 133 |

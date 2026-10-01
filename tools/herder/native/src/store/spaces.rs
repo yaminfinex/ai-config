@@ -183,9 +183,8 @@ impl Store {
     /// The first space in lens order holding `agent`: where its notification says it is and where the
     /// click opens it.
     pub fn home(&self, agent: &str) -> Option<&Space> {
-        self.lens()
-            .into_iter()
-            .find(|s| s.agents().any(|m| m == agent))
+        let holds = |s: &&Space| s.agents().any(|m| m == agent);
+        self.spaces.iter().filter(holds).min_by_key(|s| self.row(s))
     }
 
     /// Each row's spaces (focus, watch, background), in the store's order.
