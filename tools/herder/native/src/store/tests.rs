@@ -2360,6 +2360,12 @@ mod notes {
         n.quote = Some("x ``` y".into());
         n.text = String::new();
         assert_eq!(transfer_text(&n), "a.rs:3-5 (vs main)\n````\nx ``` y\n````");
+        // A kind this client does not know, with no path, leaves no empty label line.
+        n.source = Some(json!({"kind": "later"}));
+        assert_eq!(transfer_text(&n), "````\nx ``` y\n````");
+        n.quote = None;
+        n.text = "mine".into();
+        assert_eq!(transfer_text(&n), "mine");
     }
 
     #[test]

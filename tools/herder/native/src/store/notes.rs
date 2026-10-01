@@ -377,11 +377,14 @@ pub fn transfer_text(n: &Note) -> String {
         ),
         false => source_label(source),
     };
+    // A source of an unknown kind with no path has no label: no empty line for it.
+    let head = |body: &str| match (label.is_empty(), body.is_empty()) {
+        (true, _) => body.to_string(),
+        (false, true) => label.clone(),
+        (false, false) => format!("{label}\n{body}"),
+    };
     let Some(quote) = &n.quote else {
-        return match n.text.is_empty() {
-            true => label,
-            false => format!("{label}\n{}", n.text),
-        };
+        return head(&n.text);
     };
     let quote = match transcript {
         true => quote
@@ -395,11 +398,11 @@ pub fn transfer_text(n: &Note) -> String {
         true => String::new(),
         false => format!("\n\n{}", n.text),
     };
-    format!("{label}\n{quote}{text}")
+    head(&format!("{quote}{text}"))
 }
 
 /// Web's `noteSourceLabel` for a file or diff source: `path:start-end`, and `(vs base)` for a diff.
-pub fn source_label(source: &Value) -> String {
+fn source_label(source: &Value) -> String {
     let num = |k: &str| {
         source
             .get(k)
