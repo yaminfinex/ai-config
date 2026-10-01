@@ -105,7 +105,11 @@ Derived shapes are in `store`:
   baseline (web's policy: an unknown baseline is not a new turn), and marks are pruned to agents on the
   board or in a space. **Needs you** = the agent is not `Working`, not `retired` or `stopped`, and its
   `turn_end_id` is above its seen mark, or it is `Blocked` and this block has not been viewed (owner ruling,
-  U2: blocking again needs you again). The card count is the number of such agents in the space.
+  U2: blocking again needs you again). The card count is the number of such agents in the space, at least
+  one while the space is marked unread (`u`). The header's "N need you" and the dock badge are one number
+  (owner rulings, 2026-10-01): each agent that needs you once, in one space, several or none, plus each
+  marked space none of whose agents already counts. While the owner watches an agent's tail (frontmost,
+  zoomed on it, the transcript at the bottom) what lands is seen at once: it neither counts nor alerts.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
   orders and pairs them): `Prompt`, `Delivery{sender, text, operator, quiet}` (`quiet`: an ack or the
   launcher, a one-line chip),

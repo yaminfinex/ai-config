@@ -149,7 +149,15 @@ check-alerts port="4413":
     grep -q "platform: badge 1" "$home/alone.log" || { echo "check-alerts: alone: not badged"; exit 1; }
     seen alone "state notes:" 1
     seen alone "state spaces" 0
-    echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, an agent in no space alerts and opens alone, no chord taken)"
+    badged() { # NAME N: the last badge shown
+        [ "$(grep "platform: badge" "$home/$1.log" | tail -1)" = "platform: badge $2" ] || { echo "check-alerts: $1: badge not $2"; exit 1; }
+    }
+    run shared 0 "wait:4500 draw header:·+1+need+you quit" "--share mupu --turn mupu"
+    badged shared 1
+    run tail 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu draw wait:3000 draw wait:1500 draw header:·+0+need+you quit" "--turn mupu --block mupu"
+    grep -q "block: mupu" "$home/tail.fake" && [ -z "$notified" ] || { echo "check-alerts: tail: notified or no block"; exit 1; }
+    ! grep -q "platform: badge [1-9]" "$home/tail.log" || { echo "check-alerts: tail: badged"; exit 1; }
+    echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, an agent in no space alerts and opens alone, an agent in two spaces counts once, what lands on a watched tail is seen, no chord taken)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.

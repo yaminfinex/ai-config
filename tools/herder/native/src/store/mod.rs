@@ -333,6 +333,7 @@ impl Store {
                 out.push(Effect::Persist(Persist::Prefs));
             }
         }
+        self.watch(&mut out);
         self.transitions(&mut out);
         self.badge(boot, &mut out);
         out

@@ -2976,8 +2976,81 @@ mod alerts {
         assert_eq!(badges(store.apply(fleet_frame(b.clone()))), [2]);
         let read = Event::Lens(spaces::Move::Read(space_of(&store, "mupu").id.clone()));
         assert_eq!(badges(store.apply(read)), [0]);
-        // The lens total plus the agents in no space that need you.
+        // Agents in no space count too.
         bump(&mut b, "risk-framework-gezu", 1);
         assert_eq!(badges(store.apply(fleet_frame(b))), [1]);
+    }
+
+    fn badge(effects: &[Effect]) -> Option<usize> {
+        effects.iter().rev().find_map(|e| match e {
+            Effect::Badge(n) => Some(*n),
+            _ => None,
+        })
+    }
+
+    /// Owner ruling (a): the header's "N need you" is the dock badge, agents in no space included.
+    #[test]
+    fn the_header_counts_what_the_badge_shows() {
+        let (mut store, mut b) = live();
+        bump(&mut b, "mupu", 1);
+        bump(&mut b, "risk-framework-gezu", 1);
+        let effects = store.apply(fleet_frame(b));
+        assert_eq!(store.needs_you_total(), 2, "one in a space, one in none");
+        assert_eq!(badge(&effects), Some(2));
+    }
+
+    /// Owner ruling (b): an agent in two spaces counts once in the total and on each card; a space
+    /// marked unread counts as one unless one of its agents already does.
+    #[test]
+    fn an_agent_in_two_spaces_counts_once() {
+        let (mut store, mut b) = live();
+        let slack = space_of(&store, "mupu").id.clone();
+        let mut others = store.spaces.iter().filter(|s| s.id != slack);
+        let (other, third) = (
+            others.next().unwrap().id.clone(),
+            others.next().unwrap().id.clone(),
+        );
+        let at = |store: &Store, id: &str| store.spaces.iter().position(|s| s.id == id).unwrap();
+        let i = at(&store, &other);
+        store.spaces[i].members.push(Member::Agent {
+            name: "mupu".into(),
+        });
+        bump(&mut b, "mupu", 1);
+        let effects = store.apply(fleet_frame(b));
+        assert_eq!(badge(&effects), Some(1));
+        assert_eq!(store.needs_you_total(), 1);
+        assert_eq!(store.needs_you(&store.spaces[at(&store, &slack)]), 1);
+        assert_eq!(store.needs_you(&store.spaces[i]), 1);
+        // A marked space with no agent that counts adds one; marking one where mupu counts adds none.
+        let unread = |id: &str| Event::Lens(spaces::Move::Unread(id.into()));
+        assert_eq!(badge(&store.apply(unread(&third))), Some(2));
+        assert_eq!(badge(&store.apply(unread(&other))), None);
+        assert_eq!(store.needs_you_total(), 2);
+    }
+
+    /// Owner ruling (c): watching an agent's tail, frontmost and zoomed on it, sees what lands: a turn,
+    /// then a block after that turn was seen, neither counts nor alerts. Scrolled up, it counts again.
+    #[test]
+    fn watching_the_tail_sees_what_lands() {
+        let (mut store, mut b) = live();
+        store.apply(Event::Front(true));
+        store.apply(view(&store, "mupu"));
+        store.apply(Event::Transcript(transcript::Step::Tail(true)));
+        bump(&mut b, "mupu", 1);
+        let effects = store.apply(frame(&store, b.clone()));
+        assert!(!effects.contains(&BURST) && badge(&effects).is_none());
+        assert!(!store.agent_needs_you("mupu"), "the turn is seen");
+        assert!(effects.contains(&Effect::Persist(Persist::Prefs)));
+        block(&mut b, "mupu", true);
+        let effects = store.apply(frame(&store, b.clone()));
+        assert!(!effects.contains(&BURST) && badge(&effects).is_none());
+        assert!(!store.agent_needs_you("mupu"), "the block is seen");
+        // Scrolled up, a new turn needs you (the app is still not alerting for the agent in view).
+        store.apply(Event::Transcript(transcript::Step::Tail(false)));
+        bump(&mut b, "mupu", 1);
+        let effects = store.apply(frame(&store, b));
+        assert!(store.agent_needs_you("mupu"));
+        assert_eq!(badge(&effects), Some(1));
+        assert!(!effects.contains(&BURST));
     }
 }

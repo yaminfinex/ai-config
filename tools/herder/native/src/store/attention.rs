@@ -9,7 +9,7 @@
 use super::composer::Sending;
 use super::fleet::{Agent, Fleet, Status};
 use super::spaces::Space;
-use super::{Effect, Store};
+use super::{Effect, Persist, Store};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -46,9 +46,15 @@ impl Store {
         agents.max(usize::from(self.prefs.unread.contains(&space.id)))
     }
 
-    /// The lens's needs-you total: each space's count, summed.
+    /// The header's "N need you" and the dock badge (owner rulings, 2026-10-01): each agent that needs
+    /// you once, whether it sits in one space, several or none; and each space marked unread (`u`) as
+    /// one, unless one of its agents already counts.
     pub fn needs_you_total(&self) -> usize {
-        self.spaces.iter().map(|s| self.needs_you(s)).sum()
+        let agents = self.fleet.agents.keys().filter(|a| self.agent_needs_you(a));
+        let marked = self.spaces.iter().filter(|s| {
+            self.prefs.unread.contains(&s.id) && !s.agents().any(|a| self.agent_needs_you(a))
+        });
+        agents.count() + marked.count()
     }
 
     /// Whether this agent needs you: `fleet::Agent::needs_you` against its seen mark.
@@ -220,6 +226,17 @@ impl Store {
         }
     }
 
+    /// Owner ruling (2026-10-01): while the owner watches an agent's tail (frontmost, zoomed on it, its
+    /// transcript following the bottom), what lands is seen as it arrives: a new turn or block neither
+    /// counts nor alerts.
+    pub(super) fn watch(&mut self, out: &mut Vec<Effect>) {
+        let front = self.alerts.front;
+        let open = self.transcript.open.as_ref().filter(|t| t.tail && front);
+        if open.is_some_and(|t| mark_seen(&mut self.prefs.seen, &self.fleet, &t.agent)) {
+            out.push(Effect::Persist(Persist::Prefs));
+        }
+    }
+
     /// The agent the owner is looking at: zoomed in on it (its transcript is open) with the app
     /// frontmost. It is never alerted.
     pub(super) fn looking_at(&self) -> Option<&str> {
@@ -264,15 +281,10 @@ impl Store {
         out.push(Effect::Notify(notice));
     }
 
-    /// The dock badge: the lens's needs-you total plus the agents in no space that need you (they alert
-    /// too, owner ruling), sent when it changes, and at boot (`all`) whatever it is, as the effects of
-    /// the loads before boot are not run.
+    /// The dock badge: `needs_you_total`, sent when it changes, and at boot (`all`) whatever it is, as the
+    /// effects of the loads before boot are not run.
     pub(super) fn badge(&mut self, all: bool, out: &mut Vec<Effect>) {
-        let fleet = self.fleet.agents.keys();
-        let alone = fleet
-            .filter(|a| self.home(a).is_none() && self.agent_needs_you(a))
-            .count();
-        let n = self.needs_you_total() + alone;
+        let n = self.needs_you_total();
         if std::mem::replace(&mut self.alerts.badge, n) != n || all {
             out.push(Effect::Badge(n));
         }

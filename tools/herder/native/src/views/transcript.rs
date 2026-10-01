@@ -9,7 +9,6 @@
 //! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing. Text
 //! selected here with the pointer is offered to the notes strip for capture (U5).
 
-use crate::store::spaces::Move;
 use crate::store::transcript::{Item, Key, Step, Transcript};
 use crate::store::{Event, Store};
 use crate::views::lens::{State, Ui};
@@ -53,8 +52,6 @@ pub struct View {
     open: RefCell<HashSet<Key>>,
     /// Linked text per row and fold state.
     md: RefCell<(Mentions, Linked)>,
-    /// The agent and turn a "seen at the bottom" was last sent for.
-    seen: RefCell<Option<(String, Option<u64>)>>,
     /// Herder web, where a mermaid diagram links to.
     web: String,
 }
@@ -68,7 +65,6 @@ impl Default for View {
             rows: RefCell::default(),
             open: RefCell::default(),
             md: RefCell::default(),
-            seen: RefCell::default(),
             web: String::new(),
         }
     }
@@ -169,14 +165,11 @@ pub fn render<H: Host>(
         cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(older, cx)))
             .detach();
     }
-    // Reaching the bottom counts as viewing: mark a new turn seen once while following the tail.
-    let turn = store.fleet.agents.get(name).and_then(|a| a.turn_end);
-    let key = Some((name.to_string(), turn));
-    if store.agent_needs_you(name) && view.list.is_following_tail() && *view.seen.borrow() != key {
-        *view.seen.borrow_mut() = key;
-        let (space, agent) = (zoom.space.clone(), Some(name.to_string()));
-        let seen = Event::Lens(Move::View { space, agent });
-        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(seen, cx)))
+    // Following the bottom is watching the tail: the store sees what lands (`attention::watch`).
+    let tail = view.list.is_following_tail();
+    if tail != tr.tail {
+        let step = Event::Transcript(Step::Tail(tail));
+        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(step, cx)))
             .detach();
     }
     let note = |s: &'static str| div().flex_1().p(t.px(24.)).child(dim(s)).into_any_element();

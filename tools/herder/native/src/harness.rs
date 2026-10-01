@@ -14,7 +14,7 @@
 //! its start; fails after `ms`) · `box:<focused|idle>:<text>` (the composer's focus and text, `+` for a
 //! space; U4) · `says:<text>` (the line under the composer contains it) · `has:<text>` (the composer's
 //! `box:` contains it) · `notes:<n>:<closed|focused:text|idle:text>` (the zoomed agent's notes and the
-//! notes editor; U5) · `select:<text>` (as if the pointer had selected it in the transcript) ·
+//! notes editor; U5) · `header:<text>` (the lens header contains it; U6) · `select:<text>` (as if the pointer had selected it in the transcript) ·
 //! `tap:<keystroke>` (as `key:`, but bound to nothing is fine) · `click:<capture|handoff|edit:i|delete:i>`
 //! (what a click on the notes strip dispatches, `i` the zoomed agent's note, oldest first; it fails when
 //! there is no such thing to click). Units add `type:` as they need it.
@@ -184,13 +184,14 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                     _ => fail(format!("{op} {arg}: nothing to click")),
                 }
             }
-            "expect" | "box" | "has" | "says" | "notes" => {
+            "expect" | "box" | "has" | "says" | "notes" | "header" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let (got, want) = (
                     got.ok().flatten().unwrap_or_default(),
                     arg.replace('+', " "),
                 );
-                match got == want || matches!(op, "says" | "has") && got.contains(&want) {
+                let part = matches!(op, "says" | "has" | "header") && got.contains(&want);
+                match got == want || part {
                     true => metric(format!("{op} {arg}: ok")),
                     false => fail(format!("{op} {arg}: got `{got}`")),
                 }

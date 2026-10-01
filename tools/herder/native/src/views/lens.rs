@@ -257,6 +257,11 @@ fn home<H: Host>(store: &Store, ui: &Ui, t: TypeScale, cx: &mut Context<H>) -> A
 }
 
 fn header(store: &Store, t: TypeScale) -> Div {
+    dim(header_line(store)).text_size(t.small)
+}
+
+/// The lens header: the connection, the spaces, how many need you (the dock badge's count).
+pub(super) fn header_line(store: &Store) -> String {
     let conn = match &store.conn {
         Conn::Offline => "offline",
         Conn::Live => "live",
@@ -265,8 +270,7 @@ fn header(store: &Store, t: TypeScale) -> Div {
     let fresh = store.server_updated;
     let updated = if fresh { " · server updated" } else { "" };
     let spaces = store.spaces.len();
-    let line = format!("herder · {conn} · {spaces} spaces · {needs} need you{updated} · ? keys");
-    dim(line).text_size(t.small)
+    format!("herder · {conn} · {spaces} spaces · {needs} need you{updated} · ? keys")
 }
 
 /// One space: bright with its unread count when it needs you, dim otherwise. The card shows the

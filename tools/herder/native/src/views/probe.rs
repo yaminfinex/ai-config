@@ -3,13 +3,13 @@
 
 use crate::store::Store;
 use crate::views::composer;
-use crate::views::lens::{State, Ui};
+use crate::views::lens::{self, State, Ui};
 use crate::views::notes::Notes;
 use crate::views::space::{Summon, zoomed};
 use crate::views::transcript::OpenLink;
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `header` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
     let agent = ui.zoomed_agent();
@@ -37,6 +37,7 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
                 }
             }
         }
+        "header" => lens::header_line(store),
         "start" => {
             let t = store.transcript.open.as_ref().filter(|t| t.at_start())?;
             format!("{}: start reached, {} rows", t.agent, t.items.len())

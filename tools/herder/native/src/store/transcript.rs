@@ -127,6 +127,8 @@ pub enum Step {
     Dismiss,
     /// A failed forward or detail read's backoff ran out: read it again.
     Retry(Timer),
+    /// The view started (or stopped) following the bottom: the owner is watching the tail.
+    Tail(bool),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -146,6 +148,8 @@ pub struct Transcript {
     detail_reading: bool,
     detail_again: bool,
     pub detail: Option<AgentDetail>,
+    /// The view follows the bottom (`Step::Tail`): what lands is seen as it arrives (`attention`).
+    pub tail: bool,
     /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
     /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
     notice: Option<(Op, String)>,
@@ -243,6 +247,7 @@ impl Store {
             Step::Dismiss => t.notice = None,
             Step::Retry(timer) if timer.generation == t.generation => t.retry(timer, out),
             Step::Retry(_) => {}
+            Step::Tail(tail) => t.tail = tail,
         }
     }
 
