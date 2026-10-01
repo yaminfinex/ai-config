@@ -289,21 +289,21 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 322 | `views/mod.rs` | 377 |
-| `api/client.rs` | 206 | `views/lens.rs` | 376 |
-| `api/sse.rs` | 194 | `views/space.rs` | 339 |
-| `store/mod.rs` | 422 | `views/transcript.rs` | 394 |
-| `store/sync.rs` | 314 | `views/composer.rs` | 216 |
-| `store/fleet.rs` | 117 | `views/notes.rs` | 376 |
-| `store/spaces.rs` | 193 | `views/probe.rs` | 98 |
-| `store/attention.rs` | 292 | `views/markdown.rs` | 238 |
-| `store/transcript.rs` | 540 | `views/theme.rs` | 100 |
-| `store/condense.rs` | 189 | `shell.rs` | 430 |
-| `store/notes.rs` | 442 | `shell/io.rs` | 135 |
-| `store/composer.rs` | 166 | `harness.rs` | 280 |
+| `api/types.rs` | 322 | `views/mod.rs` | 378 |
+| `api/client.rs` | 206 | `views/lens.rs` | 372 |
+| `api/sse.rs` | 194 | `views/space.rs` | 335 |
+| `store/mod.rs` | 422 | `views/transcript.rs` | 391 |
+| `store/sync.rs` | 312 | `views/composer.rs` | 204 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 365 |
+| `store/spaces.rs` | 193 | `views/probe.rs` | 93 |
+| `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
+| `store/transcript.rs` | 541 | `views/theme.rs` | 98 |
+| `store/condense.rs` | 189 | `shell.rs` | 416 |
+| `store/notes.rs` | 424 | `shell/io.rs` | 134 |
+| `store/composer.rs` | 166 | `harness.rs` | 267 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
 
-About 6,900 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
+About 6,850 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 
