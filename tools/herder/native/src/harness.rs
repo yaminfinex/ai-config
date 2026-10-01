@@ -25,7 +25,9 @@
 //! `i` in lens order, a double-click on it, a click on the zoom's tab `i` or on `lens ›`; F4) ·
 //! `selected:<space>` (the selected card's space name, `+` for a space) · `jump:<shown|hidden>` and
 //! `click:jump` (jump-to-bottom over the transcript, and a click on it; A1) · `find:<text>` (scrolls the
-//! transcript so the first loaded row holding it is at the top, for side-by-side shots; A1). Units add `type:` as they need it.
+//! transcript so the first loaded row holding it is at the top, for side-by-side shots; A1) · `parts:<text>`
+//! (`S+status,+N+notes`: the answers' open status chips and internal notes) and `click:status` /
+//! `click:internal` (the last answer's cut status chip, or internal note; A2). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
@@ -112,7 +114,7 @@ fn cpu_s() -> f64 {
 
 /// What the harness asks the app; the shell answers from `views::probe`, so the harness knows no views.
 pub trait Probe {
-    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `jump` and `start` (`None`: not yet).
+    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `parts`, `jump` and `start` (`None`: not yet).
     fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String>;
     /// The action a click dispatches, for `link`, `summon` and `click` (`None`: nothing to click).
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>>;
@@ -191,7 +193,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
             }
             "expect" | "box" | "has" | "says" | "notes" | "list" | "said" | "header"
-            | "selected" | "rows" | "jump" => {
+            | "selected" | "rows" | "parts" | "jump" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");

@@ -227,6 +227,16 @@ check-runs port="4415":
     scenario runs "" "$zoom $(rows 0) jump:hidden key:o draw $(rows 1) shot:f2-runs key:o draw $(rows 0) key:g draw jump:shown key:o draw $(rows 1) click:jump draw jump:hidden quit"
     echo "check-runs: ok (mupu in web's 19 rows and 9 runs, o opens and closes the lowest run, at the tail and scrolled up; jump-to-bottom shows only scrolled up, and a click on it follows the tail again)"
 
+# A2 entries: the last answer's status chip opens and closes by click, then its internal note; mupu
+# with two queued messages (shots: a2-status, a2-note).
+check-entries port="4416":
+    #!/usr/bin/env bash
+    . scripts/scenario.sh check-entries {{port}}
+    zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:1500 draw"
+    parts() { echo "parts:$1+status,+$2+notes"; }
+    scenario entries "--queued mupu" "$zoom $(parts 0 0) click:status draw $(parts 1 0) shot:a2-status click:status draw $(parts 0 0) find:Internal( wait:300 draw click:internal draw $(parts 0 1) shot:a2-note click:internal draw $(parts 0 0) quit"
+    echo "check-entries: ok (mupu's last cut status chip opens and closes by click, its internal note too; queued box in the shots)"
+
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.
 bundle:

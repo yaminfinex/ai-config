@@ -16,7 +16,7 @@ use crate::views::markdown::{AGENT, PATH};
 use crate::views::notes::{self, Notes};
 use crate::views::notes_list::{self, Card};
 use crate::views::theme::{TypeScale, pal};
-use crate::views::transcript::{self as body, OpenLink, Scroll, ToggleRun};
+use crate::views::transcript::{self as body, Fold, OpenLink, Scroll, ToggleRun};
 use crate::views::{Host, dim, glyph, on, pill};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -342,6 +342,10 @@ pub fn render<H: Host>(
         .on_action(on(cx, |_, ui, t: &Tab| tab(ui, &t.0)))
         .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
         .on_action(on(cx, |_, ui, _: &ToggleRun| body::toggle_lowest(ui)))
+        .on_action(on(cx, |_, ui, f: &Fold| {
+            ui.transcript.fold(*f);
+            Vec::new()
+        }))
         .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
         .on_action(on(cx, |_, ui, c: &Compose| match c {
             Compose::Focus => composer::act(ui, *c),

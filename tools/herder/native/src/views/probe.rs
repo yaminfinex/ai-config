@@ -3,15 +3,17 @@
 
 use crate::store::Store;
 use crate::store::condense::Row;
+use crate::store::condense::Seg;
+use crate::store::transcript::Item;
 use crate::views::composer;
 use crate::views::lens::{self, Pick, State, Ui};
 use crate::views::notes::Notes;
 use crate::views::notes_list::Card;
 use crate::views::space::{Summon, Tab, Zoomed, zoomed};
-use crate::views::transcript::{OpenLink, Scroll};
+use crate::views::transcript::{Fold, OpenLink, Scroll, long};
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `jump` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `parts`, `jump` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
     let agent = ui.zoomed_agent();
@@ -68,6 +70,12 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             let (rows, runs, open) = ui.transcript.census();
             format!("{rows} rows, {runs} runs, {open} open")
         }
+        // How many answers' status chips and internal notes are open.
+        "parts" => {
+            let items = store.transcript.open.as_ref().map(|t| &t.items);
+            let (status, notes) = items.map_or((0, 0), |i| ui.transcript.parts(i));
+            format!("{status} status, {notes} notes")
+        }
         // Whether jump-to-bottom shows.
         "jump" => match ui.transcript.jumps() {
             true => "shown".into(),
@@ -84,8 +92,9 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 /// What a click dispatches: `link:<url>` on a transcript link, `summon:<tag>` on a notification,
 /// `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` on the notes strip (`i` the zoomed
 /// agent's note, newest-updated first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
-/// order), `click:tab:i` (the zoom's tab, from the left), `click:crumb` (`lens ›`) and `click:jump`
-/// (jump-to-bottom, while it shows); `None` where
+/// order), `click:tab:i` (the zoom's tab, from the left), `click:crumb` (`lens ›`), `click:jump`
+/// (jump-to-bottom, while it shows) and `click:status` / `click:internal` (the last answer's status chip
+/// that opens, or internal note); `None` where
 /// there is no such thing to click.
 pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {
     let notes = |what: Notes| Some(Box::new(what) as Box<dyn Action>);
@@ -117,7 +126,22 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
         }
         ("crumb", Some(_)) => return Some(Box::new(Zoomed::Out)),
         ("jump", Some(_)) if ui.transcript.jumps() => return Some(Box::new(Scroll::Bottom)),
-        ("card" | "card2" | "tab" | "crumb" | "jump", _) => return None,
+        // The last answer's status chip that a click opens, or its internal note.
+        ("status" | "internal", Some(_)) => {
+            let items = &store.transcript.open.as_ref()?.items;
+            let part = |seg: &Seg| match seg {
+                Seg::Status(s) => what == "status" && long(s),
+                Seg::Internal(_) => what == "internal",
+                Seg::Text(_) => false,
+            };
+            let mut answers = items.iter().rev().filter_map(|(&key, item)| match item {
+                Item::Assistant(segs) => Some((key, segs.iter().position(part)?)),
+                _ => None,
+            });
+            let (key, at) = answers.next()?;
+            return Some(Box::new(Fold(key, at)));
+        }
+        ("card" | "card2" | "tab" | "crumb" | "jump" | "status" | "internal", _) => return None,
         _ => {}
     }
     let agent = ui.zoomed_agent()?;

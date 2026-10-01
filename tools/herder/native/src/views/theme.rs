@@ -82,6 +82,30 @@ pub mod pal {
     pub const GREEN: u32 = 0x3CC486;
     pub const AMBER: u32 = 0xF2B51C;
     pub const PORT: u32 = 0xF0685C;
+    /// Web's `--dimmer`: times and message ids.
+    pub const DIMMER: u32 = 0x6A6D78;
+    /// Web's `--green`, an operator's: a card's edge, a badge's ink.
+    pub const OPERATOR: u32 = 0x3FB950;
+    /// Web's `--operator-bg`, `--operator-strong` and `--human-bg`.
+    pub const OPERATOR_GROUND: u32 = 0x1B2420;
+    pub const OPERATOR_NAME: u32 = 0xB7DDB9;
+    pub const HUMAN_GROUND: u32 = 0x1D2320;
+    /// Header badges' border, ground and ink: web's operator badge, a request, any other intent, a
+    /// thread.
+    pub const BADGE_OPERATOR: (u32, u32, u32) = (0x31563A, 0x182E1D, OPERATOR);
+    pub const BADGE_REQUEST: (u32, u32, u32) = (0x2C4370, 0x1B2438, BLUE);
+    pub const BADGE_INTENT: (u32, u32, u32) = (EDGE, CHIP, SLATE);
+    pub const BADGE_THREAD: (u32, u32, u32) = (0x40325C, 0x2A2138, PURPLE);
+    /// The queued box: web's `--warning-border`, `--warning-bg`, `--amber`, `--queued-subtext`,
+    /// `--queued-divider` and `--success-bg`.
+    pub const QUEUE_EDGE: u32 = 0x5C4716;
+    pub const QUEUE_GROUND: u32 = 0x3D2E12;
+    pub const QUEUE_TITLE: u32 = 0xD29922;
+    pub const QUEUE_SUB: u32 = 0xB7A678;
+    pub const QUEUE_RULE: u32 = 0x443819;
+    pub const QUEUE_OPERATOR: u32 = 0x152519;
+    /// A queued message: web's 8% black (`--overlay-subtle`) over the box's ground.
+    pub const QUEUE_ROW: u32 = 0x382A11;
 
     use crate::store::transcript::Tone;
 

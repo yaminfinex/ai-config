@@ -1211,6 +1211,169 @@ mod runs {
     }
 }
 
+/// A2: answers' parts, entry headers and cards.
+mod entries {
+    use crate::store::condense::{self, Seg};
+    use crate::store::tests::loaded;
+    use crate::store::tests::transcript_pages::{drive, history, items, open};
+    use crate::store::transcript::{Item, Key, Step};
+    use crate::store::{Event, Store};
+    use crate::views::entries::{Bit, Card, bits, stamp, waited};
+    use crate::views::transcript::{Fold, View, long};
+
+    /// The last answer holding a part `is` picks, and that part.
+    fn part(store: &Store, is: fn(&Seg) -> bool) -> Option<Fold> {
+        let answers = items(store)
+            .iter()
+            .rev()
+            .filter_map(|(&key, item)| match item {
+                Item::Assistant(segs) => Some((key, segs.iter().position(is)?)),
+                _ => None,
+            });
+        answers.map(|(key, at)| Fold(key, at)).next()
+    }
+
+    fn row_of(store: &Store, key: Key) -> usize {
+        let rows = condense::rows(items(store));
+        rows.partition_point(|r| r.last() < key)
+    }
+
+    #[test]
+    fn an_open_status_chip_and_note_stay_open_as_pages_regroup_the_rows() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, 7);
+        let view = View::default();
+        let status = |s: &Seg| matches!(s, Seg::Status(s) if long(s));
+        let note = |s: &Seg| matches!(s, Seg::Internal(_));
+        let (mut opened, mut was) = (Vec::new(), Vec::new());
+        let mut regrouped = false;
+        loop {
+            view.sync(store.transcript.open.as_ref().unwrap(), &store);
+            for is in [status as fn(&Seg) -> bool, note] {
+                // The last such answer: pages before only add earlier ones.
+                if let Some(fold) = part(&store, is).filter(|f| !opened.contains(f)) {
+                    view.fold(fold);
+                    opened.push(fold);
+                    was.push(row_of(&store, fold.0));
+                }
+            }
+            let want = (
+                usize::from(!opened.is_empty()),
+                usize::from(opened.len() > 1),
+            );
+            assert_eq!(
+                view.parts(items(&store)),
+                want,
+                "still open after a page before"
+            );
+            for (fold, at) in opened.iter().zip(&was) {
+                regrouped |= row_of(&store, fold.0) != *at;
+            }
+            let effects = store.apply(Event::Transcript(Step::Older));
+            if effects.is_empty() {
+                break;
+            }
+            drive(&mut store, effects, &all, 7);
+        }
+        assert_eq!(
+            opened.len(),
+            2,
+            "mupu has a cut status and an internal note"
+        );
+        assert!(regrouped, "pages before moved the answers' rows");
+        for fold in opened {
+            view.fold(fold);
+        }
+        assert_eq!(view.parts(items(&store)), (0, 0), "a second click closes");
+    }
+
+    #[test]
+    fn headers_say_who_and_when_as_web() {
+        let cases = [(None, "time unknown"), (Some(1000), "1s ago")];
+        for (at, want) in cases {
+            assert_eq!(stamp(at, 1000), want);
+        }
+        assert_eq!(stamp(Some(100_000 - 12_700), 100_000), "4h ago");
+        let waits = [
+            (0, "0s ago"),
+            (59, "59s ago"),
+            (119, "1m ago"),
+            (3599, "59m ago"),
+        ];
+        for (secs, want) in waits.into_iter().chain([(7300, "2h ago")]) {
+            assert_eq!(waited(secs), want, "{secs}s");
+        }
+        assert_eq!(condense::group(219_914), "219,914");
+        assert_eq!(condense::group(5998), "5,998");
+        assert_eq!(condense::group(999), "999");
+        assert_eq!(condense::group(1_000_000), "1,000,000");
+        // A fixture's operator note and another agent's message, as web's card headers.
+        let all: Vec<Item> = ["mupu", "grill-confirm-lubo", "conductor-line", "riko"]
+            .into_iter()
+            .flat_map(history)
+            .flat_map(|e| condense::condense(&e))
+            .collect();
+        let delivery = |operator: bool| {
+            let mut found = all.iter().filter(|i| {
+                matches!(i, Item::Delivery { operator: o, head, .. } if *o == operator && !head.thread.is_empty())
+            });
+            found
+                .next()
+                .unwrap_or_else(|| panic!("a delivery, operator {operator}, in a thread"))
+        };
+        let names = |bits: Vec<Bit>| {
+            bits.into_iter()
+                .map(|b| format!("{b:?}").split('(').next().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        let plain = bits(delivery(false), "mupu");
+        assert_eq!(names(plain), ["Name", "To", "Intent", "Id", "Thread"]);
+        let answer = Item::Assistant(vec![Seg::Text("hi".into())]);
+        assert_eq!(bits(&answer, "mupu"), [Bit::Name("mupu".into())]);
+        let prompt = Item::Prompt("hi".into());
+        assert_eq!(
+            bits(&prompt, "mupu"),
+            [Bit::Name("owner (terminal)".into())]
+        );
+        let operator = all
+            .iter()
+            .find(|i| matches!(i, Item::Delivery { operator: true, .. }));
+        let operator = bits(operator.expect("an operator note"), "mupu");
+        assert_eq!(operator[1], Bit::Operator, "{operator:?}");
+    }
+
+    #[test]
+    fn cards_are_web_s_three_kinds() {
+        let delivery = |operator: bool| Item::Delivery {
+            sender: "kona".into(),
+            text: "hi".into(),
+            operator,
+            head: Box::default(),
+        };
+        assert_eq!(Card::of(&delivery(false)), Some(Card::Hcom));
+        assert_eq!(Card::of(&delivery(true)), Some(Card::Operator));
+        assert_eq!(Card::of(&Item::Prompt("hi".into())), Some(Card::Human));
+        let none = [
+            Item::Assistant(vec![Seg::Text("hi".into())]),
+            Item::SystemChip("model switched".into()),
+            Item::CompactDivider("context compacted".into()),
+            Item::CompactSummary("summary".into()),
+        ];
+        assert!(none.iter().all(|i| Card::of(i).is_none()));
+        // An unnamed sender and recipient read as web's.
+        let bits = bits(&delivery(false), "mupu");
+        assert_eq!(
+            bits,
+            [
+                Bit::Name("kona".into()),
+                Bit::To("unknown recipient".into())
+            ]
+        );
+    }
+}
+
 /// F2 review: the real transcript body laid out headless. A page that grows the run at the viewport's
 /// top leaves what is read where it was; `o` toggles only a run on screen.
 mod layout {

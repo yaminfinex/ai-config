@@ -12,7 +12,8 @@
 //! One transcript is live at a time, the zoomed agent's, and none on the lens. Entry wakes coalesce without a timer: one
 //! forward read in flight, and a wake meanwhile asks for one more when it lands.
 
-use super::{Effect, Fetch, Store, Wake, condense};
+use super::condense::{self, Seg};
+use super::{Effect, Fetch, Store, Wake};
 use crate::api::client::Page;
 use crate::api::{AgentDetail, Candidate, Entries, Entry, Kind, Resolved};
 use std::collections::{BTreeMap, HashMap};
@@ -34,6 +35,7 @@ pub enum Item {
         sender: String,
         text: String,
         operator: bool,
+        head: Box<Head>,
     },
     /// A pill in a run: a task, a slash command, an unknown entry, or an answer of only statuses and
     /// internal notes.
@@ -45,9 +47,10 @@ pub enum Item {
     /// A model switch, the one system entry web's compact view shows.
     SystemChip(String),
     CompactDivider(String),
-    Assistant {
-        markdown: String,
-    },
+    /// A compaction's summary without its metadata, folded (web's `compact-summary`).
+    CompactSummary(String),
+    /// Markdown, split at its `<status>` and `<internal>` fences; one `Text` when it has none.
+    Assistant(Vec<Seg>),
     /// A folded pill; often empty (redacted reasoning).
     Thinking(String),
     Tool {
@@ -56,6 +59,15 @@ pub enum Item {
         result: Option<ToolResult>,
     },
     Error(String),
+}
+
+/// A delivery's header facts after its sender, each empty when the bus gave none.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Head {
+    pub to: String,
+    pub intent: String,
+    pub thread: String,
+    pub id: String,
 }
 
 /// A pill's colours, as web's: tools blue, thinking and internal notes purple, agents' messages green,

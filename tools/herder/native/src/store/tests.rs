@@ -956,7 +956,7 @@ pub(crate) mod transcript_pages {
     use super::*;
     use crate::api::client::Page;
     use crate::api::{Candidate, Entries, EntriesWindow, Entry, Reset, ResolveRoot, Resolved};
-    use crate::store::condense::{self, condense};
+    use crate::store::condense::{self, Seg, condense};
     use crate::store::transcript::{Got, Item, Op, PAGE, Read, Step as T, Timer, Tone, What};
     use std::collections::VecDeque;
 
@@ -1716,10 +1716,12 @@ pub(crate) mod transcript_pages {
             }
         });
         assert!(
-            dividers.contains(&"context compacted (manual, 219k → 5k tokens)".into()),
+            dividers.contains(&"context compacted (manual, 219,914 → 5,998 tokens)".into()),
             "{dividers:?}"
         );
-        assert!(dividers.contains(&"compaction summary".into()));
+        assert!(has(
+            &|i| matches!(i, Item::CompactSummary(s) if !s.trim().is_empty())
+        ));
         let chips = |tone: Tone| {
             let chips = items.iter().filter_map(move |(_, i)| match i {
                 Item::Chip {
@@ -1807,11 +1809,16 @@ pub(crate) mod transcript_pages {
                 ),
                 "{kind:?} is hidden"
             );
-            if let Item::Assistant { markdown } = item {
-                assert!(
-                    !markdown.contains("<internal>") && !markdown.contains("<status>"),
-                    "{markdown}"
-                );
+            let Item::Assistant(segs) = item else {
+                continue;
+            };
+            for seg in segs {
+                if let Seg::Text(text) = seg {
+                    assert!(
+                        !text.contains("<internal>") && !text.contains("<status>"),
+                        "{text}"
+                    );
+                }
             }
         }
         // An entry's acks go and its other deliveries stay: lubo's inform and two acks are one row.
@@ -2003,20 +2010,20 @@ pub(crate) mod transcript_pages {
         };
         for text in literal {
             assert_eq!(condense::fence(text), None, "{text:?}");
-            let markdown = text.into();
-            assert_eq!(answer(text), [Item::Assistant { markdown }], "{text:?}");
+            let literal = Item::Assistant(vec![Seg::Text(text.into())]);
+            assert_eq!(answer(text), [literal], "{text:?}");
         }
-        // Well formed: only fences is a chip, with text it is the text (F3 draws the fences).
+        // Well formed: only fences is a chip, with text the answer's parts.
         let chip = Item::Chip {
             tone: Tone::Status,
             label: "sent".into(),
             text: "sent".into(),
         };
         assert_eq!(answer("\n<status>sent</status>\n"), [chip]);
-        let markdown = "Visible".into();
+        let parts = vec![Seg::Text("Visible\n".into()), Seg::Internal("note".into())];
         assert_eq!(
             answer("Visible\n<internal>note</internal>"),
-            [Item::Assistant { markdown }]
+            [Item::Assistant(parts)]
         );
     }
 

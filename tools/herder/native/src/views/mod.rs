@@ -10,6 +10,7 @@
 //! pill), and the window's `Frame` with the working-dot `Pulse`.
 
 pub mod composer;
+pub mod entries;
 pub mod lens;
 pub mod markdown;
 pub mod notes;
