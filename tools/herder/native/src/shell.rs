@@ -236,16 +236,13 @@ impl Shell {
 
     /// Dispatch `event` after `after_ms`.
     fn later(&self, after_ms: u64, event: Event, cx: &mut Context<Self>) {
-        let tx = self.tx.clone();
-        let timer = cx
-            .background_executor()
-            .timer(Duration::from_millis(after_ms));
-        cx.background_executor()
-            .spawn(async move {
-                timer.await;
-                let _ = tx.unbounded_send(event);
-            })
-            .detach();
+        let (tx, after) = (self.tx.clone(), Duration::from_millis(after_ms));
+        let timer = cx.background_executor().timer(after);
+        let task = async move {
+            timer.await;
+            drop(tx.unbounded_send(event))
+        };
+        cx.background_executor().spawn(task).detach();
     }
 
     /// `file` as the store holds it now: its name, its bytes, and the sequence that orders this write

@@ -261,15 +261,11 @@ fn home<H: Host>(store: &Store, ui: &Ui, t: TypeScale, cx: &mut Context<H>) -> A
                 .flex()
                 .flex_col()
                 .gap(t.px(22.))
-                .child(header(store, t))
+                .child(dim(header_line(store)).text_size(t.small))
                 .children(rows),
         )
         .when(ui.help, |el| el.child(help(t)))
         .into_any_element()
-}
-
-fn header(store: &Store, t: TypeScale) -> Div {
-    dim(header_line(store)).text_size(t.small)
 }
 
 /// The lens header: the connection, the spaces, how many need you (the dock badge's count).

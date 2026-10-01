@@ -77,12 +77,7 @@ impl Store {
                 seen.entry(a.name.clone()).or_insert(fresh);
             }
         }
-        let blocked = |name: &str| {
-            fleet
-                .agents
-                .get(name)
-                .map(|a| a.status() == Status::Blocked)
-        };
+        let blocked = |name: &str| Some(fleet.agents.get(name)?.status() == Status::Blocked);
         for (name, mark) in seen.iter_mut() {
             mark.blocked &= blocked(name).unwrap_or(true);
         }
@@ -117,11 +112,8 @@ pub(super) fn mark_seen(seen: &mut BTreeMap<String, Seen>, fleet: &Fleet, name: 
 /// What looking at `name` now would mark seen; `None` off the board.
 pub(super) fn looking(fleet: &Fleet, name: &str) -> Option<Seen> {
     let a = fleet.agents.get(name)?;
-    let blocked = a.status() == Status::Blocked;
-    Some(Seen {
-        turn_end: a.turn_end.unwrap_or(0),
-        blocked,
-    })
+    let (turn_end, blocked) = (a.turn_end.unwrap_or(0), a.status() == Status::Blocked);
+    Some(Seen { turn_end, blocked })
 }
 
 /// The owner saw `name` as `then` (a send that files it back lands later): turns up to then are seen,
@@ -241,12 +233,8 @@ impl Store {
     /// The agent the owner is looking at: zoomed in on it (its transcript is open) with the app
     /// frontmost. It is never alerted.
     pub(super) fn looking_at(&self) -> Option<&str> {
-        let open = self
-            .transcript
-            .open
-            .as_ref()
-            .filter(|_| self.alerts.front)?;
-        Some(&open.agent)
+        let open = self.transcript.open.as_ref()?;
+        self.alerts.front.then_some(open.agent.as_str())
     }
 
     /// The burst's second is up: one notification for those that still need you, a summary for several.

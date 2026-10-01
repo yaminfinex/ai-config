@@ -176,10 +176,8 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
             if !to.alone() {
                 ui.select(&to.space);
             }
-            return vec![Event::Lens(Move::View {
-                space: to.space,
-                agent: to.agent,
-            })];
+            let Zoom { space, agent } = to;
+            return vec![Event::Lens(Move::View { space, agent })];
         }
         return zoom_to(ui, &to.space, to.agent, None);
     }
@@ -202,9 +200,7 @@ pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<
 /// a preview tab in this zoom, never added to the space.
 fn open(ui: &mut State, url: &str) -> Vec<Event> {
     if let Some(path) = url.strip_prefix(PATH) {
-        return vec![Event::Transcript(transcript::Step::OpenPath(
-            path.to_string(),
-        ))];
+        return vec![Event::Transcript(transcript::Step::OpenPath(path.into()))];
     }
     let (Some(agent), Some(zoom)) = (url.strip_prefix(AGENT), ui.zoom.clone()) else {
         return Vec::new();

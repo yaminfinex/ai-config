@@ -160,16 +160,13 @@ pub fn render<H: Host>(
     // Read the page before while the viewport's top is near the first rows (or there are none).
     let top = view.list.logical_scroll_top().item_ix.min(tr.items.len());
     let more = tr.loaded() && !tr.at_start() && !tr.paging() && !tr.blocked();
-    if more && top < PREFETCH {
-        let older = Event::Transcript(Step::Older);
-        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(older, cx)))
-            .detach();
-    }
+    let older = (more && top < PREFETCH).then_some(Step::Older);
     // Following the bottom is watching the tail: the store sees what lands (`attention::watch`).
     let tail = view.list.is_following_tail();
-    if tail != tr.tail {
-        let step = Event::Transcript(Step::Tail(tail));
-        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(step, cx)))
+    let follow = (tail != tr.tail).then_some(Step::Tail(tail));
+    for step in older.into_iter().chain(follow) {
+        let event = Event::Transcript(step);
+        cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(event, cx)))
             .detach();
     }
     let note = |s: &'static str| div().flex_1().p(t.px(24.)).child(dim(s)).into_any_element();

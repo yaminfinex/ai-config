@@ -1,8 +1,7 @@
 //! The shell's background I/O: a REST read, or the outbox save and the posts it guards. Each takes the
 //! client (and disk) and reports back as `Event`s; nothing here touches GPUI or view state.
 
-use crate::api::client::Client;
-use crate::api::client::Error;
+use crate::api::client::{Client, Error};
 use crate::api::types::StateRow;
 use crate::harness;
 use crate::local::{self, Disk};
