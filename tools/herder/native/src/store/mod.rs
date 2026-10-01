@@ -163,9 +163,9 @@ pub enum Effect {
         ns: Ns,
         after_ms: u64,
     },
-    /// Dispatch `Event::Transcript(Step::Retry(generation))` after this long.
+    /// Dispatch `Event::Transcript(Step::Retry(timer))` after this long.
     RetryTranscript {
-        generation: u64,
+        timer: transcript::Timer,
         after_ms: u64,
     },
     /// Dispatch `Event::ViewerRetry` after this long.

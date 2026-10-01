@@ -162,7 +162,7 @@ pub fn render<H: Host>(
     view.sync(tr, store);
     // Read the page before while the viewport's top is near the first rows (or there are none).
     let top = view.list.logical_scroll_top().item_ix.min(tr.items.len());
-    let more = tr.loaded() && !tr.at_start() && !tr.paging() && tr.notice.is_none();
+    let more = tr.loaded() && !tr.at_start() && !tr.paging() && !tr.blocked();
     if more && top < PREFETCH {
         let older = Event::Transcript(Step::Older);
         cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(older, cx)))
@@ -203,7 +203,7 @@ pub fn render<H: Host>(
             let line = format!("queued · {}: {first}", q.sender);
             dim(line).truncate().px(t.px(20.)).text_size(t.small)
         });
-    let notice = tr.notice.clone().map(|n| {
+    let notice = tr.notice().map(|n| {
         let dismiss = cx
             .listener(|h, _: &ClickEvent, _, cx| h.dispatch(Event::Transcript(Step::Dismiss), cx));
         let el = div().id("notice").px(t.px(20.)).py(t.px(4.));

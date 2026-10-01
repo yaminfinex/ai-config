@@ -929,7 +929,7 @@ mod transcript_pages {
     use crate::api::client::Page;
     use crate::api::{Candidate, Entries, EntriesWindow, Entry, Reset, ResolveRoot, Resolved};
     use crate::store::condense::{self, condense};
-    use crate::store::transcript::{Got, Item, PAGE, Read, Step as T, What};
+    use crate::store::transcript::{Got, Item, Op, PAGE, Read, Step as T, Timer, What};
     use std::collections::VecDeque;
 
     fn fixture(agent: &str, page: &str) -> Entries {
@@ -1170,7 +1170,19 @@ mod transcript_pages {
     }
 
     fn notice(store: &Store) -> Option<&str> {
-        store.transcript.open.as_ref().unwrap().notice.as_deref()
+        store.transcript.open.as_ref().unwrap().notice()
+    }
+
+    /// The one retry timer among `effects`, and its delay.
+    fn timer(effects: &[Effect]) -> (Timer, u64) {
+        match effects {
+            [Effect::RetryTranscript { timer, after_ms }] => (*timer, *after_ms),
+            other => panic!("one retry: {other:?}"),
+        }
+    }
+
+    fn retry(store: &mut Store, timer: Timer) -> Vec<Read> {
+        reads(&store.apply(Event::Transcript(T::Retry(timer))))
     }
 
     #[test]
@@ -1183,31 +1195,34 @@ mod transcript_pages {
             reads(&store.apply(wake(&store, "mupu"))).is_empty(),
             "queued"
         );
-        let retry = |after_ms| Effect::RetryTranscript {
-            generation,
-            after_ms,
-        };
-        assert_eq!(fail(&mut store, tail), [retry(1000)]);
+        let (mut pending, after_ms) = timer(&fail(&mut store, tail));
+        assert_eq!(
+            (pending.generation, pending.op, after_ms),
+            (generation, Op::Forward, 1000)
+        );
         assert_eq!(notice(&store), Some("could not read: down"));
 
         // Each retry reads once for the failed read and the wake queued behind it; three, then none.
         let mut tail = tail.clone();
         for after_ms in [2000, 4000] {
-            let again = reads(&store.apply(Event::Transcript(T::Retry(generation))));
+            let again = retry(&mut store, pending);
             assert!(
                 matches!(again.as_slice(), [r] if r.what == tail.what),
                 "{again:?}"
             );
+            assert!(retry(&mut store, pending).is_empty(), "a timer fires once");
             tail = again[0].clone();
-            assert_eq!(fail(&mut store, &tail), [retry(after_ms)]);
+            let next = timer(&fail(&mut store, &tail));
+            assert_eq!(next.1, after_ms);
+            pending = next.0;
         }
-        let again = reads(&store.apply(Event::Transcript(T::Retry(generation))));
+        let again = retry(&mut store, pending);
         assert!(fail(&mut store, &again[0]).is_empty(), "bounded");
-        assert!(
-            store
-                .apply(Event::Transcript(T::Retry(generation + 9)))
-                .is_empty()
-        );
+        let old = Timer {
+            generation: generation + 9,
+            ..pending
+        };
+        assert!(retry(&mut store, old).is_empty());
 
         // A hello clears the notice and reads again; the page lands.
         let hello = frame(
@@ -1227,12 +1242,8 @@ mod transcript_pages {
         let mut store = loaded();
         let opened = reads(&open(&mut store, "mupu"));
         let generation = opened[0].generation;
-        let effects = fail(&mut store, &opened[1]);
-        assert!(matches!(
-            effects.as_slice(),
-            [Effect::RetryTranscript { .. }]
-        ));
-        let again = reads(&store.apply(Event::Transcript(T::Retry(generation))));
+        let (pending, _) = timer(&fail(&mut store, &opened[1]));
+        let again = retry(&mut store, pending);
         assert!(matches!(
             again.as_slice(),
             [Read {
@@ -1268,12 +1279,83 @@ mod transcript_pages {
         let back = reads(&store.apply(Event::Transcript(T::Older)));
         assert_eq!(back.len(), 1, "dismissing lets it page back again");
 
-        // Any page that lands clears the notice.
+        // A forward page landing leaves the page back's notice; a hello clears it.
         fail(&mut store, &back[0]);
+        let effects = store.apply(wake(&store, "mupu"));
+        drive(&mut store, effects, &all, PAGE as usize);
+        assert_eq!(notice(&store), Some("could not read: down"));
+        assert!(store.apply(Event::Transcript(T::Older)).is_empty());
+        let hello = Wire::Hello(Hello {
+            build_identity: "b".into(),
+        });
+        let effects = store.apply(frame(&store, hello));
+        drive(&mut store, effects, &all, PAGE as usize);
+        assert_eq!(notice(&store), None);
+        assert_eq!(reads(&store.apply(Event::Transcript(T::Older))).len(), 1);
+    }
+
+    #[test]
+    fn each_read_keeps_its_own_retries_when_a_sibling_recovers() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let opened = reads(&open(&mut store, "mupu"));
+        let (tail_timer, _) = timer(&fail(&mut store, &opened[0]));
+        let (mut detail_timer, after_ms) = timer(&fail(&mut store, &opened[1]));
+        assert_eq!((detail_timer.op, after_ms), (Op::Detail, 1000));
+
+        // The tail recovers on its retry; the detail's own budget is untouched.
+        let tail = retry(&mut store, tail_timer);
+        let effects = tail
+            .into_iter()
+            .map(|r| Effect::Fetch(Fetch::Transcript(r)));
+        drive(&mut store, effects.collect(), &all, PAGE as usize);
+        assert!(store.transcript.open.as_ref().unwrap().loaded());
+        assert!(retry(&mut store, tail_timer).is_empty(), "fired already");
+
+        // The detail keeps failing: original + three retries at 1, 2 and 4 s, and nothing else.
+        let mut attempts = 1;
+        for after_ms in [2000, 4000] {
+            let again = retry(&mut store, detail_timer);
+            assert!(matches!(again.as_slice(), [r] if r.what == What::Detail));
+            attempts += 1;
+            let next = timer(&fail(&mut store, &again[0]));
+            assert_eq!((next.0.op, next.1), (Op::Detail, after_ms));
+            assert!(retry(&mut store, detail_timer).is_empty(), "superseded");
+            detail_timer = next.0;
+        }
+        let again = retry(&mut store, detail_timer);
+        attempts += 1;
+        assert!(fail(&mut store, &again[0]).is_empty(), "budget spent");
+        assert_eq!(attempts, 4);
+        assert!(retry(&mut store, tail_timer).is_empty());
+        assert!(retry(&mut store, detail_timer).is_empty());
+        assert!(store.transcript.open.as_ref().unwrap().blocked());
+
+        // A detail that recovers clears its own notice and lets paging back resume.
         let effects = store.apply(wake(&store, "mupu"));
         drive(&mut store, effects, &all, PAGE as usize);
         assert_eq!(notice(&store), None);
         assert_eq!(reads(&store.apply(Event::Transcript(T::Older))).len(), 1);
+    }
+
+    #[test]
+    fn a_detail_recovering_keeps_a_page_back_notice() {
+        let all = history("mupu");
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &all, PAGE as usize);
+        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        let detail = reads(&store.apply(wake(&store, "mupu")));
+        let detail = detail.iter().find(|r| r.what == What::Detail).unwrap();
+        fail(&mut store, &back[0]);
+        let got = Ok(Got::Detail(Box::default()));
+        store.apply(Event::Transcript(T::Read(detail.clone(), got)));
+        assert_eq!(
+            notice(&store),
+            Some("could not read: down"),
+            "the page back's"
+        );
+        assert!(store.transcript.open.as_ref().unwrap().blocked());
     }
 
     #[test]
@@ -1540,7 +1622,8 @@ mod transcript_pages {
         let fuzzy = vec![candidate("fuzzy", 9000.)];
         assert!(answer(&mut store, fuzzy, vec![root("complete")]).is_empty());
         let t = store.transcript.open.as_ref().unwrap();
-        assert_eq!(t.notice.as_deref(), Some("no single file matches src/x.rs"));
+        assert_eq!(t.notice(), Some("no single file matches src/x.rs"));
+        assert!(!t.blocked(), "an unmatched path does not hold paging back");
 
         // VS Code opens a remote path without `:<line>` as a folder: a file gets line 1, a folder none.
         let read = Read {

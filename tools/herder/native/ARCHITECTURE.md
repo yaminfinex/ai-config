@@ -27,7 +27,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
 | `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. | `api::types` |
 | `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. | `store`, gpui-kit |
-| `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects. | everything |
+| `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
 | `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
 | `platform_mac` | The AppKit calls GPUI lacks: window ordering, dock badge, activation policy, the hotkey bridge. | objc2 |
 | `terminal` | A local PTY running `et`/`ssh -t`, emulated by `alacritty_terminal`, painted by a view (Rung 2). | alacritty_terminal |
@@ -80,8 +80,11 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   `next_offset`". Wakes coalesce without a timer: one forward read in flight, and a wake meanwhile sets
   `again`, which reads once more when it lands. A `message` frame addressed to the open agent refreshes its
   detail (coalesced the same way), so a queued message shows. A failed tail, forward or detail read retries
-  after 1, 2 and 4 s (it and any queued wake), then waits for a wake or `hello`; a failed `before=` page
-  waits until the notice is dismissed, a `hello` arrives or another page lands.
+  after 1, 2 and 4 s (it and any queued wake), then waits for a wake or `hello`. Each of the two keeps its
+  own budget and one pending timer, tagged with a token, so a sibling's success resets nothing and a
+  superseded timer reads nothing. A failed read's notice holds paging back until that read succeeds, the
+  notice is dismissed or a `hello` arrives; a failed `before=` page is not retried. An unmatched path's
+  notice holds nothing.
 - **Server cost.** Debounce detail refetches; skip the web client's habit of invalidating every open
   transcript on each `fleet` frame.
 
@@ -241,8 +244,9 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   need them. U3 added `draw` (one frame: a window behind others gets none, and transcript paging is
   driven by render), `link:<url>` (dispatches what a click on a transcript link dispatches),
   `expect:<agent>` / `expect:<agent>+preview` (what the zoom shows; the shell answers through
-  `harness::Probe`, so the harness knows no views) and `cpuscroll:<key>x<n>` (`n` keystrokes, each with a
-  timed `Window::draw`). Screenshots and presented-frame timings need an
+  `harness::Probe`, so the harness knows no views), `cpuscroll:<key>x<n>` (`n` keystrokes, each with a
+  timed `Window::draw`) and `start:<ms>` (draws until the open transcript has paged back to its start,
+  logging its rows; also a `Probe` query). Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -274,14 +278,18 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 | `store/transcript.rs` | 400 | `shell.rs` | 300 |
 | `store/condense.rs` | 220 | `views/markdown.rs` | 250 |
 | `store/notes.rs` | 250 | `local.rs`, `platform_mac.rs`, `harness.rs` | 120, 150, 200 |
+| | | `shell/io.rs` | 100 |
 
 About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 
-Documented U3 exceptions (agreed at U3 review): `api/types.rs` 317, `api/client.rs` 214, `store/mod.rs`
-357, `shell.rs` 373, `harness.rs` 237: the transcript's wire types, resolve call, vocabulary, effect runner
-and harness steps.
+Documented U3 exceptions (agreed at the U3 reviews): `store/transcript.rs` 539 (one cohesive paging and
+request lifecycle: cursors, pairing, wake coalescing and each read's own retries; the condenser moved to
+`condense.rs`), `api/types.rs` 357 (message recipients and the 11-field payload projection that cut the
+decode high-water), `api/client.rs` 219 (`resolve`'s optional agent scope), `store/mod.rs` 364 (reducer
+vocabulary) and `harness.rs` 267 (the U3 steps and `Probe`). `shell.rs` is back to 338, under its U1
+exception, since its background I/O (`run_fetch`, `save_then_send`) moved to `shell/io.rs`.
 
 Documented U1 exceptions (agreed at U1 review): `store/mod.rs` 349 (the Event/Effect vocabulary,
 `Prefs`, the reducer), `shell.rs` 347 (the effect runner with the save-before-send barrier), `api/sse.rs`

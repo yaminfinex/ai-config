@@ -76,6 +76,36 @@ pub enum What {
     Resolve(String, Option<u32>, bool),
 }
 
+/// The request a read makes, for its retries and its notice.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Op {
+    /// The tail, or a `from=` read.
+    Forward,
+    Back,
+    Detail,
+    Resolve,
+}
+
+impl What {
+    fn op(&self) -> Op {
+        match self {
+            What::Page(Page::Before { .. }) => Op::Back,
+            What::Page(_) => Op::Forward,
+            What::Detail => Op::Detail,
+            What::Resolve(..) => Op::Resolve,
+        }
+    }
+}
+
+/// A failed forward or detail read's retry, due after its backoff. Only the op's pending `token`
+/// fires: a success or a `hello` since supersedes it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Timer {
+    pub generation: u64,
+    pub op: Op,
+    pub token: u64,
+}
+
 #[derive(Clone, Debug)]
 pub enum Got {
     Page(Box<Entries>),
@@ -100,8 +130,8 @@ pub enum Step {
     /// Open the agent's working directory.
     OpenCwd,
     Dismiss,
-    /// A failed tail, forward or detail read's backoff ran out (for this generation): read again.
-    Retry(u64),
+    /// A failed forward or detail read's backoff ran out: read it again.
+    Retry(Timer),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -121,15 +151,24 @@ pub struct Transcript {
     detail_reading: bool,
     detail_again: bool,
     pub detail: Option<AgentDetail>,
-    /// The last failed read, or a path that resolved to nothing to open. While set, paging back
-    /// waits: `Dismiss`, a `hello` or a landed page clear it.
-    pub notice: Option<String>,
-    /// Consecutive failed tail, forward or detail reads, each retried after a backoff up to `RETRIES`.
-    failures: u32,
+    /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
+    /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
+    notice: Option<(Op, String)>,
+    /// Each op's own retries, so a sibling's success leaves them alone.
+    forward_retry: Backoff,
+    detail_retry: Backoff,
+    timers: u64,
 }
 
-/// Retries of a failed tail, forward or detail read, after 1, 2 and 4 s; then a `hello` or a wake.
+/// Retries of a failed forward or detail read, after 1, 2 and 4 s; then a `hello` or a wake.
 const RETRIES: u32 = 3;
+
+/// One op's consecutive failures, and its one pending timer.
+#[derive(Clone, Copy, Debug, Default)]
+struct Backoff {
+    failures: u32,
+    timer: Option<u64>,
+}
 
 /// The open transcript, the stream's `agents=` set, and the counter behind every generation.
 #[derive(Clone, Debug, Default)]
@@ -206,14 +245,7 @@ impl Store {
                 out.extend(cwd.map(|path| Effect::OpenFile { path, line: None }));
             }
             Step::Dismiss => t.notice = None,
-            Step::Retry(generation) if generation == t.generation => {
-                if take(&mut t.again) {
-                    t.forward(out);
-                }
-                if take(&mut t.detail_again) {
-                    t.refresh(out);
-                }
-            }
+            Step::Retry(timer) if timer.generation == t.generation => t.retry(timer, out),
             Step::Retry(_) => {}
         }
     }
@@ -223,7 +255,8 @@ impl Store {
         let open = self.transcript.open.as_mut();
         if let Some(t) = open.filter(|t| agent.is_none_or(|a| a == t.agent)) {
             if agent.is_none() {
-                (t.notice, t.failures) = (None, 0);
+                t.notice = None;
+                (t.forward_retry, t.detail_retry) = Default::default();
             }
             t.forward(out);
             t.refresh(out);
@@ -261,6 +294,15 @@ impl Transcript {
 
     pub fn paging(&self) -> bool {
         self.back
+    }
+
+    pub fn notice(&self) -> Option<&str> {
+        self.notice.as_ref().map(|(_, text)| text.as_str())
+    }
+
+    /// A failed read holds paging back, so a dead serve is not asked again on every frame.
+    pub fn blocked(&self) -> bool {
+        matches!(self.notice, Some((op, _)) if op != Op::Resolve)
     }
 
     pub fn retired(&self) -> bool {
@@ -312,7 +354,7 @@ impl Transcript {
         let (Some(session), Some(offset)) = (self.session.clone(), self.prev_offset) else {
             return;
         };
-        if offset > 0 && self.notice.is_none() && !replace(&mut self.back, true) {
+        if offset > 0 && !self.blocked() && !replace(&mut self.back, true) {
             let page = Page::Before {
                 offset,
                 session,
@@ -335,7 +377,8 @@ impl Transcript {
         match (what, result) {
             (What::Page(page), Ok(Got::Page(e))) => self.page(page, *e, out),
             (What::Detail, Ok(Got::Detail(d))) => {
-                (self.detail, self.detail_reading, self.failures) = (Some(*d), false, 0);
+                (self.detail, self.detail_reading) = (Some(*d), false);
+                self.succeeded(Op::Detail);
                 if take(&mut self.detail_again) {
                     self.refresh(out);
                 }
@@ -346,36 +389,67 @@ impl Transcript {
                     let line = if file { line.or(Some(1)) } else { None };
                     out.push(Effect::OpenFile { path, line });
                 }
-                None => self.notice = Some(format!("no single file matches {query}")),
+                None => {
+                    let text = format!("no single file matches {query}");
+                    self.notice = Some((Op::Resolve, text));
+                }
             },
             (what, result) => {
-                // A failed tail, forward or detail read is owed again (with any wake queued behind
-                // it) after a backoff; a failed page back waits until the notice clears.
-                let retry = match what {
-                    What::Page(Page::Before { .. }) => {
-                        self.back = false;
-                        false
-                    }
-                    What::Page(_) => {
-                        (self.reading, self.again) = (false, true);
-                        true
-                    }
-                    What::Detail => {
-                        (self.detail_reading, self.detail_again) = (false, true);
-                        true
-                    }
-                    What::Resolve(..) => false,
-                };
-                if retry && self.failures < RETRIES {
-                    let (generation, after_ms) = (self.generation, 1000 << self.failures);
-                    self.failures += 1;
-                    out.push(Effect::RetryTranscript {
-                        generation,
-                        after_ms,
-                    });
+                // A failed forward or detail read is owed again (with any wake queued behind it)
+                // after its op's backoff; a failed page back waits until the notice clears.
+                let op = what.op();
+                match op {
+                    Op::Forward => (self.reading, self.again) = (false, true),
+                    Op::Back => self.back = false,
+                    Op::Detail => (self.detail_reading, self.detail_again) = (false, true),
+                    Op::Resolve => {}
                 }
-                self.notice = result.err().map(|e| format!("could not read: {e}"));
+                let (generation, token) = (self.generation, self.timers + 1);
+                let backoff = self.backoff(op);
+                if let Some(b) = backoff.filter(|b| b.timer.is_none() && b.failures < RETRIES) {
+                    let after_ms = 1000 << b.failures;
+                    (b.failures, b.timer, self.timers) = (b.failures + 1, Some(token), token);
+                    let timer = Timer {
+                        generation,
+                        op,
+                        token,
+                    };
+                    out.push(Effect::RetryTranscript { timer, after_ms });
+                }
+                self.notice = result.err().map(|e| (op, format!("could not read: {e}")));
             }
+        }
+    }
+
+    fn backoff(&mut self, op: Op) -> Option<&mut Backoff> {
+        match op {
+            Op::Forward => Some(&mut self.forward_retry),
+            Op::Detail => Some(&mut self.detail_retry),
+            Op::Back | Op::Resolve => None,
+        }
+    }
+
+    /// `op` read: its retries start over, any pending timer is void, and its own notice goes.
+    fn succeeded(&mut self, op: Op) {
+        if let Some(b) = self.backoff(op) {
+            *b = Backoff::default();
+        }
+        if self.notice.as_ref().is_some_and(|(o, _)| *o == op) {
+            self.notice = None;
+        }
+    }
+
+    /// The op's pending timer fired: read again what failed, and any wake queued behind it.
+    fn retry(&mut self, timer: Timer, out: &mut Vec<Effect>) {
+        let pending = self.backoff(timer.op);
+        match pending.filter(|b| b.timer == Some(timer.token)) {
+            Some(b) => b.timer = None,
+            None => return,
+        }
+        match timer.op {
+            Op::Forward if take(&mut self.again) => self.forward(out),
+            Op::Detail if take(&mut self.detail_again) => self.refresh(out),
+            _ => {}
         }
     }
 
@@ -391,7 +465,8 @@ impl Transcript {
                 (self.back, self.prev_offset) = (false, Some(e.prev_offset.unwrap_or(0)));
             }
         }
-        (self.notice, self.failures) = (None, 0);
+        let back = matches!(page, Page::Before { .. });
+        self.succeeded(if back { Op::Back } else { Op::Forward });
         e.entries.into_iter().for_each(|entry| self.ingest(entry));
         // A window of only hidden entries shows nothing: keep reading back until rows or the start.
         if self.items.is_empty() && !matches!(page, Page::From { .. }) {

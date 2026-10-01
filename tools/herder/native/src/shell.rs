@@ -12,14 +12,15 @@
 //! task drains into `dispatch`.
 //!
 //! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
-//! send was decided (`save_then_send`); a save still pending elsewhere cannot be overtaken.
+//! send was decided (`io::save_then_send`); a save still pending elsewhere cannot be overtaken. The
+//! REST reads and that save run in `io`.
 
 use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
-use crate::store::transcript::{self, Got, What};
-use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
+use crate::store::transcript;
+use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
     Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, markdown, space, theme,
@@ -28,9 +29,13 @@ use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
+use io::run_fetch;
+pub use io::save_then_send;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+
+mod io;
 
 /// Window title and app name.
 pub const APP_NAME: &str = "herder native";
@@ -111,28 +116,7 @@ impl Host for Shell {
             }
         );
         let scale = self.store.prefs.text_scale;
-        let start = |s: &Store| {
-            s.transcript
-                .open
-                .as_ref()
-                .filter(|t| t.at_start())
-                .is_some()
-        };
-        let paging = !start(&self.store);
         let effects = self.store.apply(event);
-        if let Some(t) = self
-            .store
-            .transcript
-            .open
-            .as_ref()
-            .filter(|t| paging && t.at_start())
-        {
-            harness::metric(format!(
-                "transcript {}: start reached, {} rows",
-                t.agent,
-                t.items.len()
-            ));
-        }
         if self.store.prefs.text_scale != scale {
             theme::apply(self.store.prefs.text_scale, cx);
         }
@@ -176,11 +160,8 @@ impl Shell {
                     self.later(after_ms, Event::Sync { ns, step }, cx)
                 }
                 Effect::RetryViewer { after_ms } => self.later(after_ms, Event::ViewerRetry, cx),
-                Effect::RetryTranscript {
-                    generation,
-                    after_ms,
-                } => {
-                    let step = transcript::Step::Retry(generation);
+                Effect::RetryTranscript { timer, after_ms } => {
+                    let step = transcript::Step::Retry(timer);
                     self.later(after_ms, Event::Transcript(step), cx)
                 }
                 Effect::Persist(Persist::Outbox) => save_outbox = true,
@@ -259,72 +240,6 @@ impl Shell {
     }
 }
 
-fn run_fetch(client: &Client, fetch: Fetch) -> Event {
-    match fetch {
-        Fetch::Viewer => Event::Viewer(client.viewer().map(|v| v.viewer).map_err(|e| {
-            eprintln!("viewer: {e}");
-            e.status()
-        })),
-        Fetch::State { ns, since } => {
-            let step = match client.state(ns.name(), since) {
-                Ok(rows) => Step::Pulled(rows),
-                Err(e) => {
-                    eprintln!("state {}: {e}", ns.name());
-                    Step::PullFailed(e.status())
-                }
-            };
-            Event::Sync { ns, step }
-        }
-        Fetch::Transcript(read) => {
-            let (started, agent) = (std::time::Instant::now(), read.agent.as_str());
-            let result = match &read.what {
-                What::Page(page) => client.entries(agent, page).map(|e| Got::Page(Box::new(e))),
-                What::Detail => client.agent(agent).map(|d| Got::Detail(Box::new(d))),
-                What::Resolve(query, _, scoped) => {
-                    let scope = scoped.then_some(agent);
-                    client.resolve(query, scope).map(Got::Resolved)
-                }
-            };
-            if let (What::Page(page), Ok(Got::Page(e))) = (&read.what, &result) {
-                let ms = started.elapsed().as_secs_f64() * 1e3;
-                let n = e.entries.len();
-                harness::metric(format!("read {agent} {page:?}: {n} entries in {ms:.1} ms"));
-            }
-            let result = result.map_err(|e| e.to_string());
-            Event::Transcript(transcript::Step::Read(read, result))
-        }
-    }
-}
-
-/// Save the outbox, then post each write and report its answer. A failed save posts nothing: every
-/// write comes back as a transport-style failure, which backs off and tries again (saving first again).
-pub fn save_then_send(
-    disk: &Disk,
-    client: &Client,
-    outbox: &[u8],
-    seq: u64,
-    sends: Vec<Write>,
-    mut on: impl FnMut(Event),
-) {
-    let saved = disk.write(local::OUTBOX, outbox, seq);
-    if let Err(e) = &saved {
-        eprintln!("local: could not save outbox.json, not sending: {e}");
-    }
-    for Write::State { ns, rows } in sends {
-        let step = match &saved {
-            Err(_) => Step::PostFailed(None),
-            Ok(()) => match client.post_state(ns.name(), &rows) {
-                Ok(_) => Step::Posted,
-                Err(e) => {
-                    eprintln!("state {} post: {e}", ns.name());
-                    Step::PostFailed(e.status())
-                }
-            },
-        };
-        on(Event::Sync { ns, step });
-    }
-}
-
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !std::mem::replace(&mut self.painted, true) {
@@ -398,10 +313,19 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
-                let s = shell.clone();
+                let (s, s2) = (shell.clone(), shell.clone());
                 let probe = harness::Probe {
                     shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
                     link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
+                    start: Box::new(move |cx| {
+                        let open = s2.read(cx).store.transcript.open.as_ref();
+                        let t = open.filter(|t| t.at_start())?;
+                        Some(format!(
+                            "{}: start reached, {} rows",
+                            t.agent,
+                            t.items.len()
+                        ))
+                    }),
                 };
                 window
                     .spawn(cx, async move |cx| harness::run(script, probe, cx).await)

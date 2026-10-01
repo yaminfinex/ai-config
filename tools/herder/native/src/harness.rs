@@ -9,7 +9,8 @@
 //! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches) ·
 //! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) ·
 //! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
-//! cost, occluded or not). Units add `type:` as they need it.
+//! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
+//! its start; fails after `ms`). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
@@ -94,12 +95,17 @@ fn cpu_s() -> f64 {
     m.parse::<f64>().unwrap_or(0.0) * 60.0 + s.parse::<f64>().unwrap_or(0.0)
 }
 
+/// `start:`'s answer: the open transcript and its rows, once it reaches its start.
+type Reached = Option<String>;
+
 /// What the harness asks the app; the shell answers, so the harness knows no views.
 pub struct Probe {
     /// The zoomed agent (`name`, or `name preview`), for `expect:`.
     pub shown: Box<dyn Fn(&App) -> String>,
     /// The action a click on a transcript link dispatches, for `link:`.
     pub link: fn(&str) -> Box<dyn Action>,
+    /// The open transcript once it holds every entry back to the start, for `start:`.
+    pub start: Box<dyn Fn(&App) -> Reached>,
 }
 
 pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
@@ -176,6 +182,22 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 match shown == arg.replace('+', " ") {
                     true => metric(format!("expect {arg}: ok")),
                     false => fail(format!("expect {arg}: the zoom shows `{shown}`")),
+                }
+            }
+            "start" => {
+                let limit = Instant::now() + Duration::from_millis(arg.parse().unwrap_or(600_000));
+                let tick = Duration::from_millis(16);
+                let reached = loop {
+                    let _ = cx.update(|window, cx| window.draw(cx).clear(cx));
+                    let reached = cx.update(|_, cx| (probe.start)(cx)).ok().flatten();
+                    if reached.is_some() || Instant::now() > limit {
+                        break reached;
+                    }
+                    cx.background_executor().timer(tick).await;
+                };
+                match reached {
+                    Some(reached) => metric(format!("transcript {reached}")),
+                    None => fail(format!("start {arg}: not reached")),
                 }
             }
             "cpuscroll" => {
