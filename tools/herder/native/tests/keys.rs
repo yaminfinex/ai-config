@@ -1,7 +1,7 @@
 //! The key guard (ARCHITECTURE §4): no lens or zoom key fires while an Input or a Terminal has focus,
 //! checked against the real binding table and GPUI's own matcher.
 
-use gpui_kit::{KeyBinding, KeyContext, Keymap, Keystroke};
+use gpui_kit::{KeyContext, Keymap, Keystroke};
 use herder_native::views;
 
 fn fires(keymap: &Keymap, key: &str, stack: &[&str]) -> bool {
@@ -57,22 +57,40 @@ fn no_navigation_key_fires_inside_an_input_or_terminal() {
     assert!(fires(&keymap, "]", &["Lens", "Space"]) && !fires(&keymap, "]", &["Lens"]));
 }
 
-gpui_kit::actions!(u3, [ScrollDown]);
-
-/// For U3: a transcript's own `j` (bound in a context deeper than `Lens`) must win over the lens's
-/// `j`, which HOME's predicate still matches inside the zoom. GPUI ranks the deeper context first.
+/// U3: the transcript's scroll keys bind in the zoom and win over the lens's `j` / `k`, which HOME's
+/// predicate still matches inside the zoom: GPUI ranks the deeper context (`Space`) first.
 #[test]
-fn a_deeper_context_binding_wins_over_home() {
-    let mut bindings = views::bindings();
-    bindings.push(KeyBinding::new("j", ScrollDown, Some("Transcript")));
-    let keymap = Keymap::new(bindings);
-    let stack: Vec<KeyContext> = ["Lens", "Space", "Transcript"]
+fn transcript_scroll_keys_win_over_home_inside_the_zoom() {
+    use views::transcript::Scroll;
+    let keymap = Keymap::new(views::bindings());
+    let stack: Vec<KeyContext> = ["Lens", "Space"]
         .iter()
         .map(|c| KeyContext::parse(c).unwrap())
         .collect();
-    let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse("j").unwrap()], &stack);
+    let keys = [
+        ("j", Scroll::Lines(1)),
+        ("k", Scroll::Lines(-1)),
+        ("space", Scroll::Pages(1)),
+        ("shift-space", Scroll::Pages(-1)),
+        ("g", Scroll::Top),
+        ("shift-g", Scroll::Bottom),
+    ];
+    for (key, scroll) in keys {
+        let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse(key).unwrap()], &stack);
+        let first = hits.first().map(|b| b.action().partial_eq(&scroll));
+        assert_eq!(first, Some(true), "`{key}` scrolls the transcript");
+        for guard in ["Input", "Terminal"] {
+            assert!(
+                !fires(&keymap, key, &["Lens", "Space", guard]),
+                "`{key}` in {guard}"
+            );
+        }
+    }
+    // On the lens, `j` / `k` still move between rows.
+    let home: Vec<KeyContext> = vec![KeyContext::parse("Lens").unwrap()];
+    let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse("j").unwrap()], &home);
     assert!(
         hits.first()
-            .is_some_and(|b| b.action().partial_eq(&ScrollDown))
+            .is_some_and(|b| !b.action().partial_eq(&Scroll::Lines(1)))
     );
 }

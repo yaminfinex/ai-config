@@ -61,7 +61,11 @@ fn zooming_in_views_the_agent_needing_you_and_tabs_view_the_next() {
         "wraps"
     );
 
-    assert!(space::act(&store, &mut ui, Zoomed::Out).is_empty());
+    let hide = |events: Vec<Event>| matches!(events.as_slice(), [Event::Transcript(_)]);
+    assert!(
+        hide(space::act(&store, &mut ui, Zoomed::Out)),
+        "the transcript goes"
+    );
     assert_eq!(zoomed(&ui), None);
     let leaving = ui.anim.as_ref().and_then(|a| a.leaving());
     assert_eq!(
@@ -87,7 +91,7 @@ fn n_and_brackets_move_between_spaces_and_swipe_when_zoomed() {
     assert_eq!(zoomed(&ui).map(|z| z.0), Some(next.id.as_str()));
     assert!(matches!(
         events.as_slice(),
-        [Event::Lens(Move::View { .. })]
+        [Event::Lens(Move::View { .. }), Event::Transcript(_)]
     ));
     assert!(
         ui.anim.as_ref().is_some_and(|a| !a.morphs()),
@@ -125,7 +129,8 @@ fn membership_changing_while_zoomed() {
 
     // The space itself goes: any zoom key morphs back to the lens.
     store.spaces.remove(at);
-    assert!(space::act(&store, &mut ui, Zoomed::Space(1)).is_empty());
+    let events = space::act(&store, &mut ui, Zoomed::Space(1));
+    assert!(matches!(events.as_slice(), [Event::Transcript(_)]));
     assert_eq!(zoomed(&ui), None);
 }
 
@@ -167,4 +172,136 @@ fn placing_the_implicit_first_selection_keeps_it_selected() {
         first,
         "and the selection with it"
     );
+}
+
+mod links {
+    use crate::views::markdown::{Mentions, link, path_like, route, vscode_url};
+
+    const WEB: &str = "http://h:4400/agents/riko";
+
+    fn linked(text: &str) -> String {
+        let names = ["native-kona", "native-bozo", "riko", "orch-lega"];
+        link(text, &Mentions::new(names), WEB)
+    }
+
+    #[test]
+    fn mentions_link_board_names_and_unique_base_names() {
+        assert_eq!(
+            linked("ask @kona, then native-bozo and riko."),
+            "ask [@kona](herder-agent:native-kona), then [native-bozo](herder-agent:native-bozo) and [riko](herder-agent:riko)."
+        );
+        // Unknown names, a longer word, and names beside a path or an extension are not mentions.
+        for plain in [
+            "@zzzz is new",
+            "konaville",
+            "see ~/x/kona",
+            "kona.md is a file",
+            "herder@riko",
+        ] {
+            assert!(
+                !linked(plain).contains("herder-agent:"),
+                "{plain}: {}",
+                linked(plain)
+            );
+        }
+    }
+
+    #[test]
+    fn code_is_not_linked_except_a_path_in_a_code_span() {
+        assert_eq!(linked("`@kona`"), "`@kona`");
+        assert_eq!(linked("`self.items`"), "`self.items`");
+        assert_eq!(
+            linked("see `src/views/transcript.rs:12`"),
+            "see [`src/views/transcript.rs:12`](<herder-path:src/views/transcript.rs:12>)"
+        );
+        let fenced = "```rust\nlet kona = \"src/main.rs\";\n```\n";
+        assert_eq!(linked(fenced), fenced);
+        let indented = "text\n\n    riko src/a/b.rs\n";
+        assert_eq!(linked(indented), indented);
+        assert_eq!(
+            linked("[riko](https://x.y/src/a/b)"),
+            "[riko](https://x.y/src/a/b)"
+        );
+        // The parser's boundaries: a longer fence holds a shorter one, a code span may span lines, a
+        // reference link keeps its syntax.
+        let long = "````md\n```\nriko src/a/b.rs\n````\nriko\n";
+        assert_eq!(
+            linked(long),
+            "````md\n```\nriko src/a/b.rs\n````\n[riko](herder-agent:riko)\n"
+        );
+        let span = "a `riko\nsrc/a/b.rs` b";
+        assert_eq!(linked(span), span);
+        let reference = "see [riko][ref]\n\n[ref]: https://x.y\n";
+        assert_eq!(linked(reference), reference);
+    }
+
+    #[test]
+    fn mermaid_links_to_web_and_authored_paths_route_to_open_path() {
+        let diagram = "before\n\n```mermaid\ngraph TD; a-->b\n```\n";
+        assert_eq!(
+            linked(diagram),
+            format!("before\n\n[view diagram in web ↗](<{WEB}>)\n")
+        );
+        assert_eq!(
+            route("docs/plan.md").as_deref(),
+            Some("herder-path:docs/plan.md")
+        );
+        assert_eq!(
+            route("/etc/hosts").as_deref(),
+            Some("herder-path:/etc/hosts")
+        );
+        assert_eq!(
+            route("herder-agent:riko").as_deref(),
+            Some("herder-agent:riko")
+        );
+        for elsewhere in ["https://x.y/a", "mailto:a@b", "#heading", ""] {
+            assert_eq!(route(elsewhere), None, "{elsewhere}");
+        }
+    }
+
+    #[test]
+    fn paths_exclude_trailing_punctuation_and_prose_look_alikes() {
+        assert_eq!(
+            linked("Read ARCHITECTURE.md. Then (src/store/mod.rs:40), done"),
+            "Read [ARCHITECTURE.md](<herder-path:ARCHITECTURE.md>). Then ([src/store/mod.rs:40](<herder-path:src/store/mod.rs:40>)), done"
+        );
+        assert_eq!(
+            linked("**~/x/y.toml**"),
+            "**[~/x/y.toml](<herder-path:~/x/y.toml>)**"
+        );
+        for word in [
+            "e.g.",
+            "and/or",
+            "/compact",
+            "v0.3.7",
+            "3.14",
+            "12:30",
+            "https://a.b/c/d/e",
+            "a=b/c/d",
+        ] {
+            assert!(!path_like(word, false), "{word}");
+        }
+        for word in [
+            "./run.sh",
+            "~/notes",
+            "/etc/hosts",
+            "a/b/c",
+            "lib.rs",
+            "x.rs:12",
+        ] {
+            assert!(path_like(word, false), "{word}");
+        }
+        assert!(path_like("src/store", true) && !path_like("src/store", false));
+    }
+
+    #[test]
+    fn vscode_urls_encode_each_segment() {
+        let url = vscode_url("superset", "/home/u/a b/ü.rs", Some(7));
+        assert_eq!(
+            url.as_deref(),
+            Some("vscode://vscode-remote/ssh-remote+superset/home/u/a%20b/%C3%BC.rs:7")
+        );
+        assert_eq!(vscode_url("bad host", "/x", None), None);
+        assert_eq!(vscode_url("superset", "relative", None), None);
+    }
 }

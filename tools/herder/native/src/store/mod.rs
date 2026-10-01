@@ -10,6 +10,7 @@
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
 //! - `transcript`: entries → compact items, paging cursors, tool/result pairing (U3).
 
+pub mod condense;
 pub mod fleet;
 pub mod notes;
 pub mod spaces;
@@ -49,6 +50,8 @@ pub struct Prefs {
     pub unread: BTreeSet<String>,
     /// The unsent composer text per agent (U4).
     pub drafts: BTreeMap<String, String>,
+    /// The SSH host alias VS Code's Remote-SSH opens files on (web asks; this Mac defaults to it).
+    pub vscode_host: String,
 }
 
 impl Default for Prefs {
@@ -60,6 +63,7 @@ impl Default for Prefs {
             seen: BTreeMap::new(),
             unread: BTreeSet::new(),
             drafts: BTreeMap::new(),
+            vscode_host: "superset".into(),
         }
     }
 }
@@ -119,12 +123,14 @@ pub enum Event {
     /// An owner move on the lens (`spaces::Move`).
     Lens(spaces::Move),
     TextScale(TextScale),
+    Transcript(transcript::Step),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Fetch {
     Viewer,
     State { ns: Ns, since: u64 },
+    Transcript(transcript::Read),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -157,11 +163,21 @@ pub enum Effect {
         ns: Ns,
         after_ms: u64,
     },
+    /// Dispatch `Event::Transcript(Step::Retry(timer))` after this long.
+    RetryTranscript {
+        timer: transcript::Timer,
+        after_ms: u64,
+    },
     /// Dispatch `Event::ViewerRetry` after this long.
     RetryViewer {
         after_ms: u64,
     },
     Persist(Persist),
+    /// Open a file or folder on the agents' host in VS Code (the file panel's seam, Rung 2).
+    OpenFile {
+        path: String,
+        line: Option<u32>,
+    },
 }
 
 /// Who this Mac's writes are attributed to (`GET /api/viewer`).
@@ -187,6 +203,7 @@ pub struct Store {
     pub spaces: Vec<spaces::Space>,
     pub notes: Vec<notes::Note>,
     pub sync: Syncs,
+    pub transcript: transcript::Live,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
@@ -260,6 +277,7 @@ impl Store {
                 }
             }
             Event::Lens(m) => self.lens_move(m, &mut out),
+            Event::Transcript(step) => self.transcript_step(step, &mut out),
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
                 let next = match step {
@@ -312,6 +330,7 @@ impl Store {
                     build: hello.build_identity,
                 };
                 self.catch_up(out);
+                self.transcript_wake(None, out);
             }
             Wire::Fleet(board) => {
                 self.live = true;
@@ -323,8 +342,10 @@ impl Store {
                     self.sync.get_mut(ns).changed(c.rev, out);
                 }
             }
-            // Transcript wakes are U3's.
-            Wire::Entry { .. } | Wire::Rewindow(_) | Wire::Ping | Wire::Other(_) => {}
+            Wire::Entry { agent, .. } => self.transcript_wake(Some(&agent), out),
+            Wire::Rewindow(r) => self.transcript_rewindow(&r.agent, out),
+            Wire::Message(m) => self.transcript_message(&m.to, out),
+            Wire::Ping | Wire::Other(_) => {}
         }
     }
 

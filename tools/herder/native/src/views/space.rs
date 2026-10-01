@@ -1,16 +1,19 @@
-//! The zoom shell (`Space` context): one space's agents as tabs over the zoomed agent. In U2 the body is
-//! a placeholder (name, status, cwd); U3 puts the transcript there. Zooming into an agent marks it seen
-//! and clears the space's unread mark.
+//! The zoom shell (`Space` context): one space's agents as tabs over the zoomed agent's transcript
+//! (`transcript`), plus a preview tab for an outsider opened from a mention (local only, never a
+//! member). Zooming into an agent marks it seen and clears the space's unread mark.
 //!
 //! Transitions, as the spike: `enter` morphs the card's bounds to the window (280 ms) and `escape`
 //! morphs back (200 ms); `[` `]` and `n` swipe sideways (240 ms). Each is one-shot, and the lens is
 //! drawn underneath only while a morph runs.
 
 use crate::store::spaces::{Move, Space};
+use crate::store::transcript;
 use crate::store::{Event, Store};
 use crate::views::lens::{self, Nav, State, Ui};
+use crate::views::markdown::{AGENT, PATH};
 use crate::views::theme::{TypeScale, pal};
-use crate::views::{Host, dim, glyph, label, on, pill};
+use crate::views::transcript::{self as body, OpenLink, Scroll};
+use crate::views::{Host, dim, glyph, on, pill};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -136,10 +139,47 @@ pub fn zoom_into(store: &Store, ui: &mut State, space: &Space, swipe: Option<f32
     show(ui, space.id.clone(), agent.map(str::to_string))
 }
 
-fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<Event> {
+pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<Event> {
     let (s, a) = (space.clone(), agent.clone());
     ui.zoom = Some(Zoom { space, agent });
-    vec![Event::Lens(Move::View { space: s, agent: a })]
+    let show = a.clone().map(|agent| {
+        let space = s.clone();
+        Event::Transcript(transcript::Step::Show { space, agent })
+    });
+    let view = Event::Lens(Move::View { space: s, agent: a });
+    std::iter::once(view).chain(show).collect()
+}
+
+/// A clicked link: a path resolves and opens in VS Code; a member becomes its tab and any other agent
+/// a preview tab in this zoom, never added to the space.
+fn open(ui: &mut State, url: &str) -> Vec<Event> {
+    if let Some(path) = url.strip_prefix(PATH) {
+        return vec![Event::Transcript(transcript::Step::OpenPath(
+            path.to_string(),
+        ))];
+    }
+    let (Some(agent), Some(zoom)) = (url.strip_prefix(AGENT), ui.zoom.clone()) else {
+        return Vec::new();
+    };
+    // Linked names are board names; one that has left the board since (retired) opens read-only.
+    if agent.is_empty() || zoom.agent.as_deref() == Some(agent) {
+        return Vec::new();
+    }
+    show(ui, zoom.space, Some(agent.to_string()))
+}
+
+/// What the zoom shows: `name`, or `name preview` for an outsider (the harness's `expect:`).
+pub fn shown(store: &Store, ui: &State) -> String {
+    let Some(zoom) = ui.zoom.as_ref() else {
+        return String::new();
+    };
+    let agent = zoom.agent.clone().unwrap_or_default();
+    let member = zoomed(store, zoom).is_some_and(|s| s.agents().any(|a| a == agent));
+    if member || agent.is_empty() {
+        agent
+    } else {
+        format!("{agent} preview")
+    }
 }
 
 pub(super) fn zoomed<'a>(store: &'a Store, zoom: &Zoom) -> Option<&'a Space> {
@@ -151,11 +191,12 @@ pub fn act(store: &Store, ui: &mut State, key: Zoomed) -> Vec<Event> {
         return Vec::new();
     };
     let (Some(space), Zoomed::Space(by) | Zoomed::Agent(by)) = (zoomed(store, &zoom), key) else {
-        // `escape`, or the space has gone: morph back to its card.
+        // `escape`, or the space has gone: morph back to its card, letting the transcript go.
         let card = ui.cards.borrow().get(&zoom.space).copied();
         ui.anim = Some(Anim::new(Kind::Out, card, ui.zoom.take()));
         ui.reveal.set(true);
-        return Vec::new();
+        ui.transcript.clear();
+        return vec![Event::Transcript(transcript::Step::Hide)];
     };
     let wrap = |at: usize, len: usize| (at as isize + by).rem_euclid(len.max(1) as isize) as usize;
     if let Zoomed::Space(by) = key {
@@ -183,7 +224,9 @@ pub fn render<H: Host>(
 ) -> AnyElement {
     let space = zoomed(store, zoom);
     let current = zoom.agent.as_deref();
-    let tabs = space.into_iter().flat_map(Space::agents).map(|name| {
+    let members: Vec<&str> = space.into_iter().flat_map(Space::agents).collect();
+    let preview = current.filter(|c| !members.contains(c));
+    let tabs = members.into_iter().chain(preview).map(|name| {
         let on = Some(name) == current;
         let agent = store.fleet.agents.get(name);
         div()
@@ -197,6 +240,9 @@ pub fn render<H: Host>(
             .when(on, |el| el.bg(rgb(pal::WASH)))
             .child(agent.map_or_else(|| div().child("·"), |a| glyph(a, &ui.dots, t)))
             .child(name.to_string())
+            .when(Some(name) == preview, |el| {
+                el.child(dim("preview").text_size(t.small))
+            })
             .when(store.agent_needs_you(name), |el| el.child(pill(1, t)))
     });
     let crumb = format!(
@@ -220,6 +266,8 @@ pub fn render<H: Host>(
         .key_context("Space")
         .track_focus(&ui.zoom_focus)
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
+        .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
+        .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
             _ => Vec::new(),
@@ -230,35 +278,6 @@ pub fn render<H: Host>(
         .flex_col()
         .child(bar)
         .child(strip.children(tabs))
-        .child(body(store, current, ui, t))
+        .child(body::render(store, ui, zoom, t, cx))
         .into_any_element()
-}
-
-/// The U2 placeholder for an agent: name, status and working directory.
-fn body(store: &Store, name: Option<&str>, ui: &Ui, t: TypeScale) -> Div {
-    let el = div().p(t.px(24.)).flex().flex_col().gap(t.px(8.));
-    let Some(name) = name else {
-        return el.child(dim("No agents in this space."));
-    };
-    let Some(agent) = store.fleet.agents.get(name) else {
-        let name = div().text_size(t.title).child(name.to_string());
-        return el.child(name).child("not on the board");
-    };
-    let meta = |k: &str, v: String| {
-        let key = dim(k.to_string()).w(t.px(70.));
-        div().flex().gap(t.px(10.)).child(key).child(v)
-    };
-    let head = div().flex().items_center().gap(t.px(8.)).text_size(t.title);
-    el.child(
-        head.child(glyph(agent, &ui.dots, t))
-            .child(name.to_string()),
-    )
-    .child(meta(
-        "status",
-        label(agent, store.agent_needs_you(name)).into(),
-    ))
-    .child(meta("cwd", agent.cwd.clone().unwrap_or_else(|| "—".into())))
-    .child(meta("tool", agent.tool.clone()))
-    .children(agent.title.clone().map(|title| meta("title", title)))
-    .child(dim("The transcript arrives in U3.").pt(t.px(16.)))
 }

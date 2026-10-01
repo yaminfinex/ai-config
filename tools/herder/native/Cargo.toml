@@ -15,7 +15,21 @@ path = "src/main.rs"
 
 [dependencies]
 # Settled decision 1: gpui-kit pinned; no fork of GPUI or Zed.
-gpui-kit = "=0.7.0"
+# Tree-sitter grammars for the transcript's fenced code blocks (U3), as the spike.
+markdown = "=1.0.0"
+gpui-kit = { version = "=0.7.0", features = [
+    "tree-sitter-markdown",
+    "tree-sitter-markdown-inline",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "tree-sitter-tsx",
+    "tree-sitter-javascript",
+    "tree-sitter-go",
+    "tree-sitter-python",
+    "tree-sitter-bash",
+    "tree-sitter-toml",
+    "tree-sitter-yaml",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "2", default-features = false, features = ["json"] }

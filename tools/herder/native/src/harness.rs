@@ -5,8 +5,12 @@
 //! Steps: `wait:<ms>` · `key:<keystroke>` (GPUI syntax such as `cmd-=`, through
 //! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
-//! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile). Units add
-//! `type:`, `cpuscroll:` and `keycpu:` as they need them.
+//! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) · `draw` (one
+//! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches) ·
+//! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) ·
+//! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
+//! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
+//! its start; fails after `ms`). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
@@ -14,8 +18,8 @@
 
 use crate::views::{POINTER_MOVES, PULSE_PAINTS};
 use gpui_kit::{
-    AsyncWindowContext, Keystroke, Modifiers, MouseMoveEvent, Pixels, PlatformInput, Size, point,
-    px, size,
+    Action, App, AsyncWindowContext, Keystroke, Modifiers, MouseMoveEvent, Pixels, PlatformInput,
+    Size, point, px, size,
 };
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
@@ -91,7 +95,20 @@ fn cpu_s() -> f64 {
     m.parse::<f64>().unwrap_or(0.0) * 60.0 + s.parse::<f64>().unwrap_or(0.0)
 }
 
-pub async fn run(script: String, cx: &mut AsyncWindowContext) {
+/// `start:`'s answer: the open transcript and its rows, once it reaches its start.
+type Reached = Option<String>;
+
+/// What the harness asks the app; the shell answers, so the harness knows no views.
+pub struct Probe {
+    /// The zoomed agent (`name`, or `name preview`), for `expect:`.
+    pub shown: Box<dyn Fn(&App) -> String>,
+    /// The action a click on a transcript link dispatches, for `link:`.
+    pub link: fn(&str) -> Box<dyn Action>,
+    /// The open transcript once it holds every entry back to the start, for `start:`.
+    pub start: Box<dyn Fn(&App) -> Reached>,
+}
+
+pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
     let shot_dir = std::env::var("HERDER_NATIVE_SHOT_DIR").unwrap_or_else(|_| ".".into());
     let mut failed = false;
     let mut fail = |what: String| {
@@ -151,6 +168,61 @@ pub async fn run(script: String, cx: &mut AsyncWindowContext) {
                 };
                 metric(format!(
                     "cpu {pct:.2}% of one core over {ms} ms ({on}): {m} pointer moves, {p} pulse paints, {r} shell renders"
+                ));
+            }
+            // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
+            "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
+            "link" => {
+                let link = (probe.link)(arg);
+                let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
+                metric(format!("link {arg}"));
+            }
+            "expect" => {
+                let shown = cx.update(|_, cx| (probe.shown)(cx)).unwrap_or_default();
+                match shown == arg.replace('+', " ") {
+                    true => metric(format!("expect {arg}: ok")),
+                    false => fail(format!("expect {arg}: the zoom shows `{shown}`")),
+                }
+            }
+            "start" => {
+                let limit = Instant::now() + Duration::from_millis(arg.parse().unwrap_or(600_000));
+                let tick = Duration::from_millis(16);
+                let reached = loop {
+                    let _ = cx.update(|window, cx| window.draw(cx).clear(cx));
+                    let reached = cx.update(|_, cx| (probe.start)(cx)).ok().flatten();
+                    if reached.is_some() || Instant::now() > limit {
+                        break reached;
+                    }
+                    cx.background_executor().timer(tick).await;
+                };
+                match reached {
+                    Some(reached) => metric(format!("transcript {reached}")),
+                    None => fail(format!("start {arg}: not reached")),
+                }
+            }
+            "cpuscroll" => {
+                let (key, n) = arg.split_once('x').unwrap_or((arg, "60"));
+                let (key, n) = (Keystroke::parse(key).ok(), n.parse().unwrap_or(60usize));
+                let mut ms = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let Some(key) = key.clone() else { break };
+                    let drawn = cx.update(|window, cx| {
+                        window.dispatch_keystroke(key, cx);
+                        let t = Instant::now();
+                        window.draw(cx).clear(cx);
+                        t.elapsed().as_secs_f64() * 1e3
+                    });
+                    ms.extend(drawn.ok());
+                }
+                ms.sort_by(f64::total_cmp);
+                let at = |q: f64| {
+                    ms.get(((ms.len() as f64 - 1.0) * q) as usize)
+                        .copied()
+                        .unwrap_or(0.0)
+                };
+                let (p50, p95, max) = (at(0.5), at(0.95), at(1.0));
+                metric(format!(
+                    "cpuscroll {arg}: draw p50 {p50:.2} ms, p95 {p95:.2} ms, max {max:.2} ms"
                 ));
             }
             "shot" => {

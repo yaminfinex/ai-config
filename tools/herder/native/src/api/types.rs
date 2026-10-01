@@ -61,8 +61,10 @@ pub enum Wire {
     },
     /// A subscribed agent's session or transcript position reset.
     Rewindow(Rewindow),
+    /// An hcom message; its recipients may now have it queued.
+    Message(Message),
     Ping,
-    /// A type this client does not use (`message`, `substrate`, `file-change`, newer ones), or a frame
+    /// A type this client does not use (`substrate`, `file-change`, newer ones), or a frame
     /// whose data did not decode.
     Other(String),
 }
@@ -79,6 +81,12 @@ pub struct StateChanged {
     pub rev: u64,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Message {
+    pub to: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Rewindow {
     pub agent: String,
@@ -93,6 +101,7 @@ impl Wire {
             "fleet" => serde_json::from_str(data).map(Wire::Fleet),
             "state-changed" => serde_json::from_str(data).map(Wire::StateChanged),
             "rewindow" => serde_json::from_str(data).map(Wire::Rewindow),
+            "message" => serde_json::from_str(data).map(Wire::Message),
             "ping" => Ok(Wire::Ping),
             _ => match event.strip_prefix("entry:") {
                 Some(agent) => serde_json::from_str(data).map(|entry| Wire::Entry {
@@ -177,7 +186,38 @@ pub struct Entry {
     pub byte_offset: u64,
     pub timestamp: Option<String>,
     pub kind: Kind,
+    /// Only the fields the compact view reads (`Slim`).
+    #[serde(deserialize_with = "slim")]
     pub payload: Value,
+}
+
+/// An entry payload's read fields. The rest (`toolUseResult`, `attachment`, compaction histories: about
+/// half the bytes) is skipped while decoding, never built as a `Value`.
+#[derive(Deserialize, Serialize)]
+struct Slim {
+    #[serde(rename = "compactMetadata")]
+    compact_metadata: Option<Value>,
+    #[serde(rename = "fallbackModel")]
+    fallback_model: Option<Value>,
+    #[serde(rename = "isApiErrorMessage")]
+    is_api_error_message: Option<Value>,
+    message: Option<Value>,
+    deliveries: Option<Value>,
+    name: Option<Value>,
+    input: Option<Value>,
+    tool_use_id: Option<Value>,
+    content: Option<Value>,
+    is_error: Option<Value>,
+    subtype: Option<Value>,
+}
+
+fn slim<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
+    let Value::Object(mut kept) = serde_json::to_value(Slim::deserialize(d)?).unwrap_or_default()
+    else {
+        return Ok(Value::Null);
+    };
+    kept.retain(|_, v| !v.is_null());
+    Ok(Value::Object(kept))
 }
 
 /// The server's entry kinds. Anything newer decodes as `Unknown` rather than failing the page.
@@ -287,4 +327,31 @@ pub struct NoteValue {
 pub struct Refusal {
     pub error: String,
     pub detail: String,
+}
+
+/// `GET /api/resolve?q=&agent=`: ranked candidates for a path-like mention, and each root's outcome.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Resolved {
+    pub candidates: Vec<Candidate>,
+    pub roots: Vec<ResolveRoot>,
+}
+
+/// `root` is absolute; `kind` is `file` or `dir`; `tier` is `exact`, `prefix`, `suffix` or `fuzzy`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct Candidate {
+    pub root: String,
+    pub path: String,
+    pub kind: String,
+    pub tier: String,
+    pub score: f64,
+}
+
+/// `status` is `complete`, `degraded` or `failed`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct ResolveRoot {
+    pub root: String,
+    pub status: String,
 }

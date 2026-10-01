@@ -12,21 +12,30 @@
 //! task drains into `dispatch`.
 //!
 //! Durability: every POST of state rows waits for a successful save of the outbox as it stood when the
-//! send was decided (`save_then_send`); a save still pending elsewhere cannot be overtaken.
+//! send was decided (`io::save_then_send`); a save still pending elsewhere cannot be overtaken. The
+//! REST reads and that save run in `io`.
 
 use crate::api::client::{Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::sync::Step;
-use crate::store::{Effect, Event, Fetch, Persist, Store, StreamEvent, TextScale, Write};
-use crate::views::{Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, theme};
+use crate::store::transcript;
+use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
+use crate::views::transcript as transcript_view;
+use crate::views::{
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, lens, markdown, space, theme,
+};
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
 use futures::channel::mpsc::{UnboundedSender, unbounded};
 use gpui_kit::*;
+use io::run_fetch;
+pub use io::save_then_send;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
+
+mod io;
 
 /// Window title and app name.
 pub const APP_NAME: &str = "herder native";
@@ -72,9 +81,11 @@ impl Shell {
             }
         })
         .detach();
+        let mut ui = lens::Ui::new(cx);
+        transcript_view::set_web(&mut ui, &base_url());
         Shell {
             store,
-            ui: lens::Ui::new(cx),
+            ui,
             client: Client::new(base_url()),
             disk: Arc::new(disk),
             tx,
@@ -89,6 +100,10 @@ impl Shell {
 impl Host for Shell {
     fn parts(&mut self) -> (&Store, &mut lens::Ui) {
         (&self.store, &mut self.ui)
+    }
+
+    fn view(&self) -> (&Store, &lens::Ui) {
+        (&self.store, &self.ui)
     }
 
     /// The only path to a state change: reduce, then run the effects.
@@ -145,12 +160,22 @@ impl Shell {
                     self.later(after_ms, Event::Sync { ns, step }, cx)
                 }
                 Effect::RetryViewer { after_ms } => self.later(after_ms, Event::ViewerRetry, cx),
+                Effect::RetryTranscript { timer, after_ms } => {
+                    let step = transcript::Step::Retry(timer);
+                    self.later(after_ms, Event::Transcript(step), cx)
+                }
                 Effect::Persist(Persist::Outbox) => save_outbox = true,
                 Effect::Persist(Persist::Prefs) => {
                     self.save_later(local::PREFS, PREFS_COALESCE, cx)
                 }
                 Effect::Persist(Persist::Snapshot) => {
                     self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
+                }
+                Effect::OpenFile { path, line } => {
+                    match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
+                        Some(url) => cx.open_url(&url),
+                        None => eprintln!("open: no VS Code URL for {path}"),
+                    }
                 }
             }
         }
@@ -212,54 +237,6 @@ impl Shell {
                 .await;
         })
         .detach();
-    }
-}
-
-fn run_fetch(client: &Client, fetch: Fetch) -> Event {
-    match fetch {
-        Fetch::Viewer => Event::Viewer(client.viewer().map(|v| v.viewer).map_err(|e| {
-            eprintln!("viewer: {e}");
-            e.status()
-        })),
-        Fetch::State { ns, since } => {
-            let step = match client.state(ns.name(), since) {
-                Ok(rows) => Step::Pulled(rows),
-                Err(e) => {
-                    eprintln!("state {}: {e}", ns.name());
-                    Step::PullFailed(e.status())
-                }
-            };
-            Event::Sync { ns, step }
-        }
-    }
-}
-
-/// Save the outbox, then post each write and report its answer. A failed save posts nothing: every
-/// write comes back as a transport-style failure, which backs off and tries again (saving first again).
-pub fn save_then_send(
-    disk: &Disk,
-    client: &Client,
-    outbox: &[u8],
-    seq: u64,
-    sends: Vec<Write>,
-    mut on: impl FnMut(Event),
-) {
-    let saved = disk.write(local::OUTBOX, outbox, seq);
-    if let Err(e) = &saved {
-        eprintln!("local: could not save outbox.json, not sending: {e}");
-    }
-    for Write::State { ns, rows } in sends {
-        let step = match &saved {
-            Err(_) => Step::PostFailed(None),
-            Ok(()) => match client.post_state(ns.name(), &rows) {
-                Ok(_) => Step::Posted,
-                Err(e) => {
-                    eprintln!("state {} post: {e}", ns.name());
-                    Step::PostFailed(e.status())
-                }
-            },
-        };
-        on(Event::Sync { ns, step });
     }
 }
 
@@ -336,8 +313,22 @@ pub fn run() {
             let focus = shell.read(cx).ui.focus_target().clone();
             window.focus(&focus, cx);
             if let Some(script) = script.clone() {
+                let (s, s2) = (shell.clone(), shell.clone());
+                let probe = harness::Probe {
+                    shown: Box::new(move |cx| space::shown(&s.read(cx).store, &s.read(cx).ui)),
+                    link: |url| Box::new(transcript_view::OpenLink(url.to_string().into())),
+                    start: Box::new(move |cx| {
+                        let open = s2.read(cx).store.transcript.open.as_ref();
+                        let t = open.filter(|t| t.at_start())?;
+                        Some(format!(
+                            "{}: start reached, {} rows",
+                            t.agent,
+                            t.items.len()
+                        ))
+                    }),
+                };
                 window
-                    .spawn(cx, async move |cx| harness::run(script, cx).await)
+                    .spawn(cx, async move |cx| harness::run(script, probe, cx).await)
                     .detach();
             }
         });
