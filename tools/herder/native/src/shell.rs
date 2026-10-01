@@ -56,7 +56,7 @@ pub struct Shell {
     tx: UnboundedSender<Event>,
     stream: Option<sse::Reader>,
     /// Files with a write waiting out its coalescing window; it reads the store when it fires.
-    saves: HashSet<&'static str>,
+    saves: HashSet<Persist>,
     painted: bool,
     live_painted: bool,
 }
@@ -169,8 +169,7 @@ impl Shell {
                 }
                 Effect::Fetch(fetch) => self.background(cx, |_, client| run_fetch(client, fetch)),
                 Effect::Message { agent, text } => {
-                    let (bytes, seq) = (local::encode(&self.store.prefs), local::next_seq());
-                    let send = (agent, text);
+                    let ((_, bytes, seq), send) = (self.bytes(Persist::Prefs), (agent, text));
                     self.background(cx, move |disk, client| {
                         save_then_message(disk, client, &bytes, seq, send)
                     })
@@ -186,16 +185,11 @@ impl Shell {
                     self.later(after_ms, Event::Transcript(step), cx)
                 }
                 Effect::Persist(Persist::Outbox) => save_outbox = true,
-                Effect::Persist(Persist::Prefs) => {
-                    self.save_later(local::PREFS, PREFS_COALESCE, cx)
-                }
-                Effect::Persist(Persist::Snapshot) => {
-                    self.save_later(local::SNAPSHOT, SNAPSHOT_COALESCE, cx)
-                }
+                Effect::Persist(file) => self.save_later(file, cx),
                 Effect::Transfer { to, agent } => match to {
                     Dest::Note => lands.push(agent),
                     Dest::Draft => {
-                        let (bytes, seq) = (local::encode(&self.store.prefs), local::next_seq());
+                        let (_, bytes, seq) = self.bytes(Persist::Prefs);
                         self.background(cx, move |disk, _| save_then_land(disk, &bytes, seq, agent))
                     }
                 },
@@ -229,7 +223,7 @@ impl Shell {
         }
         // Saved now even when this batch did not change the outbox: an edit's own save may still be
         // waiting on another task, and a send must never overtake it.
-        let (bytes, seq) = (local::encode(&self.store.outbox()), local::next_seq());
+        let (_, bytes, seq) = self.bytes(Persist::Outbox);
         let (disk, client, tx) = (self.disk.clone(), self.client.clone(), self.tx.clone());
         cx.background_executor()
             .spawn(async move {
@@ -265,25 +259,35 @@ impl Shell {
             .detach();
     }
 
-    /// Write `name` once `delay` has passed, from the store as it is then. A write already waiting
-    /// covers this change too.
-    fn save_later(&mut self, name: &'static str, delay: Duration, cx: &mut Context<Self>) {
-        if !self.saves.insert(name) {
+    /// `file` as the store holds it now: its name, its bytes, and the sequence that orders this write
+    /// after every earlier one.
+    fn bytes(&self, file: Persist) -> (&'static str, Vec<u8>, u64) {
+        let (name, bytes) = match file {
+            Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
+            Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
+            Persist::Snapshot => (local::SNAPSHOT, local::encode(&self.store.snapshot())),
+        };
+        (name, bytes, local::next_seq())
+    }
+
+    /// Write `file` once its coalescing delay has passed, from the store as it is then. A write already
+    /// waiting covers this change too.
+    fn save_later(&mut self, file: Persist, cx: &mut Context<Self>) {
+        if !self.saves.insert(file) {
             return;
         }
+        let delay = match file {
+            Persist::Prefs => PREFS_COALESCE,
+            _ => SNAPSHOT_COALESCE,
+        };
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(delay).await;
-            let Ok((bytes, disk)) = this.update(cx, |s, _| {
-                s.saves.remove(name);
-                let bytes = match name {
-                    local::PREFS => local::encode(&s.store.prefs),
-                    _ => local::encode(&s.store.snapshot()),
-                };
-                (bytes, s.disk.clone())
+            let Ok(((name, bytes, seq), disk)) = this.update(cx, |s, _| {
+                s.saves.remove(&file);
+                (s.bytes(file), s.disk.clone())
             }) else {
                 return;
             };
-            let seq = local::next_seq();
             cx.background_executor()
                 .spawn(async move {
                     if let Err(e) = disk.write(name, &bytes, seq) {

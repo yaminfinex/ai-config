@@ -281,24 +281,27 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held ‚å
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after D1 (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after D2 (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
+`shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
+are restated rather than split: what did not belong in them has moved out (`views::probe`,
+`store::attention`, `shell::io`).
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 322 | `views/mod.rs` | 375 |
-| `api/client.rs` | 206 | `views/lens.rs` | 360 |
-| `api/sse.rs` | 194 | `views/space.rs` | 356 |
-| `store/mod.rs` | 421 | `views/transcript.rs` | 401 |
-| `store/sync.rs` | 314 | `views/composer.rs` | 228 |
-| `store/fleet.rs` | 117 | `views/notes.rs` | 421 |
-| `store/spaces.rs` | 193 | `views/markdown.rs` | 238 |
-| `store/transcript.rs` | 539 | `views/theme.rs` | 100 |
-| `store/condense.rs` | 189 | `shell.rs` | 447 |
-| `store/notes.rs` | 430 | `shell/io.rs` | 133 |
-| `store/composer.rs` | 166 | `harness.rs` | 307 |
+| `api/types.rs` | 322 | `views/mod.rs` | 377 |
+| `api/client.rs` | 206 | `views/lens.rs` | 376 |
+| `api/sse.rs` | 194 | `views/space.rs` | 339 |
+| `store/mod.rs` | 422 | `views/transcript.rs` | 394 |
+| `store/sync.rs` | 314 | `views/composer.rs` | 216 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 376 |
+| `store/spaces.rs` | 193 | `views/probe.rs` | 98 |
+| `store/attention.rs` | 292 | `views/markdown.rs` | 238 |
+| `store/transcript.rs` | 540 | `views/theme.rs` | 100 |
+| `store/condense.rs` | 189 | `shell.rs` | 430 |
+| `store/notes.rs` | 442 | `shell/io.rs` | 135 |
+| `store/composer.rs` | 166 | `harness.rs` | 280 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
-| `store/attention.rs` | 280 | `views/probe.rs` | 97 |
 
 About 6,900 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

@@ -148,7 +148,7 @@ pub enum Fetch {
 }
 
 /// A file the shell writes from the store's current state; it coalesces bursts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Persist {
     Prefs,
     Outbox,
