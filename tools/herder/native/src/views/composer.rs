@@ -37,7 +37,8 @@ pub struct View {
     state: Entity<TextareaState>,
     /// The agent whose draft the box holds.
     agent: Option<String>,
-    /// The last action's focus request: `Some(true)` into the box, `Some(false)` out of it.
+    /// The last action's focus request: `Some(true)` into the box, `Some(false)` out of it; or a landed
+    /// file-back's, taken at the next render.
     pub(super) want: Option<bool>,
 }
 
@@ -67,11 +68,13 @@ impl View {
     }
 }
 
-/// Point the box at the zoomed agent's draft, before a frame is drawn. A box left focused under another
-/// zoom (a filed-back send landed) hands focus to the zoom or the lens.
+/// Point the box at the zoomed agent's draft, before a frame is drawn. A landed file-back hands focus to
+/// the lens wherever it was in the departing zoom, and a box left focused under another agent hands it
+/// to the zoom.
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
-    if ui.composer.agent != agent && ui.composer.focus_handle(cx).is_focused(window) {
+    let stranded = ui.composer.agent != agent && ui.composer.focus_handle(cx).is_focused(window);
+    if ui.composer.want.take() == Some(false) || stranded {
         window.focus(ui.focus_target(), cx);
     }
     let view = &mut ui.composer;
@@ -97,7 +100,7 @@ pub fn probe(ui: &Ui, window: &Window, cx: &App) -> String {
 
 /// A composer key: `Focus` from the zoom, the rest from the box itself.
 pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
-    let Some((space, agent)) = ui.zoom.clone().and_then(|z| Some((z.space, z.agent?))) else {
+    let Some(agent) = ui.zoom.as_ref().and_then(|z| z.agent.clone()) else {
         return Vec::new();
     };
     let send = |file_back| {
@@ -109,9 +112,9 @@ pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
     match key {
         Compose::Focus => ui.composer.want = Some(store.can_send(&agent).is_ok()),
         Compose::Leave => ui.composer.want = Some(false),
-        Compose::Send => return send(None),
+        Compose::Send => return send(false),
         // The zoom stays, "sending", until it lands (`Effect::FiledBack`); a failure stays to say why.
-        Compose::FileBack => return send(Some(space)),
+        Compose::FileBack => return send(true),
     }
     Vec::new()
 }
@@ -129,6 +132,7 @@ pub fn filed_back<H: Host>(
     let before = ui.anim.as_ref().map(space::Anim::seq);
     let out = space::act(store, ui, Zoomed::Out);
     settle_later(ui, before, cx);
+    ui.composer.want = Some(false);
     out
 }
 

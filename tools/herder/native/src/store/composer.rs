@@ -3,7 +3,7 @@
 //! (a `hello`, a retry timer, a reconnect) sends it again, because `POST …/message` has no idempotency
 //! key and a message must never land twice.
 
-use super::spaces::Move;
+use super::spaces::{self, Seen};
 use super::{Attribution, Effect, Persist, Store, Write};
 use crate::api::Refusal;
 
@@ -12,11 +12,8 @@ pub enum Step {
     /// The box's text for `agent` changed.
     Edit { agent: String, text: String },
     /// `cmd-enter`: send `agent`'s draft. `file_back` (`cmd-shift-enter`): once it lands, mark the agent
-    /// seen in this space and leave the zoom for the lens.
-    Send {
-        agent: String,
-        file_back: Option<String>,
-    },
+    /// seen as it stood when sent and leave the zoom for the lens.
+    Send { agent: String, file_back: bool },
     /// The server's answer, or why it was never asked.
     Sent {
         agent: String,
@@ -47,9 +44,10 @@ pub enum Failure {
 /// A send in flight, or the last one's failure, per agent.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Sending {
+    /// `file_back`: the agent as the owner left it, which the landing acknowledges.
     InFlight {
         text: String,
-        file_back: Option<String>,
+        file_back: Option<Seen>,
     },
     Failed(Failure),
 }
@@ -119,6 +117,9 @@ impl Store {
                     return;
                 }
                 let text = self.prefs.drafts[&agent].clone();
+                let file_back = file_back
+                    .then(|| spaces::looking(&self.fleet, &agent))
+                    .flatten();
                 let flight = Sending::InFlight {
                     text: text.clone(),
                     file_back,
@@ -136,10 +137,13 @@ impl Store {
                             drafts.remove(&agent);
                             out.push(Effect::Persist(Persist::Prefs));
                         }
-                        // Filed back: only a send that landed lets the owner leave the agent.
-                        if let Some(space) = file_back {
-                            let seen = Some(agent.clone());
-                            self.lens_move(Move::View { space, agent: seen }, out);
+                        // Filed back: only a send that landed lets the owner leave the agent, and only
+                        // what they saw when sending is seen: a turn since still needs them.
+                        if let Some(then) = file_back {
+                            let seen = &mut self.prefs.seen;
+                            if spaces::acknowledge(seen, &self.fleet, &agent, then) {
+                                out.push(Effect::Persist(Persist::Prefs));
+                            }
                             out.push(Effect::FiledBack { agent });
                         }
                     }

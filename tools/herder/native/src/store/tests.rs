@@ -1865,8 +1865,8 @@ mod composer {
         store.apply(Event::Compose(C::Edit { agent, text }))
     }
 
-    fn send(store: &mut Store, agent: &str, file_back: Option<&str>) -> Vec<Effect> {
-        let (agent, file_back) = (agent.into(), file_back.map(String::from));
+    fn send(store: &mut Store, agent: &str, file_back: bool) -> Vec<Effect> {
+        let agent = agent.into();
         store.apply(Event::Compose(C::Send { agent, file_back }))
     }
 
@@ -1960,18 +1960,21 @@ mod composer {
     #[test]
     fn a_send_goes_once_and_success_clears_the_draft() {
         let mut store = zoomed("mupu", Some("listening"));
-        assert!(send(&mut store, "mupu", None).is_empty(), "nothing to send");
+        assert!(
+            send(&mut store, "mupu", false).is_empty(),
+            "nothing to send"
+        );
         edit(&mut store, "mupu", "  ");
         assert!(
-            send(&mut store, "mupu", None).is_empty(),
+            send(&mut store, "mupu", false).is_empty(),
             "a blank draft stays"
         );
         edit(&mut store, "mupu", "hi there");
-        let effects = send(&mut store, "mupu", None);
+        let effects = send(&mut store, "mupu", false);
         assert_eq!(messages(&effects), vec![("mupu".into(), "hi there".into())]);
         assert!(store.in_flight("mupu"));
         // In flight: a second press and an edit do nothing.
-        assert!(send(&mut store, "mupu", None).is_empty());
+        assert!(send(&mut store, "mupu", false).is_empty());
         assert!(edit(&mut store, "mupu", "changed").is_empty());
         assert_eq!(store.prefs.drafts["mupu"], "hi there");
         let effects = sent(&mut store, "mupu", Ok(()));
@@ -1994,7 +1997,7 @@ mod composer {
         for failure in failures {
             let mut store = zoomed("mupu", Some("listening"));
             edit(&mut store, "mupu", "hi");
-            send(&mut store, "mupu", None);
+            send(&mut store, "mupu", false);
             assert!(sent(&mut store, "mupu", Err(failure.clone())).is_empty());
             assert_eq!(store.prefs.drafts["mupu"], "hi");
             assert_eq!(store.sends["mupu"], Sending::Failed(failure));
@@ -2009,7 +2012,7 @@ mod composer {
     fn nothing_resends_on_reconnect_or_retry_timers() {
         let mut store = zoomed("mupu", Some("listening"));
         edit(&mut store, "mupu", "once");
-        assert_eq!(messages(&send(&mut store, "mupu", None)).len(), 1);
+        assert_eq!(messages(&send(&mut store, "mupu", false)).len(), 1);
         let space = store.spaces[0].id.clone();
         let mut later = Vec::new();
         later.extend(store.apply(hello("b1")));
@@ -2032,29 +2035,67 @@ mod composer {
     }
 
     #[test]
-    fn a_filed_back_send_leaves_only_once_it_lands() {
+    fn a_filed_back_send_acknowledges_only_what_was_there_when_sent() {
         let mut store = zoomed("mupu", Some("listening"));
-        let space = store.spaces[0].id.clone();
-        store.apply(Event::Lens(spaces::Move::Unread(space.clone())));
+        let mut b = board();
+        let space = space_of(&store, "mupu").clone();
+        let turn = store.fleet.agents["mupu"].turn_end.unwrap();
+        store.prefs.seen.get_mut("mupu").unwrap().turn_end = turn - 1;
         edit(&mut store, "mupu", "done here");
-        assert_eq!(messages(&send(&mut store, "mupu", Some(&space))).len(), 1);
-        // In flight: still unread, the zoom stays.
-        assert!(store.prefs.unread.contains(&space));
-        let effects = sent(&mut store, "mupu", Ok(()));
-        assert!(!store.prefs.unread.contains(&space), "seen");
+        assert_eq!(messages(&send(&mut store, "mupu", true)).len(), 1);
+        assert!(store.agent_needs_you("mupu"), "not seen until it lands");
         let filed = Effect::FiledBack {
             agent: "mupu".into(),
         };
-        assert!(effects.contains(&filed));
-        // A failure stays in the zoom, saying why, and leaves the lens marks alone.
+        assert!(sent(&mut store, "mupu", Ok(())).contains(&filed));
+        assert_eq!(store.prefs.seen["mupu"].turn_end, turn);
+        // The owner moves to another agent; mupu finishes a newer turn and they mark its space unread
+        // before the send lands: both survive the landing.
         edit(&mut store, "mupu", "again");
-        store.apply(Event::Lens(spaces::Move::Unread(space.clone())));
-        send(&mut store, "mupu", Some(&space));
+        send(&mut store, "mupu", true);
+        let other = space.agents().find(|a| *a != "mupu").unwrap().to_string();
+        let (id, agent) = (space.id.clone(), other);
+        store.apply(Event::Transcript(T::Show { space: id, agent }));
+        bump(&mut b, "mupu", 1);
+        // On the stream the open transcript reopened (`fleet_frame` is generation 1's).
+        let event = StreamEvent::Frame(Wire::Fleet(b.clone()));
+        let generation = store.stream;
+        store.apply(Event::Stream { generation, event });
+        store.apply(Event::Lens(spaces::Move::Unread(space.id.clone())));
+        assert!(sent(&mut store, "mupu", Ok(())).contains(&filed));
+        assert!(store.agent_needs_you("mupu"), "the newer turn is unseen");
+        assert!(store.prefs.unread.contains(&space.id));
+        // A failure stays in the zoom, saying why, and acknowledges nothing.
+        let mut store = zoomed("mupu", Some("listening"));
+        store.prefs.seen.get_mut("mupu").unwrap().turn_end = turn - 1;
+        edit(&mut store, "mupu", "once more");
+        send(&mut store, "mupu", true);
         let effects = sent(&mut store, "mupu", Err(Failure::Unreachable("down".into())));
         assert!(effects.is_empty(), "{effects:?}");
-        assert!(store.prefs.unread.contains(&space));
+        assert!(store.agent_needs_you("mupu"));
         let failed = Sending::Failed(Failure::Unreachable("down".into()));
         assert_eq!(store.sends["mupu"], failed);
+    }
+
+    #[test]
+    fn a_late_viewer_answer_does_not_undo_a_send_refusal() {
+        let why = Refusal {
+            error: "sender refused".into(),
+            detail: "web-vile already exists".into(),
+        };
+        for late in [Ok("web-me".into()), Err(None), Err(Some(409))] {
+            let mut store = zoomed("mupu", Some("listening"));
+            assert_eq!(store.viewer, Attribution::Unknown);
+            assert!(store.viewer_asked, "the GET is out");
+            edit(&mut store, "mupu", "hi");
+            send(&mut store, "mupu", false);
+            sent(&mut store, "mupu", Err(Failure::Unattributed(why.clone())));
+            let effects = store.apply(Event::Viewer(late.clone()));
+            assert!(effects.is_empty(), "{late:?}: {effects:?}");
+            assert_eq!(store.viewer, Attribution::Refused(Some(why.clone())));
+            assert!(!store.viewer_asked && !store.viewer_retry, "settled");
+            assert_eq!(store.can_send("mupu"), Err(ReadOnly::Refused));
+        }
     }
 
     #[test]
@@ -2065,7 +2106,7 @@ mod composer {
         for error in ["attribution required", "sender refused"] {
             let mut store = store.clone();
             edit(&mut store, "mupu", "hi");
-            send(&mut store, "mupu", None);
+            send(&mut store, "mupu", false);
             let why = Refusal {
                 error: error.into(),
                 detail: "web-vile already exists".into(),
@@ -2085,7 +2126,7 @@ mod composer {
         }
         // Any other 409 is this send's alone.
         edit(&mut store, "mupu", "hi");
-        send(&mut store, "mupu", None);
+        send(&mut store, "mupu", false);
         sent(
             &mut store,
             "mupu",

@@ -262,6 +262,10 @@ impl Store {
                 StreamEvent::Dropped => self.conn = Conn::Offline,
             },
             Event::Stream { .. } => {}
+            // A send refused for attribution outranks the answer to a GET asked before it.
+            Event::Viewer(_) if matches!(self.viewer, Attribution::Refused(Some(_))) => {
+                self.viewer_asked = false
+            }
             Event::Viewer(v) => {
                 self.viewer_asked = false;
                 self.viewer = match v {
