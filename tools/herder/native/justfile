@@ -157,7 +157,12 @@ check-alerts port="4413":
     run tail 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu draw wait:3000 draw wait:1500 draw header:·+0+need+you quit" "--turn mupu --block mupu"
     grep -q "block: mupu" "$home/tail.fake" && [ -z "$notified" ] || { echo "check-alerts: tail: notified or no block"; exit 1; }
     ! grep -q "platform: badge [1-9]" "$home/tail.log" || { echo "check-alerts: tail: badged"; exit 1; }
-    echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, an agent in no space alerts and opens alone, an agent in two spaces counts once, what lands on a watched tail is seen, no chord taken)"
+    # Scrolled off the bottom by a key, what lands counts again. (A turn landing before the next frame
+    # is views::tests' a_scroll_key_leaves_the_tail_before_the_next_render: frames come here meanwhile.)
+    run scrolled 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu draw key:g wait:3500 header:·+1+need+you quit" "--turn mupu"
+    [ -z "$notified" ] || { echo "check-alerts: scrolled: notified"; exit 1; }
+    badged scrolled 1
+    echo "check-alerts: ok (a turn notifies once and badges, the agent in view is never notified, a burst is one summary, an agent in no space alerts and opens alone, an agent in two spaces counts once, what lands on a watched tail is seen and counts once scrolled off it, no chord taken)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.

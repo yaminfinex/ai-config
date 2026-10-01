@@ -127,8 +127,14 @@ pub enum Step {
     Dismiss,
     /// A failed forward or detail read's backoff ran out: read it again.
     Retry(Timer),
-    /// The view started (or stopped) following the bottom: the owner is watching the tail.
-    Tail(bool),
+    /// The view started (or stopped) following the bottom of `agent`'s rows under `generation`: the
+    /// owner is watching the tail. Taken only while that transcript is still the open one, so an
+    /// observation that outlived a zoom switch or a reset is dropped.
+    Tail {
+        agent: String,
+        generation: u64,
+        tail: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -247,7 +253,12 @@ impl Store {
             Step::Dismiss => t.notice = None,
             Step::Retry(timer) if timer.generation == t.generation => t.retry(timer, out),
             Step::Retry(_) => {}
-            Step::Tail(tail) => t.tail = tail,
+            Step::Tail {
+                agent,
+                generation,
+                tail,
+            } if agent == t.agent && generation == t.generation => t.tail = tail,
+            Step::Tail { .. } => {}
         }
     }
 

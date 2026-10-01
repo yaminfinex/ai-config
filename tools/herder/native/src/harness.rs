@@ -104,7 +104,7 @@ fn cpu_s() -> f64 {
 
 /// What the harness asks the app; the shell answers from `views::probe`, so the harness knows no views.
 pub trait Probe {
-    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes` and `start` (`None`: not yet).
+    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `header` and `start` (`None`: not yet).
     fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String>;
     /// The action a click dispatches, for `link`, `summon` and `click` (`None`: nothing to click).
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>>;

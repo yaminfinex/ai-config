@@ -1,11 +1,14 @@
 //! The lens and zoom key logic against the fixture store: which moves reach the store, where the
 //! selection and zoom go, and when the selected card is revealed. Drawing is the harness's job.
 
+use crate::api::Entries;
 use crate::store::spaces::{Move, Row, Space};
-use crate::store::tests::{board, bump, fleet_frame, loaded, space_of};
-use crate::store::{Event, Store};
+use crate::store::tests::{board, bump, fleet_frame, frame, loaded, space_of};
+use crate::store::transcript::{Got, Step, What};
+use crate::store::{Effect, Event, Fetch, Store};
 use crate::views::lens::{self, Nav, State};
 use crate::views::space::{self, Zoomed};
+use crate::views::transcript::{self, Scroll};
 
 /// A live store where mupu (slack) and orch-lega (herder) have unread turns.
 fn store() -> Store {
@@ -172,6 +175,41 @@ fn placing_the_implicit_first_selection_keeps_it_selected() {
         first,
         "and the selection with it"
     );
+}
+
+/// Owner ruling (c): a scroll key that leaves the bottom says so as it moves the list, so a fleet frame
+/// drained before the next render does not land as seen.
+#[test]
+fn a_scroll_key_leaves_the_tail_before_the_next_render() {
+    let mut store = loaded();
+    let mut b = board();
+    store.apply(fleet_frame(b.clone()));
+    store.apply(Event::Front(true));
+    let (space, agent) = (space_of(&store, "mupu").id.clone(), Some("mupu".into()));
+    let effects = store.apply(Event::Lens(Move::View { space, agent }));
+    let read = effects.into_iter().find_map(|e| match e {
+        Effect::Fetch(Fetch::Transcript(r)) if matches!(r.what, What::Page(_)) => Some(r),
+        _ => None,
+    });
+    let tail = include_str!("../../testdata/agents/mupu/tail.json");
+    let page: Entries = serde_json::from_str(tail).expect("entries fixture decodes");
+    let got = Ok(Got::Page(Box::new(page)));
+    store.apply(Event::Transcript(Step::Read(read.unwrap(), got)));
+    // A render: the list mirrors the rows and follows the bottom, and says so.
+    let mut ui = State::default();
+    ui.transcript
+        .sync(store.transcript.open.as_ref().unwrap(), &store);
+    store.apply(ui.transcript.tail(true));
+    bump(&mut b, "mupu", 1);
+    store.apply(frame(&store, b.clone()));
+    assert!(!store.agent_needs_you("mupu"), "watched as it lands");
+    // `g`, then a fleet frame before any render.
+    for event in transcript::scroll(&store, &mut ui, Scroll::Top) {
+        store.apply(event);
+    }
+    bump(&mut b, "mupu", 1);
+    store.apply(frame(&store, b));
+    assert!(store.agent_needs_you("mupu"), "scrolled off the bottom");
 }
 
 mod links {

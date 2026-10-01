@@ -2880,6 +2880,17 @@ mod alerts {
         Event::Lens(spaces::Move::View { space, agent })
     }
 
+    /// The view's word on whether the open transcript's rows follow the bottom.
+    fn tail(store: &Store, tail: bool) -> Event {
+        let t = store.transcript.open.as_ref().unwrap();
+        let (agent, generation) = (t.agent.clone(), t.generation);
+        Event::Transcript(transcript::Step::Tail {
+            agent,
+            generation,
+            tail,
+        })
+    }
+
     #[test]
     fn a_turn_seen_working_alerts_once_it_stops() {
         let (mut store, mut b) = live();
@@ -3058,7 +3069,7 @@ mod alerts {
         let (mut store, mut b) = live();
         store.apply(Event::Front(true));
         store.apply(view(&store, "mupu"));
-        store.apply(Event::Transcript(transcript::Step::Tail(true)));
+        store.apply(tail(&store, true));
         bump(&mut b, "mupu", 1);
         let effects = store.apply(frame(&store, b.clone()));
         assert!(!effects.contains(&BURST) && badge(&effects).is_none());
@@ -3068,12 +3079,58 @@ mod alerts {
         let effects = store.apply(frame(&store, b.clone()));
         assert!(!effects.contains(&BURST) && badge(&effects).is_none());
         assert!(!store.agent_needs_you("mupu"), "the block is seen");
+        // Not frontmost, the tail is not watched: a turn needs you and alerts. Coming forward at the
+        // tail sees it, before its burst ends.
+        store.apply(Event::Front(false));
+        bump(&mut b, "mupu", 1);
+        let effects = store.apply(frame(&store, b.clone()));
+        assert!(store.agent_needs_you("mupu") && effects.contains(&BURST));
+        store.apply(Event::Front(true));
+        assert!(!store.agent_needs_you("mupu"), "coming forward sees it");
+        assert!(notices(store.apply(Event::Wake(Wake::Burst))).is_empty());
         // Scrolled up, a new turn needs you (the app is still not alerting for the agent in view).
-        store.apply(Event::Transcript(transcript::Step::Tail(false)));
+        store.apply(tail(&store, false));
         bump(&mut b, "mupu", 1);
         let effects = store.apply(frame(&store, b));
         assert!(store.agent_needs_you("mupu"));
         assert_eq!(badge(&effects), Some(1));
         assert!(!effects.contains(&BURST));
+    }
+
+    /// An observation of the tail belongs to one transcript's rows: one that lands after a zoom switch
+    /// or a reset moved on is dropped, and what lands next still needs you.
+    #[test]
+    fn a_stale_tail_observation_is_dropped() {
+        let (mut store, mut b) = live();
+        store.apply(Event::Front(true));
+        store.apply(view(&store, "mupu"));
+        let stale = tail(&store, true);
+        let following = |store: &Store| store.transcript.open.as_ref().unwrap().tail;
+        store.apply(view(&store, "orch-lega"));
+        store.apply(stale.clone());
+        assert!(!following(&store), "another agent's");
+        store.apply(view(&store, "mupu"));
+        store.apply(stale);
+        assert!(!following(&store), "the zoom before's");
+        bump(&mut b, "mupu", 1);
+        store.apply(frame(&store, b.clone()));
+        assert!(store.agent_needs_you("mupu"));
+
+        store.apply(tail(&store, true));
+        assert!(!store.agent_needs_you("mupu"), "a current one is taken");
+        let stale = tail(&store, true);
+        let agent = "mupu".into();
+        let rewindow = StreamEvent::Frame(Wire::Rewindow(crate::api::Rewindow { agent }));
+        let generation = store.stream;
+        store.apply(Event::Stream {
+            generation,
+            event: rewindow,
+        });
+        assert!(!following(&store), "a reset follows nothing yet");
+        store.apply(stale);
+        assert!(!following(&store), "the generation before the reset's");
+        bump(&mut b, "mupu", 1);
+        store.apply(frame(&store, b));
+        assert!(store.agent_needs_you("mupu"));
     }
 }
