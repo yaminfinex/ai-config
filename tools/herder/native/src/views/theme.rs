@@ -125,6 +125,16 @@ fn ours(c: &ThemeConfig) -> Rc<ThemeConfig> {
     k.border = hex(pal::RULE);
     k.link = hex(pal::ACC);
     k.selection = hex(pal::SELECT);
+    // Markdown tables: the header row as web's `th`, the body on the panel (the kit's table surface is
+    // the popover colour).
+    k.table_head = hex(pal::WASH);
+    k.table_head_foreground = hex(pal::INK);
+    k.popover = hex(pal::PANEL);
+    k.popover_foreground = hex(pal::INK);
+    // The composer's and notes' inputs: border, focus ring and caret.
+    k.input = hex(pal::RULE);
+    k.ring = hex(pal::ACC);
+    k.caret = hex(pal::INK);
     Rc::new(c)
 }
 

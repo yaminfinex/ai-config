@@ -470,3 +470,70 @@ mod summon {
         assert_eq!(zoomed(&ui), None);
     }
 }
+
+/// A synthetic wheel over a fenced block in a transcript row (F1): a mostly sideways gesture scrolls the
+/// block and leaves the list alone; a mostly vertical one scrolls the list.
+mod wheel {
+    use crate::views::theme;
+    use crate::views::transcript::sideways;
+    use gpui_kit::component::text::TextView;
+    use gpui_kit::test::{TestSupportExt as _, TestWindowExt as _};
+    use gpui_kit::{
+        Context, Empty, InteractiveElement as _, IntoElement, ListAlignment, ListState,
+        ParentElement as _, Render, ScrollDelta, Styled as _, TestAppContext, VisualTestContext,
+        Window, div, list, point, px,
+    };
+
+    struct Rows(ListState);
+
+    impl Render for Rows {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let fence: String = format!("```\n{}\n```", "wide ".repeat(80));
+            let row = move |ix: usize, _: &mut Window, _: &mut gpui_kit::App| {
+                let md = TextView::markdown(("md", ix), fence.clone())
+                    .style(theme::prose(theme::type_scale(1.)))
+                    .code_block_actions(|_, _, _| Empty);
+                let target = div().id(("row", ix)).w(px(300.)).child(md).test_support();
+                sideways(div().child(target)).into_any_element()
+            };
+            div()
+                .size_full()
+                .child(list(self.0.clone(), row).size_full())
+        }
+    }
+
+    fn rows(cx: &mut TestAppContext) -> (ListState, &mut VisualTestContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+        });
+        let state = ListState::new(40, ListAlignment::Top, px(400.));
+        let view = state.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| Rows(view));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+        (state, cx)
+    }
+
+    fn top(state: &ListState) -> (usize, f32) {
+        let top = state.logical_scroll_top();
+        (top.item_ix, f32::from(top.offset_in_item))
+    }
+
+    #[gpui_kit::test]
+    fn a_sideways_gesture_over_a_fence_leaves_the_list(cx: &mut TestAppContext) {
+        let (state, cx) = rows(cx);
+        let swipe = ScrollDelta::Pixels(point(px(-40.), px(-10.)));
+        cx.update(|window, cx| window.scroll(("row", 1usize), swipe, cx));
+        assert_eq!(top(&state), (0, 0.));
+    }
+
+    #[gpui_kit::test]
+    fn a_vertical_gesture_over_a_fence_scrolls_the_list(cx: &mut TestAppContext) {
+        let (state, cx) = rows(cx);
+        let swipe = ScrollDelta::Pixels(point(px(-10.), px(-40.)));
+        cx.update(|window, cx| window.scroll(("row", 1usize), swipe, cx));
+        assert_ne!(top(&state), (0, 0.));
+    }
+}

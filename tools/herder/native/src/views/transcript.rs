@@ -354,11 +354,12 @@ fn row<H: Host>(
         let text = text
             .style(theme::prose(t))
             .code_block_actions(|_, _, _| Empty);
-        text.on_link_click(|url, _, window, cx| match markdown::route(url) {
+        let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
             Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
             None if url.starts_with("http://") || url.starts_with("https://") => cx.open_url(url),
             None => {}
-        })
+        });
+        sideways(div().child(text))
     };
     let body = match item {
         Item::Prompt(text) => div()
@@ -426,6 +427,19 @@ fn row<H: Host>(
             .into_any_element(),
     };
     el.child(body).into_any_element()
+}
+
+/// Keeps a sideways gesture off the list. A fenced block scrolls itself sideways (`theme::prose`), but
+/// the event goes on bubbling, and GPUI's list would apply its vertical part. Underneath the block, in
+/// bubble order, this stops a gesture that is mostly sideways; a mostly vertical one goes on to the list.
+/// The list never scrolls sideways, so stopping one over prose loses nothing.
+pub(super) fn sideways(el: Div) -> Div {
+    el.on_scroll_wheel(|e: &ScrollWheelEvent, _, cx| {
+        let d = e.delta.pixel_delta(px(16.));
+        if d.x.abs() > d.y.abs() {
+            cx.stop_propagation();
+        }
+    })
 }
 
 /// A delivery as shown, and whether it is long: web's preview, tighter, of at most five lines and 420
