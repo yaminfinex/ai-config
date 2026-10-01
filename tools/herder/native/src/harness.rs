@@ -10,7 +10,9 @@
 //! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) ·
 //! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
 //! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
-//! its start; fails after `ms`). Units add `type:` as they need it.
+//! its start; fails after `ms`) · `box:<focused|idle>:<text>` (the composer's focus and text, `+` for a
+//! space; U4) · `says:<text>` (the line under the composer contains it). Units add `type:` as they need
+//! it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window. `HERDER_NATIVE_VISIBLE=1` orders it in front
 //! instead of behind, still without focus: a window behind others is never drawn, so measuring
@@ -19,7 +21,7 @@
 use crate::views::{POINTER_MOVES, PULSE_PAINTS};
 use gpui_kit::{
     Action, App, AsyncWindowContext, Keystroke, Modifiers, MouseMoveEvent, Pixels, PlatformInput,
-    Size, point, px, size,
+    Size, Window, point, px, size,
 };
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
@@ -97,6 +99,7 @@ fn cpu_s() -> f64 {
 
 /// `start:`'s answer: the open transcript and its rows, once it reaches its start.
 type Reached = Option<String>;
+type Ask = Box<dyn Fn(&Window, &App) -> String>;
 
 /// What the harness asks the app; the shell answers, so the harness knows no views.
 pub struct Probe {
@@ -106,6 +109,10 @@ pub struct Probe {
     pub link: fn(&str) -> Box<dyn Action>,
     /// The open transcript once it holds every entry back to the start, for `start:`.
     pub start: Box<dyn Fn(&App) -> Reached>,
+    /// The composer's focus and text (`focused:text` or `idle:text`), for `box:`.
+    pub composer: Ask,
+    /// The line under the composer, for `says:`.
+    pub says: Box<dyn Fn(&App) -> String>,
 }
 
 pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
@@ -177,11 +184,16 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                 let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
                 metric(format!("link {arg}"));
             }
-            "expect" => {
-                let shown = cx.update(|_, cx| (probe.shown)(cx)).unwrap_or_default();
-                match shown == arg.replace('+', " ") {
-                    true => metric(format!("expect {arg}: ok")),
-                    false => fail(format!("expect {arg}: the zoom shows `{shown}`")),
+            "expect" | "box" | "says" => {
+                let got = cx.update(|window, cx| match op {
+                    "expect" => (probe.shown)(cx),
+                    "box" => (probe.composer)(window, cx),
+                    _ => (probe.says)(cx),
+                });
+                let (got, want) = (got.unwrap_or_default(), arg.replace('+', " "));
+                match got == want || op == "says" && got.contains(&want) {
+                    true => metric(format!("{op} {arg}: ok")),
+                    false => fail(format!("{op} {arg}: got `{got}`")),
                 }
             }
             "start" => {

@@ -4,6 +4,7 @@
 use gpui_kit::{KeyContext, Keymap, Keystroke};
 use herder_native::views;
 
+/// Any of our bindings fires.
 fn fires(keymap: &Keymap, key: &str, stack: &[&str]) -> bool {
     let stack: Vec<KeyContext> = stack
         .iter()
@@ -93,4 +94,56 @@ fn transcript_scroll_keys_win_over_home_inside_the_zoom() {
         hits.first()
             .is_some_and(|b| !b.action().partial_eq(&Scroll::Lines(1)))
     );
+}
+
+/// U4: in the box (`Composer > Input`), `cmd-enter` / `cmd-shift-enter` / `escape` are the composer's
+/// (not the zoom's `escape`), and `/` `r` focus it from the zoom but type into it once there. Another
+/// input in the zoom (U5's notes) gets none of them.
+#[test]
+fn composer_chords_win_in_the_box_only_and_focus_keys_stay_in_the_zoom() {
+    use views::composer::Compose;
+    let keymap = Keymap::new(views::bindings());
+    let parse = |s: &[&str]| -> Vec<KeyContext> {
+        s.iter().map(|c| KeyContext::parse(c).unwrap()).collect()
+    };
+    let first = |key: &str, stack: &[&str]| {
+        let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse(key).unwrap()], &parse(stack));
+        hits.first().map(|b| b.action().boxed_clone())
+    };
+    let boxed = ["Lens", "Space", "Composer", "Input"];
+    for (key, want) in [
+        ("cmd-enter", Compose::Send),
+        ("cmd-shift-enter", Compose::FileBack),
+        ("escape", Compose::Leave),
+    ] {
+        let got = first(key, &boxed);
+        assert!(
+            got.is_some_and(|a| a.partial_eq(&want)),
+            "`{key}` in the box"
+        );
+    }
+    for other in [
+        &["Lens", "Space", "Input"][..],
+        &["Lens", "Space", "Notes", "Input"],
+    ] {
+        for key in [
+            "cmd-enter",
+            "cmd-shift-enter",
+            "alt-enter",
+            "escape",
+            "/",
+            "r",
+        ] {
+            assert!(!fires(&keymap, key, other), "`{key}` fires in {other:?}");
+        }
+    }
+    for key in ["/", "r"] {
+        let got = first(key, &["Lens", "Space"]);
+        assert!(
+            got.is_some_and(|a| a.partial_eq(&Compose::Focus)),
+            "`{key}` in the zoom"
+        );
+        assert!(first(key, &boxed).is_none(), "`{key}` types in the box");
+        assert!(!fires(&keymap, key, &["Lens"]), "`{key}` is not a lens key");
+    }
 }

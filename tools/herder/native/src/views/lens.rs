@@ -43,6 +43,7 @@ const SIZES: [(f32, usize); 4] = [(284., 5), (360., 8), (440., 12), (240., 3)];
 pub struct Ui {
     home: FocusHandle,
     pub(super) zoom_focus: FocusHandle,
+    pub(super) composer: crate::views::composer::View,
     state: State,
 }
 
@@ -83,11 +84,12 @@ impl DerefMut for Ui {
 }
 
 impl Ui {
-    pub fn new(cx: &mut App) -> Self {
+    pub fn new<H: Host>(window: &mut Window, cx: &mut Context<H>) -> Self {
         let (home, zoom_focus) = (cx.focus_handle(), cx.focus_handle());
         Ui {
             home,
             zoom_focus,
+            composer: crate::views::composer::View::new(window, cx),
             state: State::default(),
         }
     }

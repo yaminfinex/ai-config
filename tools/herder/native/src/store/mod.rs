@@ -7,9 +7,11 @@
 //! - `fleet`: agents and their status, derived from the board.
 //! - `spaces`: spaces and their members, in lens order; the lens row type.
 //! - `notes`: note records; drafts live in `Prefs`.
+//! - `composer`: drafts, who can be written to, and each message send (U4).
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
 //! - `transcript`: entries → compact items, paging cursors, tool/result pairing (U3).
 
+pub mod composer;
 pub mod condense;
 pub mod fleet;
 pub mod notes;
@@ -20,7 +22,7 @@ pub mod transcript;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use crate::api::{Board, StateRow, Wire};
+use crate::api::{Board, Refusal, StateRow, Wire};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use sync::{Ns, Step, Syncs};
@@ -124,6 +126,7 @@ pub enum Event {
     Lens(spaces::Move),
     TextScale(TextScale),
     Transcript(transcript::Step),
+    Compose(composer::Step),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -135,7 +138,15 @@ pub enum Fetch {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Write {
-    State { ns: Ns, rows: Vec<StateRow> },
+    State {
+        ns: Ns,
+        rows: Vec<StateRow>,
+    },
+    /// `POST /api/agents/{agent}/message`, once, after the prefs (with the draft) are saved.
+    Message {
+        agent: String,
+        text: String,
+    },
 }
 
 /// A file the shell writes from the store's current state; it coalesces bursts.
@@ -155,8 +166,8 @@ pub enum Effect {
         agents: Vec<String>,
     },
     Fetch(Fetch),
-    /// The shell saves the current outbox first and posts only once that save succeeded; a failed
-    /// save comes back as `Step::PostFailed(None)`.
+    /// The shell saves the current outbox (a message: the prefs) first and posts only once that save
+    /// succeeded; a failed save comes back as `Step::PostFailed(None)` (`Failure::NotSaved`).
     Send(Write),
     /// Dispatch `Event::Sync { ns, step: Step::Retry }` after this long.
     Retry {
@@ -173,6 +184,10 @@ pub enum Effect {
         after_ms: u64,
     },
     Persist(Persist),
+    /// A filed-back send (`cmd-shift-enter`) landed: leave the zoom if it is still on `agent`.
+    FiledBack {
+        agent: String,
+    },
     /// Open a file or folder on the agents' host in VS Code (the file panel's seam, Rung 2).
     OpenFile {
         path: String,
@@ -188,8 +203,9 @@ pub enum Attribution {
     #[default]
     Unknown,
     Attributed(String),
-    /// The server refused (409 on loopback or an unattributed peer); writes will be refused too.
-    Refused,
+    /// The server refused (409 on loopback or an unattributed peer); writes will be refused too. With
+    /// the reason when a send was refused for it (`attribution required`, `sender refused`).
+    Refused(Option<Refusal>),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -204,6 +220,8 @@ pub struct Store {
     pub notes: Vec<notes::Note>,
     pub sync: Syncs,
     pub transcript: transcript::Live,
+    /// Message sends in flight, or their last failure, per agent.
+    pub sends: BTreeMap<String, composer::Sending>,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
@@ -244,11 +262,15 @@ impl Store {
                 StreamEvent::Dropped => self.conn = Conn::Offline,
             },
             Event::Stream { .. } => {}
+            // A send refused for attribution outranks the answer to a GET asked before it.
+            Event::Viewer(_) if matches!(self.viewer, Attribution::Refused(Some(_))) => {
+                self.viewer_asked = false
+            }
             Event::Viewer(v) => {
                 self.viewer_asked = false;
                 self.viewer = match v {
                     Ok(name) => Attribution::Attributed(name),
-                    Err(Some(409)) => Attribution::Refused,
+                    Err(Some(409)) => Attribution::Refused(None),
                     // Transport or a server fault: ask again after a backoff (one timer at a time); a
                     // healthy stream may never send another `hello`.
                     Err(_) => {
@@ -278,6 +300,7 @@ impl Store {
             }
             Event::Lens(m) => self.lens_move(m, &mut out),
             Event::Transcript(step) => self.transcript_step(step, &mut out),
+            Event::Compose(step) => self.compose(step, &mut out),
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
                 let next = match step {
@@ -351,6 +374,7 @@ impl Store {
 
     fn board(&mut self, board: Board, out: &mut Vec<Effect>) {
         self.fleet.ingest(board);
+        self.lapse_blocks();
         if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
             out.push(Effect::Persist(Persist::Prefs));
         }

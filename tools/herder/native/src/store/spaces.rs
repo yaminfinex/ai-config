@@ -235,13 +235,36 @@ fn cycle_visible(space: &Space, fleet: &Fleet, prefs: &mut Prefs) -> bool {
 /// The owner has looked at `name`: its latest turn and its current block are seen. An agent off the
 /// board, or with no turn and no block, gets no mark. True when the mark changed.
 fn mark_seen(seen: &mut BTreeMap<String, Seen>, fleet: &Fleet, name: &str) -> bool {
-    let Some(a) = fleet.agents.get(name) else {
+    looking(fleet, name).is_some_and(|now| acknowledge(seen, fleet, name, now))
+}
+
+/// What looking at `name` now would mark seen; `None` off the board.
+pub(super) fn looking(fleet: &Fleet, name: &str) -> Option<Seen> {
+    let a = fleet.agents.get(name)?;
+    let blocked = a.status() == Status::Blocked;
+    Some(Seen {
+        turn_end: a.turn_end.unwrap_or(0),
+        blocked,
+    })
+}
+
+/// The owner saw `name` as `then` (a send that files it back lands later): turns up to then are seen,
+/// and its block only while it still stands as it was. True when the mark changed.
+pub(super) fn acknowledge(
+    seen: &mut BTreeMap<String, Seen>,
+    fleet: &Fleet,
+    name: &str,
+    then: Seen,
+) -> bool {
+    let Some(now) = looking(fleet, name) else {
         return false;
     };
     let before = seen.get(name).copied().unwrap_or_default();
     let mut mark = before;
-    mark.turn_end = mark.turn_end.max(a.turn_end.unwrap_or(0));
-    mark.blocked = a.status() == Status::Blocked;
+    mark.turn_end = mark.turn_end.max(then.turn_end);
+    if now == then {
+        mark.blocked = then.blocked;
+    }
     let changed = mark != before;
     if changed {
         seen.insert(name.to_string(), mark);
