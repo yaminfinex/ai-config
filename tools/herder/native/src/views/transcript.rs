@@ -216,10 +216,9 @@ pub fn render<H: Host>(
     // Where the pointer lets go, the selection it made is what `c` (or the strip's chip) captures.
     let let_go = cx.listener(|h: &mut H, _: &MouseUpEvent, window, cx| {
         let text = gpui_kit::base::TextSelection::selected_text(window, cx);
-        let text = Some(text.trim().to_string()).filter(|t| !t.is_empty());
-        let notes = &mut h.parts().1.notes;
-        if notes.selection != text {
-            notes.selection = text;
+        let ui = h.parts().1;
+        let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
+        if ui.notes.selected(agent, &text) {
             cx.notify();
         }
     });

@@ -6,8 +6,10 @@
 //! both clients read each other's notes. A version is `max(now, previous + 1)`, as web's.
 //!
 //! The hand-off follows web's `noteHandOff`: the notes are appended to the composer draft (`\n\n`
-//! between them, each as web's `noteTransferText`) and deleted in the same step, not when a message
-//! lands; the draft is saved like any draft, and what the owner then sends from it is theirs to edit.
+//! between them, each as web's `noteTransferText`) and deleted, not when a message lands; what the
+//! owner then sends from it is theirs to edit. A hand-off or a queued draft is a `Transfer`: the
+//! destination (the draft's prefs, the note's outbox) is saved first, and only then is the source
+//! deleted or cleared. Adds, edits and queues over web's 8 KiB are refused in web's words.
 
 use super::sync::{Ns, Step as SyncStep};
 use super::{Effect, Persist, Store};
@@ -70,8 +72,10 @@ pub enum Step {
         quote: Option<String>,
         stamp: Stamp,
     },
+    /// New text for the note `original` was when the editor opened. Deleted meanwhile (by web), it is
+    /// written again from `original`, newer than the tombstone, as web's edit does: the text survives.
     Edit {
-        id: String,
+        original: Note,
         text: String,
         stamp: Stamp,
     },
@@ -79,17 +83,41 @@ pub enum Step {
         id: String,
         stamp: Stamp,
     },
-    /// Every note of `agent` into its composer draft, then deleted.
+    /// Every note of `agent` into its composer draft, deleted once the draft is saved.
     HandOff {
         agent: String,
         stamp: Stamp,
     },
-    /// `alt-enter` in the box: `agent`'s draft becomes a note on it and the box clears.
+    /// `alt-enter` in the box: `agent`'s draft becomes a note on it; the box clears once it is saved.
     Queue {
         agent: String,
         stamp: Stamp,
     },
+    /// The destination of `agent`'s transfer was saved, or the disk refused (`Effect::Transfer`).
+    Landed {
+        agent: String,
+        saved: Result<(), String>,
+    },
 }
+
+/// A move between the notes and a draft, waiting on the save of its destination. The source changes
+/// only once that save landed, so a crash or a refused write can duplicate a note, never lose one.
+#[derive(Clone, Debug)]
+pub enum Transfer {
+    /// The draft before and after the hand-off, and the notes it took with the version it saw.
+    HandOff {
+        before: String,
+        after: String,
+        taken: Vec<(String, i64)>,
+        stamp: Stamp,
+    },
+    /// The draft that became a note.
+    Queue { draft: String },
+}
+
+/// Web's limit on a note's text and quote together (`maxNoteBytes`), in UTF-8 bytes.
+pub const MAX_BYTES: usize = 8 * 1024;
+const TOO_LONG: &str = "This note is too long to save. Shorten it and try again.";
 
 impl Store {
     /// `agent`'s notes, oldest first.
@@ -97,7 +125,45 @@ impl Store {
         self.notes.iter().filter(move |n| n.group == agent)
     }
 
+    /// Whether `agent`'s notes cannot be handed over now: its box is read-only, or a send or another
+    /// transfer is in flight.
+    pub fn hand_off_blocked(&self, agent: &str) -> bool {
+        self.can_send(agent).is_err() || self.in_flight(agent) || self.transfers.contains_key(agent)
+    }
+
+    /// Why web would refuse to save this add, edit or queue, in its words.
+    pub fn refusal(&self, step: &Step) -> Option<&'static str> {
+        let (text, quote, empty) = match step {
+            Step::Add { text, quote, .. } => {
+                let empty = "Write something before saving this note.";
+                (text.as_str(), quote.as_deref(), empty)
+            }
+            Step::Edit { original, text, .. } => {
+                let live = self.notes.iter().find(|n| n.id == original.id);
+                let quote = live.unwrap_or(original).quote.as_deref();
+                (text.as_str(), quote, "A note cannot be empty.")
+            }
+            Step::Queue { agent, .. } => {
+                let draft = self.prefs.drafts.get(agent).map_or("", String::as_str);
+                (draft, None, "")
+            }
+            _ => return None,
+        };
+        let (text, quote) = (text.trim(), quote.map_or("", str::trim));
+        match text.len() + quote.len() {
+            0 if !empty.is_empty() => Some(empty),
+            n if n > MAX_BYTES => Some(TOO_LONG),
+            _ => None,
+        }
+    }
+
     pub(super) fn note(&mut self, step: Step, out: &mut Vec<Effect>) {
+        if let Some(why) = self.refusal(&step) {
+            if let Step::Queue { agent, .. } = &step {
+                self.note_problems.insert(agent.clone(), why.into());
+            }
+            return;
+        }
         let rows = match step {
             Step::Add {
                 group,
@@ -108,10 +174,6 @@ impl Store {
                 let quote = quote
                     .map(|q| q.trim().to_string())
                     .filter(|q| !q.is_empty());
-                let text = text.trim().to_string();
-                if text.is_empty() && quote.is_none() {
-                    return;
-                }
                 let source = quote
                     .as_ref()
                     .map(|_| json!({"kind": "transcript", "agent": group}));
@@ -119,33 +181,39 @@ impl Store {
                 let value = NoteValue {
                     id,
                     group,
-                    text,
+                    text: text.trim().to_string(),
                     quote,
                     source,
                     created,
                 };
                 vec![row(value, 0, &stamp)]
             }
-            Step::Edit { id, text, stamp } => {
-                let Some(note) = self.notes.iter().find(|n| n.id == id) else {
-                    return;
-                };
+            Step::Edit {
+                original,
+                text,
+                stamp,
+            } => {
+                let live = self.notes.iter().find(|n| n.id == original.id);
                 let text = text.trim().to_string();
-                if text == note.text || text.is_empty() && note.quote.is_none() {
+                if live.is_some_and(|n| n.text == text) {
                     return;
                 }
+                let base = live.unwrap_or(&original);
+                // The version to supersede: the row as it stands here, a tombstone included.
+                let seen = self.sync[&Ns::Notes].rows.get(&original.id);
+                let previous = seen.map_or(base.updated, |r| r.updated);
                 let value = NoteValue {
                     text,
-                    ..value(note)
+                    ..value(base)
                 };
-                vec![row(value, note.updated, &stamp)]
+                vec![row(value, previous, &stamp)]
             }
             Step::Delete { id, stamp } => {
                 let note = self.notes.iter().find(|n| n.id == id);
                 note.map(|n| tombstone(n, &stamp)).into_iter().collect()
             }
             Step::HandOff { agent, stamp } => {
-                if self.can_send(&agent).is_err() || self.in_flight(&agent) {
+                if self.hand_off_blocked(&agent) {
                     return;
                 }
                 let notes: Vec<&Note> = self.notes_of(&agent).collect();
@@ -155,37 +223,104 @@ impl Store {
                 if addition.is_empty() {
                     return;
                 }
-                let rows = notes.iter().map(|n| tombstone(n, &stamp)).collect();
+                let taken = notes.iter().map(|n| (n.id.clone(), n.updated)).collect();
                 let draft = self.prefs.drafts.entry(agent.clone()).or_default();
+                let before = draft.clone();
                 *draft = match draft.is_empty() {
                     true => addition,
                     false => format!("{draft}\n\n{addition}"),
                 };
-                self.sends.remove(&agent);
-                out.push(Effect::Persist(Persist::Prefs));
-                rows
-            }
-            Step::Queue { agent, stamp } => {
-                let draft = self.prefs.drafts.get(&agent);
-                if self.in_flight(&agent) || draft.is_none_or(|d| d.trim().is_empty()) {
-                    return;
-                }
-                let text = self.prefs.drafts.remove(&agent).unwrap_or_default();
-                self.sends.remove(&agent);
-                out.push(Effect::Persist(Persist::Prefs));
-                let quote = None;
-                let add = Step::Add {
-                    group: agent,
-                    text,
-                    quote,
+                let after = draft.clone();
+                let transfer = Transfer::HandOff {
+                    before,
+                    after,
+                    taken,
                     stamp,
                 };
-                return self.note(add, out);
+                self.begin_transfer(agent, transfer, Persist::Prefs, out);
+                return;
             }
+            Step::Queue { agent, stamp } => {
+                let draft = self
+                    .prefs
+                    .drafts
+                    .get(&agent)
+                    .filter(|d| !d.trim().is_empty());
+                let Some(draft) = draft.cloned() else {
+                    return;
+                };
+                if self.in_flight(&agent) || self.transfers.contains_key(&agent) {
+                    return;
+                }
+                let add = Step::Add {
+                    group: agent.clone(),
+                    text: draft.clone(),
+                    quote: None,
+                    stamp,
+                };
+                self.note(add, out);
+                let transfer = Transfer::Queue { draft };
+                return self.begin_transfer(agent, transfer, Persist::Outbox, out);
+            }
+            Step::Landed { agent, saved } => match self.land(&agent, saved, out) {
+                Some(rows) => rows,
+                None => return,
+            },
         };
         if !rows.is_empty() {
             self.sync_step(Ns::Notes, SyncStep::Edit(rows), out);
         }
+    }
+
+    fn begin_transfer(&mut self, agent: String, t: Transfer, file: Persist, out: &mut Vec<Effect>) {
+        self.sends.remove(&agent);
+        self.note_problems.remove(&agent);
+        self.transfers.insert(agent.clone(), t);
+        out.push(Effect::Transfer { file, agent });
+    }
+
+    /// Finish `agent`'s transfer once its destination is saved, or undo what was not; a hand-off's
+    /// deletions are returned for the outbox. A refused save is said in the strip.
+    fn land(
+        &mut self,
+        agent: &str,
+        saved: Result<(), String>,
+        out: &mut Vec<Effect>,
+    ) -> Option<Vec<StateRow>> {
+        let transfer = self.transfers.remove(agent)?;
+        let draft = self.prefs.drafts.get(agent);
+        match (transfer, saved) {
+            (Transfer::HandOff { taken, stamp, .. }, Ok(())) => {
+                // A note edited since it was taken is not what went into the draft: it stays.
+                let notes = self
+                    .notes
+                    .iter()
+                    .filter(|n| taken.contains(&(n.id.clone(), n.updated)));
+                return Some(notes.map(|n| tombstone(n, &stamp)).collect());
+            }
+            (Transfer::HandOff { before, after, .. }, Err(e)) => {
+                if draft == Some(&after) {
+                    match before.is_empty() {
+                        true => self.prefs.drafts.remove(agent),
+                        false => self.prefs.drafts.insert(agent.into(), before),
+                    };
+                    out.push(Effect::Persist(Persist::Prefs));
+                }
+                let why = format!("The draft could not be saved, so the notes stay: {e}");
+                self.note_problems.insert(agent.into(), why);
+            }
+            (Transfer::Queue { draft: queued }, Ok(())) => {
+                if draft == Some(&queued) {
+                    self.prefs.drafts.remove(agent);
+                    out.push(Effect::Persist(Persist::Prefs));
+                }
+            }
+            (Transfer::Queue { .. }, Err(e)) => {
+                let why = format!("The note could not be saved yet, so the draft stays: {e}");
+                self.note_problems.insert(agent.into(), why);
+            }
+        }
+        None
     }
 }
 

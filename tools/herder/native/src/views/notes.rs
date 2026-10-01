@@ -9,7 +9,8 @@
 //! `enter` or `cmd-enter` save, `shift-enter` a new line, `escape` cancel. `alt-enter` in the composer
 //! queues its draft as a note (`views::composer`).
 
-use crate::store::notes::{Stamp, Step};
+use crate::store::notes::{Note, Stamp, Step};
+use crate::store::sync::{Hold, Ns};
 use crate::store::{Event, Store};
 use crate::views::lens::Ui;
 use crate::views::theme::{TypeScale, pal};
@@ -17,7 +18,6 @@ use crate::views::{Host, dim};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = notes, no_json)]
@@ -46,8 +46,11 @@ pub struct View {
     editing: Option<Editing>,
     /// Text for the editor at the next render.
     load: Option<String>,
-    /// The transcript selection when the pointer last let go, trimmed; what `c` captures.
-    pub(super) selection: Option<String>,
+    /// The transcript selection when the pointer last let go, trimmed, with the agent it was made on;
+    /// what `c` captures. Gone once the zoom leaves that agent.
+    selection: Option<(String, String)>,
+    /// Why the editor's text was not saved.
+    problem: Option<&'static str>,
     armed: Option<SharedString>,
     open: bool,
     /// The last action's focus request: `Some(true)` into the editor, `Some(false)` out of it.
@@ -56,8 +59,8 @@ pub struct View {
 
 struct Editing {
     agent: String,
-    /// A note being edited, or a new one (with its captured quote).
-    note: Option<SharedString>,
+    /// A note being edited, as it was when the editor opened, or a new one (with its captured quote).
+    note: Option<Note>,
     quote: Option<String>,
 }
 
@@ -79,6 +82,7 @@ impl View {
             editing: None,
             load: None,
             selection: None,
+            problem: None,
             armed: None,
             open: false,
             want: None,
@@ -89,23 +93,29 @@ impl View {
         self.editor.read(cx).focus_handle(cx)
     }
 
-    fn begin(
-        &mut self,
-        agent: &str,
-        note: Option<SharedString>,
-        quote: Option<String>,
-        text: &str,
-    ) {
+    fn begin(&mut self, agent: &str, note: Option<Note>, quote: Option<String>) {
+        let text = note.as_ref().map_or(String::new(), |n| n.text.clone());
         let agent = agent.to_string();
         self.editing = Some(Editing { agent, note, quote });
-        self.load = Some(text.to_string());
+        self.load = Some(text);
         self.armed = None;
+        self.problem = None;
         self.want = Some(true);
     }
 
     fn close(&mut self) {
         self.editing = None;
+        self.problem = None;
         self.want = Some(false);
+    }
+
+    /// The pointer let go on `agent`'s transcript with `text` selected (blank: none). Whether it changed.
+    pub fn selected(&mut self, agent: Option<String>, text: &str) -> bool {
+        let text = Some(text.trim()).filter(|t| !t.is_empty());
+        let next = agent.zip(text.map(str::to_string));
+        let changed = self.selection != next;
+        self.selection = next;
+        changed
     }
 }
 
@@ -113,6 +123,7 @@ impl View {
 pub fn stamp() -> Stamp {
     let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
     let now = since.map_or(0, |d| d.as_millis() as i64);
+    let uuid = || uuid::Uuid::new_v4().to_string();
     Stamp {
         now,
         id: uuid(),
@@ -120,38 +131,18 @@ pub fn stamp() -> Stamp {
     }
 }
 
-/// A random UUID v4, as web's ids: std's randomly keyed hasher over a counter (unique, not secret).
-fn uuid() -> String {
-    use std::hash::BuildHasher;
-    static N: AtomicU64 = AtomicU64::new(0);
-    let (s, n) = (
-        std::hash::RandomState::new(),
-        N.fetch_add(1, Ordering::Relaxed),
-    );
-    let x = (u128::from(s.hash_one((n, 0))) << 64) | u128::from(s.hash_one((n, 1)));
-    let x = (x & !(0xf << 76) | 0x4 << 76) & !(0x3 << 62) | 0x2 << 62;
-    let h = format!("{x:032x}");
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..]
-    )
-}
-
-/// Close what belonged to another agent, before a frame is drawn; load the editor's text.
+/// Drop what belonged to another agent (the editor, the selection), before a frame is drawn; load the
+/// editor's text.
 pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
     let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
     let notes = &mut ui.notes;
-    if notes
-        .editing
-        .as_ref()
-        .is_some_and(|e| Some(&e.agent) != agent.as_ref())
-    {
-        notes.editing = None;
+    let other = |a: &String| Some(a) != agent.as_ref();
+    if notes.selection.as_ref().is_some_and(|(a, _)| other(a)) {
         notes.selection = None;
+    }
+    if notes.editing.as_ref().is_some_and(|e| other(&e.agent)) {
+        notes.editing = None;
+        notes.problem = None;
         if notes.focus_handle(cx).is_focused(window) {
             window.focus(&ui.zoom_focus, cx);
         }
@@ -183,9 +174,33 @@ pub fn probe(store: &Store, ui: &Ui, window: &Window, cx: &App) -> String {
     format!("{n}:{editor}")
 }
 
-/// What the pointer selected in the transcript, for the harness's `select:` (it cannot drag).
+/// What the pointer selected in the zoomed transcript, for the harness's `select:` (it cannot drag).
 pub fn select(ui: &mut Ui, text: &str) {
-    ui.notes.selection = Some(text.to_string());
+    let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
+    ui.notes.selected(agent, text);
+}
+
+/// What a click on the strip dispatches, for the harness's `click:` (`capture`, `handoff`, or `edit:i`
+/// and `delete:i` on the zoomed agent's note `i`, oldest first); `None` where the strip has no such thing.
+pub fn clicked(store: &Store, ui: &Ui, what: &str) -> Option<Notes> {
+    let agent = ui.zoom.as_ref()?.agent.as_deref()?;
+    let note = |i: &str| {
+        let note = store.notes_of(agent).nth(i.parse().ok()?)?;
+        Some(SharedString::from(note.id.clone()))
+    };
+    match what.split_once(':').unwrap_or((what, "")) {
+        ("capture", _) => {
+            ui.notes.selection.as_ref().filter(|(a, _)| a == agent)?;
+            Some(Notes::Capture)
+        }
+        ("handoff", _) => {
+            let shown = note("0").is_some() && !store.hand_off_blocked(agent);
+            shown.then_some(Notes::HandOff)
+        }
+        ("edit", i) => note(i).map(Notes::Edit),
+        ("delete", i) => note(i).map(Notes::Delete),
+        _ => None,
+    }
 }
 
 pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
@@ -195,9 +210,9 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
     let notes = &mut ui.notes;
     let event = |step| vec![Event::Note(step)];
     match key {
-        Notes::Add => notes.begin(&agent, None, None, ""),
-        Notes::Capture => match notes.selection.take() {
-            Some(quote) => notes.begin(&agent, None, Some(quote), ""),
+        Notes::Add => notes.begin(&agent, None, None),
+        Notes::Capture => match notes.selection.take_if(|(a, _)| *a == agent) {
+            Some((_, quote)) => notes.begin(&agent, None, Some(quote)),
             None => return Vec::new(),
         },
         Notes::HandOff => {
@@ -208,31 +223,37 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
             });
         }
         Notes::Save => {
-            let Some(editing) = notes.editing.take() else {
+            let Some(editing) = &notes.editing else {
                 return Vec::new();
             };
-            notes.want = Some(false);
             let (text, stamp) = (notes.text.clone(), stamp());
-            return event(match editing.note {
-                Some(id) => Step::Edit {
-                    id: id.into(),
+            let step = match &editing.note {
+                Some(original) => Step::Edit {
+                    original: original.clone(),
                     text,
                     stamp,
                 },
                 None => Step::Add {
                     group: agent,
                     text,
-                    quote: editing.quote,
+                    quote: editing.quote.clone(),
                     stamp,
                 },
-            });
+            };
+            // Refused, the editor keeps its text and says why; saved, it closes.
+            notes.problem = store.refusal(&step);
+            if notes.problem.is_some() {
+                return Vec::new();
+            }
+            notes.close();
+            return event(step);
         }
         Notes::Cancel => notes.close(),
         Notes::Toggle => notes.open = !notes.open,
         Notes::Edit(id) => {
             let note = store.notes.iter().find(|n| n.id == id.as_ref());
             if let Some(n) = note {
-                notes.begin(&agent, Some(id.clone()), n.quote.clone(), &n.text);
+                notes.begin(&agent, Some(n.clone()), n.quote.clone());
             }
         }
         Notes::Delete(id) if notes.armed.as_ref() == Some(id) => {
@@ -270,12 +291,38 @@ fn line(s: &str) -> String {
     if more { format!("{cut}…") } else { cut }
 }
 
-/// The strip for `agent`: nothing while it has no notes, no editor open and no selection to capture.
+/// Why notes are not being saved or synced, for `agent`'s strip: its editor's refusal, its last
+/// transfer's, and a notes sync the server is holding back.
+fn problems(store: &Store, v: &View, agent: &str) -> Vec<String> {
+    let hold = match store.sync[&Ns::Notes].hold {
+        Some(Hold::TooLarge) => Some(
+            "The server refused the notes as too large (413); unsent notes wait for the next edit.",
+        ),
+        Some(Hold::LocalOnly) => {
+            Some("Notes stay on this Mac: the server refused its attribution (409).")
+        }
+        None => None,
+    };
+    let editor = v
+        .problem
+        .filter(|_| v.editing.as_ref().is_some_and(|e| e.agent == agent));
+    let last = store.note_problems.get(agent).map(String::as_str);
+    [editor, last, hold]
+        .into_iter()
+        .flatten()
+        .map(str::to_string)
+        .collect()
+}
+
+/// The strip for `agent`: nothing while it has no notes, no editor open, no selection to capture and
+/// nothing to say.
 pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> {
     let v = &ui.notes;
     let notes: Vec<_> = store.notes_of(agent).collect();
     let editing = v.editing.as_ref().filter(|e| e.agent == agent);
-    if notes.is_empty() && editing.is_none() && v.selection.is_none() {
+    let selection = v.selection.as_ref().filter(|(a, _)| a == agent);
+    let problems = problems(store, v, agent);
+    if notes.is_empty() && editing.is_none() && selection.is_none() && problems.is_empty() {
         return None;
     }
     let (n, open) = (notes.len(), notes.len() <= SHOWN || v.open);
@@ -295,10 +342,14 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
         .text_size(t.small);
     let head = head
         .child(count.text_color(rgb(pal::SLATE)))
-        .when(n > 0, |h| {
+        .when(n > 0 && !store.hand_off_blocked(agent), |h| {
             h.child(chip("handoff", "→ composer  p".into(), Notes::HandOff, t))
         })
-        .children(v.selection.as_ref().map(|s| {
+        // Unavailable (the box is read-only or busy; it says why), shown as such rather than hidden.
+        .when(n > 0 && store.hand_off_blocked(agent), |h| {
+            h.child(dim("→ composer unavailable"))
+        })
+        .children(selection.map(|(_, s)| {
             chip("capture", format!("❝ {}  c", line(s)), Notes::Capture, t)
                 .max_w(t.px(420.))
                 .truncate()
@@ -306,7 +357,7 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
     let rows = notes.into_iter().filter(|_| open).map(|note| {
         let id = SharedString::from(note.id.clone());
         let armed = v.armed.as_ref() == Some(&id);
-        let on = editing.is_some_and(|e| e.note.as_ref() == Some(&id));
+        let on = editing.is_some_and(|e| e.note.as_ref().is_some_and(|n| n.id == note.id));
         let quote = note.quote.as_deref().map(|q| {
             dim(format!("❝ {}", line(q)))
                 .flex_none()
@@ -366,6 +417,10 @@ pub fn render(store: &Store, ui: &Ui, agent: &str, t: TypeScale) -> Option<Div> 
             .border_color(rgb(pal::RULE))
             .child(head)
             .children(rows)
-            .children(editor),
+            .children(editor)
+            .children(problems.into_iter().map(|why| {
+                let line = div().text_size(t.small).text_color(rgb(pal::AMBER));
+                line.child(why)
+            })),
     )
 }

@@ -6,6 +6,7 @@ use crate::api::client::Error;
 use crate::harness;
 use crate::local::{self, Disk};
 use crate::store::composer::{self, Failure};
+use crate::store::notes;
 use crate::store::sync::Step;
 use crate::store::transcript::{self, Got, What};
 use crate::store::{Event, Fetch, Write};
@@ -116,4 +117,19 @@ pub fn save_then_message(
         }),
     };
     Event::Compose(composer::Step::Sent { agent, result })
+}
+
+/// Save one file now, the destination of a note transfer, and report whether it is on disk.
+pub fn save_then_land(
+    disk: &Disk,
+    name: &'static str,
+    bytes: &[u8],
+    seq: u64,
+    agent: String,
+) -> Event {
+    let saved = disk.write(name, bytes, seq).map_err(|e| {
+        eprintln!("local: could not save {name}: {e}");
+        e.to_string()
+    });
+    Event::Note(notes::Step::Landed { agent, saved })
 }

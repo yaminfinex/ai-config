@@ -269,8 +269,10 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held ‚å
   expects). U5 added `notes:<n>:<closed|focused:text>`, `has:` (the composer contains), `select:` (stands in for a
   pointer selection, which a script cannot drag), `tap:` (a key that may be bound to nothing), and `POST
   /api/state/<ns>` on the fake serve, held in memory (`--notes` seeds web's two notes from
-  `testdata/notes-web.json`); `just check-notes` runs five scenarios, each failing unless it made exactly the
-  notes POSTs it expects and no message. Screenshots and presented-frame timings need an
+  `testdata/notes-web.json`), and `click:<capture|handoff|edit:i|delete:i>` (what a click on the strip
+  dispatches, through the focused element as the click does). `just check-notes` runs six scenarios (one
+  relaunches on the same HOME after a hand-off), each failing unless it made exactly the notes POSTs it
+  expects and no message. Screenshots and presented-frame timings need an
   unlocked screen; CPU frame cost (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ‚âà 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -309,15 +311,17 @@ About 4,000 lines for Rung 1, tests excluded. Going over a budget needs a stated
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
 and never a new module invented to satisfy a cap.
 
-U5 exceptions (to agree at review): `views/notes.rs` 371 (the strip, its count collapse, the editor with its
-own key context for add, capture and edit, the two-click delete, the capture chip, and the note ids and
-clock, which the store may not read; rustfmt lays the GPUI builder chains out a call per line);
-`store/notes.rs` 284 (each edit's row in web's record shape and web's `noteTransferText` and
-`noteSourceLabel`, so a hand-off reads as web's); `harness.rs` 299 and `shell.rs` 369 (the U5 probes and
-steps), `views/mod.rs` 375 (the notes bindings and help, and the editor in the focus rule),
-`views/transcript.rs` 402 (the selection taken at mouse-up), `api/types.rs` 360 (quote and source omitted
-when unset, as web writes them), `store/mod.rs` 393 (`Event::Note` and `sync_step`, shared by the network
-and local edits).
+U5 exceptions (agreed at review; the U5 fixes grew the first two): `views/notes.rs` 426, one cohesive view
+(the strip, its count collapse, the editor with its own key context for add, capture and edit and its
+refusal kept on screen, the two-click delete, the capture chip and the selection bound to its agent, the
+problem lines, the harness's click map; rustfmt lays the GPUI builder chains out a call per line);
+`store/notes.rs` 419 (each edit's row in web's record shape, web's 8 KiB refusals and edit-after-delete
+fallback, the hand-off and queue as transfers that save their destination first, and web's
+`noteTransferText` and `noteSourceLabel`, so a hand-off reads as web's); `harness.rs` 314 and `shell.rs`
+387 (the U5 probes and steps, the transfer's save), `views/mod.rs` 375 (the notes bindings and help, and
+the editor in the focus rule), `views/transcript.rs` 401 (the selection taken at mouse-up),
+`api/types.rs` 360 (quote and source omitted when unset, as web writes them), `store/mod.rs` 403
+(`Event::Note`, `Effect::Transfer` and `sync_step`, shared by the network and local edits).
 
 U4 exceptions (agreed at review): `store/composer.rs` is new (drafts, `can_send`, the send lifecycle) at
 174; `views/composer.rs` 217 (the box, its keys, file-back and the wording of every read-only state and

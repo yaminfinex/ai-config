@@ -185,6 +185,12 @@ pub enum Effect {
         after_ms: u64,
     },
     Persist(Persist),
+    /// Save `file` now, from the store as it is, then dispatch `notes::Step::Landed` for `agent`: the
+    /// destination of a note transfer is on disk before its source changes.
+    Transfer {
+        file: Persist,
+        agent: String,
+    },
     /// A filed-back send (`cmd-shift-enter`) landed: leave the zoom if it is still on `agent`.
     FiledBack {
         agent: String,
@@ -223,6 +229,10 @@ pub struct Store {
     pub transcript: transcript::Live,
     /// Message sends in flight, or their last failure, per agent.
     pub sends: BTreeMap<String, composer::Sending>,
+    /// Note hand-offs and queued drafts waiting on their destination's save, per agent.
+    pub transfers: BTreeMap<String, notes::Transfer>,
+    /// Per agent, why its last queue or transfer did not happen; until its next transfer.
+    pub note_problems: BTreeMap<String, String>,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
