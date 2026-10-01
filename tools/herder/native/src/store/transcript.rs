@@ -37,8 +37,7 @@ pub enum Item {
         operator: bool,
         head: Box<Head>,
     },
-    /// A pill in a run: a task, a slash command, an unknown entry, or an answer of only statuses and
-    /// internal notes.
+    /// A pill in a run: a task, a slash command or an unknown entry.
     Chip {
         tone: Tone,
         label: String,
@@ -49,13 +48,16 @@ pub enum Item {
     CompactDivider(String),
     /// A compaction's summary without its metadata, folded (web's `compact-summary`).
     CompactSummary(String),
-    /// Markdown, split at its `<status>` and `<internal>` fences; one `Text` when it has none.
+    /// Markdown, split at its `<status>` and `<internal>` fences; one `Text` when it has none. One of
+    /// only fences is a run's member (`condense::marker`).
     Assistant(Vec<Seg>),
     /// A folded pill; often empty (redacted reasoning).
     Thinking(String),
     Tool {
         name: String,
         summary: String,
+        /// The call's input, pretty JSON.
+        input: String,
         result: Option<ToolResult>,
     },
     Error(String),
@@ -87,16 +89,21 @@ impl Item {
         match self {
             Item::Tool { .. } | Item::Thinking(_) | Item::Chip { .. } => true,
             Item::Delivery { operator, .. } => !operator,
+            Item::Assistant(segs) => condense::marker(segs).is_some(),
             _ => false,
         }
     }
 }
 
-/// A tool's result: whether it failed, and its first line.
-#[derive(Clone, Debug, PartialEq)]
+/// A tool's result: whether it failed, its text, when it came (epoch ms), its whole size in bytes
+/// when the serve capped the text, and how many images it held (not served).
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ToolResult {
     pub error: bool,
     pub text: String,
+    pub at: Option<u64>,
+    pub capped: Option<u64>,
+    pub images: u64,
 }
 
 /// A read, tagged with the transcript it was made for.
@@ -183,7 +190,7 @@ pub struct Transcript {
     pub generation: u64,
     pub session: Option<String>,
     pub items: BTreeMap<Key, Item>,
-    /// Each item's entry time, epoch seconds by byte offset.
+    /// Each item's entry time, epoch milliseconds by byte offset.
     pub times: HashMap<u64, u64>,
     calls: HashMap<String, Key>,
     orphans: HashMap<String, ToolResult>,
@@ -542,18 +549,19 @@ impl Transcript {
         let mut items = Vec::new();
         match entry.kind {
             Kind::ToolUse => {
-                let (name, summary) = condense::tool_call(p);
+                let (name, summary, input) = condense::tool_call(p);
                 let result = self.orphans.remove(&id);
                 let tool = Item::Tool {
                     name,
                     summary,
+                    input,
                     result,
                 };
                 items.push(tool);
                 self.calls.insert(id, (offset, 0));
             }
             Kind::ToolResult => {
-                let result = condense::tool_result(p);
+                let result = condense::tool_result(p, &entry.timestamp);
                 match self.calls.get(&id).and_then(|k| self.items.get_mut(k)) {
                     Some(Item::Tool { result: slot, .. }) => *slot = Some(result),
                     _ => drop(self.orphans.insert(id, result)),
@@ -561,7 +569,7 @@ impl Transcript {
             }
             _ => items = condense::condense(&entry),
         }
-        if let Some(at) = condense::epoch(&entry.timestamp).filter(|_| !items.is_empty()) {
+        if let Some(at) = condense::epoch_ms(&entry.timestamp).filter(|_| !items.is_empty()) {
             self.times.insert(offset, at);
         }
         for (sub, item) in items.into_iter().enumerate() {

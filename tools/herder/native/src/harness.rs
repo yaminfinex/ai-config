@@ -27,7 +27,10 @@
 //! `click:jump` (jump-to-bottom over the transcript, and a click on it; A1) · `find:<text>` (scrolls the
 //! transcript so the first loaded row holding it is at the top, for side-by-side shots; A1) · `parts:<text>`
 //! (`S+status,+N+notes`: the answers' open status chips and internal notes) and `click:status` /
-//! `click:internal` (the last answer's cut status chip, or internal note; A2). Units add `type:` as they need it.
+//! `click:internal` (the last standalone answer's cut status chip, or internal note; A2) · `tools:<text>`
+//! (`T+open,+O+with+output`: open tools, and those showing an output), `click:member` / `click:failed`
+//! (the first tool, or failed tool, in an open run) and `run:<text>` (`find:`, then opens the first run
+//! from that row on; A3). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
@@ -114,14 +117,15 @@ fn cpu_s() -> f64 {
 
 /// What the harness asks the app; the shell answers from `views::probe`, so the harness knows no views.
 pub trait Probe {
-    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `parts`, `jump` and `start` (`None`: not yet).
+    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `parts`, `tools`, `jump` and `start` (`None`: not yet).
     fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String>;
     /// The action a click dispatches, for `link`, `summon` and `click` (`None`: nothing to click).
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>>;
     /// Stand in for a pointer selection in the transcript, for `select:`.
     fn select(&self, text: &str, cx: &mut App);
-    /// Scroll the transcript to the first row holding `text`, for `find:` (`false`: none does).
-    fn find(&self, text: &str, cx: &mut App) -> bool;
+    /// Scroll the transcript to the first row holding `text`, for `find:` (`false`: none does); with
+    /// `open`, open the first run from there on too, for `run:`.
+    fn find(&self, text: &str, open: bool, cx: &mut App) -> bool;
 }
 
 pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext) {
@@ -154,10 +158,12 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 let _ = cx.update(|_, cx| probe.select(&arg.replace('+', " "), cx));
                 metric(format!("select {arg}"));
             }
-            "find" => match cx.update(|_, cx| probe.find(&arg.replace('+', " "), cx)) {
-                Ok(true) => metric(format!("find {arg}")),
-                _ => fail(format!("find {arg}: no row holds it")),
-            },
+            "find" | "run" => {
+                match cx.update(|_, cx| probe.find(&arg.replace('+', " "), op == "run", cx)) {
+                    Ok(true) => metric(format!("find {arg}")),
+                    _ => fail(format!("find {arg}: no row holds it")),
+                }
+            }
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
             // `cpu:` idles, counting pointer events (real ones) meanwhile.
             "cpu" => {
@@ -193,7 +199,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
             }
             "expect" | "box" | "has" | "says" | "notes" | "list" | "said" | "header"
-            | "selected" | "rows" | "parts" | "jump" => {
+            | "selected" | "rows" | "parts" | "tools" | "jump" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");

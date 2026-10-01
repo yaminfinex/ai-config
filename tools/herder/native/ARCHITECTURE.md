@@ -117,11 +117,14 @@ Derived shapes are in `store`:
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
   orders and pairs them): `Prompt`, `Delivery{sender, text, operator, head}` (`head`: recipient, intent,
   thread and message id, for the card's header; acks and the launcher vanish,
-  owner ruling F2), `Chip{tone, label, text}` (a run pill: a task notification, a slash command, an unknown
-  entry, or an answer that is only `<status>`/`<internal>` fences; `Tone` is `Tool`, `Thinking`, `Message`,
+  owner ruling F2), `Chip{tone, label, text}` (a run pill: a task notification, a slash command or an unknown
+  entry; `Tone` is `Tool`, `Thinking`, `Message`,
   `Other` or `Status`, web's pill colours), `SystemChip` (model switches; `injected_system`,
   `command_stdout`, `turn_duration` and scheduled-task fires fold or are dropped), `CompactDivider` (with
-  its metadata), `CompactSummary` (without: web's folded summary), `Assistant(Vec<Seg>)`, `Thinking`, `Tool{name, summary, result: Option<ToolResult{error, text}>}`, `Error`.
+  its metadata), `CompactSummary` (without: web's folded summary), `Assistant(Vec<Seg>)` (one of only `<status>`/`<internal>` fences is a run's member and pill,
+  `condense::marker`), `Thinking`, `Tool{name, summary, input, result: Option<ToolResult{error, text, at, capped, images}>}`
+  (the input as pretty JSON and the whole output, as the entries pages carry them, for the open member; A3),
+  `Error`.
   An answer's fences parse as web's `fencingModel` (`condense::fence`) into `Seg::Text`, `Status` and
   `Internal`; an unfenced or malformed one is a single literal `Text`. The
   operator envelope (`[HERDER_WEB_OPERATOR_NOTE_BEGIN]…END]`) is stripped from deliveries.
@@ -140,8 +143,8 @@ Derived shapes are in `store`:
   the row grew or rewrapped. A mark gone since (a latest block replaced by an answer) falls back to the
   row's top: a stated limitation. `o` toggles the lowest run on screen among the recorded rows (the list
   keeps no top while following the tail). Open runs are a set of member keys, so a run stays open as it grows and closing it
-  drops every key in it. `Transcript.times` maps an entry's offset to its UTC seconds for the tail's
-  "latest · 3m" line.
+  drops every key in it. `Transcript.times` maps an entry's offset to its UTC milliseconds, for ages
+  and the members' durations.
 - **`transcript::Transcript`** — pages arrive in both directions, so nothing is an append-only fold:
   - One wire entry can yield several items (an `hcom_delivery` entry carries every delivery of that
     injection; `grill-confirm-lubo` has three at one offset), so the row key is `(byte_offset, sub)` with
@@ -302,6 +305,24 @@ through the `Fold` action, which the harness clicks too. Limits, nearest kept: n
 owner's prompt and a queued message past an hour show an age), no fade on a cut message, no letter spacing
 on the queued title, the owner's prompt as markdown on a 1.55 line (web: plain text, 1.5).
 
+Runs are drawn as web's (A3, spec §1 "Activity strip", "Expanded run details", "Latest activity"). The strip
+is a summary of min-height 24, padding 2 5, radius 6, ruled and on the panel under the pointer or open,
+with the dimmer `›` and its pills (mono 9, padding 1 7, 14 tall; a cut status on the button's 17.5 line; a
+merged failed tool keeps F2's red). Open, its members sit on a rail (padding 2 8 4 14, a rule on the left)
+at their own margins (`Kind::item`): a tool or a thinking is an expander (`entries::expander`, 27 tall,
+6 apart); a tool shows its status dot (green, red, blue running), name, summary cut to the row, duration
+(result time less call time, web's `formatDuration`) and time, and opens to `INPUT` and `OUTPUT` sections
+of mono 11 that scroll sideways; a thinking shows `thinking · 2.7s` (until the next item) and opens to its
+text or web's "Thinking content unavailable."; an answer of only statuses and notes is drawn bare, as web,
+with its notes held open; cards and answers as their own rows. Closed and last, a run ends in
+`Latest activity · 8d` and its last member in full. Members open through `Fold(key, 0)`, the same set as
+A2's parts. A chevron that web turns is swapped for `⌄`, raised to the turned glyph's centre. A capped output ends in web's
+`Output capped at 16 KiB — N bytes total.` and an image result in `▧ N image results present (not served)`
+(the payload's `truncated`, `total_bytes`, `image_count`). The detail's sections are observed under the
+tool's id for the headless test. Limits, nearest kept: no structured-patch diff in a tool's detail; its
+text is not selectable; a thinking's duration runs to the next item, not the next entry; tasks, slash commands
+and unknown entries in an open run stay F2's pill and text; no letter spacing on the section heads.
+
 ## 6. Persistence
 
 | Where | What | Owner |
@@ -363,7 +384,8 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge and the
   summon chord are logged no-ops. The harness knows no views: what it asks of them goes through
   the `harness::Probe` trait, which the shell implements with `views::probe` (`ask`, `action`, `select`,
-  `find`, which scrolls the first transcript row holding a text to the top, for shots),
+  `find`, which scrolls the first transcript row holding a text to the top, or the member holding it in
+  an open run, for shots; `run:` opens the run from there too),
   the one file that spells what a script compares against. A scenario that sends anything points
   `HERDER_URL` at `testdata/fake_serve.py` on loopback, never at the real serve (`scripts/scenario.sh`,
   shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Steps live
@@ -388,7 +410,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after A2 (A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after A3 (A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -396,23 +418,23 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 328 | `views/mod.rs` | 420 |
+| `api/types.rs` | 332 | `views/mod.rs` | 420 |
 | `api/client.rs` | 206 | `views/lens.rs` | 442 |
 | `api/sse.rs` | 194 | `views/space.rs` | 370 |
-| `store/mod.rs` | 445 | `views/transcript.rs` | 1117 |
+| `store/mod.rs` | 445 | `views/transcript.rs` | 1214 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 221 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 430 |
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
-| `store/attention.rs` | 281 | `views/probe.rs` | 210 |
-| `store/transcript.rs` | 597 | `views/markdown.rs` | 238 |
-| `store/condense.rs` | 428 | `views/theme.rs` | 257 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 250 |
+| `store/transcript.rs` | 605 | `views/markdown.rs` | 238 |
+| `store/condense.rs` | 439 | `views/theme.rs` | 261 |
 | `store/notes.rs` | 432 | `shell.rs` | 441 |
 | `store/composer.rs` | 166 | `shell/io.rs` | 180 |
-| `local.rs` | 95 | `harness.rs` | 284 |
+| `local.rs` | 95 | `harness.rs` | 290 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
-|  |  | `views/entries.rs` | 356 |
+|  |  | `views/entries.rs` | 529 |
 
-About 9,560 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
+About 9,890 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

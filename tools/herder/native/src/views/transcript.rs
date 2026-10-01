@@ -19,7 +19,8 @@ use crate::store::condense::{self, Pill, Row, Seg};
 use crate::store::transcript::{Item, Key, Step, Tone, Transcript};
 use crate::store::{Effect, Event, Store};
 use crate::views::entries::{
-    answer, bits, card, detail, expander, header, now, queued, stamp, system, time, toned,
+    self, answer, bits, card, chevron, expander, header, md_detail, mono, now, queued, stamp,
+    system, time, toned,
 };
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, Mentions};
@@ -279,6 +280,53 @@ impl View {
         (status, segs.len() - status)
     }
 
+    /// The first tool in an open run (`failed`: that failed), which `click:member` (`click:failed`)
+    /// opens, for the harness.
+    pub(super) fn first_tool(&self, items: &BTreeMap<Key, Item>, failed: bool) -> Option<Key> {
+        let rows = &self.rows.borrow().2;
+        let open = rows.iter().filter_map(|r| match *r {
+            Row::Run(first, last) if self.opened(first, last) => Some(items.range(first..=last)),
+            _ => None,
+        });
+        let mut tools = open.flatten().filter(|(_, i)| match i {
+            Item::Tool { result, .. } => !failed || result.as_ref().is_some_and(|r| r.error),
+            _ => false,
+        });
+        tools.next().map(|(&key, _)| key)
+    }
+
+    /// How many tools are open, and how many of those show an output, for the harness.
+    pub(super) fn tools(&self, items: &BTreeMap<Key, Item>) -> (usize, usize) {
+        let open = self.open.borrow();
+        let result = |&(key, part): &(Key, usize)| match items.get(&key) {
+            Some(Item::Tool { result, .. }) if part == 0 => Some(result.is_some()),
+            _ => None,
+        };
+        let tools: Vec<bool> = open.iter().filter_map(result).collect();
+        (tools.len(), tools.iter().filter(|&&r| r).count())
+    }
+
+    /// Bring the member `key` of an open run to the viewport's top, as a page's anchor does (`hold`);
+    /// `false` when its run is closed. For the harness's `find:`.
+    pub(super) fn reveal(&self, key: Key) -> bool {
+        let rows = self.rows.borrow();
+        let ix = rows.2.partition_point(|r| r.last() < key);
+        let open = rows
+            .2
+            .get(ix)
+            .is_some_and(|r| self.opened(r.first(), r.last()));
+        if open {
+            let (mark, y) = (Some(Mark::Member(key)), px(0.));
+            self.anchor.set(Some(Anchor {
+                mark,
+                key,
+                y,
+                row: y,
+            }));
+        }
+        open
+    }
+
     fn opened(&self, first: Key, last: Key) -> bool {
         self.runs.borrow().range(first..=last).next().is_some()
     }
@@ -329,6 +377,8 @@ pub fn plan(old: &[Row], new: &[Row]) -> Option<(usize, usize)> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     Answer,
+    /// An answer of only statuses and notes, bare (web's `.assistant-fenced-content`).
+    Fenced,
     Strip,
     Card,
     Divider,
@@ -340,20 +390,27 @@ impl Kind {
         let Row::One(key) = row else {
             return Kind::Strip;
         };
-        match items.get(&key) {
-            Some(Item::Prompt(_) | Item::Delivery { .. }) => Kind::Card,
-            Some(Item::CompactDivider(_)) => Kind::Divider,
-            Some(Item::SystemChip(_) | Item::CompactSummary(_)) => Kind::System,
-            _ => Kind::Answer,
+        items.get(&key).map_or(Kind::Answer, Kind::item)
+    }
+
+    /// An item's kind, as its own row or as a run's member: a tool, a thinking or a pill is a fold.
+    fn item(item: &Item) -> Kind {
+        match item {
+            Item::Prompt(_) | Item::Delivery { .. } => Kind::Card,
+            Item::CompactDivider(_) => Kind::Divider,
+            Item::SystemChip(_) | Item::CompactSummary(_) => Kind::System,
+            Item::Tool { .. } | Item::Thinking(_) | Item::Chip { .. } => Kind::System,
+            Item::Assistant(segs) if condense::marker(segs).is_some() => Kind::Fenced,
+            Item::Assistant(_) | Item::Error(_) => Kind::Answer,
         }
     }
 
-    /// Web's vertical margin around the kind: an assistant block, an activity strip, an entry card,
+    /// Web's vertical margin around the kind: an assistant block, a bare fenced answer, an activity strip, an entry card,
     /// the compact divider, a system chip or a fold (`.entry-expander`, a compaction's summary).
     fn margin(self) -> f32 {
         match self {
             Kind::Answer => 10.,
-            Kind::Strip => 5.,
+            Kind::Fenced | Kind::Strip => 5.,
             Kind::Card => 9.,
             Kind::Divider => 14.,
             Kind::System => 6.,
@@ -676,7 +733,7 @@ fn row<H: Host>(
     let el = el.text_size(t.css(13.)).line_height(relative(1.5));
     let el = el.child(record(&view.painted, move |p, b| p.rows.insert(ix, b)));
     match r {
-        Row::One(key) => el.children(tr.items.get(&key).map(|item| paint.body(key, item))),
+        Row::One(key) => el.children(tr.items.get(&key).map(|item| paint.body(key, item, false))),
         Row::Run(first, last_key) => el.child(paint.run((first, last_key), last)),
     }
     .into_any_element()
@@ -695,12 +752,17 @@ struct Paint<'a, H> {
 
 impl<H: Host> Paint<'_, H> {
     fn id(&self, kind: &str, key: Key) -> ElementId {
-        let generation = self.tr.generation;
-        ElementId::Name(format!("{kind}-{generation}-{}-{}", key.0, key.1).into())
+        ElementId::Name(self.name(kind, key).into())
     }
 
-    /// A run: its strip of pills, a click opening it to every member behind a rule. Closed and last,
-    /// its last member is drawn in full under its age instead of as a pill.
+    /// An element's id for `kind` of the item `key`, in this transcript (`name`); harness tests find it.
+    fn name(&self, kind: &str, key: Key) -> String {
+        name(kind, self.tr.generation, key)
+    }
+
+    /// A run (spec §1 "Activity strip", "Expanded run details", "Latest activity"): its strip of
+    /// pills, a click opening it to every member on a rail. Closed and last, its last member is drawn
+    /// in full under its age instead of as a pill.
     fn run(&self, (first, last): (Key, Key), tail: bool) -> Div {
         let (view, tr, t, ix) = (self.view, self.tr, self.t, self.ix);
         let members = || tr.items.range(first..=last);
@@ -716,14 +778,22 @@ impl<H: Host> Paint<'_, H> {
                 cx.notify();
             });
         };
+        let lit = |el: Stateful<Div>| el.border_color(rgb(pal::RULE)).bg(rgb(pal::PANEL));
         let strip = (!pills.is_empty()).then(|| {
-            let el = div().id(self.id("run", first)).cursor_pointer();
-            el.on_click(toggle)
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(t.css(5.))
-                .child(dim(if open { "⌄" } else { "›" }))
+            let el = div()
+                .id(self.id("run", first))
+                .cursor_pointer()
+                .on_click(toggle);
+            let el = el.flex().flex_wrap().items_center().gap(t.css(5.));
+            let el = el.min_h(t.css(24.)).px(t.css(5.)).py(t.css(2.));
+            let el = el.border_1().rounded(t.css(6.)).text_size(t.css(10.));
+            let el = match open {
+                true => lit(el),
+                false => el
+                    .border_color(transparent_black())
+                    .hover(|s| s.border_color(rgb(pal::RULE)).bg(rgb(pal::PANEL))),
+            };
+            el.child(chevron(open, t))
                 .children(pills.iter().enumerate().map(|(i, p)| {
                     let end = pills.get(i + 1).map_or(n, |next| next.at);
                     let mark = Mark::Pill(keys[p.at], keys[end - 1]);
@@ -731,29 +801,54 @@ impl<H: Host> Paint<'_, H> {
                     pill(p, t).relative().child(at)
                 }))
         });
-        let each = members().map(|(&key, item)| {
-            let mark = Mark::Member(key);
-            let at = record(&view.painted, move |p, b| p.marks.push((mark, b)));
-            let el = div().relative().pb(t.css(4.));
-            el.child(self.body(key, item)).child(at)
-        });
+        // Members on the rail, each a fold 6 apart, or an answer or card at its own margins (spec §2).
         let detail = open.then(|| {
-            let el = div().border_l_1().border_color(rgb(pal::RULE));
-            el.ml(t.css(4.)).pl(t.css(12.)).pt(t.css(4.)).children(each)
+            let mut above = None;
+            let each = members().map(|(&key, item)| {
+                let kind = Kind::item(item);
+                let gap = above.map_or(kind.margin(), |a: Kind| a.margin().max(kind.margin()));
+                above = Some(kind);
+                let mark = Mark::Member(key);
+                let at = record(&view.painted, move |p, b| p.marks.push((mark, b)));
+                let el = div().relative().pt(t.css(gap));
+                el.child(self.body(key, item, true)).child(at)
+            });
+            let el = div().flex().flex_col().children(each.collect::<Vec<_>>());
+            let below = above.map_or(0., Kind::margin);
+            let el = el
+                .border_l_1()
+                .border_color(rgb(pal::RULE))
+                .text_color(rgb(pal::SLATE));
+            el.pt(t.css(2.))
+                .pr(t.css(8.))
+                .pb(t.css(4. + below))
+                .pl(t.css(14.))
         });
+        // Its member's margins collapse into the block's 5 below, and the row adds that 5.
         let latest = latest.map(|(&key, item)| {
             let now = now();
-            let age = tr.times.get(&key.0).map(|&at| ago(now.saturating_sub(at)));
+            let age = tr
+                .times
+                .get(&key.0)
+                .map(|&at| ago(now.saturating_sub(at / 1000)));
             let age = age.unwrap_or_else(|| "time unknown".into());
-            let line = dim(format!("latest · {age}"));
-            let line = line.font_family(MONO_T).text_size(t.css(9.));
+            let line = mono(div(), 9., t).flex().items_center().gap(t.css(4.));
+            let line = line
+                .min_h(t.css(18.))
+                .px(t.css(9.))
+                .text_color(rgb(pal::DIMMER));
+            let line = line.child("Latest activity").child(format!("· {age}"));
             let mark = Mark::Member(key);
             let at = record(&view.painted, move |p, b| p.marks.push((mark, b)));
-            let el = div().relative().pt(t.css(3.)).child(line);
-            el.child(self.body(key, item)).child(at)
+            let margin = Kind::item(item).margin();
+            let el = div().relative().child(line);
+            let el = el.child(div().pt(t.css(margin)).child(self.body(key, item, true)));
+            el.pb(t.css((margin - 5.).max(0.))).child(at)
         });
-        let el = div().flex().flex_col().gap(t.css(2.));
-        el.children(strip).children(detail).children(latest)
+        let strip =
+            (strip.is_some() || detail.is_some()).then(|| div().children(strip).children(detail));
+        let el = div().flex().flex_col().gap(t.css(5.));
+        el.children(strip).children(latest)
     }
 
     /// Linked, selectable markdown (U5's selection seam) in `ink`: an item's part, cached by part.
@@ -794,17 +889,14 @@ impl<H: Host> Paint<'_, H> {
         self.view.open.borrow().contains(&(key, part))
     }
 
-    /// One item as its own row, or as a member of an open run or the latest.
-    fn body(&self, key: Key, item: &Item) -> AnyElement {
+    /// One item as its own row, or as a `member` of an open run or the latest, where web shows its
+    /// internal notes open.
+    fn body(&self, key: Key, item: &Item, member: bool) -> AnyElement {
         let t = self.t;
         let open = self.opened(key, 0);
         let small = |text: String| dim(text).text_size(t.css(10.));
-        let glyph = if open { "▾" } else { "▸" };
-        let line = |text: String| {
-            self.fold(key, 0, "fold")
-                .child(small(format!("{glyph} {text}")))
-        };
-        let when = stamp(self.tr.times.get(&key.0).copied(), now());
+        let at = self.tr.times.get(&key.0).copied();
+        let when = stamp(at.map(|ms| ms / 1000), now());
         let head = |operator| header(bits(item, &self.tr.agent), when.clone(), operator, t);
         match item {
             Item::Prompt(text) => {
@@ -838,19 +930,17 @@ impl<H: Host> Paint<'_, H> {
                 let body = div().when(!long, |b| b.pb(t.css(6.))).child(body);
                 card(item, self.width, head(*operator), body.children(more), t)
             }
-            Item::Assistant(segs) => answer(head(false), self.segments(key, segs), t),
+            // Only statuses and notes: web draws the parts bare, no rule or header, at margins 5.
+            Item::Assistant(segs) if condense::marker(segs).is_some() => {
+                self.segments(key, segs, member).mb_0().into_any_element()
+            }
+            Item::Assistant(segs) => answer(head(false), self.segments(key, segs, member), t),
             // The pill uncut, then what it stands for when that says more.
             Item::Chip { tone, label, text } => {
-                let full = Pill {
-                    tone: *tone,
-                    label: label.clone(),
-                    count: 1,
-                    error: false,
-                    at: 0,
-                };
+                let full = toned(div(), *tone, t).line_height(t.css(10.)).max_w_full();
                 let more = (text != label && !text.is_empty()).then(|| small(text.clone()));
                 let el = div().flex().flex_col().items_start().gap(t.css(2.));
-                el.child(chip(&full, label.clone(), t).max_w_full())
+                el.child(full.child(label.clone()))
                     .children(more)
                     .into_any_element()
             }
@@ -872,28 +962,29 @@ impl<H: Host> Paint<'_, H> {
                     .text_color(rgb(pal::PURPLE))
                     .child("compaction summary")
                     .child(time(when, t).ml_auto());
-                let body = open.then(|| detail(self.md(key, 1, text, pal::CODE_INK), t));
+                let body = open.then(|| md_detail(self.md(key, 1, text, pal::CODE_INK), t));
                 div().child(summary).children(body).into_any_element()
             }
-            Item::Thinking(text) if text.trim().is_empty() => {
-                small("∴ thinking".into()).into_any_element()
+            // How long until the next entry (web), here the next item's.
+            Item::Thinking(text) => {
+                let next = self.tr.items.range((key.0 + 1, 0)..).next();
+                let next = next.and_then(|(k, _)| self.tr.times.get(&k.0));
+                let took = match (at, next) {
+                    (Some(at), Some(&next)) => entries::took(next as i64 - at as i64),
+                    _ => "duration unknown".into(),
+                };
+                entries::thinking(self.fold(key, 0, "fold"), open, text, took, when, t)
             }
-            Item::Thinking(text) => div()
-                .child(line("thinking".into()))
-                .when(open, |el| el.child(small(text.clone())))
-                .into_any_element(),
             Item::Tool {
                 name,
                 summary,
+                input,
                 result,
             } => {
-                let err = result.as_ref().is_some_and(|r| r.error);
-                let mark = if err { " ✗" } else { "" };
-                let head = line(format!("{name} {summary}{mark}")).truncate();
-                let head = head.when(err, |el| el.text_color(rgb(pal::PORT)));
-                let detail = result.as_ref().filter(|_| open);
-                let detail = detail.map(|r| small(format!("→ {}", r.text)));
-                div().child(head).children(detail).into_any_element()
+                let id = self.name("tool", key);
+                let call = (name.as_str(), summary.as_str(), input.as_str());
+                let fold = self.fold(key, 0, "fold");
+                entries::tool(fold, open, call, result.as_ref(), at, &id, t)
             }
             Item::Error(text) => div()
                 .text_color(rgb(pal::PORT))
@@ -903,9 +994,9 @@ impl<H: Host> Paint<'_, H> {
     }
 
     /// An answer's markdown, or its fenced parts in a column 4 apart (spec §1 "Assistant block"):
-    /// text, a status chip, an internal note. A flex item keeps its paragraphs' margins, so fenced
-    /// text sits 6 inside its own box.
-    fn segments(&self, key: Key, segs: &[Seg]) -> Div {
+    /// text, a status chip, an internal note (held open in a run's `member`). A flex item keeps its
+    /// paragraphs' margins, so fenced text sits 6 inside its own box.
+    fn segments(&self, key: Key, segs: &[Seg], member: bool) -> Div {
         let t = self.t;
         let fenced = segs.iter().any(|s| !matches!(s, Seg::Text(_)));
         let parts = segs.iter().enumerate().filter_map(|(part, seg)| match seg {
@@ -918,7 +1009,7 @@ impl<H: Host> Paint<'_, H> {
                 pal::INK,
             ))),
             Seg::Status(s) => Some(self.status(key, part, s)),
-            Seg::Internal(s) => Some(self.internal(key, part, s)),
+            Seg::Internal(s) => Some(self.internal(key, part, s, member)),
         });
         let column = div().flex().flex_col().items_start();
         column
@@ -954,15 +1045,23 @@ impl<H: Host> Paint<'_, H> {
     }
 
     /// An internal note (spec §1 "Internal note"): a thinking pill, `› internal note · N words`; a
-    /// click opens its body under it.
-    fn internal(&self, key: Key, part: usize, text: &str) -> Div {
+    /// click opens its body under it. `held` open in a run, as web's (`showSystem`).
+    fn internal(&self, key: Key, part: usize, text: &str, held: bool) -> Div {
         let t = self.t;
-        let open = self.opened(key, part);
+        let open = held || self.opened(key, part);
         let words = text.split_whitespace().count();
         let unit = if words == 1 { "word" } else { "words" };
+        // `⌄` raised to the turned `›`'s centre, as `entries::chevron`.
         let chevron = div().text_size(t.css(12.)).line_height(t.css(12.));
-        let chevron = chevron.child(if open { "⌄" } else { "›" });
-        let summary = toned(self.fold(key, part, "note"), Tone::Thinking, t);
+        let chevron = match open {
+            true => chevron.relative().top(t.css(-3.5)).child("⌄"),
+            false => chevron.child("›"),
+        };
+        let fold = match held {
+            true => div().id(self.id(&format!("note{part}"), key)),
+            false => self.fold(key, part, "note"),
+        };
+        let summary = toned(fold, Tone::Thinking, t);
         let summary = summary
             .flex()
             .items_center()
@@ -972,12 +1071,19 @@ impl<H: Host> Paint<'_, H> {
             .child(chevron)
             .child(format!("internal note · {words} {unit}"));
         let body = self.md(key, part, text, pal::CODE_INK);
-        let body = open.then(|| detail(body, t).mt(t.css(3.)).max_w(t.css(900.)));
+        let body = open.then(|| md_detail(body, t).mt(t.css(3.)).max_w(t.css(900.)));
+        // Web's every `details` has margin-top 7; the internal note keeps it.
         div()
             .w_full()
+            .mt(t.css(7.))
             .child(div().flex().child(summary))
             .children(body)
     }
+}
+
+/// The id of `kind` for the item `key` in transcript `generation`.
+pub(super) fn name(kind: &str, generation: u64, (offset, sub): Key) -> String {
+    format!("{kind}-{generation}-{offset}-{sub}")
 }
 
 /// Records where its parent laid out into `painted` (a parent drawn this frame is on screen or in
@@ -1026,36 +1132,27 @@ fn hold<H: Host>(view: &View, t: TypeScale, host: WeakEntity<H>) -> Option<impl 
     Some(canvas(measure, |_, _, _, _| {}))
 }
 
-/// A run's pill: `Bash ×4`, a status cut to web's width, red when a merged tool failed.
+/// A run's pill (spec §1 "Activity strip and pills"): `Bash ×4`, 14 tall; a status cut to web's width,
+/// on the button's taller line when cut; red when a merged tool failed.
 fn pill(p: &Pill, t: TypeScale) -> Div {
     let text = match p.count {
         1 => p.label.clone(),
         n => format!("{} ×{n}", p.label),
     };
+    let line = if p.tone == Tone::Status && long(&text) {
+        13.5
+    } else {
+        10.
+    };
     let text = match p.tone {
         Tone::Status => cut(&text, STATUS),
         _ => text,
     };
-    chip(p, text, t).flex_none()
-}
-
-fn chip(p: &Pill, text: String, t: TypeScale) -> Div {
-    let (border, ground, ink) = pal::chip(p.tone);
-    let (border, ink) = if p.error {
-        (pal::PORT, pal::PORT)
-    } else {
-        (border, ink)
-    };
-    div()
-        .px(t.css(7.))
-        .border_1()
-        .border_color(rgb(border))
-        .bg(rgb(ground))
-        .text_color(rgb(ink))
-        .rounded(t.css(10.))
-        .font_family(MONO_T)
-        .text_size(t.css(9.))
-        .child(text)
+    let el = toned(div(), p.tone, t).flex_none().line_height(t.css(line));
+    let el = el.when(p.error, |el| {
+        el.border_color(rgb(pal::PORT)).text_color(rgb(pal::PORT))
+    });
+    el.child(text)
 }
 
 /// Whether a status is cut, so its chip opens (web's `statusChipTruncates`).
@@ -1091,7 +1188,7 @@ pub fn ago(secs: u64) -> String {
 /// the event goes on bubbling, and GPUI's list would apply its vertical part. Underneath the block, in
 /// bubble order, this stops a gesture that is mostly sideways; a mostly vertical one goes on to the list.
 /// The list never scrolls sideways, so stopping one over prose loses nothing.
-pub(super) fn sideways(el: Div) -> Div {
+pub(super) fn sideways<E: InteractiveElement>(el: E) -> E {
     el.on_scroll_wheel(|e: &ScrollWheelEvent, _, cx| {
         let d = e.delta.pixel_delta(px(16.));
         if d.x.abs() > d.y.abs() {

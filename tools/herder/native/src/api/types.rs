@@ -196,6 +196,10 @@ pub struct Payload {
     pub tool_use_id: Value,
     pub content: Value,
     pub is_error: Value,
+    /// A tool result the serve cut at 16 KiB, its whole size, and its image blocks (not served).
+    pub truncated: Value,
+    pub total_bytes: Value,
+    pub image_count: Value,
     pub subtype: Value,
 }
 

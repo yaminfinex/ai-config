@@ -76,6 +76,12 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             let (status, notes) = items.map_or((0, 0), |i| ui.transcript.parts(i));
             format!("{status} status, {notes} notes")
         }
+        // How many tools are open, each showing its input, and how many show an output too.
+        "tools" => {
+            let items = store.transcript.open.as_ref().map(|t| &t.items);
+            let (open, output) = items.map_or((0, 0), |i| ui.transcript.tools(i));
+            format!("{open} open, {output} with output")
+        }
         // Whether jump-to-bottom shows.
         "jump" => match ui.transcript.jumps() {
             true => "shown".into(),
@@ -93,8 +99,8 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 /// `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` on the notes strip (`i` the zoomed
 /// agent's note, newest-updated first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
 /// order), `click:tab:i` (the zoom's tab, from the left), `click:crumb` (`lens ›`), `click:jump`
-/// (jump-to-bottom, while it shows) and `click:status` / `click:internal` (the last answer's status chip
-/// that opens, or internal note); `None` where
+/// (jump-to-bottom, while it shows), `click:status` / `click:internal` (the last standalone answer's
+/// status chip that opens, or internal note) and `click:member` / `click:failed` (the first tool, or failed tool, in an open run); `None` where
 /// there is no such thing to click.
 pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {
     let notes = |what: Notes| Some(Box::new(what) as Box<dyn Action>);
@@ -134,14 +140,29 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
                 Seg::Internal(_) => what == "internal",
                 Seg::Text(_) => false,
             };
+            // A run's answer holds its notes open: a standalone one.
             let mut answers = items.iter().rev().filter_map(|(&key, item)| match item {
-                Item::Assistant(segs) => Some((key, segs.iter().position(part)?)),
+                Item::Assistant(segs) if !item.activity() => {
+                    Some((key, segs.iter().position(part)?))
+                }
                 _ => None,
             });
             let (key, at) = answers.next()?;
             return Some(Box::new(Fold(key, at)));
         }
-        ("card" | "card2" | "tab" | "crumb" | "jump" | "status" | "internal", _) => return None,
+        // The first tool in an open run, or the first that failed.
+        ("member" | "failed", Some(_)) => {
+            let items = &store.transcript.open.as_ref()?.items;
+            let key = ui.transcript.first_tool(items, what == "failed")?;
+            return Some(Box::new(Fold(key, 0)));
+        }
+        (
+            "card" | "card2" | "tab" | "crumb" | "jump" | "status" | "internal" | "member"
+            | "failed",
+            _,
+        ) => {
+            return None;
+        }
         _ => {}
     }
     let agent = ui.zoomed_agent()?;
@@ -180,8 +201,9 @@ pub fn select(ui: &mut Ui, text: &str) {
 }
 
 /// Scroll the zoomed transcript so the first row with `text` in an item (as debug-printed) is at the
-/// top.
-pub fn find(store: &Store, ui: &Ui, text: &str) -> bool {
+/// top, or the member holding it when that row is an open run; with `open`, also open the first run
+/// from that row on (A3's side-by-side shots).
+pub fn find(store: &Store, ui: &Ui, text: &str, open: bool) -> bool {
     let Some(tr) = store.transcript.open.as_ref() else {
         return false;
     };
@@ -191,6 +213,24 @@ pub fn find(store: &Store, ui: &Ui, text: &str) -> bool {
     let Some(ix) = rows.2.iter().position(holds) else {
         return false;
     };
+    let run = rows.2[ix..]
+        .iter()
+        .enumerate()
+        .find_map(|(at, r)| match *r {
+            Row::Run(first, last) => Some(((first, last), ix + at)),
+            Row::One(_) => None,
+        });
+    if let Some((run, at)) = run.filter(|_| open) {
+        ui.transcript.toggle(run, at);
+    }
+    let member = items(&rows.2[ix]).find(|(_, item)| format!("{item:?}").contains(text));
+    if let (Row::Run(..), Some((&key, _))) = (rows.2[ix], member) {
+        return ui.transcript.reveal(key) || scroll_to(ui, ix);
+    }
+    scroll_to(ui, ix)
+}
+
+fn scroll_to(ui: &Ui, ix: usize) -> bool {
     ui.transcript.list.scroll_to(ListOffset {
         item_ix: ix,
         offset_in_item: px(0.),

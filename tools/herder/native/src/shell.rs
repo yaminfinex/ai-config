@@ -419,9 +419,9 @@ impl harness::Probe for Entity<Shell> {
         })
     }
 
-    fn find(&self, text: &str, cx: &mut App) -> bool {
+    fn find(&self, text: &str, open: bool, cx: &mut App) -> bool {
         let s = self.read(cx);
-        let found = probe::find(&s.store, &s.ui, text);
+        let found = probe::find(&s.store, &s.ui, text, open);
         // The list moved with nothing notified: the next frame would reuse the view as it was.
         self.update(cx, |_, cx| cx.notify());
         found

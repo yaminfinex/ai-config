@@ -1761,18 +1761,21 @@ pub(crate) mod transcript_pages {
             "{tasks:?}"
         );
         // Answers of only a status (or an internal note) are pills; mupu's carry a status.
-        let statuses = chips(Tone::Status);
+        let statuses = items.iter().filter_map(|(_, i)| match i {
+            Item::Assistant(segs) => condense::marker(segs),
+            _ => None,
+        });
+        let statuses: Vec<String> = statuses
+            .filter(|(tone, _)| *tone == Tone::Status)
+            .map(|(_, label)| label)
+            .collect();
         assert!(
             statuses
                 .iter()
-                .any(|(l, _)| l.starts_with("08:07 AEST sweep done")),
+                .any(|l| l.starts_with("08:07 AEST sweep done")),
             "{statuses:?}"
         );
-        assert!(
-            statuses
-                .iter()
-                .all(|(l, t)| !l.contains('<') && !t.contains('<'))
-        );
+        assert!(statuses.iter().all(|l| !l.contains('<')));
         let operator = items.iter().find_map(|(_, i)| match i {
             Item::Delivery {
                 operator: true,
@@ -1835,6 +1838,37 @@ pub(crate) mod transcript_pages {
         assert_eq!(condense::clean("shown<internal>hidden to the end"), "shown");
     }
 
+    /// A result the serve cut at 16 KiB keeps its whole size, so the detail can say so (conductor-line's
+    /// recorded tail holds one: 17,059 bytes).
+    #[test]
+    fn a_capped_result_keeps_its_whole_size() {
+        let all = history("conductor-line");
+        let mut store = loaded();
+        let effects = open(&mut store, "conductor-line");
+        drive(&mut store, effects, &all, PAGE as usize);
+        while !store.transcript.open.as_ref().unwrap().at_start() {
+            let effects = store.apply(Event::Transcript(T::Older));
+            drive(&mut store, effects, &all, PAGE as usize);
+        }
+        let capped: Vec<_> = items(&store)
+            .values()
+            .filter_map(|i| match i {
+                Item::Tool {
+                    result: Some(r), ..
+                } => r.capped.map(|total| (total, r.text.len(), r.images)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(capped.len(), 1, "{capped:?}");
+        let (total, shown, images) = capped[0];
+        assert_eq!(total, 17_059);
+        assert!(
+            shown > 0 && shown <= 16 * 1024 && shown < total as usize,
+            "{shown}"
+        );
+        assert_eq!(images, 0);
+    }
+
     #[test]
     fn tool_results_pair_with_their_calls_across_pages() {
         let all = history("mupu");
@@ -1868,16 +1902,16 @@ pub(crate) mod transcript_pages {
             byte_offset: u64::MAX - 1,
             kind: Kind::ToolResult,
             payload: serde_json::from_value(
-                json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
+                json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore", "image_count": 2}),
             )
             .unwrap(),
-            ..Entry::default()
+            timestamp: "2026-09-30T00:07:17.200Z".into(),
         };
         let call = Entry {
             byte_offset: u64::MAX - 2,
             kind: Kind::ToolUse,
             payload: serde_json::from_value(json!({"tool_use_id": "x", "name": "Bash", "input": {"command": "false  &&\n true"}})).unwrap(),
-            ..Entry::default()
+            timestamp: "2026-09-30T00:07:16.868Z".into(),
         };
         let page = |entries| Entries {
             session_id: "s1".into(),
@@ -1904,20 +1938,28 @@ pub(crate) mod transcript_pages {
             )));
         }
         let tool = items(&store).get(&(u64::MAX - 2, 0)).cloned();
+        // The whole output and when it came, for the member's detail and duration (A3).
         let result = Some(transcript::ToolResult {
             error: true,
-            text: "boom".into(),
+            text: "boom\nmore".into(),
+            at: Some(1_790_726_837_200),
+            capped: None,
+            images: 2,
         });
         let summary = "false && true".to_string();
+        let input = "{\n  \"command\": \"false  &&\\n true\"\n}".to_string();
         assert_eq!(
             tool,
             Some(Item::Tool {
                 name: "Bash".into(),
                 summary,
+                input,
                 result
             }),
             "a result before its call"
         );
+        let t = store.transcript.open.as_ref().unwrap();
+        assert_eq!(t.times.get(&(u64::MAX - 2)), Some(&1_790_726_836_868));
     }
 
     /// The rows as `runs-web.mts` writes them: `e:<offset>` for a standalone item, a run's pills.
@@ -2013,13 +2055,22 @@ pub(crate) mod transcript_pages {
             let literal = Item::Assistant(vec![Seg::Text(text.into())]);
             assert_eq!(answer(text), [literal], "{text:?}");
         }
-        // Well formed: only fences is a chip, with text the answer's parts.
-        let chip = Item::Chip {
-            tone: Tone::Status,
-            label: "sent".into(),
-            text: "sent".into(),
-        };
-        assert_eq!(answer("\n<status>sent</status>\n"), [chip]);
+        // Well formed: only fences is a run's member, its pill the statuses (and notes).
+        let only = answer("\n<status>sent</status>\n");
+        let segs = vec![
+            Seg::Text("\n".into()),
+            Seg::Status("sent".into()),
+            Seg::Text("\n".into()),
+        ];
+        assert_eq!(only, [Item::Assistant(segs.clone())]);
+        assert!(only[0].activity());
+        assert_eq!(condense::marker(&segs), Some((Tone::Status, "sent".into())));
+        let notes = [Seg::Status("a".into()), Seg::Internal("b".into())];
+        let pill = (Tone::Status, "a · internal note".into());
+        assert_eq!(condense::marker(&notes), Some(pill));
+        let note = [Seg::Internal("b".into())];
+        let pill = (Tone::Thinking, "internal note".into());
+        assert_eq!(condense::marker(&note), Some(pill));
         let parts = vec![Seg::Text("Visible\n".into()), Seg::Internal("note".into())];
         assert_eq!(
             answer("Visible\n<internal>note</internal>"),
@@ -2089,6 +2140,15 @@ pub(crate) mod transcript_pages {
         assert_eq!(condense::epoch("2026-09-30T00:07:16"), None);
         assert_eq!(condense::epoch("2026-09-30T00:07:16+0000"), None);
         assert_eq!(condense::epoch(""), None);
+        // To the millisecond, for durations; a longer fraction is cut, a shorter one padded.
+        let ms = condense::epoch_ms;
+        assert_eq!(
+            ms("2026-09-30T00:07:16.868123+00:00"),
+            Some(1_790_726_836_868)
+        );
+        assert_eq!(ms("2026-09-30T00:07:16.8Z"), Some(1_790_726_836_800));
+        assert_eq!(ms("2026-09-30T00:07:16Z"), Some(1_790_726_836_000));
+        assert_eq!(ms("2026-09-30T00:07:16.Z"), Some(1_790_726_836_000));
     }
 }
 
