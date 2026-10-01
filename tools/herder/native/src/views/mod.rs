@@ -110,6 +110,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("p", Notes::HandOff),
     ];
     keys.extend(note.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
+    keys.push(KeyBinding::new("o", transcript::ToggleRun, Some(SPACE)));
     let editor = [
         ("enter", Notes::Save),
         ("cmd-enter", Notes::Save),
@@ -164,6 +165,7 @@ n / N         next space needing you
 j k           scroll
 space ⇧space  page down / up
 g G           top of loaded (reads older) / end
+o             open / close the lowest run
 / r           write to the agent
 ⌘⏎ / ⌘⇧⏎      send / send and back to the lens
 ⌥⏎            keep the box as a note

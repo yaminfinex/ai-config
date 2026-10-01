@@ -952,12 +952,12 @@ fn seen_marks_read_the_old_bare_turn_form() {
 
 // Transcript (U3): paging, catch-up, resets and condensing, against the recorded pages.
 
-mod transcript_pages {
+pub(crate) mod transcript_pages {
     use super::*;
     use crate::api::client::Page;
     use crate::api::{Candidate, Entries, EntriesWindow, Entry, Reset, ResolveRoot, Resolved};
     use crate::store::condense::{self, condense};
-    use crate::store::transcript::{Got, Item, Op, PAGE, Read, Step as T, Timer, What};
+    use crate::store::transcript::{Got, Item, Op, PAGE, Read, Step as T, Timer, Tone, What};
     use std::collections::VecDeque;
 
     fn fixture(agent: &str, page: &str) -> Entries {
@@ -985,7 +985,7 @@ mod transcript_pages {
     const AGENTS: [&str; 4] = ["mupu", "conductor-line", "grill-confirm-lubo", "riko"];
 
     /// Both recorded pages of `agent`, oldest first: one stretch of its transcript.
-    fn history(agent: &str) -> Vec<Entry> {
+    pub(crate) fn history(agent: &str) -> Vec<Entry> {
         let mut all = fixture(agent, "before").entries;
         all.extend(fixture(agent, "tail").entries);
         all
@@ -1025,7 +1025,12 @@ mod transcript_pages {
 
     /// Answer every transcript read among `effects` (and the reads they lead to) from `all`; returns
     /// the pages read.
-    fn drive(store: &mut Store, effects: Vec<Effect>, all: &[Entry], limit: usize) -> Vec<Page> {
+    pub(crate) fn drive(
+        store: &mut Store,
+        effects: Vec<Effect>,
+        all: &[Entry],
+        limit: usize,
+    ) -> Vec<Page> {
         let mut queue: VecDeque<Effect> = effects.into();
         let mut pages = Vec::new();
         while let Some(effect) = queue.pop_front() {
@@ -1045,7 +1050,7 @@ mod transcript_pages {
         pages
     }
 
-    fn open(store: &mut Store, agent: &str) -> Vec<Effect> {
+    pub(crate) fn open(store: &mut Store, agent: &str) -> Vec<Effect> {
         let (space, agent) = ("none".into(), agent.to_string());
         store.apply(Event::Lens(spaces::Move::View {
             space,
@@ -1053,12 +1058,12 @@ mod transcript_pages {
         }))
     }
 
-    fn items(store: &Store) -> &BTreeMap<(u64, u16), Item> {
+    pub(crate) fn items(store: &Store) -> &BTreeMap<(u64, u16), Item> {
         &store.transcript.open.as_ref().unwrap().items
     }
 
     /// The rows a single read of the whole history gives.
-    fn reference(agent: &str, all: &[Entry]) -> BTreeMap<(u64, u16), Item> {
+    pub(crate) fn reference(agent: &str, all: &[Entry]) -> BTreeMap<(u64, u16), Item> {
         let mut store = loaded();
         let effects = open(&mut store, agent);
         drive(&mut store, effects, all, usize::MAX);
@@ -1187,7 +1192,7 @@ mod transcript_pages {
         Event::Stream { generation, event }
     }
 
-    fn wake(store: &Store, agent: &str) -> Event {
+    pub(crate) fn wake(store: &Store, agent: &str) -> Event {
         frame(store, Wire::Entry(agent.into()))
     }
 
@@ -1715,38 +1720,56 @@ mod transcript_pages {
             "{dividers:?}"
         );
         assert!(dividers.contains(&"compaction summary".into()));
-        let chips = text(&|i| {
-            if let Item::SystemChip(t) = i {
-                Some(t.clone())
-            } else {
-                None
-            }
+        let chips = |tone: Tone| {
+            let chips = items.iter().filter_map(move |(_, i)| match i {
+                Item::Chip {
+                    tone: t,
+                    label,
+                    text,
+                } if *t == tone => Some((label.as_str(), text.as_str())),
+                _ => None,
+            });
+            chips.collect::<Vec<_>>()
+        };
+        assert!(
+            chips(Tone::Tool)
+                .iter()
+                .any(|(l, t)| *l == "/compact" && t.starts_with("Keep:")),
+            "slash command: {:?}",
+            chips(Tone::Tool)
+        );
+        let system = text(&|i| match i {
+            Item::SystemChip(t) => Some(t.clone()),
+            _ => None,
         });
         assert!(
-            chips.iter().any(|c| c.starts_with("/compact Keep:")),
-            "slash command: {chips:?}"
+            system.is_empty(),
+            "web compact shows only model switches: {system:?}"
         );
         assert!(
-            chips
+            !chips(Tone::Tool)
                 .iter()
-                .any(|c| c.starts_with("Running scheduled task ("))
-        );
-        assert!(
-            !chips
-                .iter()
-                .any(|c| c.contains("Compacted") || c.contains('\u{1b}')),
+                .any(|(_, t)| t.contains("Compacted") || t.contains('\u{1b}')),
             "command output joins its command"
         );
-        let notes = text(&|i| {
-            if let Item::TaskNotification(t) = i {
-                Some(t.clone())
-            } else {
-                None
-            }
-        });
+        let tasks = chips(Tone::Other);
+        let tasks: Vec<_> = tasks.iter().filter(|(l, _)| *l == "task").collect();
         assert!(
-            notes.len() == 3 && notes.iter().all(|n| n.starts_with("Monitor event:")),
-            "{notes:?}"
+            tasks.len() == 3 && tasks.iter().all(|(_, t)| t.starts_with("Monitor event:")),
+            "{tasks:?}"
+        );
+        // Answers of only a status (or an internal note) are pills; mupu's carry a status.
+        let statuses = chips(Tone::Status);
+        assert!(
+            statuses
+                .iter()
+                .any(|(l, _)| l.starts_with("08:07 AEST sweep done")),
+            "{statuses:?}"
+        );
+        assert!(
+            statuses
+                .iter()
+                .all(|(l, t)| !l.contains('<') && !t.contains('<'))
         );
         let operator = items.iter().find_map(|(_, i)| match i {
             Item::Delivery {
@@ -1762,10 +1785,18 @@ mod transcript_pages {
             i,
             Item::Delivery {
                 operator: false,
-                quiet: false,
                 ..
             }
         )));
+        // Acks and the launcher are bus traffic: no items.
+        let senders = text(&|i| match i {
+            Item::Delivery { sender, .. } => Some(sender.clone()),
+            _ => None,
+        });
+        assert!(
+            !senders.iter().any(|s| s == "[hcom-launcher]"),
+            "{senders:?}"
+        );
         assert!(has(&|i| matches!(i, Item::Thinking(_))));
         assert!(has(&|i| matches!(i, Item::Assistant { .. })));
         for (kind, item) in &items {
@@ -1783,10 +1814,13 @@ mod transcript_pages {
                 );
             }
         }
-        // The one delivery entry with three deliveries yields three rows at one offset.
+        // An entry's acks go and its other deliveries stay: lubo's inform and two acks are one row.
         let lubo = history("grill-confirm-lubo");
-        let many = lubo.iter().find(|e| condense(e).len() == 3);
-        assert!(many.is_some(), "several deliveries share an entry");
+        let mixed = lubo.iter().find(|e| e.byte_offset == 11068313).unwrap();
+        assert!(matches!(
+            &condense(mixed)[..],
+            [Item::Delivery { sender, .. }] if sender == "confirmation-sim-build-lore"
+        ));
         assert_eq!(
             condense::clean("a <internal>x</internal>b <status>ok</status>"),
             "a b ok"
@@ -1830,11 +1864,13 @@ mod transcript_pages {
                 json!({"tool_use_id": "x", "is_error": true, "content": "boom\nmore"}),
             )
             .unwrap(),
+            ..Entry::default()
         };
         let call = Entry {
             byte_offset: u64::MAX - 2,
             kind: Kind::ToolUse,
             payload: serde_json::from_value(json!({"tool_use_id": "x", "name": "Bash", "input": {"command": "false  &&\n true"}})).unwrap(),
+            ..Entry::default()
         };
         let page = |entries| Entries {
             session_id: "s1".into(),
@@ -1875,6 +1911,171 @@ mod transcript_pages {
             }),
             "a result before its call"
         );
+    }
+
+    /// The rows as `runs-web.mts` writes them: `e:<offset>` for a standalone item, a run's pills.
+    fn shape(items: &BTreeMap<(u64, u16), Item>) -> Vec<serde_json::Value> {
+        let mut out: Vec<serde_json::Value> = Vec::new();
+        for row in condense::rows(items) {
+            let value = match row {
+                condense::Row::One(key) => json!(format!("e:{}", key.0)),
+                condense::Row::Run(first, last) => {
+                    let pills = condense::pills(items.range(first..=last).map(|(_, i)| i));
+                    let label = |p: &condense::Pill| match p.count {
+                        1 => p.label.clone(),
+                        n => format!("{} ×{n}", p.label),
+                    };
+                    json!(pills.iter().map(label).collect::<Vec<_>>())
+                }
+            };
+            // One entry is one row on web, however many items it makes here.
+            if out.last() != Some(&value) || !value.is_string() {
+                out.push(value);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn runs_group_as_web_does() {
+        let web: serde_json::Value =
+            serde_json::from_str(include_str!("../../testdata/runs-web.json")).unwrap();
+        for agent in AGENTS {
+            let all = history(agent);
+            let ours = shape(&reference(agent, &all));
+            let theirs = web[agent].as_array().unwrap();
+            let at = ours.iter().zip(theirs).position(|(a, b)| a != b);
+            assert!(
+                at.is_none() && ours.len() == theirs.len(),
+                "{agent}: row {at:?} of {}/{}: ours {:?}, web {:?}",
+                ours.len(),
+                theirs.len(),
+                at.map(|i| &ours[i]),
+                at.map(|i| &theirs[i]),
+            );
+        }
+    }
+
+    #[test]
+    fn fences_parse_as_web_does() {
+        use condense::Seg::{Internal, Status, Text};
+        let s = String::from;
+        let fenced = [
+            (
+                "Before\n\n<internal>two words\nplus two</internal>\n<status>sent to ziru</status>\n\nAfter",
+                vec![
+                    Text(s("Before\n\n")),
+                    Internal(s("two words\nplus two")),
+                    Text(s("\n")),
+                    Status(s("sent to ziru")),
+                    Text(s("\n\nAfter")),
+                ],
+            ),
+            (
+                "<internal>\nfirst line\nsecond line\n</internal><internal></internal>",
+                vec![Internal(s("\nfirst line\nsecond line\n")), Internal(s(""))],
+            ),
+            (
+                "\n<status>sent</status>\n",
+                vec![Text(s("\n")), Status(s("sent")), Text(s("\n"))],
+            ),
+        ];
+        for (text, segs) in fenced {
+            assert_eq!(condense::fence(text), Some(segs), "{text:?}");
+        }
+        let literal = [
+            "ordinary **markdown**",
+            "<Internal>visible</Internal> <status data-kind=\"cheap\">visible</status>",
+            "before <internal>unfinished",
+            "before </status> after",
+            "<internal>body</status>",
+            "<internal>outer <internal>inner</internal></internal>",
+            "<internal>outer <status>inner</status></internal>",
+            "<status>first\nsecond</status>",
+        ];
+        // Condensed, a malformed answer is the answer as written, tags and all, never cleaned or dropped.
+        let answer = |text: &str| {
+            let entry = json!({
+                "byteOffset": 1, "kind": "assistant_text",
+                "payload": {"message": {"content": [{"type": "text", "text": text}]}},
+            });
+            condense(&serde_json::from_value(entry).unwrap())
+        };
+        for text in literal {
+            assert_eq!(condense::fence(text), None, "{text:?}");
+            let markdown = text.into();
+            assert_eq!(answer(text), [Item::Assistant { markdown }], "{text:?}");
+        }
+        // Well formed: only fences is a chip, with text it is the text (F3 draws the fences).
+        let chip = Item::Chip {
+            tone: Tone::Status,
+            label: "sent".into(),
+            text: "sent".into(),
+        };
+        assert_eq!(answer("\n<status>sent</status>\n"), [chip]);
+        let markdown = "Visible".into();
+        assert_eq!(
+            answer("Visible\n<internal>note</internal>"),
+            [Item::Assistant { markdown }]
+        );
+    }
+
+    #[test]
+    fn rows_are_the_same_however_the_history_pages_in() {
+        for agent in AGENTS {
+            let all = history(agent);
+            let whole = reference(agent, &all);
+            for limit in [7, 10, 100] {
+                let mut store = loaded();
+                let effects = open(&mut store, agent);
+                drive(&mut store, effects, &all, limit);
+                let mut seen = vec![condense::rows(items(&store))];
+                for _ in 0..200 {
+                    let effects = store.apply(Event::Transcript(T::Older));
+                    if effects.is_empty() {
+                        break;
+                    }
+                    drive(&mut store, effects, &all, limit);
+                    seen.push(condense::rows(items(&store)));
+                }
+                let got = items(&store);
+                assert_eq!(got, &whole, "{agent} by {limit}: every entry once");
+                for rows in &seen {
+                    // Every row in order, and runs hold only activity.
+                    let pairs = rows.windows(2);
+                    assert!(pairs.into_iter().all(|w| w[0].last() < w[1].first()));
+                    for row in rows {
+                        if let condense::Row::Run(first, last) = *row {
+                            assert!(got.range(first..=last).all(|(_, i)| i.activity()));
+                        }
+                    }
+                }
+                let covered: usize = seen
+                    .last()
+                    .unwrap()
+                    .iter()
+                    .map(|r| match *r {
+                        condense::Row::One(_) => 1,
+                        condense::Row::Run(first, last) => got.range(first..=last).count(),
+                    })
+                    .sum();
+                assert_eq!(
+                    covered,
+                    got.len(),
+                    "{agent} by {limit}: each item in one row"
+                );
+                assert_eq!(seen.last(), Some(&condense::rows(&whole)));
+            }
+        }
+    }
+
+    #[test]
+    fn timestamps_read_as_utc_seconds() {
+        assert_eq!(condense::epoch("2026-09-30T00:07:16Z"), Some(1_790_726_836));
+        assert_eq!(condense::epoch("1970-01-01T00:00:00.000Z"), Some(0));
+        assert_eq!(condense::epoch("2024-02-29T12:00:00Z"), Some(1_709_208_000));
+        assert_eq!(condense::epoch("2026-09-30T00:07:16+10:00"), None);
+        assert_eq!(condense::epoch(""), None);
     }
 }
 

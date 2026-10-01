@@ -14,7 +14,8 @@
 //! its start; fails after `ms`) · `box:<focused|idle>:<text>` (the composer's focus and text, `+` for a
 //! space; U4) · `says:<text>` (the line under the composer contains it) · `has:<text>` (the composer's
 //! `box:` contains it) · `notes:<n>:<closed|focused:text|idle:text>` (the zoomed agent's notes and the
-//! notes editor; U5) · `header:<text>` (the lens header contains it; U6) · `select:<text>` (as if the pointer had selected it in the transcript) ·
+//! notes editor; U5) · `header:<text>` (the lens header contains it; U6) · `rows:<text>` (the zoomed transcript's list,
+//! `R+rows,+N+runs,+K+open`; F2) · `select:<text>` (as if the pointer had selected it in the transcript) ·
 //! `tap:<keystroke>` (as `key:`, but bound to nothing is fine) ·
 //! `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` (what a click on the notes strip
 //! dispatches, `i` the zoomed agent's note, newest-updated first, `edit` a double-click on it; it fails when
@@ -109,7 +110,7 @@ fn cpu_s() -> f64 {
 
 /// What the harness asks the app; the shell answers from `views::probe`, so the harness knows no views.
 pub trait Probe {
-    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header` and `start` (`None`: not yet).
+    /// What the app shows, for `expect`, `box`, `has`, `says`, `notes`, `list`, `said`, `header`, `rows` and `start` (`None`: not yet).
     fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String>;
     /// The action a click dispatches, for `link`, `summon` and `click` (`None`: nothing to click).
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>>;
@@ -182,7 +183,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
             }
             "expect" | "box" | "has" | "says" | "notes" | "list" | "said" | "header"
-            | "selected" => {
+            | "selected" | "rows" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");
