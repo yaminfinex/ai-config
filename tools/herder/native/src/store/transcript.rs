@@ -149,20 +149,11 @@ impl Store {
             agents.push(agent.to_string());
         }
         agents.sort();
-        if agents != self.transcript.subscribed {
-            self.stream += 1;
-            let generation = self.stream;
-            self.transcript.subscribed = agents.clone();
-            out.push(Effect::Stream { generation, agents });
-        }
+        self.subscribe(agents, out);
         let live = &mut self.transcript;
-        // A transcript whose tail never arrived (and is not being read) opens again.
-        let stuck = |t: &Transcript| !t.loaded() && !t.reading;
-        if live
-            .open
-            .as_ref()
-            .is_none_or(|t| t.agent != agent || stuck(t))
-        {
+        // Another agent, or one whose tail never arrived (and is not being read): open afresh.
+        let stale = |t: &Transcript| t.agent != agent || !t.loaded() && !t.reading;
+        if live.open.as_ref().is_none_or(stale) {
             live.generations += 1;
             let agent = agent.to_string();
             let mut t = Transcript {
@@ -174,21 +165,25 @@ impl Store {
         }
     }
 
+    /// Stream exactly `agents`' entries: a new connection whenever the set changes.
+    fn subscribe(&mut self, agents: Vec<String>, out: &mut Vec<Effect>) {
+        if agents != self.transcript.subscribed {
+            self.stream += 1;
+            self.transcript.subscribed = agents.clone();
+            out.push(Effect::Stream {
+                generation: self.stream,
+                agents,
+            });
+        }
+    }
+
     pub(super) fn transcript_step(&mut self, step: Step, out: &mut Vec<Effect>) {
         if let Step::Show { space, agent } = &step {
             return self.show(space, agent, out);
         }
         if let Step::Hide = step {
             self.transcript.open = None;
-            if !take(&mut self.transcript.subscribed).is_empty() {
-                self.stream += 1;
-                let generation = self.stream;
-                out.push(Effect::Stream {
-                    generation,
-                    agents: Vec::new(),
-                });
-            }
-            return;
+            return self.subscribe(Vec::new(), out);
         }
         let (live, agents) = (&mut self.transcript, &self.fleet.agents);
         let Some(t) = live.open.as_mut() else { return };
