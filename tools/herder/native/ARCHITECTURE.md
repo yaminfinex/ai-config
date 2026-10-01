@@ -196,7 +196,11 @@ the owner's ruling: body 10.8 px, code 11.7 px, meta 9.9 px) is the only source 
 and never a literal `px()` for text. `theme::apply` pushes `body` into the kit theme's `font_size` and `code`
 into `mono_font_size`, calls `Theme::sync_base` (the kit rebuilds its Base defaults only then) and refreshes
 every window, so inputs, lists, markdown and the code editor follow. The scale persists in `prefs.json` and is
-restored at boot. The palette is dark only in v0; U2 owns colours. Font families are explicit (Menlo /
+restored at boot. The palette (`theme::pal`) is dark only in v0, its neutrals herder web's dark theme (ink
+on ground ~12:1). The kit's own text (markdown, inputs, lists) paints from it too: `theme::dark` sets the kit
+theme's foreground, muted, border, link, selection, table, input, ring and caret colours from `pal`, and transcript markdown takes
+`theme::prose` (paragraph gap, inline code chip, unwrapped fenced code that scrolls sideways; a row
+stops a mostly sideways wheel so the list does not take its vertical part, `transcript::sideways`). Font families are explicit (Menlo /
 Monaco) so the kit never enumerates installed fonts.
 
 ## 6. Persistence
@@ -295,12 +299,12 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `api/types.rs` | 322 | `views/mod.rs` | 378 |
 | `api/client.rs` | 206 | `views/lens.rs` | 379 |
 | `api/sse.rs` | 194 | `views/space.rs` | 335 |
-| `store/mod.rs` | 422 | `views/transcript.rs` | 435 |
+| `store/mod.rs` | 422 | `views/transcript.rs` | 459 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 204 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 365 |
 | `store/spaces.rs` | 209 | `views/probe.rs` | 93 |
 | `store/attention.rs` | 281 | `views/markdown.rs` | 238 |
-| `store/transcript.rs` | 552 | `views/theme.rs` | 98 |
+| `store/transcript.rs` | 552 | `views/theme.rs` | 157 |
 | `store/condense.rs` | 189 | `shell.rs` | 420 |
 | `store/notes.rs` | 424 | `shell/io.rs` | 166 |
 | `store/composer.rs` | 166 | `harness.rs` | 267 |
