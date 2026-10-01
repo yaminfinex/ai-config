@@ -104,11 +104,12 @@ pub enum Step {
 /// only once that save landed, so a crash or a refused write can duplicate a note, never lose one.
 #[derive(Clone, Debug)]
 pub enum Transfer {
-    /// The draft before and after the hand-off, and the notes it took with the version it saw.
+    /// The draft before and after the hand-off, and the notes it took with the row version it saw
+    /// (`updated`, `writeID`).
     HandOff {
         before: String,
         after: String,
-        taken: Vec<(String, i64)>,
+        taken: Vec<(String, i64, String)>,
         stamp: Stamp,
     },
     /// The draft that became a note.
@@ -223,7 +224,7 @@ impl Store {
                 if addition.is_empty() {
                     return;
                 }
-                let taken = notes.iter().map(|n| (n.id.clone(), n.updated)).collect();
+                let taken = notes.iter().filter_map(|n| self.version(&n.id)).collect();
                 let draft = self.prefs.drafts.entry(agent.clone()).or_default();
                 let before = draft.clone();
                 *draft = match draft.is_empty() {
@@ -272,6 +273,12 @@ impl Store {
         }
     }
 
+    /// The note `id`'s row version as it stands here: its key, `updated` and `writeID`.
+    fn version(&self, id: &str) -> Option<(String, i64, String)> {
+        let row = self.sync[&Ns::Notes].rows.get(id)?;
+        Some((row.key.clone(), row.updated, row.write_id.clone()))
+    }
+
     fn begin_transfer(&mut self, agent: String, t: Transfer, file: Persist, out: &mut Vec<Effect>) {
         self.sends.remove(&agent);
         self.note_problems.remove(&agent);
@@ -291,11 +298,12 @@ impl Store {
         let draft = self.prefs.drafts.get(agent);
         match (transfer, saved) {
             (Transfer::HandOff { taken, stamp, .. }, Ok(())) => {
-                // A note edited since it was taken is not what went into the draft: it stays.
+                // A note changed since it was taken (any newer version, here or from web) is not what
+                // went into the draft: it stays.
                 let notes = self
                     .notes
                     .iter()
-                    .filter(|n| taken.contains(&(n.id.clone(), n.updated)));
+                    .filter(|n| self.version(&n.id).is_some_and(|v| taken.contains(&v)));
                 return Some(notes.map(|n| tombstone(n, &stamp)).collect());
             }
             (Transfer::HandOff { before, after, .. }, Err(e)) => {

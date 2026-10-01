@@ -315,7 +315,7 @@ U5 exceptions (agreed at review; the U5 fixes grew the first two): `views/notes.
 (the strip, its count collapse, the editor with its own key context for add, capture and edit and its
 refusal kept on screen, the two-click delete, the capture chip and the selection bound to its agent, the
 problem lines, the harness's click map; rustfmt lays the GPUI builder chains out a call per line);
-`store/notes.rs` 419 (each edit's row in web's record shape, web's 8 KiB refusals and edit-after-delete
+`store/notes.rs` 427 (each edit's row in web's record shape, web's 8 KiB refusals and edit-after-delete
 fallback, the hand-off and queue as transfers that save their destination first, and web's
 `noteTransferText` and `noteSourceLabel`, so a hand-off reads as web's); `harness.rs` 314 and `shell.rs`
 387 (the U5 probes and steps, the transfer's save), `views/mod.rs` 375 (the notes bindings and help, and

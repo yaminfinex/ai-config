@@ -2604,4 +2604,63 @@ mod notes {
         assert_eq!(saved[0].value["created"], plain.value["created"]);
         assert_eq!(texts(&store, "mupu"), ["still wanted"]);
     }
+
+    #[test]
+    fn a_note_web_changed_at_the_same_time_with_a_later_write_survives_the_hand_off() {
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        let mut plain = web_row(1);
+        plain.write_id = "w1".into();
+        pulled(&mut store, vec![plain.clone()], 1);
+        store.apply(Event::Note(N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(1, "-", "w-h"),
+        }));
+        // Web's edit lands while the draft is saving: same `updated`, a later writeID, so it wins.
+        let mut changed = plain.clone();
+        changed.write_id = "w2".into();
+        changed.value["text"] = "changed on web".into();
+        pulled(&mut store, vec![changed], 2);
+        assert_eq!(texts(&store, "mupu"), ["changed on web"]);
+        landed(&mut store, "mupu", Ok(()));
+        assert_eq!(tombstones(&store.outbox()), 0);
+        assert_eq!(texts(&store, "mupu"), ["changed on web"]);
+    }
+
+    #[test]
+    fn no_message_goes_while_a_transfer_waits_on_its_save() {
+        use crate::store::composer::Step as C;
+        let send = |store: &mut Store| {
+            let step = C::Send {
+                agent: "mupu".into(),
+                file_back: false,
+            };
+            let effects = store.apply(Event::Compose(step));
+            let message = |e: &Effect| matches!(e, Effect::Send(Write::Message { .. }));
+            effects.iter().any(message)
+        };
+        // A hand-off: the draft with the notes may still be put back, so it cannot go yet.
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        pulled(&mut store, vec![web_row(1)], 1);
+        store.prefs.drafts.insert("mupu".into(), "D".into());
+        store.apply(Event::Note(N::HandOff {
+            agent: "mupu".into(),
+            stamp: stamp(1, "-", "w-h"),
+        }));
+        assert!(!store.ready("mupu"));
+        assert!(!send(&mut store));
+        landed(&mut store, "mupu", Ok(()));
+        assert!(send(&mut store), "once landed, the draft sends as usual");
+        // A queue: the draft is about to clear, so it cannot go either.
+        let mut store = super::composer::zoomed("mupu", Some("listening"));
+        store.prefs.drafts.insert("mupu".into(), "later".into());
+        store.apply(Event::Note(N::Queue {
+            agent: "mupu".into(),
+            stamp: stamp(2, "q", "w-q"),
+        }));
+        assert!(!send(&mut store));
+        landed(&mut store, "mupu", Ok(()));
+        assert!(!store.prefs.drafts.contains_key("mupu"));
+        store.prefs.drafts.insert("mupu".into(), "now".into());
+        assert!(send(&mut store), "a new draft sends after the queue landed");
+    }
 }

@@ -152,7 +152,8 @@ pub fn render<H: Host>(
     cx: &mut Context<H>,
 ) -> Div {
     let (line, color) = status(store, agent);
-    let writable = store.can_send(agent).is_ok() && !store.in_flight(agent);
+    let busy = store.in_flight(agent) || store.transfers.contains_key(agent);
+    let writable = store.can_send(agent).is_ok() && !busy;
     let input = Textarea::new(&ui.composer.state).disabled(!writable);
     let input = div()
         .key_context("Composer")
@@ -177,10 +178,14 @@ pub fn says(store: &Store, ui: &Ui) -> String {
     agent.map_or_else(String::new, |a| status(store, a).0)
 }
 
-/// The line under the box and its colour: why it is read-only, "sending…", the last failure or the keys.
+/// The line under the box and its colour: why it is read-only, "sending…", "saving the notes…" (a U5
+/// transfer), the last failure or the keys.
 fn status(store: &Store, agent: &str) -> (String, u32) {
     match (store.can_send(agent), store.sends.get(agent)) {
         (Err(why), _) => (say_read_only(&store.viewer, why), pal::AMBER),
+        (Ok(()), _) if store.transfers.contains_key(agent) => {
+            ("saving the notes…".to_string(), pal::SLATE)
+        }
         (Ok(()), Some(Sending::InFlight { .. })) => ("sending…".to_string(), pal::SLATE),
         (Ok(()), Some(Sending::Failed(failure))) => (say_failure(failure), pal::AMBER),
         (Ok(()), None) => (HINT.to_string(), pal::SLATE),
