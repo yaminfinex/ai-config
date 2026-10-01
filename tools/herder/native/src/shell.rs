@@ -378,7 +378,7 @@ pub fn run() {
         let (handle, _) = gpui_kit::open_window(opts, cx, frame).expect("window");
         let shell = shell.expect("the window built the shell");
         if automated {
-            platform_mac::order_windows(harness::visible());
+            platform_mac::order_back();
         } else {
             cx.activate(true);
         }

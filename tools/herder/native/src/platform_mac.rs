@@ -68,19 +68,15 @@ pub fn summon_chord(chord: &str, pressed: impl Fn() + Send + Sync + 'static) {
     std::mem::forget(manager);
 }
 
-/// Push every window of this app behind the other apps' windows (or in front of them, `front`)
-/// without activating anything. Automated runs call this right after opening, so the owner keeps
-/// focus (settled decision 8).
-pub fn order_windows(front: bool) {
+/// Push every window of this app behind the other apps' windows without activating anything.
+/// Automated runs call this right after opening, so the owner keeps focus (settled decision 8).
+pub fn order_back() {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
     let app = NSApplication::sharedApplication(mtm);
     for window in app.windows().iter() {
-        match front {
-            true => window.orderFrontRegardless(),
-            false => window.orderBack(None),
-        }
+        window.orderBack(None);
     }
 }
 

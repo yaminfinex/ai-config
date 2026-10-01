@@ -247,15 +247,13 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held โ
   No network, no clock, milliseconds to run.
 - **Layering** (`tests/layering.rs`), see ยง1.
 - **UI harness** (`harness`, `just harness "<steps>"`): a scripted run opens its window with `focus: false`,
-  orders it behind every other app's windows (`platform_mac::order_windows`) and never calls
+  orders it behind every other app's windows (`platform_mac::order_back`) and never calls
   `activate`, so the owner keeps focus. It always quits when the script ends, and any failed step (a bad
   keystroke, a failed screenshot, an unknown step) exits non-zero. Steps: `wait:`, `key:` (through
   `Window::dispatch_keystroke`, the real input path), `shot:` (draws a fresh frame first, then
   `render_to_image`; needs the `shots` feature = GPUI `test-support`), `rss`, `cpu:<ms>` (CPU share with
-  pulse paints, shell renders, pointer moves and whether the window was on screen), `move:<ms>` (the same
-  while a synthetic pointer sweeps the window), `quit`; `HERDER_NATIVE_WINDOW=WxH` sizes the window and
-  `HERDER_NATIVE_VISIBLE=1` orders it in front, still unfocused, for CPU runs, only when the owner asks
-  for one (the window pops up over their work); units add `type:` and `keycpu:` from the spike as they
+  pulse paints, shell renders, pointer moves and whether the window was on screen), `quit`;
+  `HERDER_NATIVE_WINDOW=WxH` sizes the window; units add `type:` and `keycpu:` from the spike as they
   need them. U3 added `draw` (one frame: a window behind others gets none, and transcript paging is
   driven by render), `link:<url>` (dispatches what a click on a transcript link dispatches),
   `expect:<agent>` / `expect:<agent>+preview` (what the zoom shows; the shell answers through
