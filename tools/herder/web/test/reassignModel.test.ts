@@ -29,7 +29,7 @@ test('quickOpenRows returns only reassign rows in reassign mode', () => {
   const rows = [row('subject'), row('other')]
   const result = quickOpenRows({ kind: 'reassign', subject: 'subject' }, 'other', {
     spaces: [{ id: 'main', name: 'main', order: 0, created: 0, updated: 0 }],
-    agents: ['subject', 'other'], atSpaceCap: false, hasActivePanel: true, activeSpaceID: 'main',
+    agents: ['subject', 'other'], hasActivePanel: true, activeSpaceID: 'main',
     reassignSubject: 'subject', rows, descendantsOf: () => new Set(),
   })
   assert.ok(result.length > 0)

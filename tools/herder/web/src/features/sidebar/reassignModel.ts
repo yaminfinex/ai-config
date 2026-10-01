@@ -72,7 +72,6 @@ export function reassignSelection(candidates: QuickOpenActionRow[], rawQuery: st
 export type QuickOpenRowsContext = {
   spaces: SpaceDefinition[]
   agents: string[]
-  atSpaceCap: boolean
   hasActivePanel: boolean
   activeSpaceID: string | null
   reassignSubject?: string
@@ -82,7 +81,7 @@ export type QuickOpenRowsContext = {
 
 export function quickOpenRows(mode: QuickOpenMode, query: string, context: QuickOpenRowsContext): QuickOpenActionRow[] {
   return mode.kind === 'normal'
-    ? quickOpenActionRows(query, context.spaces, context.agents, context.atSpaceCap, context.hasActivePanel, context.activeSpaceID, context.reassignSubject)
+    ? quickOpenActionRows(query, context.spaces, context.agents, context.hasActivePanel, context.activeSpaceID, context.reassignSubject)
     : reassignCandidates(mode.subject, context.rows, context.descendantsOf, query)
 }
 

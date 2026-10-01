@@ -26,7 +26,7 @@ function useDebounced(value: string, delay = 120) {
   return debounced
 }
 
-export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpaceID, agents, atSpaceCap, onClose, onMode, onOpenFile, onOpenFolder, onOpenAgent, onSwitchSpace, onCreateSpace }: {
+export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpaceID, agents, onClose, onMode, onOpenFile, onOpenFolder, onOpenAgent, onSwitchSpace, onCreateSpace }: {
   open: boolean
   mode: QuickOpenMode
   agent?: string
@@ -35,7 +35,6 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   spaces: SpaceDefinition[]
   activeSpaceID: string | null
   agents: string[]
-  atSpaceCap: boolean
   onClose: () => void
   onMode: (mode: QuickOpenMode) => void
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
@@ -67,7 +66,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
 
   const rows = useMemo(() => flattenedBoardRows(board), [board])
   const rowContext = {
-    spaces, agents, atSpaceCap, hasActivePanel: Boolean(workspaceData.activePanel), activeSpaceID,
+    spaces, agents, hasActivePanel: Boolean(workspaceData.activePanel), activeSpaceID,
     reassignSubject: agent, rows, descendantsOf: (subject: string) => reassignDescendants(subject, rows),
   }
   const actions = quickOpenRows(mode, query, rowContext)
