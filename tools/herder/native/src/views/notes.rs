@@ -12,7 +12,6 @@
 use crate::store::notes::{Note, Stamp, Step};
 use crate::store::sync::{Hold, Ns};
 use crate::store::{Event, Store};
-use crate::views::composer;
 use crate::views::lens::{Focus, Ui};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim};
@@ -166,7 +165,7 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
             None => return Vec::new(),
         },
         Notes::HandOff => {
-            ui.focus = Some(composer::into_box(store, &agent));
+            ui.focus = Some(Focus::Box);
             return event(Step::HandOff {
                 agent,
                 stamp: stamp(),

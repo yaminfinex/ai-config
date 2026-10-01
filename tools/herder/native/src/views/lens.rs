@@ -39,8 +39,8 @@ pub enum Nav {
 /// Card sizes (`s`): width in design pixels and text lines, as the prototype; the first is the default.
 const SIZES: [(f32, usize); 4] = [(284., 5), (360., 8), (440., 12), (240., 3)];
 
-/// Where an action asks focus to go: into the composer's box, into the notes editor, or out of them
-/// to the zoom (or the lens).
+/// Where an action asks focus to go: into the composer's box (where it is writable), into the notes
+/// editor, or out of them to the zoom (or the lens).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Focus {
     Box,

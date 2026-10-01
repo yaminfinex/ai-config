@@ -246,7 +246,7 @@ impl Store {
                     taken,
                     stamp,
                 };
-                self.begin_transfer(agent, transfer, out);
+                self.begin_transfer(agent, transfer, Dest::Draft, out);
                 return;
             }
             Step::Queue { agent, stamp } => {
@@ -269,7 +269,7 @@ impl Store {
                 };
                 self.note(add, out);
                 let transfer = Transfer::Queue { draft };
-                return self.begin_transfer(agent, transfer, out);
+                return self.begin_transfer(agent, transfer, Dest::Note, out);
             }
             Step::Landed { agent, saved } => match self.land(&agent, saved, out) {
                 Some(rows) => rows,
@@ -287,11 +287,7 @@ impl Store {
         Some((row.key.clone(), row.updated, row.write_id.clone()))
     }
 
-    fn begin_transfer(&mut self, agent: String, t: Transfer, out: &mut Vec<Effect>) {
-        let to = match t {
-            Transfer::HandOff { .. } => Dest::Draft,
-            Transfer::Queue { .. } => Dest::Note,
-        };
+    fn begin_transfer(&mut self, agent: String, t: Transfer, to: Dest, out: &mut Vec<Effect>) {
         self.sends.remove(&agent);
         self.note_problems.remove(&agent);
         self.transfers.insert(agent.clone(), t);

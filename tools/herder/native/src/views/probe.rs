@@ -29,12 +29,10 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
         // The zoomed agent's note count, then the editor: `closed`, or its focus and text.
         "notes" => {
             let n = store.notes_of(agent.unwrap_or("")).count();
+            let focus = focused(ui.notes.focus_handle(cx));
             match &ui.notes.editing {
                 None => format!("{n}:closed"),
-                Some(_) => {
-                    let focus = focused(ui.notes.focus_handle(cx));
-                    format!("{n}:{focus}:{}", ui.notes.text)
-                }
+                Some(_) => format!("{n}:{focus}:{}", ui.notes.text),
             }
         }
         "header" => lens::header_line(store),
@@ -88,11 +86,8 @@ pub(super) fn shown(store: &Store, ui: &State) -> String {
     let Some(zoom) = ui.zoom.as_ref() else {
         return String::new();
     };
-    let agent = zoom.agent.clone().unwrap_or_default();
+    let agent = zoom.agent.as_deref().unwrap_or("");
     let member = zoomed(store, zoom).is_some_and(|s| s.agents().any(|a| a == agent));
-    if member || agent.is_empty() {
-        agent
-    } else {
-        format!("{agent} preview")
-    }
+    let outsider = !member && !agent.is_empty();
+    format!("{agent}{}", if outsider { " preview" } else { "" })
 }

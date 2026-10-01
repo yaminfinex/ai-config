@@ -317,8 +317,8 @@ pub fn render<H: Host>(
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
         .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
         .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
-        .on_action(on(cx, |store, ui, c: &Compose| match c {
-            Compose::Focus => composer::act(store, ui, *c),
+        .on_action(on(cx, |_, ui, c: &Compose| match c {
+            Compose::Focus => composer::act(ui, *c),
             _ => Vec::new(),
         }))
         .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))

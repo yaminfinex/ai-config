@@ -88,7 +88,7 @@ pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
 }
 
 /// A composer key: `Focus` from the zoom, the rest from the box itself.
-pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
+pub fn act(ui: &mut Ui, key: Compose) -> Vec<Event> {
     let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
     };
@@ -99,7 +99,7 @@ pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
         })]
     };
     match key {
-        Compose::Focus => ui.focus = Some(into_box(store, &agent)),
+        Compose::Focus => ui.focus = Some(Focus::Box),
         Compose::Leave => ui.focus = Some(Focus::Out),
         Compose::Send => return send(false),
         // The zoom stays, "sending", until it lands (`Effect::FiledBack`); a failure stays to say why.
@@ -129,14 +129,6 @@ pub fn filed_back<H: Host>(
     out
 }
 
-/// Focus into `agent`'s box, or out where it is read-only.
-pub(super) fn into_box(store: &Store, agent: &str) -> Focus {
-    match store.can_send(agent) {
-        Ok(()) => Focus::Box,
-        Err(_) => Focus::Out,
-    }
-}
-
 /// The box and its status line, under the transcript.
 pub fn render<H: Host>(
     store: &Store,
@@ -150,7 +142,7 @@ pub fn render<H: Host>(
     let input = Textarea::new(&ui.composer.state).disabled(!writable);
     let input = div()
         .key_context("Composer")
-        .on_action(on(cx, |store, ui, c: &Compose| act(store, ui, *c)))
+        .on_action(on(cx, |_, ui, c: &Compose| act(ui, *c)))
         .child(input);
     div()
         .flex_none()

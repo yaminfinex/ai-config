@@ -182,8 +182,9 @@ pub fn on<A: Action, H: Host>(
         let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
         let events = f(store, ui, action);
         let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
+        let writable = ui.zoomed_agent().is_some_and(|a| store.can_send(a).is_ok());
         let target = match (ui.focus.take(), held) {
-            (Some(Focus::Box), _) => ui.composer.focus_handle(cx),
+            (Some(Focus::Box), _) if writable => ui.composer.focus_handle(cx),
             (Some(Focus::Editor), _) => ui.notes.focus_handle(cx),
             (None, Some(held)) => held,
             _ => ui.focus_target().clone(),
