@@ -36,6 +36,13 @@ pub fn waited(secs: u64) -> String {
     }
 }
 
+/// How long a message has been queued, from hcom's `sent_at`; as sent when it does not parse (web's
+/// fallback).
+pub fn queued_age(sent_at: &str, now: u64) -> String {
+    let at = condense::epoch(sent_at);
+    at.map_or_else(|| sent_at.to_string(), |at| waited(now.saturating_sub(at)))
+}
+
 /// The entry cards (spec §1 "Operator / prompt card and delivery card"): another agent's message, an
 /// operator's note, the owner's prompt.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -292,8 +299,7 @@ pub(super) fn queued(messages: &[Queued], t: TypeScale) -> Option<Div> {
     let head = head.text_color(rgb(pal::QUEUE_TITLE)).child(title);
     let head = head.child(sub.child("waiting for the agent’s next turn"));
     let row = |q: &Queued| {
-        let age = condense::epoch(&q.sent_at).map(|at| waited(now.saturating_sub(at)));
-        let age = age.unwrap_or_else(|| q.sent_at.clone());
+        let age = queued_age(&q.sent_at, now);
         let meta = div()
             .flex()
             .items_center()

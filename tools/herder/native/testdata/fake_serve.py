@@ -28,7 +28,9 @@ STATE = {}  # namespace -> {key: row}, what was posted (and --notes)
 
 
 def ago(seconds):
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - seconds))
+    """A time `seconds` back in hcom's wire form (`hcomevents` keeps its `ts`): microseconds, +00:00."""
+    at = time.time() - seconds
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(at)) + f".{int(at % 1 * 1e6):06d}+00:00"
 
 
 # --queued: an operator's request and another agent's inform, waiting for the agent's next turn.

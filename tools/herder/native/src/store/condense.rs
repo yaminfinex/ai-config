@@ -334,20 +334,35 @@ pub fn pills<'a>(members: impl IntoIterator<Item = &'a Item>) -> Vec<Pill> {
     pills
 }
 
-/// Epoch seconds of the serve's RFC 3339 UTC timestamps (`2026-09-30T00:07:16.868Z`); `None` for
+/// Epoch seconds of an RFC 3339 timestamp: the serve's entries' (`2026-09-30T00:07:16.868Z`) and
+/// hcom's queued messages' (`2026-09-30T00:07:16.868123+00:00`). The fraction is dropped; `None` for
 /// any other form. The store reads no clock: the view says how long ago.
 pub fn epoch(ts: &str) -> Option<u64> {
     let n = |from: usize, to: usize| ts.get(from..to)?.parse::<i64>().ok();
-    let utc = ts.ends_with('Z') && ts.get(10..11) == Some("T");
+    if ts.get(10..11) != Some("T") {
+        return None;
+    }
+    let zone = ts.get(19..)?;
+    let zone = zone
+        .strip_prefix('.')
+        .map_or(zone, |f| f.trim_start_matches(|c: char| c.is_ascii_digit()));
+    let offset = match zone.as_bytes() {
+        b"Z" => 0,
+        [sign @ (b'+' | b'-'), _, _, b':', _, _] => {
+            let at = |from: usize| zone.get(from..from + 2)?.parse::<i64>().ok();
+            let offset = at(1)? * 3600 + at(4)? * 60;
+            if *sign == b'+' { offset } else { -offset }
+        }
+        _ => return None,
+    };
     let (y, m, d) = (n(0, 4)?, n(5, 7)?, n(8, 10)?);
-    let secs = n(11, 13)? * 3600 + n(14, 16)? * 60 + n(17, 19)?;
+    let secs = n(11, 13)? * 3600 + n(14, 16)? * 60 + n(17, 19)? - offset;
     // Days from 1970-01-01 to the civil date (Hinnant's algorithm), years starting in March.
     let y = if m <= 2 { y - 1 } else { y };
     let (era, yoe) = (y.div_euclid(400), y.rem_euclid(400));
     let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
     let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
-    utc.then(|| u64::try_from(days * 86_400 + secs).ok())
-        .flatten()
+    u64::try_from(days * 86_400 + secs).ok()
 }
 
 /// Web's one-line tool summary: the command or file when there is one, else the first input value.

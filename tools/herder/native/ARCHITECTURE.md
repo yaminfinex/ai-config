@@ -405,14 +405,14 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
 | `store/attention.rs` | 281 | `views/probe.rs` | 210 |
 | `store/transcript.rs` | 597 | `views/markdown.rs` | 238 |
-| `store/condense.rs` | 413 | `views/theme.rs` | 257 |
+| `store/condense.rs` | 428 | `views/theme.rs` | 257 |
 | `store/notes.rs` | 432 | `shell.rs` | 441 |
 | `store/composer.rs` | 166 | `shell/io.rs` | 180 |
 | `local.rs` | 95 | `harness.rs` | 284 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
-|  |  | `views/entries.rs` | 350 |
+|  |  | `views/entries.rs` | 356 |
 
-About 9,540 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
+About 9,560 lines for Rung 1, tests excluded. F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

@@ -2081,7 +2081,13 @@ pub(crate) mod transcript_pages {
         assert_eq!(condense::epoch("2026-09-30T00:07:16Z"), Some(1_790_726_836));
         assert_eq!(condense::epoch("1970-01-01T00:00:00.000Z"), Some(0));
         assert_eq!(condense::epoch("2024-02-29T12:00:00Z"), Some(1_709_208_000));
-        assert_eq!(condense::epoch("2026-09-30T00:07:16+10:00"), None);
+        // hcom's queued messages: an offset, and microseconds.
+        let utc = condense::epoch("2026-09-30T00:07:16.868123+00:00");
+        assert_eq!(utc, Some(1_790_726_836));
+        let aest = condense::epoch("2026-09-30T10:07:16+10:00");
+        assert_eq!(aest, Some(1_790_726_836));
+        assert_eq!(condense::epoch("2026-09-30T00:07:16"), None);
+        assert_eq!(condense::epoch("2026-09-30T00:07:16+0000"), None);
         assert_eq!(condense::epoch(""), None);
     }
 }

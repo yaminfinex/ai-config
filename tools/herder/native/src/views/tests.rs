@@ -1213,12 +1213,13 @@ mod runs {
 
 /// A2: answers' parts, entry headers and cards.
 mod entries {
+    use crate::api::AgentDetail;
     use crate::store::condense::{self, Seg};
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{drive, history, items, open};
     use crate::store::transcript::{Item, Key, Step};
     use crate::store::{Event, Store};
-    use crate::views::entries::{Bit, Card, bits, stamp, waited};
+    use crate::views::entries::{Bit, Card, bits, queued_age, stamp, waited};
     use crate::views::transcript::{Fold, View, long};
 
     /// The last answer holding a part `is` picks, and that part.
@@ -1305,6 +1306,26 @@ mod entries {
         for (secs, want) in waits.into_iter().chain([(7300, "2h ago")]) {
             assert_eq!(waited(secs), want, "{secs}s");
         }
+        // A queued message's `sent_at` as hcom writes it (`hcomevents` keeps its `ts`), and as Z: one age.
+        let detail: AgentDetail = serde_json::from_str(
+            r#"{"name": "mupu", "queued": [
+                {"id": 1, "sender": "kona", "preview": "a", "sent_at": "2026-09-30T00:07:16.868123+00:00"},
+                {"id": 2, "sender": "kona", "preview": "b", "sent_at": "2026-09-30T00:07:16.868Z"}]}"#,
+        )
+        .unwrap();
+        let now = condense::epoch("2026-09-30T00:08:51Z").unwrap();
+        let ages: Vec<String> = detail
+            .queued
+            .unwrap()
+            .iter()
+            .map(|q| queued_age(&q.sent_at, now))
+            .collect();
+        assert_eq!(ages, ["1m ago", "1m ago"]);
+        assert_eq!(
+            queued_age("yesterday", now),
+            "yesterday",
+            "as sent when it does not parse"
+        );
         assert_eq!(condense::group(219_914), "219,914");
         assert_eq!(condense::group(5998), "5,998");
         assert_eq!(condense::group(999), "999");
