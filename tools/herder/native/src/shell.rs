@@ -134,7 +134,8 @@ impl Host for Shell {
             }
         );
         // Whom the owner is looking at, as the store last heard: a notification never interrupts that.
-        let looking = self.front.then(|| self.ui.zoomed_agent()).flatten();
+        let looking = self.ui.zoomed_agent().filter(|_| self.front);
+        let looking = looking.map(String::from);
         if looking != self.store.alerts.looking {
             let effects = self.store.apply(Event::Looking(looking));
             self.run(effects, cx);

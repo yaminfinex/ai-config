@@ -217,7 +217,7 @@ pub fn render<H: Host>(
     let let_go = cx.listener(|h: &mut H, _: &MouseUpEvent, window, cx| {
         let text = gpui_kit::base::TextSelection::selected_text(window, cx);
         let ui = h.parts().1;
-        let agent = ui.zoom.as_ref().and_then(|z| z.agent.clone());
+        let agent = ui.zoomed_agent().map(String::from);
         if ui.notes.selected(agent, &text) {
             cx.notify();
         }

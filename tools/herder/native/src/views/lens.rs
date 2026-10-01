@@ -117,8 +117,8 @@ impl State {
     }
 
     /// The agent zoomed in on, if any.
-    pub fn zoomed_agent(&self) -> Option<String> {
-        self.zoom.as_ref().and_then(|z| z.agent.clone())
+    pub fn zoomed_agent(&self) -> Option<&str> {
+        self.zoom.as_ref()?.agent.as_deref()
     }
 
     pub fn selected<'a>(&self, store: &'a Store) -> Option<&'a Space> {
@@ -261,7 +261,7 @@ fn header(store: &Store, t: TypeScale) -> Div {
         Conn::Offline => "offline",
         Conn::Live => "live",
     };
-    let needs: usize = store.spaces.iter().map(|s| store.needs_you(s)).sum();
+    let needs = store.needs_you_total();
     let fresh = store.server_updated;
     let updated = if fresh { " · server updated" } else { "" };
     let spaces = store.spaces.len();

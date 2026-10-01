@@ -153,27 +153,21 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                     .await;
             }
             // `tap:` presses a key that may be bound to nothing (a guard checks what did not happen).
-            "tap" => match Keystroke::parse(arg) {
+            "key" | "tap" => match Keystroke::parse(arg) {
                 Ok(keystroke) => {
                     let handled = cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
-                    metric(format!("tap {arg}: handled {}", handled.unwrap_or(false)));
+                    match (op, handled) {
+                        ("tap", h) => metric(format!("tap {arg}: handled {}", h.unwrap_or(false))),
+                        (_, Ok(true)) => metric(format!("key {arg}")),
+                        _ => fail(format!("key {arg}: not handled by any binding")),
+                    }
                 }
-                Err(e) => fail(format!("tap {arg}: {e}")),
+                Err(e) => fail(format!("{op} {arg}: {e}")),
             },
             "select" => {
                 let _ = cx.update(|_, cx| (probe.select)(&arg.replace('+', " "), cx));
                 metric(format!("select {arg}"));
             }
-            "key" => match Keystroke::parse(arg) {
-                Ok(keystroke) => {
-                    let handled = cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
-                    match handled {
-                        Ok(true) => metric(format!("key {arg}")),
-                        _ => fail(format!("key {arg}: not handled by any binding")),
-                    }
-                }
-                Err(e) => fail(format!("key {arg}: {e}")),
-            },
             "rss" => metric(format!("rss {:.1} MB", rss_mb())),
             // `cpu:` idles, counting pointer events (real ones) meanwhile.
             "cpu" => {
@@ -208,15 +202,14 @@ pub async fn run(script: String, probe: Probe, cx: &mut AsyncWindowContext) {
                     _ => fail(format!("click {arg}: nothing to click")),
                 }
             }
-            "link" => {
-                let link = (probe.link)(arg);
-                let _ = cx.update(|window, cx| window.dispatch_action(link, cx));
-                metric(format!("link {arg}"));
-            }
-            "summon" => {
-                let summon = (probe.summon)(arg);
-                let _ = cx.update(|window, cx| window.dispatch_action(summon, cx));
-                metric(format!("summon {arg}"));
+            "link" | "summon" => {
+                let action = if op == "link" {
+                    probe.link
+                } else {
+                    probe.summon
+                };
+                let _ = cx.update(|window, cx| window.dispatch_action(action(arg), cx));
+                metric(format!("{op} {arg}"));
             }
             "expect" | "box" | "has" | "says" | "notes" => {
                 let got = cx.update(|window, cx| match op {

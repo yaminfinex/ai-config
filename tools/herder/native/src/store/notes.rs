@@ -129,7 +129,7 @@ impl Store {
     /// Whether `agent`'s notes cannot be handed over now: its box is read-only, or a send or another
     /// transfer is in flight.
     pub fn hand_off_blocked(&self, agent: &str) -> bool {
-        self.can_send(agent).is_err() || self.in_flight(agent) || self.transfers.contains_key(agent)
+        self.can_send(agent).is_err() || self.busy(agent)
     }
 
     /// Why web would refuse to save this add, edit or queue, in its words.
@@ -250,7 +250,7 @@ impl Store {
                 let Some(draft) = draft.cloned() else {
                     return;
                 };
-                if self.in_flight(&agent) || self.transfers.contains_key(&agent) {
+                if self.busy(&agent) {
                     return;
                 }
                 let add = Step::Add {
