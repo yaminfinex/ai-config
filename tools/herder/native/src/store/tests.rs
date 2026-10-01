@@ -2900,6 +2900,32 @@ mod alerts {
     }
 
     #[test]
+    fn one_agent_alerting_twice_in_a_burst_is_one_notice() {
+        let (mut store, mut b) = live();
+        block(&mut b, "mupu", true);
+        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
+        block(&mut b, "mupu", false);
+        store.apply(fleet_frame(b.clone()));
+        block(&mut b, "mupu", true);
+        assert!(!store.apply(fleet_frame(b.clone())).contains(&BURST));
+        let got = notices(store.apply(Event::BurstEnded));
+        assert_eq!(got.len(), 1);
+        assert_eq!(
+            (got[0].tag.as_str(), got[0].body.as_str()),
+            ("agent:mupu", "blocked")
+        );
+        // Two agents in one burst still summarize.
+        block(&mut b, "mupu", false);
+        store.apply(fleet_frame(b.clone()));
+        block(&mut b, "mupu", true);
+        bump(&mut b, "support-mifa", 1);
+        assert!(store.apply(fleet_frame(b)).contains(&BURST));
+        let got = notices(store.apply(Event::BurstEnded));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].title, "2 agents need you");
+    }
+
+    #[test]
     fn a_reconnect_is_not_a_transition_but_turns_after_it_are() {
         let (mut store, mut b) = live();
         let dropped = Event::Stream {

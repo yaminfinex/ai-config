@@ -336,7 +336,8 @@ impl Store {
             mark.block &= blocked;
             let cause = turn > mark.turn || (blocked && !mark.block);
             let alert = armed && eligible && !mark.eligible && cause;
-            if alert && !looking {
+            // Once per burst: an agent alerting again before it ends (block, unblock, block) is one notice.
+            if alert && !looking && !self.alerts.burst.contains(&name) {
                 self.alerts.burst.push(name);
             }
             if alert || !armed {
