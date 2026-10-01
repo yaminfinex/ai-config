@@ -5,12 +5,14 @@
 //! the foreground thread only. Views read `&Store`; they never hold `&mut`.
 //!
 //! - `fleet`: agents and their status, derived from the board.
-//! - `spaces`: spaces and their members, in lens order; the lens row type; needs-you alerts (U6).
+//! - `spaces`: spaces and their members, in lens order; the lens row type and the owner's moves.
+//! - `attention`: seen marks, needs-you, the alerts and the dock badge (U2, U6).
 //! - `notes`: note records and the owner's note edits, hand-off and queueing (U5).
 //! - `composer`: drafts, who can be written to, and each message send (U4).
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
 //! - `transcript`: entries → compact items, paging cursors, tool/result pairing (U3).
 
+pub mod attention;
 pub mod composer;
 pub mod condense;
 pub mod fleet;
@@ -46,7 +48,7 @@ pub struct Prefs {
     /// The visible agent per space id (U2).
     pub visible: BTreeMap<String, String>,
     /// Per agent, the latest turn end (`turn_end_id`) the owner has seen, and whether this block was.
-    pub seen: BTreeMap<String, spaces::Seen>,
+    pub seen: BTreeMap<String, attention::Seen>,
     /// Spaces the owner marked unread (`u`): they need you until the next zoom-in.
     pub unread: BTreeSet<String>,
     /// The unsent composer text per agent (U4).
@@ -132,7 +134,7 @@ pub enum Event {
     Note(notes::Step),
     /// The app became frontmost, or stopped being (U6): the agent zoomed in meanwhile is never notified.
     Front(bool),
-    /// A notification burst's `spaces::BURST_MS` is up.
+    /// A notification burst's `attention::BURST_MS` is up.
     BurstEnded,
     /// The summon hotkey; the shell handles it before the store, which ignores it.
     Summon,
@@ -200,7 +202,7 @@ pub enum Effect {
         agent: String,
     },
     /// Post a notification (U6); on the foreground, through `platform_mac`'s test-mode switch.
-    Notify(spaces::Notice),
+    Notify(attention::Notice),
     /// Show this needs-you count on the dock (0 clears it).
     Badge(usize),
     /// Dispatch `Event::BurstEnded` after this long.
@@ -245,7 +247,7 @@ pub struct Store {
     pub transfers: BTreeMap<String, notes::Transfer>,
     /// Per agent, why its last queue or transfer did not happen; until its next transfer.
     pub note_problems: BTreeMap<String, String>,
-    pub alerts: spaces::Alerts,
+    pub alerts: attention::Alerts,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
@@ -392,9 +394,8 @@ impl Store {
 
     fn board(&mut self, board: Board, live: bool, out: &mut Vec<Effect>) {
         self.fleet.ingest(board);
-        self.lapse_blocks();
         self.alerts.live |= live;
-        if spaces::baseline_seen(&mut self.prefs.seen, &self.fleet, &self.spaces) {
+        if self.reseen() {
             out.push(Effect::Persist(Persist::Prefs));
         }
     }

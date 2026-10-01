@@ -25,7 +25,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 | Module | Responsibility (one sentence) | Depends on |
 |---|---|---|
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
-| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. | `api::types` |
+| `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). | `api::types` |
 | `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
 | `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
@@ -99,7 +99,7 @@ Derived shapes are in `store`:
   An agent absent from the board is gone; retired detail (`bus_status: retired`) makes a transcript read-only.
 - **`spaces::Space`** — `{id, name, order}` from the `spaces` namespace, tombstones dropped. **`Member`** is
   `Agent{name}` or `File{root, path}` from `spaces.members`, in dock order. Local: **`Row`** (`Focus`,
-  `Watch`, `Background`) per space, the **visible agent** per space, and **seen** per agent: the board's
+  `Watch`, `Background`) per space and the **visible agent** per space. **`attention::Seen`** per agent: the board's
   `turn_end_id` (the hcom event id of the agent's latest completed turn, monotonic) the owner has seen; the
   board carries no activity timestamp. An agent seen for the first time takes its current turn as the
   baseline (web's policy: an unknown baseline is not a new turn), and marks are pruned to agents on the
@@ -285,15 +285,16 @@ Current budgets, at each file's size after D1 (tests excluded: `store/tests.rs`,
 | `api/types.rs` | 322 | `views/mod.rs` | 375 |
 | `api/client.rs` | 206 | `views/lens.rs` | 360 |
 | `api/sse.rs` | 194 | `views/space.rs` | 356 |
-| `store/mod.rs` | 420 | `views/transcript.rs` | 401 |
+| `store/mod.rs` | 421 | `views/transcript.rs` | 401 |
 | `store/sync.rs` | 314 | `views/composer.rs` | 228 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 421 |
-| `store/spaces.rs` | 420 | `views/markdown.rs` | 238 |
+| `store/spaces.rs` | 193 | `views/markdown.rs` | 238 |
 | `store/transcript.rs` | 539 | `views/theme.rs` | 100 |
 | `store/condense.rs` | 189 | `shell.rs` | 447 |
 | `store/notes.rs` | 430 | `shell/io.rs` | 133 |
-| `store/composer.rs` | 180 | `harness.rs` | 307 |
+| `store/composer.rs` | 166 | `harness.rs` | 307 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
+| `store/attention.rs` | 280 | `views/probe.rs` | 97 |
 
 About 6,900 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

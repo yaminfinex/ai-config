@@ -919,7 +919,7 @@ fn a_block_before_any_turn_alerts_again_when_it_recurs() {
 #[test]
 fn seen_marks_read_the_old_bare_turn_form() {
     let old: Prefs = serde_json::from_str(r#"{"seen": {"mupu": 42}}"#).unwrap();
-    let mark = spaces::Seen {
+    let mark = attention::Seen {
         turn_end: 42,
         blocked: false,
     };
@@ -2676,7 +2676,7 @@ mod notes {
 /// Notifications and the dock badge (U6): transitions in, `Burst`/`Notify`/`Badge` out.
 mod alerts {
     use super::*;
-    use crate::store::spaces::{BURST_MS, Notice};
+    use crate::store::attention::{BURST_MS, Notice};
 
     const BURST: Effect = Effect::Burst { after_ms: BURST_MS };
 
