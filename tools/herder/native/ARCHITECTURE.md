@@ -322,7 +322,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `store/notes.rs` | 424 | `shell/io.rs` | 177 |
 | `store/composer.rs` | 166 | `harness.rs` | 269 |
 | `local.rs` | 95 | `platform_mac.rs` | 92 |
-| `store/cards.rs` | 169 | | |
+| `store/cards.rs` | 182 | | |
 
 About 6,950 lines for Rung 1, tests excluded. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
