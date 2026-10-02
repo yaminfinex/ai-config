@@ -102,6 +102,35 @@ export function readUpdates({ markers, board, viewed, positions, armed, now }: {
   return updates
 }
 
+// agentUnread is whether an agent can be marked read: a deliberate mark
+// unread (even while blocked), or a turn that ended after the marker's.
+export function agentUnread(row: Row | undefined, marker: ReadMarker | undefined): boolean {
+  return Boolean(marker?.unread) || agentAttention(row, marker) === 'unread'
+}
+
+// markReadUpdates are what an explicit mark read writes for the named
+// unread agents: what a dwell read writes (the board's turn end, the
+// transcript tail where loaded or else the position held, now, the mark
+// unread cleared), at once and whether or not a mark unread is armed.
+// Agents already read are left alone.
+export function markReadUpdates({ markers, board, names, positions, now }: {
+  markers: ReadMarkers
+  board: Board | undefined
+  names: readonly string[]
+  positions: Readonly<Record<string, ReadPosition | null | undefined>>
+  now: number
+}): Record<string, ReadMarker> {
+  const updates: Record<string, ReadMarker> = {}
+  for (const name of names) {
+    const row = findAgentRow(board, name)
+    const marker = markers[name]
+    if (!agentUnread(row, marker)) continue
+    const next = readThrough(marker, turnEnd(row), positions[name] ?? null, now)
+    if (next) updates[name] = next
+  }
+  return updates
+}
+
 // boardAgents names every agent row on the board, placed, unplaced or
 // subagent.
 export function boardAgents(board: Board): Set<string> {
@@ -123,6 +152,12 @@ export function markerKeepSet(board: Board | undefined, openAgents: readonly str
   const keep = boardAgents(board)
   for (const name of openAgents) keep.add(name)
   return keep
+}
+
+// spaceMenuItems is a space row's context menu: "Mark all read" while its
+// badge counts an unread agent, nothing (the browser's own menu) otherwise.
+export function spaceMenuItems(attention: SpaceAttention): { id: 'read', label: 'Mark all read' }[] {
+  return attention.unread.length > 0 ? [{ id: 'read', label: 'Mark all read' }] : []
 }
 
 export function attentionLabel(attention: SpaceAttention): string {

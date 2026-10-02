@@ -1,4 +1,6 @@
 import { createContext, useContext, type ReactNode } from 'react'
+import { findAgentRow } from '../../shared/agentStatus'
+import { agentUnread, useReadMarker } from '../spaces/index.ts'
 import type { Board, FileTarget, FolderTarget } from '../../types'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
 import type { FileViewMode } from '../files/fileTabs'
@@ -31,6 +33,8 @@ export type WorkspaceActionsValue = {
   // markUnread marks an agent unread from entries[index] of its loaded
   // transcript window, or from the start of its latest turn.
   markUnread: (name: string, index?: number) => void
+  // markRead marks agents read now, as a dwell read would.
+  markRead: (names: readonly string[]) => void
 }
 
 export type WorkspaceDataValue = {
@@ -66,4 +70,10 @@ export function WorkspaceProviders({ actions, data, children }: { actions: Works
   return <WorkspaceActionsContext.Provider value={actions}><WorkspaceDataContext.Provider value={data}>
     {children}
   </WorkspaceDataContext.Provider></WorkspaceActionsContext.Provider>
+}
+
+// useAgentUnread is whether an agent can be marked read: the menus and the
+// footer offer "Mark read" in place of "Mark unread" while it is.
+export function useAgentUnread(name: string): boolean {
+  return agentUnread(findAgentRow(useWorkspaceData().board, name), useReadMarker(name))
 }

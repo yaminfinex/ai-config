@@ -60,7 +60,7 @@ function actions(calls: string[]): ShellShortcutActions {
     goToTop: () => { calls.push('top'); return true },
     goToBottom: () => { calls.push('bottom'); return true },
     toggleMaximize: () => { calls.push('maximize'); return true },
-    markUnread: () => { calls.push('unread'); return true },
+    toggleRead: () => { calls.push('toggle-read'); return true },
   }
 }
 
@@ -185,7 +185,7 @@ test('Option Enter uses its physical code for the maximize toggle', () => {
   }
 })
 
-test('Option U marks the active agent unread by physical code, Mac dead key included', () => {
+test('Option U toggles the active agent read or unread by physical code, Mac dead key included', () => {
   const target = new EventTarget()
   const calls: string[] = []
   const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
@@ -193,7 +193,7 @@ test('Option U marks the active agent unread by physical code, Mac dead key incl
     assert.equal(dispatch(target, { key: 'Dead', code: 'KeyU', altKey: true }).defaultPrevented, true)
     assert.equal(dispatch(target, { key: '¨', code: 'KeyU', altKey: true }).defaultPrevented, true)
     dispatch(target, { key: 'u', code: 'KeyU' })
-    assert.deepEqual(calls, ['unread', 'unread'])
+    assert.deepEqual(calls, ['toggle-read', 'toggle-read'])
   } finally {
     unsubscribe()
   }
@@ -202,12 +202,12 @@ test('Option U marks the active agent unread by physical code, Mac dead key incl
   const unbind = bindShellShortcuts(linux as unknown as Window, actions(linuxCalls), 'Linux')
   try {
     dispatch(linux, { key: 'u', code: 'KeyU', altKey: true })
-    assert.deepEqual(linuxCalls, ['unread'])
+    assert.deepEqual(linuxCalls, ['toggle-read'])
   } finally {
     unbind()
   }
-  assert.equal(shortcutLabels('Macintosh').markUnread, '⌥U')
-  assert.equal(shortcutLabels('Linux').markUnread, 'Alt+U')
+  assert.equal(shortcutLabels('Macintosh').toggleRead, '⌥U')
+  assert.equal(shortcutLabels('Linux').toggleRead, 'Alt+U')
 })
 
 test('shortcut reference labels are platform-aware and Escape stays neutral', () => {

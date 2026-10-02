@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { dockTabMenuFocusAction, dockTabMenuItems, dockTabMenuKeyAction, dockTabMenuNavigationIndex, isDockTabMenuKey } from '../src/features/workspace/dockTabMenuModel.ts'
+import { dockTabMenuFocusAction, dockTabMenuItems, readMenuItem, dockTabMenuKeyAction, dockTabMenuNavigationIndex, isDockTabMenuKey } from '../src/features/workspace/dockTabMenuModel.ts'
 
 const spaces = [
   { id: 'main', name: 'main', order: 0, created: 0, updated: 0 },
@@ -18,6 +18,15 @@ test('dock tab menu contains other spaces, send-to-new, and agent-only reassign 
   ])
   assert.equal(dockTabMenuItems(spaces, 'main').some((item) => item.kind === 'reassign'), false)
   assert.equal(dockTabMenuItems(spaces, 'main').some((item) => item.kind === 'unread'), false)
+})
+
+test('an unread agent offers Mark read in place of Mark unread, a read one Mark unread', () => {
+  assert.deepEqual(dockTabMenuItems(spaces, 'main', 'nota', true).at(-1), { id: 'read', label: 'Mark read', kind: 'read', subject: 'nota' })
+  assert.equal(dockTabMenuItems(spaces, 'main', 'nota', true).some((item) => item.kind === 'unread'), false)
+  assert.deepEqual(dockTabMenuItems(spaces, 'main', 'nota', false).at(-1), { id: 'unread', label: 'Mark unread', kind: 'unread', subject: 'nota' })
+  assert.equal(dockTabMenuItems(spaces, 'main', undefined, true).some((item) => item.kind === 'read'), false)
+  assert.deepEqual(readMenuItem('nota', true), { id: 'read', label: 'Mark read', kind: 'read', subject: 'nota' })
+  assert.match(menuSource, /readMenuItem\(subject, agentUnread\(findAgentRow\(data\.board, subject\), markers\[subject\]\)\)/, 'the tree row menu toggles the same way')
 })
 
 test('dock tab menu recognizes the platform context-menu keys only', () => {

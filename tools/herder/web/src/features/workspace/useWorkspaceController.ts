@@ -562,8 +562,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   // Deliberate switches (rail, ⌥Tab, ⇧⌥←/→) land in the new space's composer.
   const switchSpaceFocusing = useSwitchSpaceFocusing(apiRef, switchSpace)
   const spaceAttention = useSpaceAttention({ apiRef, revision, board: boardQuery.data, spaces, activeSpaceID, activeAgents: agentNames })
-  const markUnread = spaceAttention.markUnread
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace: switchSpaceFocusing, markUnread })
+  const { markUnread, markRead, toggleRead } = spaceAttention
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace: switchSpaceFocusing, toggleRead })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceFocusing })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
@@ -578,8 +578,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
     setAgentScreenPane, setAgentTailPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
-    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread,
-  }), [closePanel, markUnread, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
+    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread, markRead,
+  }), [closePanel, markRead, markUnread, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
     board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
     spaces, activeSpaceID, activePanel: activeParams ? { id: activePanelID, params: activeParams } : null,
@@ -619,6 +619,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       reopen: reopenSpace,
       announcement: spaceAnnouncement,
       attention: spaceAttention.attention,
+      markAllRead: spaceAttention.markSpaceRead,
       collapsed: layout.spacesCollapsed,
       onCollapsed: layout.setSpacesCollapsed,
     },

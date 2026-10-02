@@ -15,7 +15,7 @@ export function useWorkspaceShortcuts({
   spaces,
   activeSpaceID,
   switchSpace,
-  markUnread,
+  toggleRead,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   shortcutReference: boolean
@@ -26,7 +26,7 @@ export function useWorkspaceShortcuts({
   spaces: SpaceDefinition[]
   activeSpaceID: string | null
   switchSpace: (id: string) => boolean
-  markUnread: (name: string) => void
+  toggleRead: (name: string) => void
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
@@ -84,12 +84,12 @@ export function useWorkspaceShortcuts({
         else group.api.maximize()
         return true
       },
-      markUnread: () => {
+      toggleRead: () => {
         const params = panelParams(apiRef.current?.activePanel?.params)
         if (params?.kind !== 'agent') return false
-        markUnread(params.name)
+        toggleRead(params.name)
         return true
       },
     }, navigator.userAgent)
-  }, [activeSpaceID, apiRef, closePanel, markUnread, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail])
+  }, [activeSpaceID, apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail, toggleRead])
 }

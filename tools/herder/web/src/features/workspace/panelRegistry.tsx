@@ -14,7 +14,7 @@ import { ChangesPanel } from '../git/ChangesPanel'
 import { initialGitFileState } from '../git/gitViewModel'
 import { placementInGroup } from '../layout/openPlacement'
 import { screenIdentityState, type AgentPanelParams, type ChangesPanelParams, type DockPanelParams, type FilePanelParams, type FolderPanelParams, type ScreenPanelParams } from '../layout/dockLayout'
-import { useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext'
+import { useAgentUnread, useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext'
 import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace, type PanelKind } from './panelRegistryModel'
 import { liveRosterNames } from '../notes/notesPresentation'
 import { useDockTabMenu } from './DockTabMenu'
@@ -50,13 +50,15 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
   const agents = useLiveRosterNames(data.board)
+  const unread = useAgentUnread(params.name)
   return <AgentPanel name={params.name} agents={agents} active={visible} liveStatus={agentBusStatus(data.board, params.name)} screenPaneID={data.agentScreenPanes[params.name]}
     mentionMatcher={data.mentionMatcher} onOpenAgent={(name, placement) => workspace.openAgent(name, true, placementInGroup(placement, api.group.id), true)}
     onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onTailPane={(paneID) => workspace.setAgentTailPane(params.name, paneID)} onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
     onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))}
     onOpenChanges={(root, placement) => workspace.openChanges(root, placementInGroup(placement, api.group.id))}
     identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={() => workspace.pinPanel(api.id)} onStatus={workspace.onAgentStatus}
-    onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={(index) => workspace.markUnread(params.name, index)} />
+    onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={(index) => workspace.markUnread(params.name, index)}
+    unread={unread} onMarkRead={() => workspace.markRead([params.name])} />
 }
 
 function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>) {

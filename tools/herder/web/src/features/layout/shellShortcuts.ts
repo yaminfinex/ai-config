@@ -15,7 +15,7 @@ export type ShellShortcutActions = {
   goToTop: () => boolean | void
   goToBottom: () => boolean | void
   toggleMaximize: () => boolean | void
-  markUnread: () => boolean | void
+  toggleRead: () => boolean | void
 }
 
 export type ShortcutLabels = {
@@ -32,7 +32,7 @@ export type ShortcutLabels = {
   goToTop: string
   goToBottom: string
   toggleMaximize: string
-  markUnread: string
+  toggleRead: string
   browserClose: string
 }
 
@@ -55,7 +55,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     goToTop: '⌥↑',
     goToBottom: '⌥↓',
     toggleMaximize: '⌥⏎',
-    markUnread: '⌥U',
+    toggleRead: '⌥U',
     browserClose: '⌘W',
   } : {
     closePanel: 'Alt+W',
@@ -71,7 +71,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     goToTop: 'Alt+Up',
     goToBottom: 'Alt+Down',
     toggleMaximize: 'Alt+Enter',
-    markUnread: 'Alt+U',
+    toggleRead: 'Alt+U',
     browserClose: 'Ctrl+W',
   }
 }
@@ -103,7 +103,7 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     'Alt+ArrowUp': claimed(actions.goToTop, true),
     'Alt+ArrowDown': claimed(actions.goToBottom, true),
     'Alt+Enter': claimed(actions.toggleMaximize, true),
-    'Alt+KeyU': claimed(actions.markUnread, true),
+    'Alt+KeyU': claimed(actions.toggleRead, true),
     '$mod+PageUp': claimed(() => actions.switchTab('previous')),
     '$mod+PageDown': claimed(() => actions.switchTab('next')),
     'Alt+Digit1': claimed(actions.focusFleet, true),

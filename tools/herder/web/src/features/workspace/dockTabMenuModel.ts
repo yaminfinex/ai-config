@@ -5,8 +5,17 @@ export type DockTabMenuItem =
   | { id: 'new', label: 'Send to new space', kind: 'new' }
   | { id: 'reassign', label: 'Reassign…', kind: 'reassign', subject: string }
   | { id: 'unread', label: 'Mark unread', kind: 'unread', subject: string }
+  | { id: 'read', label: 'Mark read', kind: 'read', subject: string }
 
-export function dockTabMenuItems(spaces: SpaceDefinition[], activeSpaceID: string | null, subject?: string): DockTabMenuItem[] {
+// readMenuItem is an agent's read toggle: "Mark read" while it is unread
+// (a mark unread or a new turn), "Mark unread" otherwise.
+export function readMenuItem(subject: string, unread: boolean): DockTabMenuItem {
+  return unread
+    ? { id: 'read', label: 'Mark read', kind: 'read', subject }
+    : { id: 'unread', label: 'Mark unread', kind: 'unread', subject }
+}
+
+export function dockTabMenuItems(spaces: SpaceDefinition[], activeSpaceID: string | null, subject?: string, unread = false): DockTabMenuItem[] {
   return [
     ...spaces.flatMap((space): DockTabMenuItem[] => space.id === activeSpaceID ? [] : [{
       id: space.id,
@@ -16,7 +25,7 @@ export function dockTabMenuItems(spaces: SpaceDefinition[], activeSpaceID: strin
     { id: 'new', label: 'Send to new space', kind: 'new' },
     ...subject ? [
       { id: 'reassign' as const, label: 'Reassign…' as const, kind: 'reassign' as const, subject },
-      { id: 'unread' as const, label: 'Mark unread' as const, kind: 'unread' as const, subject },
+      readMenuItem(subject, unread),
     ] : [],
   ]
 }
