@@ -5,7 +5,8 @@
 //! quote as a note. In the popover (`Capture > Input`) `⏎` saves the quote and comment as a note on the
 //! agent (`store::notes`), `⇧⏎` is a new line, `⌘⏎` sends them to the agent instead (web's quick send,
 //! `composer::Step::Quick`) and `esc` cancels. A click anywhere else cancels, typed text and all, as
-//! web's does. Closing clears the selection, so the keys come back.
+//! web's does, and so does focus leaving it any other way (Tab). Closing clears the selection, so the
+//! keys come back.
 //!
 //! The chip sits 6 under the selection's last line at its left, as web's `capturePosition`; the kit
 //! does not say where a selection's lines are, so that line is the one under the lower end of the drag
@@ -51,6 +52,7 @@ pub struct View {
     load: Option<String>,
     /// Clear the transcript's selection at the next render.
     clear: bool,
+    _blurs: [Subscription; 2],
 }
 
 pub(super) struct Draft {
@@ -73,13 +75,30 @@ impl View {
             }
         })
         .detach();
+        // Focus leaving it (Tab to the composer, anything) cancels it and clears the selection: the
+        // zoom's keys never come back while a selection is live. Its own chip-to-box move is not leaving.
+        let left = |host: &mut H, window: &mut Window, cx: &mut Context<H>| {
+            let ui = host.parts().1;
+            if ui.capture.draft.is_some() && !ui.capture.focused(window, cx) {
+                ui.capture.draft = None;
+                TextSelection::clear(window, cx);
+                cx.notify();
+            }
+        };
+        let chip = cx.focus_handle();
+        let boxed = input.read(cx).focus_handle(cx);
+        let blurs = [
+            cx.on_blur(&chip, window, left),
+            cx.on_blur(&boxed, window, left),
+        ];
         View {
-            chip: cx.focus_handle(),
+            chip,
             input,
             text: String::new(),
             draft: None,
             load: None,
             clear: false,
+            _blurs: blurs,
         }
     }
 
@@ -214,8 +233,9 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Capture) -> Vec<Event> {
             close(ui);
             return vec![Event::Compose(SendStep::Quick { agent, text })];
         }
-        // Saved (`⌘⏎` too while the agent cannot take a message: kept, and said why); refused (too
-        // long), the popover stays and the strip says why.
+        // Saved. `⌘⏎` too while the agent cannot take a message now (native's rule: read-only, or a send
+        // of its in flight, which web would not wait for; web adds the text to a read-only agent's
+        // prompt instead): kept, and said. Refused (too long), the popover stays and the strip says why.
         Capture::Save | Capture::Send => {
             if let Some(why) = store.refusal(&add) {
                 ui.notes.say(why);

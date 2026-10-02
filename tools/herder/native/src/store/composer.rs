@@ -15,7 +15,8 @@ pub enum Step {
     /// seen as it stood when sent and leave the zoom for the lens.
     Send { agent: String, file_back: bool },
     /// `cmd-enter` in the capture popover (F7): send `text` (a note, as web's `noteTransferText`) on its
-    /// own, the draft untouched (web's quick send). If it fails, the text is added to the draft.
+    /// own, the draft untouched (web's quick send). It is saved (`Prefs::quick`) before it goes, as a
+    /// draft is; if it fails, or the app stops before the answer, the text is added to the draft.
     Quick { agent: String, text: String },
     /// The server's answer, or why it was never asked.
     Sent {
@@ -149,6 +150,8 @@ impl Store {
                     quick: true,
                 };
                 self.sends.insert(agent.clone(), flight);
+                // In the prefs `Effect::Message` saves before it posts (a failed save posts nothing).
+                self.prefs.quick.insert(agent.clone(), text.clone());
                 out.push(Effect::Message { agent, text });
             }
             Step::Sent { agent, result } => {
@@ -160,15 +163,16 @@ impl Store {
                 else {
                     return;
                 };
-                // A quick send that did not land is kept in the draft, as web appends it to the prompt.
-                if quick && result.is_err() {
-                    let draft = drafts.entry(agent.clone()).or_default();
-                    *draft = match draft.is_empty() {
-                        true => text.clone(),
-                        false => format!("{draft}\n\n{text}"),
-                    };
+                // A quick send is answered: no longer pending. One that did not land is kept in the
+                // draft, as web appends it to the prompt.
+                if quick {
+                    self.prefs.quick.remove(&agent);
+                    if result.is_err() {
+                        keep(&mut self.prefs.drafts, &agent, &text);
+                    }
                     out.push(Effect::Persist(Persist::Prefs));
                 }
+                let drafts = &mut self.prefs.drafts;
                 match result {
                     Ok(()) => {
                         if !quick && drafts.get(&agent) == Some(&text) {
@@ -195,4 +199,27 @@ impl Store {
             }
         }
     }
+}
+
+impl Store {
+    /// At boot, quick sends the app stopped before hearing back about: each into its agent's draft,
+    /// not sent again (it may have landed).
+    pub(super) fn recover(&mut self, out: &mut Vec<Effect>) {
+        let pending = std::mem::take(&mut self.prefs.quick);
+        for (agent, text) in &pending {
+            keep(&mut self.prefs.drafts, agent, text);
+        }
+        if !pending.is_empty() {
+            out.push(Effect::Persist(Persist::Prefs));
+        }
+    }
+}
+
+/// `text` after `agent`'s draft, a blank line between.
+fn keep(drafts: &mut std::collections::BTreeMap<String, String>, agent: &str, text: &str) {
+    let draft = drafts.entry(agent.to_string()).or_default();
+    *draft = match draft.is_empty() {
+        true => text.to_string(),
+        false => format!("{draft}\n\n{text}"),
+    };
 }

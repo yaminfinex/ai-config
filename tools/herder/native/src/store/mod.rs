@@ -55,6 +55,9 @@ pub struct Prefs {
     pub unread: BTreeSet<String>,
     /// The unsent composer text per agent (U4).
     pub drafts: BTreeMap<String, String>,
+    /// A quick send from the capture popover (F7) not yet answered, per agent, saved before it goes: a
+    /// boot that finds one adds it to the draft, never sending it again (`composer::Store::recover`).
+    pub quick: BTreeMap<String, String>,
     /// The SSH host alias VS Code's Remote-SSH opens files on (web asks; this Mac defaults to it).
     pub vscode_host: String,
     /// The global summon chord (U6), in GPUI's syntax; no UI, edit `prefs.json`.
@@ -70,6 +73,7 @@ impl Default for Prefs {
             seen: BTreeMap::new(),
             unread: BTreeSet::new(),
             drafts: BTreeMap::new(),
+            quick: BTreeMap::new(),
             vscode_host: "superset".into(),
             hotkey: "ctrl-alt-cmd-h".into(),
         }
@@ -278,7 +282,10 @@ impl Store {
     pub fn apply(&mut self, event: Event) -> Vec<Effect> {
         let (mut out, boot) = (Vec::new(), matches!(event, Event::Boot));
         match event {
-            Event::PrefsLoaded(p) => self.prefs = p,
+            Event::PrefsLoaded(p) => {
+                self.prefs = p;
+                self.recover(&mut out);
+            }
             Event::Snapshot(snap) => {
                 if !self.live {
                     self.sync.restore(snap.rows, false);

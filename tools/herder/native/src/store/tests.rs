@@ -2211,7 +2211,8 @@ pub(crate) mod composer {
 
     /// F7's quick send (`cmd-enter` in the capture popover, web's): the note's text goes on its own, the
     /// draft untouched whether it lands or not, except that text which did not land is added to the
-    /// draft (web appends it to the prompt). One send at a time, as the box's.
+    /// draft (web appends it to the prompt). It is pending in the prefs (which `Effect::Message` saves
+    /// before it posts) until answered. One send at a time, as the box's (native's own rule).
     #[test]
     fn a_quick_send_leaves_the_draft_and_keeps_what_did_not_land_in_it() {
         let quick = |store: &mut Store, text: &str| {
@@ -2222,21 +2223,25 @@ pub(crate) mod composer {
         edit(&mut store, "mupu", "mine");
         let effects = quick(&mut store, "a note");
         assert_eq!(messages(&effects), [("mupu".into(), "a note".into())]);
+        assert_eq!(
+            store.prefs.quick["mupu"], "a note",
+            "pending, in what is saved first"
+        );
         assert!(store.busy("mupu"));
         assert!(
             messages(&quick(&mut store, "another")).is_empty(),
             "one at a time"
         );
         assert!(messages(&send(&mut store, "mupu", false)).is_empty());
-        sent(&mut store, "mupu", Ok(()));
+        let effects = sent(&mut store, "mupu", Ok(()));
         assert_eq!(store.prefs.drafts["mupu"], "mine");
-        // Not landed: kept after the draft.
+        assert!(store.prefs.quick.is_empty());
+        assert!(effects.contains(&Effect::Persist(Persist::Prefs)));
+        // Not landed (here not even saved, so never posted): kept after the draft.
         quick(&mut store, "a note");
-        let effects = sent(
-            &mut store,
-            "mupu",
-            Err(Failure::NoAnswer("timed out".into())),
-        );
+        let not_saved = Failure::NotSaved("disk full".into());
+        let effects = sent(&mut store, "mupu", Err(not_saved));
+        assert!(store.prefs.quick.is_empty());
         assert!(effects.contains(&Effect::Persist(Persist::Prefs)));
         assert_eq!(store.prefs.drafts["mupu"], "mine\n\na note");
         assert!(matches!(store.sends.get("mupu"), Some(Sending::Failed(_))));

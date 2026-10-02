@@ -170,7 +170,7 @@ Derived shapes are in `store`:
   line clamp.
 - **`notes::Note`** — the web record: `{id, group (agent or general), text, quote?, source?, created}`,
   `updated` on the row. **`Draft`** is one string per agent, local only.
-- **`Prefs`** — local owner preferences: `text_scale`, rows, visible, seen, drafts, `hotkey` (U6);
+- **`Prefs`** — local owner preferences: `text_scale`, rows, visible, seen, drafts, a pending quick send per agent (F7), `hotkey` (U6);
   `vscode_host`, the Remote-SSH alias file links open on (default `superset`; web asks).
 
 ## 4. Keys
@@ -238,8 +238,9 @@ A note web deletes or reassigns while it is open in the editor keeps its card un
 (`notes::fade_later`). `just check-notes` (`list`, `picked`, `keyed`, `armed`) and `views::tests`'
 `notes_events` (real pointer and key events in a headless window) drive it.
 
-**Type-to-capture (F7).** `views::capture` is web's `NoteCaptureChip`. A release that leaves text selected
-in the transcript puts a focused "＋ Add note" chip 6 under the selection's last line, at its left (the kit
+**Type-to-capture (F7).** `views::capture` is web's `NoteCaptureChip`. A drag begun in the transcript and
+let go anywhere in the window (the body's `on_mouse_up_out` too, as web's window `pointerup`) that leaves
+text selected puts a focused "＋ Add note" chip 6 under the selection's last line, at its left (the kit
 does not say where a selection's lines are: the line is the one under the lower end of the drag, its bottom
 half a line under the pointer, and a selection over more than one line starts at the text column). While
 it holds focus `Capture` is on the focus stack, so no lens or zoom key fires (one rule: no per-key
@@ -247,10 +248,15 @@ exceptions; chords keep their meaning, the kit Root's `cmd-c` copies): a printab
 with that key typed (the chip's key listener), `enter` or `space` empty, `cmd-enter` sends the quote,
 `escape` cancels, a click on it saves the quote alone. The popover (quote, box, footer; web's measured
 style) saves on `enter` through `store::notes` as any note (outbox, then POST), sends on `cmd-enter` as
-web's quick send (`composer::Step::Quick`: web's note text alone, the draft untouched, text that did not
-land added to the draft; while the agent cannot take a message the note is saved instead, and said),
-and cancels on `escape` or a click anywhere else (typed text and all, as web's). Closing clears the
-selection, so the keys come back. `just check-notes` (`capture`, `dropped`, `sent`) and `views::tests`'
+web's quick send (`composer::Step::Quick`: web's note text alone, the draft untouched; it is pending in
+`Prefs::quick`, saved before the POST as a draft is, until answered; text that did not land, or that a
+boot finds still pending, is added to the draft, never sent again), and cancels on `escape` or a click
+anywhere else (typed text and all, as web's). While the agent cannot take a message now (read-only, or
+a send of its in flight) `cmd-enter` saves the note instead and says so: native's rule (web sends
+regardless of a send in flight, and adds the text to a read-only agent's prompt). Focus leaving the chip
+or the popover any other way (the kit Root's `tab`) cancels it too (`on_blur`; GPUI reports it in an
+active window), so no zoom key runs while text is selected. Closing clears the selection, so the keys
+come back. `just check-notes` (`capture`, `dropped`, `sent`) and `views::tests`'
 `capture_events` drive it with real drags and keys.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
@@ -349,7 +355,7 @@ and unknown entries in an open run stay F2's pill and text; no letter spacing on
 | Server, `spaces` | space definitions (`{id,name,order,created}`, tombstones 30 days) | shared with web |
 | Server, `spaces.members` | per space: `{members:[{kind:agent,name}|{kind:file,root,path}], updated}` | shared with web |
 | Server, `notes` | notes, per agent | shared with web |
-| `prefs.json` | text scale, rows, visible agent per space, seen marks, drafts, hotkey | this Mac |
+| `prefs.json` | text scale, rows, visible agent per space, seen marks, drafts, pending quick sends (F7), hotkey | this Mac |
 | `outbox.json` | unsent state rows (notes, spaces, members), written before each send attempt | this Mac |
 | `snapshot.json` | the last board, spaces, members and notes, for the first paint | this Mac |
 | `~/Library/Logs/herder-native/panic.log` | each panic's message, thread and backtrace, appended before the default hook (and the abort) | this Mac |
@@ -430,7 +436,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after F7 (F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after F7 (F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -441,7 +447,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `api/types.rs` | 332 | `views/mod.rs` | 437 |
 | `api/client.rs` | 206 | `views/lens.rs` | 453 |
 | `api/sse.rs` | 194 | `views/space.rs` | 373 |
-| `store/mod.rs` | 445 | `views/transcript.rs` | 1284 |
+| `store/mod.rs` | 452 | `views/transcript.rs` | 1307 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 221 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 399 |
 | `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
@@ -449,13 +455,13 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `store/transcript.rs` | 605 | `views/markdown.rs` | 238 |
 | `store/condense.rs` | 439 | `views/theme.rs` | 261 |
 | `store/notes.rs` | 432 | `shell.rs` | 436 |
-| `store/composer.rs` | 198 | `shell/io.rs` | 180 |
+| `store/composer.rs` | 225 | `shell/io.rs` | 180 |
 | `local.rs` | 95 | `harness.rs` | 384 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 |  |  | `views/entries.rs` | 529 |
-|  |  | `views/capture.rs` | 398 |
+|  |  | `views/capture.rs` | 418 |
 
-About 10,330 lines for Rung 1, tests excluded (F7: +440). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 10,410 lines for Rung 1, tests excluded (F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

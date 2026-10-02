@@ -2578,8 +2578,9 @@ mod lens_cards {
     }
 }
 
-/// F7: type-to-capture with real pointer and key events in a headless window: the zoom, its transcript
-/// (mupu's recorded pages, an answer added at the tail) under the kit's selection layer, and the chip.
+/// F7: type-to-capture with real pointer and key events in a headless window under the kit's `Root` (its
+/// selection layer, Tab and cmd-c, as the app's): the zoom, its transcript (mupu's recorded pages, an
+/// answer added at the tail), the chip and the composer.
 mod capture_events {
     use crate::store::condense::Seg;
     use crate::store::notes::Step as N;
@@ -2592,7 +2593,7 @@ mod capture_events {
     use crate::views::space::Zoom;
     use crate::views::transcript::{self, Scroll};
     use crate::views::{Host, bind, on, theme};
-    use gpui_kit::base::{TextSelection, TextSelectionLayer};
+    use gpui_kit::base::TextSelection;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
         Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
@@ -2607,6 +2608,7 @@ mod capture_events {
         events: Vec<Event>,
         effects: Vec<Effect>,
         scrolled: usize,
+        leaked: bool,
     }
 
     impl Host for Shell {
@@ -2632,10 +2634,15 @@ mod capture_events {
 
     impl Render for Shell {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            crate::views::composer::sync(&mut self.ui, &self.store, window, cx);
             capture::sync(&mut self.ui, window, cx);
             let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
             let zoom = ui.zoom.clone().unwrap();
-            let scroll = cx.listener(|s: &mut Shell, _: &Scroll, _, _| s.scrolled += 1);
+            // A zoom key that runs while text is selected breaks the rule.
+            let scroll = cx.listener(|s: &mut Shell, _: &Scroll, window, cx| {
+                s.scrolled += 1;
+                s.leaked |= TextSelection::has_selection(window, cx);
+            });
             let space = div()
                 .id("space")
                 .key_context("Space")
@@ -2646,12 +2653,9 @@ mod capture_events {
                 .flex()
                 .flex_col()
                 .child(transcript::render(store, ui, &zoom, t, cx))
+                .child(crate::views::composer::render(store, ui, "mupu", t, cx))
                 .children(capture::render(ui, "mupu", t, cx));
-            div()
-                .size_full()
-                .key_context("Lens")
-                .child(TextSelectionLayer)
-                .child(space)
+            div().size_full().key_context("Lens").child(space)
         }
     }
 
@@ -2667,7 +2671,22 @@ mod capture_events {
             bind(cx);
         });
         let text = text.to_string();
-        let (shell, cx) = cx.add_window_view(move |window, cx| {
+        let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let keep = made.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let shell = gpui_kit::AppContext::new(cx, |cx| shell(text, window, cx));
+            *keep.borrow_mut() = Some(shell.clone());
+            gpui_kit::base::Root::new(shell, window, cx)
+        });
+        let shell = made.borrow_mut().take().unwrap();
+        cx.simulate_resize(size(px(1400.), px(900.)));
+        draw(cx);
+        draw(cx);
+        (shell, cx)
+    }
+
+    fn shell(text: String, window: &mut Window, cx: &mut Context<Shell>) -> Shell {
+        {
             let mut store = loaded();
             store.apply(fleet_frame(board()));
             let space = store.spaces[0].id.clone();
@@ -2693,12 +2712,9 @@ mod capture_events {
                 events: Vec::new(),
                 effects: Vec::new(),
                 scrolled: 0,
+                leaked: false,
             }
-        });
-        cx.simulate_resize(size(px(1400.), px(900.)));
-        draw(cx);
-        draw(cx);
-        (shell, cx)
+        }
     }
 
     fn draw(cx: &mut VisualTestContext) {
@@ -2717,8 +2733,13 @@ mod capture_events {
 
     /// A real drag across 200px of the last answer's first line.
     fn select(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        let p = line(shell, cx);
+        drag(shell, point(p.x + px(200.), p.y), cx);
+    }
+
+    /// A real drag from the last answer's first line, let go at `to`.
+    fn drag(shell: &Entity<Shell>, to: Point<Pixels>, cx: &mut VisualTestContext) {
         let (p, m, left) = (line(shell, cx), Modifiers::default(), MouseButton::Left);
-        let to = point(p.x + px(200.), p.y);
         cx.simulate_mouse_move(p, None, m);
         cx.simulate_event(MouseDownEvent {
             button: left,
@@ -2886,5 +2907,49 @@ mod capture_events {
         draw(cx);
         assert_eq!(shown(&shell, cx), "none");
         assert_eq!(shell.read_with(cx, |s, _| s.events.len()), 0);
+    }
+
+    /// miro's P2: focus leaving the chip or the popover any way (here the kit Root's Tab, to the
+    /// composer) cancels it and clears the selection, so no zoom key ever runs with text selected: Esc
+    /// then leaves the box and `j` scrolls, the selection gone.
+    #[gpui_kit::test]
+    fn focus_leaving_it_cancels_it_and_clears_the_selection(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        // GPUI says what lost focus only in an active window (the owner's; a scripted run's is not).
+        cx.update(|window, _| window.activate_window());
+        draw(cx);
+        for typed in ["", "o"] {
+            select(&shell, cx);
+            if !typed.is_empty() {
+                keys(cx, typed);
+                assert_eq!(shown(&shell, cx), format!("open:{typed}"));
+            }
+            keys(cx, "tab");
+            assert_eq!(shown(&shell, cx), "none", "after `{typed}` and tab");
+            assert!(cx.update(TextSelection::selected_text).is_empty());
+            keys(cx, "escape j");
+        }
+        let (events, scrolled, leaked) =
+            shell.read_with(cx, |s, _| (s.events.len(), s.scrolled, s.leaked));
+        assert_eq!((events, leaked), (0, false));
+        assert_eq!(scrolled, 2, "the keys are back once it is gone");
+    }
+
+    /// miro's P2: a drag begun in the transcript and let go outside it (over the composer) still gets the
+    /// chip, so `j` types instead of scrolling.
+    #[gpui_kit::test]
+    fn a_drag_let_go_outside_the_transcript_still_gets_the_chip(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        let p = line(&shell, cx);
+        drag(&shell, point(p.x + px(200.), px(885.)), cx);
+        assert!(
+            shown(&shell, cx).starts_with("chip:"),
+            "{}",
+            shown(&shell, cx)
+        );
+        keys(cx, "j");
+        assert_eq!(shown(&shell, cx), "open:j");
+        let (scrolled, leaked) = shell.read_with(cx, |s, _| (s.scrolled, s.leaked));
+        assert_eq!((scrolled, leaked), (0, false));
     }
 }

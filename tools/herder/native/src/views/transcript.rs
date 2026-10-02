@@ -101,7 +101,7 @@ pub struct View {
 /// What `replay` needs across a click: whether the last frame drew a selection, where the press went
 /// down if no frame was drawn since (and whether the frame under it drew one), and whether the release
 /// now going out is a replay (and how many were: the tests count them). And where the last left press
-/// went down, where a selection starts.
+/// went down, where a selection starts, and whether it is still held.
 #[derive(Default)]
 pub(super) struct Taps {
     selected: Cell<bool>,
@@ -109,6 +109,8 @@ pub(super) struct Taps {
     replaying: Cell<bool>,
     pub(super) replays: Cell<u32>,
     from: Cell<Point<Pixels>>,
+    /// A left press went down in the transcript and has not been let go.
+    dragging: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -626,26 +628,46 @@ pub fn render<H: Host>(
             .child(format!("{n}  ✕"))
             .on_click(dismiss)
     });
-    // Where the pointer lets go, the selection it made gets the capture chip, under it.
-    let taps = view.taps.clone();
-    let let_go = cx.listener(move |h: &mut H, e: &MouseUpEvent, window, cx| {
-        let text = TextSelection::selected_text(window, cx);
-        let ui = h.parts().1;
-        let Some(agent) = ui.zoomed_agent().map(String::from) else {
-            return;
-        };
-        let column = ui.transcript.list.viewport_bounds().left() + t.css(PAD);
-        let at = capture::anchor(taps.from.get(), e.position, column, t.line);
-        capture::offer(ui, &agent, &text, at, window, cx);
-        cx.notify();
-    });
+    // A drag that started here and ends anywhere in the window (`on_mouse_up_out`, as web's window
+    // `pointerup`); a release over the transcript alone is only heard while over it.
+    let let_go = || {
+        let taps = view.taps.clone();
+        cx.listener(move |h: &mut H, e: &MouseUpEvent, window, cx| {
+            if e.button == MouseButton::Left && taps.dragging.replace(false) {
+                released(h, &taps, e.position, t, window, cx);
+            }
+        })
+    };
+    let (inside, outside) = (let_go(), let_go());
     replay(body, &view.taps)
-        .capture_any_mouse_up(let_go)
+        .capture_any_mouse_up(inside)
+        .on_mouse_up_out(MouseButton::Left, outside)
         .child(head)
         .children(hold)
         .child(rows)
         .children(waiting)
         .children(notice)
+}
+
+/// Where the pointer let go of a drag begun in the transcript, the selection it made gets the capture
+/// chip, under it.
+fn released<H: Host>(
+    h: &mut H,
+    taps: &Taps,
+    to: Point<Pixels>,
+    t: TypeScale,
+    window: &mut Window,
+    cx: &mut Context<H>,
+) {
+    let text = TextSelection::selected_text(window, cx);
+    let ui = h.parts().1;
+    let Some(agent) = ui.zoomed_agent().map(String::from) else {
+        return;
+    };
+    let column = ui.transcript.list.viewport_bounds().left() + t.css(PAD);
+    let at = capture::anchor(taps.from.get(), to, column, t.line);
+    capture::offer(ui, &agent, &text, at, window, cx);
+    cx.notify();
 }
 
 /// Web's scrollbar as Chromium draws it (spec §1 "Scrollbar"): a rounded #3a3c45 thumb about 8 wide on
@@ -1132,6 +1154,7 @@ fn replay(body: Div, taps: &Rc<Taps>) -> Div {
         at.press.set(left.then(|| (e.position, at.selected.get())));
         if e.button == MouseButton::Left {
             at.from.set(e.position);
+            at.dragging.set(true);
         }
     };
     let at = taps.clone();
