@@ -203,7 +203,7 @@ impl Shell {
                 Effect::Badge(n) => platform_mac::badge(n),
                 Effect::OpenFile { path, line } => {
                     match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
-                        Some(url) => cx.open_url(&url),
+                        Some(url) => platform_mac::open(&url, cx),
                         None => eprintln!("open: no VS Code URL for {path}"),
                     }
                 }

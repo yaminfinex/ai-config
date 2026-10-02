@@ -31,15 +31,17 @@
 //! (`T+open,+O+with+output`: open tools, and those showing an output), `click:member` / `click:failed`
 //! (the first tool, or failed tool, in an open run) and `run:<text>` (`find:`, then opens the first run
 //! from that row on; A3) · `wheel:<x>,<y>,<l|p>,<dx>,<dy>` (one wheel event at a window point, in a
-//! mouse's lines or a trackpad's pixels, through `Window::dispatch_event`; wheel-fix). Units add `type:`
-//! as they need it.
+//! mouse's lines or a trackpad's pixels, through `Window::dispatch_event`; wheel-fix) · `point:<x>,<y>`
+//! and `drag:<x>,<y>,<x2>,<y2>` (a real left click, or press, move and let go, at window points, the same
+//! way; G1; `fast:` draws no frame between press and release). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
 use crate::views::{POINTER_MOVES, PULSE_PAINTS};
 use gpui_kit::{
-    Action, App, AsyncWindowContext, Keystroke, Modifiers, Pixels, PlatformInput, ScrollDelta,
-    ScrollWheelEvent, Size, TouchPhase, Window, point, px, size,
+    Action, App, AsyncWindowContext, Keystroke, Modifiers, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
+    Size, TouchPhase, Window, point, px, size,
 };
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
@@ -193,6 +195,50 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
             }
             // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
             "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
+            // `point:x,y`: a real left click at a window point (move, down, up), through the window's
+            // event path, so what the element under it does is what a pointer gets.
+            // `drag:x,y,x2,y2`: pressed at the first point, moved to the second and let go there.
+            // `fast:x,y`: the same click with no frame drawn between press and release.
+            "point" | "drag" | "fast" => match drag(arg) {
+                Some((from, to)) => {
+                    let (button, modifiers) = (MouseButton::Left, Modifiers::default());
+                    let moved = |position, pressed_button| {
+                        PlatformInput::MouseMove(MouseMoveEvent {
+                            position,
+                            pressed_button,
+                            modifiers,
+                        })
+                    };
+                    let inputs = [
+                        moved(from, None),
+                        PlatformInput::MouseDown(MouseDownEvent {
+                            button,
+                            position: from,
+                            modifiers,
+                            click_count: 1,
+                            first_mouse: false,
+                        }),
+                        moved(to, Some(button)),
+                        PlatformInput::MouseUp(MouseUpEvent {
+                            button,
+                            position: to,
+                            modifiers,
+                            click_count: 1,
+                        }),
+                    ];
+                    let last = inputs.len() - 1;
+                    for (i, input) in inputs.into_iter().enumerate() {
+                        let _ = cx.update(|window, cx| {
+                            window.dispatch_event(input, cx);
+                            if op != "fast" || i == last {
+                                window.draw(cx).clear(cx);
+                            }
+                        });
+                    }
+                    metric(format!("{op} {arg}"));
+                }
+                None => fail(format!("{op} {arg}: want x,y (point) or x,y,x2,y2 (drag)")),
+            },
             // `wheel:x,y,l|p,dx,dy`: one wheel event at a window point, in lines (a mouse) or pixels (a
             // trackpad), through the window's event path as the platform sends it.
             "wheel" => match wheel(arg) {
@@ -302,6 +348,21 @@ fn shot(dir: &str, name: &str, cx: &mut AsyncWindowContext) -> Result<(), String
 #[cfg(not(feature = "shots"))]
 fn shot(_dir: &str, name: &str, _cx: &mut AsyncWindowContext) -> Result<(), String> {
     Err(format!("shot:{name} needs a build with --features shots"))
+}
+
+/// `x,y` (a click: from and to the same point) or `x,y,x2,y2` (a drag) as window points.
+fn drag(arg: &str) -> Option<(Point<Pixels>, Point<Pixels>)> {
+    let n: Vec<f32> = arg
+        .split(',')
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()?;
+    let at = |x: f32, y: f32| point(px(x), px(y));
+    match n[..] {
+        [x, y] => Some((at(x, y), at(x, y))),
+        [x, y, x2, y2] => Some((at(x, y), at(x2, y2))),
+        _ => None,
+    }
 }
 
 /// `x,y,l|p,dx,dy` as a wheel event.
