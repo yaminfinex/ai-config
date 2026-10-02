@@ -219,15 +219,19 @@ check-mouse port="4414":
 # and 9 runs (`testdata/runs-web.json`); `o` opens the lowest run on screen (at the tail, the last one) and
 # closes it again; scrolled to the top, `o` opens a run there. Shot: f2-runs (the last run open). Jump-to-bottom
 # (A1) is hidden at the tail, shows scrolled up, and a click on it follows the tail again. A3: in the open run a
-# click opens the first tool to its input and output and closes it (shot: a3-member).
+# click opens the first tool to its input and output and closes it (shot: a3-member). The wheel (wheel-fix): a
+# mouse's lines and a trackpad's pixels over the lens, then up from the watched tail (it leaves it, as the
+# owner's crash did), over the scrollbar and sideways.
 check-runs port="4415":
     #!/usr/bin/env bash
     . scripts/scenario.sh check-runs {{port}}
     zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:1500 draw"
     rows() { echo "rows:19+rows,+9+runs,+$1+open"; }
     tools() { echo "tools:$1+open,+$2+with+output"; }
-    scenario runs "" "$zoom $(rows 0) jump:hidden key:o draw $(rows 1) shot:f2-runs $(tools 0 0) click:member draw $(tools 1 1) shot:a3-member click:member draw $(tools 0 0) key:o draw $(rows 0) key:g draw jump:shown key:o draw $(rows 1) click:jump draw jump:hidden quit"
-    echo "check-runs: ok (mupu in web's 19 rows and 9 runs, o opens and closes the lowest run, at the tail and scrolled up; a click opens a member to its input and output and closes it; jump-to-bottom shows only scrolled up, and a click on it follows the tail again)"
+    lens="wheel:700,400,l,0,-3 draw wheel:700,400,p,0,40 draw"
+    wheel="wait:200 draw wheel:700,400,l,0,3 draw jump:shown click:jump draw jump:hidden wait:200 draw wheel:700,400,p,0,40 draw jump:shown wheel:1395,400,l,0,-3 draw wheel:700,400,l,2,0 draw"
+    scenario runs "" "wait:1500 $lens $zoom $(rows 0) jump:hidden key:o draw $(rows 1) shot:f2-runs $(tools 0 0) click:member draw $(tools 1 1) shot:a3-member click:member draw $(tools 0 0) key:o draw $(rows 0) key:g draw jump:shown key:o draw $(rows 1) click:jump draw jump:hidden $wheel quit"
+    echo "check-runs: ok (mupu in web's 19 rows and 9 runs, o opens and closes the lowest run, at the tail and scrolled up; a click opens a member to its input and output and closes it; the wheel in lines and pixels over the lens and up from the tail; jump-to-bottom shows only scrolled up, and a click on it follows the tail again)"
 
 # A2 entries: the last answer's status chip opens and closes by click, then its internal note; mupu
 # with two queued messages (shots: a2-status, a2-note).

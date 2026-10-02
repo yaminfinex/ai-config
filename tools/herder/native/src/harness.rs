@@ -30,12 +30,17 @@
 //! `click:internal` (the last standalone answer's cut status chip, or internal note; A2) · `tools:<text>`
 //! (`T+open,+O+with+output`: open tools, and those showing an output), `click:member` / `click:failed`
 //! (the first tool, or failed tool, in an open run) and `run:<text>` (`find:`, then opens the first run
-//! from that row on; A3). Units add `type:` as they need it.
+//! from that row on; A3) · `wheel:<x>,<y>,<l|p>,<dx>,<dy>` (one wheel event at a window point, in a
+//! mouse's lines or a trackpad's pixels, through `Window::dispatch_event`; wheel-fix). Units add `type:`
+//! as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
 use crate::views::{POINTER_MOVES, PULSE_PAINTS};
-use gpui_kit::{Action, App, AsyncWindowContext, Keystroke, Pixels, Size, Window, px, size};
+use gpui_kit::{
+    Action, App, AsyncWindowContext, Keystroke, Modifiers, Pixels, PlatformInput, ScrollDelta,
+    ScrollWheelEvent, Size, TouchPhase, Window, point, px, size,
+};
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU32;
 use std::sync::atomic::Ordering::Relaxed;
@@ -188,6 +193,16 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
             }
             // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
             "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
+            // `wheel:x,y,l|p,dx,dy`: one wheel event at a window point, in lines (a mouse) or pixels (a
+            // trackpad), through the window's event path as the platform sends it.
+            "wheel" => match wheel(arg) {
+                Some(event) => {
+                    let input = PlatformInput::ScrollWheel(event);
+                    let _ = cx.update(|window, cx| window.dispatch_event(input, cx));
+                    metric(format!("wheel {arg}"));
+                }
+                None => fail(format!("wheel {arg}: want x,y,l|p,dx,dy")),
+            },
             "link" | "summon" | "click" => {
                 let ok = cx.update(|window, cx| {
                     let action = probe.action(op, arg, cx);
@@ -287,4 +302,25 @@ fn shot(dir: &str, name: &str, cx: &mut AsyncWindowContext) -> Result<(), String
 #[cfg(not(feature = "shots"))]
 fn shot(_dir: &str, name: &str, _cx: &mut AsyncWindowContext) -> Result<(), String> {
     Err(format!("shot:{name} needs a build with --features shots"))
+}
+
+/// `x,y,l|p,dx,dy` as a wheel event.
+fn wheel(arg: &str) -> Option<ScrollWheelEvent> {
+    let parts: Vec<&str> = arg.split(',').collect();
+    let [x, y, kind, dx, dy] = parts[..] else {
+        return None;
+    };
+    let n = |s: &str| s.parse::<f32>().ok();
+    let (x, y, dx, dy) = (n(x)?, n(y)?, n(dx)?, n(dy)?);
+    let delta = match kind {
+        "l" => ScrollDelta::Lines(point(dx, dy)),
+        "p" => ScrollDelta::Pixels(point(px(dx), px(dy))),
+        _ => return None,
+    };
+    Some(ScrollWheelEvent {
+        position: point(px(x), px(y)),
+        delta,
+        modifiers: Modifiers::default(),
+        touch_phase: TouchPhase::Moved,
+    })
 }

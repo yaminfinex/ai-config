@@ -111,7 +111,8 @@ Derived shapes are in `store`:
   marked space none of whose agents already counts. While the owner watches an agent's tail (frontmost,
   zoomed on it, the transcript at the bottom) what lands is seen at once: it neither counts nor alerts.
   Leaving the bottom (a scroll key, the wheel) reaches the store as it happens, before any fleet frame
-  behind it; a route that publishes nothing (the scrollbar's drag) is caught as the shell reduces its next
+  behind it (the wheel's from the list's scroll handler, deferred to the end of that event's effects: the
+  list calls it holding its own borrow, so asking the list from there panicked, the owner's 10-02 crash); a route that publishes nothing (the scrollbar's drag) is caught as the shell reduces its next
   event (`transcript::reduce`, which publishes the list's leaving first); the view's word on the tail names the transcript's agent and generation, and a stale one
   (after a zoom switch or a reset) is dropped.
 - **`transcript::Item`** — what compact mode renders (`store::condense` projects entries; `transcript`
@@ -333,6 +334,7 @@ and unknown entries in an open run stay F2's pill and text; no letter spacing on
 | `prefs.json` | text scale, rows, visible agent per space, seen marks, drafts, hotkey | this Mac |
 | `outbox.json` | unsent state rows (notes, spaces, members), written before each send attempt | this Mac |
 | `snapshot.json` | the last board, spaces, members and notes, for the first paint | this Mac |
+| `~/Library/Logs/herder-native/panic.log` | each panic's message, thread and backtrace, appended before the default hook (and the abort) | this Mac |
 
 `store::sync` holds it, one `Sync` per namespace. State sync is simpler than web's in one way: **no persisted revision cursor.** Every boot pulls each
 namespace with `since=0` (tens of kilobytes, one round trip each) into the store; the pull cursor lives in

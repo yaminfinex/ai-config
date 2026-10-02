@@ -554,17 +554,21 @@ pub fn render<H: Host>(
         cx.spawn(async move |host, cx| host.update(cx, follow))
             .detach();
     }
-    // The wheel stops following inside the list's own handler: published from there at once.
+    // The wheel stops following inside the list's own handler, which the list calls holding its own
+    // borrow: anything that asks the list from there panics (the owner's crash, 10-02). So published
+    // just after, deferred to the end of this event's effects, before any other event or frame.
     if !view.wheel.replace(true) {
         let host = cx.weak_entity();
         let wheel = move |e: &ListScrollEvent, _: &mut Window, cx: &mut App| {
-            let publish = |h: &mut H, cx: &mut Context<H>| {
+            let following = e.is_following_tail;
+            let publish = move |h: &mut H, cx: &mut Context<H>| {
                 let (store, ui) = h.view();
-                if let Some(event) = left(store, &ui.transcript, e.is_following_tail) {
+                if let Some(event) = left(store, &ui.transcript, following) {
                     h.dispatch(event, cx)
                 }
             };
-            host.update(cx, publish).ok();
+            let host = host.clone();
+            cx.defer(move |cx| drop(host.update(cx, publish)));
         };
         view.list.set_scroll_handler(wheel);
     }

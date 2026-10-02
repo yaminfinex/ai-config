@@ -1412,13 +1412,16 @@ mod layout {
     use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
-        Bounds, Context, ElementId, Entity, IntoElement, ListOffset, ParentElement as _, Pixels,
-        Render, Styled as _, TestAppContext, VisualTestContext, Window, div, point, px, size,
+        Bounds, Context, ElementId, Entity, IntoElement, ListOffset, Modifiers, ParentElement as _,
+        Pixels, Render, ScrollDelta, ScrollWheelEvent, Styled as _, TestAppContext, TouchPhase,
+        VisualTestContext, Window, div, point, px, size,
     };
 
     struct Body {
         store: Store,
         ui: Ui,
+        /// Reduce what the view dispatches, as the shell does (else the test reads the pages itself).
+        reduce: bool,
     }
 
     impl Host for Body {
@@ -1430,8 +1433,12 @@ mod layout {
             (&self.store, &self.ui)
         }
 
-        // The test reads the pages itself.
-        fn dispatch(&mut self, _: Event, _: &mut Context<Self>) {}
+        fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+            if self.reduce {
+                drop(transcript::reduce(&mut self.store, &self.ui, event));
+                cx.notify();
+            }
+        }
 
         fn copy(&mut self, _: String, _: &mut Context<Self>) {}
     }
@@ -1464,7 +1471,11 @@ mod layout {
             let mut ui = Ui::new(window, cx);
             let (space, agent) = ("none".into(), Some(agent.into()));
             ui.zoom = Some(Zoom { space, agent });
-            Body { store, ui }
+            Body {
+                store,
+                ui,
+                reduce: false,
+            }
         });
         cx.simulate_resize(size(px(width), px(height)));
         draw(cx);
@@ -1852,6 +1863,82 @@ mod layout {
         );
         body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
         assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
+    }
+
+    /// The owner's crash (10-02, every wheel): leaving the watched tail is published from the list's
+    /// scroll handler, which the list calls inside its own borrow, and reducing it asked the list again
+    /// ("RefCell already mutably borrowed"). A mouse's lines and a trackpad's pixels, over prose, the
+    /// scrollbar, sideways, and over an open tool's output.
+    #[gpui_kit::test]
+    fn the_wheel_leaving_the_watched_tail_publishes_it(cx: &mut TestAppContext) {
+        let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
+        let out = body.update(cx, |b, cx| {
+            b.reduce = true;
+            let tr = b.store.transcript.open.as_ref().unwrap();
+            let rows = condense::rows(&tr.items);
+            let (ix, first, last) = rows.iter().enumerate().rev().find_map(|(ix, r)| match *r {
+                Row::Run(first, last) => Some((ix, first, last)),
+                Row::One(_) => None,
+            })?;
+            let mut tools = tr.items.range(first..=last).rev();
+            let (&key, _) = tools.find(|(_, i)| {
+                matches!(
+                    i,
+                    Item::Tool {
+                        result: Some(_),
+                        ..
+                    }
+                )
+            })?;
+            b.ui.transcript.toggle((first, last), ix);
+            b.ui.transcript.fold(Fold(key, 0));
+            cx.notify();
+            Some(transcript::name("tool", tr.generation, key) + "-out")
+        });
+        draw(cx);
+        let out = out.expect("mupu's last run has a finished tool");
+        let pre = cx.update(|window, _| window.try_find(ElementId::Name(out.into())));
+        let pre = pre
+            .expect("the open tool's output is drawn")
+            .bounds()
+            .center();
+        let lines = |dx, dy| ScrollDelta::Lines(point(dx, dy));
+        let pixels = |dx, dy| ScrollDelta::Pixels(point(px(dx), px(dy)));
+        let cases = [
+            (point(px(700.), px(400.)), lines(0., 3.)),
+            (point(px(700.), px(400.)), pixels(0., 40.)),
+            (point(px(1395.), px(400.)), lines(0., 3.)),
+            (point(px(700.), px(400.)), lines(1., 0.)),
+            (pre, lines(0., 3.)),
+            (pre, pixels(-40., 10.)),
+        ];
+        for (position, delta) in cases {
+            body.update(cx, |b, cx| {
+                b.ui.transcript.list.scroll_to(ListOffset {
+                    item_ix: usize::MAX,
+                    offset_in_item: px(0.),
+                });
+                let event = b.ui.transcript.tail(true);
+                drop(b.store.apply(event));
+                cx.notify();
+            });
+            draw(cx);
+            cx.simulate_event(ScrollWheelEvent {
+                position,
+                delta,
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            });
+            draw(cx);
+            let (tail, following) = body.read_with(cx, |b, _| {
+                let tail = b.store.transcript.open.as_ref().unwrap().tail;
+                (tail, b.ui.transcript.list.is_following_tail())
+            });
+            assert_eq!(
+                tail, following,
+                "{delta:?} at {position:?}: the store hears what the list does"
+            );
+        }
     }
 
     /// A3: a tool opened in an open run draws its INPUT and OUTPUT with their text, and closed, neither.
