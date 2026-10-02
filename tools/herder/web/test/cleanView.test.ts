@@ -268,7 +268,7 @@ test('a trailing show entry including fenced assistant text prevents the final a
   assert.match(transcriptEntriesSource, /if \(entry\.kind === 'assistant_text'\) return <AssistantText/)
   assert.match(transcriptEntriesSource, /if \(cleanView\) \{[\s\S]+splitFinalActivityRun\(rows\)[\s\S]+return <MentionContext\.Provider/)
   assert.match(transcriptEntriesSource, /finalActivity && rowIndex === rows\.length - 1/)
-  assert.match(transcriptEntriesSource, /return <MentionContext\.Provider value=\{mentionContext\}>\{entries\.map\(\(entry, index\) => <EntryView/)
+  assert.match(transcriptEntriesSource, /return <MentionContext\.Provider value=\{mentionContext\}>\{entries\.map\(\(entry, index\) => <Block index=\{index\} divider=\{index === dividerAt\}[^>]*>\s+<EntryView/)
   assert.match(transcriptEntriesSource, /approximateActivityAge\(activity\.entry\.timestamp, now\)/)
   assert.doesNotMatch(transcriptEntriesSource, /setInterval/)
 })

@@ -1,6 +1,7 @@
 import { useEffect, type MutableRefObject } from 'react'
 import type { DockviewApi } from 'dockview-react'
 import { followScrollCommandEvent, type FollowScrollCommand } from '../../shared/useFollowScroll'
+import { panelParams } from '../layout/dockLayout'
 import { bindShellShortcuts } from '../layout/shellShortcuts'
 import { spaceIDInDirection, type SpaceDefinition } from '../spaces/index.ts'
 
@@ -14,6 +15,7 @@ export function useWorkspaceShortcuts({
   spaces,
   activeSpaceID,
   switchSpace,
+  markUnread,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   shortcutReference: boolean
@@ -24,6 +26,7 @@ export function useWorkspaceShortcuts({
   spaces: SpaceDefinition[]
   activeSpaceID: string | null
   switchSpace: (id: string) => boolean
+  markUnread: (name: string) => void
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
@@ -81,6 +84,12 @@ export function useWorkspaceShortcuts({
         else group.api.maximize()
         return true
       },
+      markUnread: () => {
+        const params = panelParams(apiRef.current?.activePanel?.params)
+        if (params?.kind !== 'agent') return false
+        markUnread(params.name)
+        return true
+      },
     }, navigator.userAgent)
-  }, [activeSpaceID, apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail])
+  }, [activeSpaceID, apiRef, closePanel, markUnread, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail])
 }

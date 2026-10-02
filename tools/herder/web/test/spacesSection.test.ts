@@ -95,11 +95,14 @@ test('the controller derives attention and the MRU switcher from the live worksp
   assert.match(controller, /spaceSwitcher,/)
 })
 
-test('the attention hook seeds, marks read after the dwell and persists through the versioned stores', () => {
+test('the attention hook prunes, seeds weakly after the first pull, and reads after the dwell through the shared store', () => {
   assert.match(attentionHook, /const open = Object\.values\(openBySpace\)\.flat\(\)/)
-  assert.match(attentionHook, /seedReadMarkers\(pruneReadMarkers\(current, board, open\), board, open\)/)
-  assert.match(attentionHook, /markViewedRead\(seeded, board, dwelledAgents\(viewing, Date\.now\(\)\)\)/)
-  assert.match(attentionHook, /writeReadMarkers\(localStorage, markers, markerState\.current\)/)
+  assert.match(attentionHook, /const keep = markerKeepSet\(board, open\)\s+if \(keep\) store\.prune\(keep\)/)
+  assert.match(attentionHook, /if \(pulled\) store\.apply\(seedUpdates\(store\.markers\(\), board, open\), \{ weak: true \}\)/)
+  assert.match(attentionHook, /const dwelled = dwelledAgents\(viewing, Date\.now\(\)\)/)
+  assert.match(attentionHook, /store\.apply\(readUpdates\(\{ markers: store\.markers\(\), board, viewed: dwelled, positions, armed, now: Date\.now\(\) \}\)\)/)
+  assert.match(attentionHook, /nextArmed\(previous, markers, viewedKey\.split\('\\n'\)\.filter\(Boolean\), dockReady\)/)
+  assert.doesNotMatch(attentionHook, /localStorage\.setItem|writeReadMarkers/, 'markers persist only through the read-markers store')
   assert.match(attentionHook, /group\.api\.isVisible/)
   assert.match(attentionHook, /useDOMEvent\(document, 'visibilitychange'/)
   assert.match(attentionHook, /storedSpaceAgents\(localStorage, space\.id\)/)

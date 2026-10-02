@@ -9,13 +9,15 @@ const spaces = [
   { id: 'review', name: 'review', order: 1, created: 0, updated: 0 },
 ]
 
-test('dock tab menu contains other spaces, send-to-new, and agent-only reassign', () => {
+test('dock tab menu contains other spaces, send-to-new, and agent-only reassign and mark unread', () => {
   assert.deepEqual(dockTabMenuItems(spaces, 'main', 'nota'), [
     { id: 'review', label: 'Send to review', kind: 'space' },
     { id: 'new', label: 'Send to new space', kind: 'new' },
     { id: 'reassign', label: 'Reassign…', kind: 'reassign', subject: 'nota' },
+    { id: 'unread', label: 'Mark unread', kind: 'unread', subject: 'nota' },
   ])
   assert.equal(dockTabMenuItems(spaces, 'main').some((item) => item.kind === 'reassign'), false)
+  assert.equal(dockTabMenuItems(spaces, 'main').some((item) => item.kind === 'unread'), false)
 })
 
 test('dock tab menu recognizes the platform context-menu keys only', () => {
@@ -48,12 +50,15 @@ test('dock tab menu keys inside the menu navigate, Escape closes, other keys are
 })
 
 const menuSource = readFileSync(new URL('../src/features/workspace/DockTabMenu.tsx', import.meta.url), 'utf8')
+// The positioned-menu lifecycle every context menu shares lives in src/shared.
+const hookSource = readFileSync(new URL('../src/shared/usePositionedMenu.tsx', import.meta.url), 'utf8')
+const panelSource = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
 // The effect that owns the open menu: from its guard to its dependency list.
 const menuEffect = (() => {
-  const start = menuSource.indexOf('    if (!position) return\n')
-  const end = menuSource.indexOf('  }, [close, position])', start)
+  const start = hookSource.indexOf('    if (!position) return\n')
+  const end = hookSource.indexOf('  }, [close, position])', start)
   assert.ok(start >= 0 && end > start, 'open-menu effect not found')
-  return menuSource.slice(start, end)
+  return hookSource.slice(start, end)
 })()
 const callbackBody = (name: string) => {
   const start = menuEffect.indexOf(`    const ${name} = (`)
@@ -78,7 +83,7 @@ test('dock tab menu stays open while focus is on or moves within the menu, and c
   // Dismissal is driven by focusin only: a freshly opened menu whose tab keeps focus raises no event and stays open.
   assert.match(menuEffect, /document\.addEventListener\('focusin', onFocusIn, true\)/)
   const focusIn = callbackBody('onFocusIn')
-  assert.match(focusIn, /dockTabMenuFocusAction\(Boolean\(menuRef\.current\?\.contains\(event\.target as Node\)\)\) === 'dismiss'\) close\(false\)/)
+  assert.match(focusIn, /menuFocusAction\(Boolean\(menuRef\.current\?\.contains\(event\.target as Node\)\)\) === 'dismiss'\) close\(false\)/)
   assert.equal(focusIn.match(/close\(false\)/g)?.length, 1)
   // Outside the key handler's dismiss branch and the focusin callback, the effect never closes with close(false):
   // the autofocus of the first item on open must not be followed by a close.
@@ -87,15 +92,17 @@ test('dock tab menu stays open while focus is on or moves within the menu, and c
   assert.match(rest, /querySelector<HTMLElement>\('\[role="menuitem"\]'\)\?\.focus\(\)/)
 })
 
-test('both context menus share one positioned-menu lifecycle with guarded disposal', () => {
-  assert.match(menuSource, /function usePositionedMenu\(\)/)
-  assert.equal((menuSource.match(/usePositionedMenu\(\)/g) ?? []).length, 3)
-  assert.ok((menuSource.match(/const source = sourceGuard\.current/g) ?? []).length >= 1)
-  assert.ok((menuSource.match(/source !== sourceGuard\.current/g) ?? []).length >= 3)
+test('every context menu shares one positioned-menu lifecycle with guarded disposal', () => {
+  assert.match(hookSource, /export function usePositionedMenu\(\)/)
+  assert.equal((menuSource.match(/usePositionedMenu\(\)/g) ?? []).length, 2, 'the tab menu and the agent row menu')
+  assert.equal((panelSource.match(/usePositionedMenu\(\)/g) ?? []).length, 1, 'the transcript block menu')
+  assert.ok((hookSource.match(/const source = sourceGuard\.current/g) ?? []).length >= 1)
+  assert.ok((hookSource.match(/source !== sourceGuard\.current/g) ?? []).length >= 3)
   for (const event of ['focusin', 'pointerdown', 'dragstart', 'scroll', 'keydown']) {
-    assert.equal((menuSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length,
-      (menuSource.match(new RegExp(`document\\.removeEventListener\\('${event}'`, 'g')) ?? []).length, event)
-    assert.equal((menuSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length, 1, `${event} must have one shared owner`)
+    assert.equal((hookSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length,
+      (hookSource.match(new RegExp(`document\\.removeEventListener\\('${event}'`, 'g')) ?? []).length, event)
+    assert.equal((hookSource.match(new RegExp(`document\\.addEventListener\\('${event}'`, 'g')) ?? []).length, 1, `${event} must have one shared owner`)
+    for (const source of [menuSource, panelSource]) assert.equal(source.includes(`document.addEventListener('${event}'`), false, `${event} is owned by the shared hook only`)
   }
   assert.match(menuSource, /export function useAgentRowMenu\(\)/)
 })

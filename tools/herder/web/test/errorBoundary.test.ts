@@ -15,7 +15,7 @@ test('the root error boundary shows only the error and a reload action', () => {
 
 test('App keeps the shell inside the root error boundary', () => {
   const app = read('../src/App.tsx')
-  assert.match(app, /<NotesProvider><ErrorBoundary><Shell initialRoute=\{route\} \/><\/ErrorBoundary><\/NotesProvider>/)
+  assert.match(app, /<NotesProvider><ReadMarkersProvider><ErrorBoundary><Shell initialRoute=\{route\} \/><\/ErrorBoundary><\/ReadMarkersProvider><\/NotesProvider>/)
 })
 
 test('each dock panel body has a kind-labelled boundary outside its component', () => {

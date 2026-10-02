@@ -18,6 +18,7 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
     [labels.goToTop, 'Go to top'],
     [labels.goToBottom, 'Go to bottom and resume follow'],
     [labels.toggleMaximize, 'Maximize or restore active pane'],
+    [labels.markUnread, 'Mark the active agent unread'],
     [openInSideKeys(navigator.userAgent), 'Open in closest side group'],
     ['?', 'Open this reference'],
   ] as const

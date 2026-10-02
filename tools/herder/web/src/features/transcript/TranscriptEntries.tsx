@@ -1,10 +1,10 @@
-import { createContext, Fragment, useContext, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { createContext, useContext, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { duplicateHcomDeliveryIndices } from '../../messagePolish'
 import { agentMarkdownOptions, Markdown } from '../../shared/Markdown'
 import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMentions'
 import type { TranscriptEntry } from '../../types'
 import { aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun, statusChipTruncates } from './cleanView'
-import { cleanRows, messageText, objectValue, valueText, type CleanActivity, type ObjectValue } from './cleanRows'
+import { cleanRows, cleanRowSpan, dividerRow, messageText, objectValue, valueText, type CleanActivity, type ObjectValue } from './cleanRows'
 import { deliveryExpandLabel, hcomDeliveryPresentation } from './deliveryModel'
 import { parseAssistantFencing } from './fencingModel'
 import { systemEntryPresentation, unknownEntryLabel } from './systemEntries'
@@ -280,22 +280,36 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
   return <details className="system-chip unknown-entry"><summary>{entry.quarantine ? `quarantined entry · ${entry.quarantine.reason}` : unknownEntryLabel(entry)} · <Timestamp timestamp={entry.timestamp} now={now} /></summary><pre data-note-capture-content>{JSON.stringify(entry.payload, null, 2)}</pre></details>
 }
 
-export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView, mentionMatcher, onOpenAgent, sideHint }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void, sideHint: string }) {
+// NewDivider quietly marks where unread entries begin.
+function NewDivider() {
+  return <div className="transcript-new-divider" role="separator" aria-label="New since you last read"><span>new</span></div>
+}
+
+// A block carries the index of the first entry it draws, so the transcript's
+// context menu can mark unread from it.
+function Block({ index, divider, children }: { index: number, divider: boolean, children: ReactNode }) {
+  return <div className="transcript-block" data-entry-index={index}>{divider && <NewDivider />}{children}</div>
+}
+
+export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView, mentionMatcher, onOpenAgent, sideHint, dividerAt = -1 }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void, sideHint: string, dividerAt?: number }) {
   const relationships = useMemo(() => relateEntries(entries), [entries])
   const rows = useMemo(() => cleanView ? cleanRows(entries, relationships) : [], [cleanView, entries, relationships])
   const mentionContext = useMemo(() => ({ matcher: mentionMatcher, onOpenAgent, sideHint }), [mentionMatcher, onOpenAgent, sideHint])
   if (cleanView) {
     const finalActivity = splitFinalActivityRun(rows)
-    return <MentionContext.Provider value={mentionContext}>{rows.map((row, rowIndex) => row.type === 'run'
+    const divider = dividerRow(rows, dividerAt)
+    return <MentionContext.Provider value={mentionContext}>{rows.map((row, rowIndex) => <Block index={cleanRowSpan(row).first} divider={rowIndex === divider} key={row.key}>{row.type === 'run'
       ? finalActivity && rowIndex === rows.length - 1
-        ? <Fragment key={row.key}>
+        ? <>
           {finalActivity.collapsed.length > 0 && <ActivityStrip activities={finalActivity.collapsed} entries={entries} relationships={relationships} agentName={agentName} now={now} />}
           <LatestActivity activity={finalActivity.latest} entries={entries} relationships={relationships} agentName={agentName} now={now} key={finalActivity.latest.key} />
-        </Fragment>
-        : <ActivityStrip activities={row.activities} entries={entries} relationships={relationships} agentName={agentName} now={now} key={row.key} />
+        </>
+        : <ActivityStrip activities={row.activities} entries={entries} relationships={relationships} agentName={agentName} now={now} />
       : row.deliveryIndex == null
-        ? <EntryView entry={row.entry} index={row.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView key={row.key} />
-        : <HcomCards entry={row.entry} entryIndex={row.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={row.deliveryIndex} key={row.key} />)}</MentionContext.Provider>
+        ? <EntryView entry={row.entry} index={row.index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView />
+        : <HcomCards entry={row.entry} entryIndex={row.index} now={now} showSystem={showSystem} cleanView={false} relationships={relationships} deliveryIndex={row.deliveryIndex} />}</Block>)}</MentionContext.Provider>
   }
-  return <MentionContext.Provider value={mentionContext}>{entries.map((entry, index) => <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} key={entry.uuid || `${entry.byteOffset}:${entry.line}`} />)}</MentionContext.Provider>
+  return <MentionContext.Provider value={mentionContext}>{entries.map((entry, index) => <Block index={index} divider={index === dividerAt} key={entry.uuid || `${entry.byteOffset}:${entry.line}`}>
+    <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} />
+  </Block>)}</MentionContext.Provider>
 }

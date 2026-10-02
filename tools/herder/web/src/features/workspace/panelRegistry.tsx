@@ -56,7 +56,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
     onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))}
     onOpenChanges={(root, placement) => workspace.openChanges(root, placementInGroup(placement, api.group.id))}
     identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={() => workspace.pinPanel(api.id)} onStatus={workspace.onAgentStatus}
-    onTerminalFocus={workspace.onTerminalFocus} />
+    onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={(index) => workspace.markUnread(params.name, index)} />
 }
 
 function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>) {

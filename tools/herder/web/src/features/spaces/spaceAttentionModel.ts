@@ -1,7 +1,8 @@
 import type { Board, Row } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { panelParams, readStoredSpaceLayout } from '../layout/dockLayout.ts'
-import { keepMarkers, setMarkers, type ReadMarkers } from './readMarkerStore.ts'
+import { baselineMarker, type ReadMarker, type ReadMarkers, type ReadPosition } from './readMarkerModel.ts'
+import { readThrough } from './readPositionModel.ts'
 
 export type SpaceAttention = { unread: string[], blocked: string[] }
 export const quietAttention: SpaceAttention = { unread: [], blocked: [] }
@@ -40,14 +41,16 @@ export function turnEnd(row: Row | undefined): number | null {
 // on a finished turn; inactive, pending, unknown or '-' never count.
 const unreadStatuses = new Set(['listening', 'active'])
 
-// agentAttention: blocked always shows; unread is a turn that ended after
-// the marker. With no marker the baseline is unknown, so nothing is unread
-// until seeding records one.
-export function agentAttention(row: Row | undefined, marker: number | undefined): 'blocked' | 'unread' | null {
+// agentAttention: blocked always shows; a deliberate mark unread is quiet
+// unread; otherwise unread is a turn that ended after the marker's. With no
+// marker the baseline is unknown, so nothing is unread until seeding
+// records one.
+export function agentAttention(row: Row | undefined, marker: ReadMarker | undefined): 'blocked' | 'unread' | null {
   if (row?.bus_status === 'blocked') return 'blocked'
+  if (marker?.unread) return 'unread'
   if (!row || !unreadStatuses.has(row.bus_status)) return null
   const id = turnEnd(row)
-  return id !== null && marker !== undefined && id > marker ? 'unread' : null
+  return id !== null && marker !== undefined && id > marker.turn ? 'unread' : null
 }
 
 export function spaceAttention(board: Board | undefined, agents: readonly string[], markers: ReadMarkers): SpaceAttention {
@@ -59,30 +62,44 @@ export function spaceAttention(board: Board | undefined, agents: readonly string
   return result
 }
 
-// seedReadMarkers silently records the current turn end of every open agent
-// that has none: one never seen, or one whose first turn_end_id arrives
-// late (an unknown baseline is not a new completion). A panel then turns
-// unread only for a turn that ends after that.
-export function seedReadMarkers(markers: ReadMarkers, board: Board | undefined, agents: readonly string[]): ReadMarkers {
-  const updates: Record<string, number> = {}
+// seedUpdates are the silent baselines for every open agent with no
+// marker: one never seen, or one whose first turn_end_id arrives late (an
+// unknown baseline is not a new completion). A panel then turns unread only
+// for a turn that ends after that. They are written weakly.
+export function seedUpdates(markers: ReadMarkers, board: Board | undefined, agents: readonly string[]): Record<string, ReadMarker> {
+  const updates: Record<string, ReadMarker> = {}
   for (const name of agents) {
     if (markers[name] !== undefined) continue
     const id = turnEnd(findAgentRow(board, name))
-    if (id !== null) updates[name] = id
+    if (id !== null) updates[name] = baselineMarker(id)
   }
-  return setMarkers(markers, updates)
+  return updates
 }
 
-// markViewedRead records the latest turn end of each agent the owner has
-// been looking at for the dwell. A turn still running has no id yet, so it
-// lands as unread if the owner looks away before it ends.
-export function markViewedRead(markers: ReadMarkers, board: Board | undefined, viewed: readonly string[]): ReadMarkers {
-  const updates: Record<string, number> = {}
+// readUpdates are what the dwell writes for each agent the owner has been
+// looking at: the latest turn end and the newest rendered entry (positions,
+// by agent; undefined while its transcript end is still loading, null when
+// it has none). A turn still running has no id yet, so it lands as unread
+// if the owner looks away before it ends. A mark unread is held until
+// armed (the agent was left and came back).
+export function readUpdates({ markers, board, viewed, positions, armed, now }: {
+  markers: ReadMarkers
+  board: Board | undefined
+  viewed: readonly string[]
+  positions: Readonly<Record<string, ReadPosition | null | undefined>>
+  armed: ReadonlySet<string>
+  now: number
+}): Record<string, ReadMarker> {
+  const updates: Record<string, ReadMarker> = {}
   for (const name of viewed) {
-    const id = turnEnd(findAgentRow(board, name))
-    if (id !== null && id > (markers[name] ?? 0)) updates[name] = id
+    const marker = markers[name]
+    if (marker?.unread && !armed.has(name)) continue
+    const latest = positions[name]
+    if (latest === undefined) continue
+    const next = readThrough(marker, turnEnd(findAgentRow(board, name)), latest, now)
+    if (next) updates[name] = next
   }
-  return setMarkers(markers, updates)
+  return updates
 }
 
 // boardAgents names every agent row on the board, placed, unplaced or
@@ -98,13 +115,14 @@ export function boardAgents(board: Board): Set<string> {
   return names
 }
 
-// pruneReadMarkers forgets agents that are neither open in any space nor on
-// the board. It waits for a board, and never drops an open agent's marker.
-export function pruneReadMarkers(markers: ReadMarkers, board: Board | undefined, openAgents: readonly string[]): ReadMarkers {
-  if (!board) return markers
+// markerKeepSet names the markers this browser keeps: agents open in any
+// space or on the board. null without a board: nothing is known gone.
+// Pruning is local; the server's own sweep forgets long-absent agents.
+export function markerKeepSet(board: Board | undefined, openAgents: readonly string[]): Set<string> | null {
+  if (!board) return null
   const keep = boardAgents(board)
   for (const name of openAgents) keep.add(name)
-  return keepMarkers(markers, keep)
+  return keep
 }
 
 export function attentionLabel(attention: SpaceAttention): string {

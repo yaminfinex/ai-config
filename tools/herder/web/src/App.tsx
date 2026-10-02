@@ -17,6 +17,7 @@ import { Banner } from './shared/presentation'
 import { statusBarHealth, type HealthTick } from './shared/statusBarPresentation'
 import { ThemeToggle } from './shared/ThemeToggle'
 import { NotesProvider, useNotes, useNotesCount } from './features/notes/NotesProvider'
+import { ReadMarkersProvider } from './features/spaces/index.ts'
 import { NotesRail } from './features/notes/NotesRail'
 import { NoteQuickAdd } from './features/notes/NoteQuickAdd'
 import { shortcutLabels } from './features/layout/shellShortcuts'
@@ -139,6 +140,6 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
 
 export default function App() {
   const route = currentRoute()
-  if (route.page !== 'missing') return <NotesProvider><ErrorBoundary><Shell initialRoute={route} /></ErrorBoundary></NotesProvider>
+  if (route.page !== 'missing') return <NotesProvider><ReadMarkersProvider><ErrorBoundary><Shell initialRoute={route} /></ErrorBoundary></ReadMarkersProvider></NotesProvider>
   return <main className="agent-page"><AppLink to="/" className="back-link">← Workspace</AppLink><section className="not-found"><strong>404 · Page not found</strong></section></main>
 }

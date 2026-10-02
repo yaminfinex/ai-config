@@ -28,6 +28,9 @@ export type WorkspaceActionsValue = {
   showQuickOpen: (groupID?: string, mode?: QuickOpenMode) => void
   sendPanelToSpace: (sourceID: string, params: DockPanelParams, spaceID: string) => boolean
   sendPanelToNewSpace: (sourceID: string, params: DockPanelParams) => boolean
+  // markUnread marks an agent unread from entries[index] of its loaded
+  // transcript window, or from the start of its latest turn.
+  markUnread: (name: string, index?: number) => void
 }
 
 export type WorkspaceDataValue = {

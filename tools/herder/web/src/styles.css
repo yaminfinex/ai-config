@@ -10,6 +10,7 @@
   --border: #d0d7de; --border2: #afb8c1; --text: #1f2328; --dim: #57606a; --dimmer: #5d6670;
   --accent: #0969da; --accent-dim: #dbeafe; --accent-text: #0349b4; --accent-glow: rgba(9,105,218,.35);
   --green: #1a7f37; --amber: #9a6700; --orphan-text: #7d4e00; --red: #cf222e; --purple: #8250df; --chip: #eaeef2;
+  --read-divider-line: #9ec5f5; --read-divider-text: #0349b4;
   --status-unknown: #6e7781; --status-bar-text: #17365d;
   --space-mark-unread-bg: #dbeafe; --space-mark-unread-text: #0349b4; --space-mark-blocked-bg: #cf222e; --space-mark-blocked-text: #ffffff;
   --info-border: #8c959f; --info-bg: #eaeef2; --info-text: #424a53;
@@ -42,6 +43,7 @@
   --border: #2e3037; --border2: #3a3c45; --text: #d6d8df; --dim: #8e919c; --dimmer: #6a6d78;
   --accent: #5b93ff; --accent-dim: #31406b; --accent-text: #a9c4ff; --accent-glow: rgba(88,166,255,.55);
   --green: #3fb950; --amber: #d29922; --orphan-text: #e5b94f; --red: #f47067; --purple: #b689f4; --chip: #2b2d35;
+  --read-divider-line: #3d5488; --read-divider-text: #a9c4ff;
   --status-unknown: #565a66; --status-bar-text: #b8c8e8;
   --space-mark-unread-bg: #31406b; --space-mark-unread-text: #a9c4ff; --space-mark-blocked-bg: #f47067; --space-mark-blocked-text: #1b1c21;
   --info-border: #484b55; --info-bg: #26272e; --info-text: #b6bac4;
@@ -614,6 +616,12 @@ h2, h3, p { margin-top: 0; }
 .transcript { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; }
 .transcript > * { min-width: 0; }
 .window-note { margin: 2px 0 10px; color: var(--dimmer); font: 9px var(--mono); text-align: center; }
+.transcript-block { display: contents; }
+.transcript-new-divider { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--read-divider-text); font: 9px var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+.transcript-new-divider::before, .transcript-new-divider::after { content: ''; flex: 1; border-top: 1px solid var(--read-divider-line); }
+.transcript-read-footer { display: flex; justify-content: center; align-items: baseline; gap: 6px; margin: 12px 0 2px; color: var(--dimmer); font: 9px var(--mono); }
+.transcript-read-footer button { padding: 0; border: 0; background: none; color: var(--dim); font: inherit; text-decoration: underline; cursor: pointer; }
+.transcript-read-footer button:hover, .transcript-read-footer button:focus-visible { color: var(--accent-text); }
 .transcript-unavailable { max-width: 34rem; margin: 3rem auto; text-align: center; color: var(--dim); }
 .transcript-unavailable strong { display: block; color: var(--text); }
 .transcript-unavailable button { margin-top: 0.5rem; }

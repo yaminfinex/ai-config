@@ -518,6 +518,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		socket = startSocket(stateDir, runtimeDependencies.observer, runtimeDependencies)
 		runtimeDependencies.storeWriter = socket != nil
 		runtimeDependencies = startStoreProjection(ctx, runtimeDependencies)
+		if store != nil && storeErr == nil {
+			startStateSweep(ctx, runtimeDependencies, store, StateSweepCadence, stderr)
+		}
 	}
 	defer socket.Close()
 	return serve(listeners, newHandler(runtimeDependencies), reload, ReloadDrainTimeout, socket.Close, stdout, stderr)
