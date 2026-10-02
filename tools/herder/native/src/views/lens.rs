@@ -409,7 +409,14 @@ fn card(store: &Store, ui: &Ui, space: &Space, row: Row, on: bool, t: TypeScale)
         .child(recorder(ui, &space.id, on))
         .child(title)
         .child(who)
-        .when(lines > 0, |el| el.child(dim(text).line_clamp(lines)))
+        .when(lines > 0, |el| el.child(body(text, lines, t)))
+}
+
+/// A card's text (the prototype's `.body`, G1): wrapped at words, at most `lines` lines with an
+/// ellipsis where it is cut, and always that many lines tall, so every card in a lane is as tall.
+pub(super) fn body(text: String, lines: usize, t: TypeScale) -> Div {
+    let el = dim(text).line_height(t.line).min_h(t.line * lines as f32);
+    el.line_clamp(lines).text_ellipsis()
 }
 
 /// Records the card's bounds for the zoom's morph, and scrolls the selected card into view after

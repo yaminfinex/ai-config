@@ -27,8 +27,8 @@ use crate::views::markdown::{self, Mentions};
 use crate::views::space::Zoom;
 use crate::views::theme::{self, MONO_T, SANS_T, TypeScale, pal, type_scale};
 use crate::views::{Host, dim};
-use gpui_kit::base::TextView;
 use gpui_kit::base::{Scrollbar, ScrollbarMode};
+use gpui_kit::base::{TextSelection, TextView};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::cell::{Cell, RefCell};
@@ -93,6 +93,17 @@ pub struct View {
     /// The list's width as last laid out, which cards indent by a share of (rows cannot ask the list
     /// while it lays them out).
     width: Cell<Pixels>,
+    /// A click on a link right after a selection (`replay`).
+    taps: Rc<Taps>,
+}
+
+/// What `replay` needs across a click: whether the last frame drew a selection, where the press went
+/// down (and whether that frame drew one), and whether the release now going out is a replay.
+#[derive(Default)]
+struct Taps {
+    selected: Cell<bool>,
+    press: Cell<Option<(Point<Pixels>, bool)>>,
+    replaying: Cell<bool>,
 }
 
 #[derive(Default)]
@@ -151,6 +162,7 @@ impl Default for View {
             painted: Rc::default(),
             anchor: Cell::default(),
             width: Cell::default(),
+            taps: Rc::default(),
         }
     }
 }
@@ -611,14 +623,15 @@ pub fn render<H: Host>(
     });
     // Where the pointer lets go, the selection it made is what `c` (or the strip's chip) captures.
     let let_go = cx.listener(|h: &mut H, _: &MouseUpEvent, window, cx| {
-        let text = gpui_kit::base::TextSelection::selected_text(window, cx);
+        let text = TextSelection::selected_text(window, cx);
         let ui = h.parts().1;
         let agent = ui.zoomed_agent().map(String::from);
         if ui.notes.selected(agent, &text) {
             cx.notify();
         }
     });
-    body.capture_any_mouse_up(let_go)
+    replay(body, &view.taps)
+        .capture_any_mouse_up(let_go)
         .child(head)
         .children(hold)
         .child(rows)
@@ -874,7 +887,9 @@ impl<H: Host> Paint<'_, H> {
         let text = text.style(style).code_block_actions(|_, _, _| Empty);
         let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
             Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
-            None if url.starts_with("http://") || url.starts_with("https://") => cx.open_url(url),
+            None if url.starts_with("http://") || url.starts_with("https://") => {
+                crate::platform_mac::open(url, cx)
+            }
             None => {}
         });
         sideways(div().w_full().max_w(t.css(900.)).child(text))
@@ -1088,6 +1103,42 @@ impl<H: Host> Paint<'_, H> {
 /// The id of `kind` for the item `key` in transcript `generation`.
 pub(super) fn name(kind: &str, generation: u64, (offset, sub): Key) -> String {
     format!("{kind}-{generation}-{offset}-{sub}")
+}
+
+/// A click on a link right after text was selected (G1): the kit draws no link's click into a frame
+/// that shows a selection, so a click pressed and let go before the next frame (a tap) found none and
+/// did nothing. Its release (a still one, left button, the frame under the press drew a selection) is
+/// held, a fresh frame drawn, and the same release sent again, once: then the link under it hears it.
+/// A drag, or a click with a frame between press and release, goes through as it is.
+fn replay(body: Div, taps: &Rc<Taps>) -> Div {
+    let at = taps.clone();
+    let shown = move |_, window: &mut Window, cx: &mut App| {
+        at.selected.set(TextSelection::has_selection(window, cx));
+    };
+    let at = taps.clone();
+    let pressed = move |e: &MouseDownEvent, _: &mut Window, _: &mut App| {
+        let left = e.button == MouseButton::Left && e.click_count == 1;
+        at.press.set(left.then(|| (e.position, at.selected.get())));
+    };
+    let at = taps.clone();
+    let released = move |e: &MouseUpEvent, window: &mut Window, cx: &mut App| {
+        let press = at.press.take();
+        let still = press.is_some_and(|(p, stale)| stale && (e.position - p).magnitude() < 3.);
+        if at.replaying.get() || !still {
+            return;
+        }
+        cx.stop_propagation();
+        let (up, at) = (e.clone(), at.clone());
+        window.defer(cx, move |window, cx| {
+            window.draw(cx).clear(cx);
+            at.replaying.set(true);
+            window.dispatch_event(PlatformInput::MouseUp(up), cx);
+            at.replaying.set(false);
+        });
+    };
+    body.child(canvas(shown, |_, _, _, _| {}).absolute())
+        .capture_any_mouse_down(pressed)
+        .capture_any_mouse_up(released)
 }
 
 /// Records where its parent laid out into `painted` (a parent drawn this frame is on screen or in

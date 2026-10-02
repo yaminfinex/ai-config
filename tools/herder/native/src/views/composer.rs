@@ -16,9 +16,10 @@ use crate::store::{Attribution, Event, Store};
 use crate::views::lens::{Focus, Ui};
 use crate::views::notes_list;
 use crate::views::space::{self, Zoomed};
-use crate::views::theme::{TypeScale, pal};
-use crate::views::{Host, dim, on, settle_later};
+use crate::views::theme::{SANS_T, TypeScale, pal};
+use crate::views::{Host, on, settle_later};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Action)]
@@ -139,9 +140,23 @@ pub fn render<H: Host>(
     t: TypeScale,
     cx: &mut Context<H>,
 ) -> Div {
-    let (line, color) = status(store, agent);
+    let (line_text, color) = status(store, agent);
     let writable = store.can_send(agent).is_ok() && !store.busy(agent);
+    // Web's `.send-box textarea` (measured, G1): system UI 13 on a 1.45 line, padding 7 9, a #3a3c45
+    // rule rounded 5, on the ground; at least 36 tall, at most 160.
     let input = Textarea::new(&ui.composer.state).disabled(!writable);
+    let input = input
+        .font_family(SANS_T)
+        .text_size(t.css(13.))
+        .line_height(relative(1.45));
+    // The kit pads the text inside by its size (small: 8 across, 2 down); the rest of web's goes round it.
+    let input = input.with_size(Size::Small);
+    let input = input.px(t.css(9.) - px(8.)).py(t.css(7.) - px(2.));
+    let input = input.min_h(t.css(36.)).max_h(t.css(160.));
+    let input = input
+        .rounded(t.css(5.))
+        .border_color(rgb(pal::EDGE))
+        .bg(rgb(pal::GROUND));
     let (state, notes) = (
         ui.composer.state.clone(),
         store.notes_of(agent).next().is_some(),
@@ -161,17 +176,25 @@ pub fn render<H: Host>(
         .on_action(on(cx, |_, ui, c: &Compose| act(ui, *c)))
         .on_action(up)
         .child(input);
+    // Web's `.send-box`: padding 7 14 5 on the panel under a rule; its footer 4 below the box, the keys
+    // in system UI 9 (here, or why it is read-only, or how a send went).
+    let line = div()
+        .font_family(SANS_T)
+        .text_size(t.css(9.))
+        .line_height(t.css(13.5));
     div()
         .flex_none()
         .flex()
         .flex_col()
-        .gap(t.px(4.))
-        .px(t.px(20.))
-        .py(t.px(8.))
+        .gap(t.css(4.))
+        .px(t.css(14.))
+        .pt(t.css(7.))
+        .pb(t.css(5.))
+        .bg(rgb(pal::PANEL))
         .border_t_1()
         .border_color(rgb(pal::RULE))
         .child(input)
-        .child(dim(line).text_size(t.small).text_color(rgb(color)))
+        .child(line.text_color(rgb(color)).child(line_text))
 }
 
 /// The line under the box and its colour: why it is read-only, "sending…", "saving the notes…" (a U5
@@ -184,7 +207,7 @@ pub(super) fn status(store: &Store, agent: &str) -> (String, u32) {
         }
         (Ok(()), Some(Sending::InFlight { .. })) => ("sending…".to_string(), pal::SLATE),
         (Ok(()), Some(Sending::Failed(failure))) => (say_failure(failure), pal::AMBER),
-        (Ok(()), None) => (HINT.to_string(), pal::SLATE),
+        (Ok(()), None) => (HINT.to_string(), pal::DIMMER),
     }
 }
 

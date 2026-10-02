@@ -3,8 +3,8 @@
 //! `show_system_notification`, which the shell calls only when `quiet()` is false.
 //!
 //! Test mode is decided here, once: a run with `HERDER_NATIVE_SCRIPT` set at all (the harness and
-//! every `just check-*`; a blank one is refused before the app opens) is `quiet`. It posts no notification, sets no badge and never takes the owner's
-//! chord; each is a logged no-op (`platform: would notify …`, `platform: badge 3`) the scenarios read.
+//! every `just check-*`; a blank one is refused before the app opens) is `quiet`. It posts no notification, sets no badge, opens no URL and never takes the owner's
+//! chord; each is a logged no-op (`platform: would notify …`, `platform: badge 3`, `platform: would open …`) the scenarios read.
 
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -25,6 +25,14 @@ pub fn assume_front() -> bool {
 /// What a quiet run did instead of the real call.
 pub fn log(what: impl AsRef<str>) {
     eprintln!("platform: {}", what.as_ref());
+}
+
+/// Open a URL (a web link, a file in VS Code) in its app.
+pub fn open(url: &str, cx: &gpui_kit::App) {
+    match quiet() {
+        true => log(format!("would open {url}")),
+        false => cx.open_url(url),
+    }
 }
 
 /// The needs-you count on the dock icon; 0 clears it.

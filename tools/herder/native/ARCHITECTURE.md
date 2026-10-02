@@ -383,8 +383,8 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held ‚å
   orders it behind every other app's windows (`platform_mac::order_back`) and never calls `activate`, so
   the owner keeps focus; no automated run brings a window on screen. It always quits when the script ends,
   and any failed step (a bad keystroke, a failed screenshot, an unknown step) exits non-zero. Any
-  `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge and the
-  summon chord are logged no-ops. The harness knows no views: what it asks of them goes through
+  `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge, the
+  summon chord and opening a URL (`platform_mac::open`: a web link, a file in VS Code) are logged no-ops. The harness knows no views: what it asks of them goes through
   the `harness::Probe` trait, which the shell implements with `views::probe` (`ask`, `action`, `select`,
   `find`, which scrolls the first transcript row holding a text to the top, or the member holding it in
   an open run, for shots; `run:` opens the run from there too),
