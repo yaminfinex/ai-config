@@ -18,13 +18,18 @@ const (
 	// AbsentAgentRetention is how long an agent must have been gone from
 	// the roster and the store's history before its agent-keyed rows go.
 	AbsentAgentRetention = 7 * 24 * time.Hour
-	// TombstoneRetention is how long any namespace keeps a delete.
+	// TombstoneRetention is how long an agent-keyed namespace keeps a delete.
 	TombstoneRetention = 30 * 24 * time.Hour
 )
 
 // agentKeyedNamespaces are keyed by agent name and mean nothing once the
-// agent is gone. notes (note ids), spaces and spaces.members (space ids)
-// are owner content keyed by other ids and are never swept for absence.
+// agent is gone; they are the only namespaces the sweep touches. notes
+// (note ids), spaces and spaces.members (space ids) are owner content: the
+// sweep never removes their rows or purges their tombstones, since clients
+// replay their caches additively and a purged tombstone would let a stale
+// browser bring a deleted note or space back. Inside read.markers a stale
+// client re-adding a swept row is acceptable: last-write-wins lets any newer
+// write beat it, and the next sweep removes it again.
 var agentKeyedNamespaces = map[string]bool{"read.markers": true}
 
 type stateSweeper interface {
@@ -45,6 +50,7 @@ func stateSweepPolicy(now time.Time, roster []hcomidentity.Row, projection *agen
 	}
 	cutoff := now.Add(-AbsentAgentRetention)
 	return webstate.SweepPolicy{
+		Namespaces:       agentKeyedNamespaces,
 		TombstonesBefore: now.Add(-TombstoneRetention).UnixMilli(),
 		Absent: func(namespace string, row webstate.Row) bool {
 			if !agentKeyedNamespaces[namespace] || present[row.Key] || row.Updated >= cutoff.UnixMilli() {
@@ -66,9 +72,11 @@ func stateSweepPolicy(now time.Time, roster []hcomidentity.Row, projection *agen
 	}
 }
 
-// sweepStateOnce sweeps with a fresh roster; without one it skips the
-// absence rule (an unreadable roster is not evidence of absence) and still
-// purges old tombstones.
+// sweepStateOnce sweeps with a fresh roster and the projection of the
+// latest successful fold; without either it skips the absence rule (an
+// unreadable roster, or a store read that failed after an earlier one
+// succeeded, is not evidence of absence) and still purges old tombstones
+// in agent-keyed namespaces.
 func sweepStateOnce(deps dependencies, store stateSweeper, publish func(stateChange), stderr io.Writer) {
 	now := time.Now()
 	if deps.now != nil {
@@ -76,7 +84,7 @@ func sweepStateOnce(deps dependencies, store stateSweeper, publish func(stateCha
 	}
 	var projection *agentstore.Projection
 	if deps.projection != nil {
-		projection = deps.projection.get()
+		projection = deps.projection.current()
 	}
 	var roster []hcomidentity.Row
 	var rosterErr error = fmt.Errorf("no roster reader")

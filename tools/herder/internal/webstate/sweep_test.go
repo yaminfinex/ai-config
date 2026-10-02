@@ -39,6 +39,7 @@ func TestSweepPurgesOldTombstonesAndAbsentRowsWithoutTombstones(t *testing.T) {
 	_, before, _ := store.Since("web-owner", "read.markers", 0)
 
 	results, err := store.Sweep(SweepPolicy{
+		Namespaces:       map[string]bool{"read.markers": true},
 		TombstonesBefore: 500,
 		Absent:           func(namespace string, row Row) bool { return namespace == "read.markers" && row.Key == "gone" },
 	})
@@ -46,26 +47,26 @@ func TestSweepPurgesOldTombstonesAndAbsentRowsWithoutTombstones(t *testing.T) {
 		t.Fatal(err)
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Namespace < results[j].Namespace })
-	if len(results) != 2 || results[0].Namespace != "notes" || results[0].Removed != 1 || results[1].Namespace != "read.markers" || results[1].Removed != 2 {
+	if len(results) != 1 || results[0].Namespace != "read.markers" || results[0].Removed != 2 {
 		t.Fatalf("results = %+v", results)
 	}
-	if results[1].Rev != before+1 {
-		t.Fatalf("a sweep bumps the revision once: rev %d after %d", results[1].Rev, before)
+	if results[0].Rev != before+1 {
+		t.Fatalf("a sweep bumps the revision once: rev %d after %d", results[0].Rev, before)
 	}
 
 	rows, rev, err := store.Since("web-owner", "read.markers", 0)
-	if err != nil || rev != results[1].Rev {
+	if err != nil || rev != results[0].Rev {
 		t.Fatalf("since: rev=%d err=%v", rev, err)
 	}
 	if got := keys(rows); len(got) != 2 || got[0] != "here" || got[1] != "new-delete" {
 		t.Fatalf("rows after sweep = %v; want the present row and the recent tombstone, nothing left for the absent row", got)
 	}
 	notes, _, _ := store.Since("web-owner", "notes", 0)
-	if got := keys(notes); len(got) != 1 || got[0] != "note-1" {
-		t.Fatalf("notes after sweep = %v; the absence rule was only for read.markers", got)
+	if got := keys(notes); len(got) != 2 || got[0] != "note-1" || got[1] != "note-2" {
+		t.Fatalf("notes after sweep = %v; a namespace the policy does not list keeps every row and tombstone", got)
 	}
 
-	again, err := store.Sweep(SweepPolicy{TombstonesBefore: 500, Absent: func(string, Row) bool { return false }})
+	again, err := store.Sweep(SweepPolicy{Namespaces: map[string]bool{"read.markers": true}, TombstonesBefore: 500, Absent: func(string, Row) bool { return false }})
 	if err != nil || len(again) != 0 {
 		t.Fatalf("a sweep with nothing to remove changes nothing: %+v %v", again, err)
 	}
@@ -81,7 +82,7 @@ func TestSweepAnswersAnOlderCursorWithEveryCurrentRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, cursor, _ := store.Since("web-owner", "read.markers", 0)
-	if _, err := store.Sweep(SweepPolicy{Absent: func(_ string, row Row) bool { return row.Key == "b" }}); err != nil {
+	if _, err := store.Sweep(SweepPolicy{Namespaces: map[string]bool{"read.markers": true}, Absent: func(_ string, row Row) bool { return row.Key == "b" }}); err != nil {
 		t.Fatal(err)
 	}
 	rows, rev, err := store.Since("web-owner", "read.markers", cursor)

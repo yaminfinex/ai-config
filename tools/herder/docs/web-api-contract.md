@@ -427,19 +427,25 @@ GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
   wins over them. Clients prune their local copy only; they never write a
   delete into this namespace.
 
-  The serve sweeps stored state at start and then hourly. It removes
-  tombstones older than 30 days in every namespace, and removes
-  `read.markers` rows outright (no tombstone) when the agent is off the
-  hcom roster, the agent store last saw or closed it more than 7 days ago
-  (or never), and the row itself is more than 7 days old. Without a
-  readable roster or agent store the absence rule is skipped. A namespace
-  that loses rows takes one new revision, publishes `state-changed`, and
-  sets a floor at that revision: a pull from an older cursor is answered
-  with every current row, as if from zero. A swept row simply stops
-  appearing; clients keep their copy until their own pruning drops it. A
-  client offline for longer than 30 days still holding a row whose
-  tombstone was purged can write it back on its next upsert; that is
-  accepted as an ordinary write.
+  The serve sweeps stored state at start and then hourly, and only in
+  agent-keyed namespaces (today `read.markers`). `notes`, `spaces` and
+  `spaces.members` are owner content: the sweep never removes their rows
+  or purges their tombstones, because clients replay their cached rows
+  and merge additively, so a purged tombstone would let a stale browser
+  bring a deleted note or space back just by opening the app. In
+  `read.markers` the sweep removes tombstones older than 30 days, and
+  removes rows outright (no tombstone) when the agent is off the hcom
+  roster, the agent store last saw or closed it more than 7 days ago (or
+  never), and the row itself is more than 7 days old. Without a readable
+  roster, or when the latest agent store read failed, the absence rule is
+  skipped. A namespace that loses rows takes one new revision, publishes
+  `state-changed`, and sets a floor at that revision: a pull from an
+  older cursor is answered with every current row, as if from zero. A
+  swept row simply stops appearing; clients keep their copy until their
+  own pruning drops it. A stale client may still write a swept
+  `read.markers` row back. That is accepted: it is an ordinary
+  last-write-wins row, so any newer write beats it, and the next sweep
+  removes it again.
 
 GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   The classified, immutable Claude session entry stream. The server

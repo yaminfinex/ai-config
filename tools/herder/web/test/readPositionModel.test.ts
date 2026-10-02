@@ -99,6 +99,23 @@ test('the divider waits for a marker that loads after arrival, and moves on a ma
   assert.equal(nextDividerSnapshot(initialDividerSnapshot, false, marker(5, 300)).pos, null, 'never taken while not active')
 })
 
+test('a repeated mark unread while already unread moves the divider again', () => {
+  const arrived = nextDividerSnapshot(initialDividerSnapshot, true, marker(5, 300))
+  const first = nextDividerSnapshot(arrived, true, marker(5, 200, 1000, true))
+  assert.deepEqual(first.pos, pos(200))
+  // Locally: the same agent stays open and the owner marks from an earlier block.
+  const again = nextDividerSnapshot(first, true, marker(5, 0, 1000, true))
+  assert.deepEqual(again.pos, pos(0), 'a second local mark from here moves it')
+  // Remotely: the merged row arrives with a later position, still unread.
+  const remote = nextDividerSnapshot(again, true, marker(5, 100, 1000, true))
+  assert.deepEqual(remote.pos, pos(100), 'a second mark from another device moves it')
+  assert.equal(nextDividerSnapshot(remote, true, marker(5, 100, 1000, true)), remote, 'the same mark again changes nothing')
+  // Once read, advancing positions leave it frozen until the next arrival.
+  const read = nextDividerSnapshot(remote, true, marker(6, 500))
+  assert.deepEqual(read.pos, pos(100))
+  assert.equal(nextDividerSnapshot(read, true, marker(6, 600)), read, 'ordinary reading still never moves it')
+})
+
 test('the block menu opens on a block, not over a selection, a link or a text box', () => {
   const target = (attrs: Record<string, string | null>, editable = false) => ({
     closest: (selector: string) => {

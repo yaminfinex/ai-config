@@ -30,6 +30,9 @@ type projectionCache struct {
 	// refold compares against it so a quiet store is never refolded or
 	// rewritten.
 	journalSize int64
+	// failed says the latest fold failed, so proj is an older read: fine
+	// for the board, but no evidence an agent is gone (the state sweep).
+	failed bool
 }
 
 func (c *projectionCache) get() *agentstore.Projection {
@@ -45,7 +48,28 @@ func (c *projectionCache) set(proj *agentstore.Projection, journalSize int64) {
 	c.mu.Lock()
 	c.proj = proj
 	c.journalSize = journalSize
+	c.failed = false
 	c.mu.Unlock()
+}
+
+// markFailed records a failed fold; the projection stays for the board.
+func (c *projectionCache) markFailed() {
+	c.mu.Lock()
+	c.failed = true
+	c.mu.Unlock()
+}
+
+// current is the projection only when the latest fold succeeded, else nil.
+func (c *projectionCache) current() *agentstore.Projection {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.failed {
+		return nil
+	}
+	return c.proj
 }
 
 func (c *projectionCache) lastJournalSize() int64 {
@@ -76,6 +100,7 @@ func refreshProjection(deps dependencies) {
 	}
 	if err != nil {
 		deps.audit("herder serve: agent store read failed; board keeps the last projection: %v", err)
+		deps.projection.markFailed()
 		return
 	}
 	deps.projection.set(proj, size)

@@ -9,10 +9,17 @@ import (
 )
 
 // SweepPolicy says which rows a sweep removes outright, without leaving a
-// tombstone. TombstonesBefore purges tombstones whose Updated (ms) is older;
-// zero keeps every tombstone. Absent reports a live row of an agent-keyed
-// namespace whose agent is gone; nil removes no live row.
+// tombstone. Namespaces lists the only namespaces a sweep touches; every
+// other namespace is left exactly as it is. TombstonesBefore purges
+// tombstones whose Updated (ms) is older; zero keeps every tombstone. Absent
+// reports a live row whose agent is gone; nil removes no live row.
+//
+// Only list namespaces whose rows may come back harmlessly. Clients replay
+// their cached rows and merge additively, so a purged tombstone lets a stale
+// client re-add the deleted row; owner content (notes, spaces) must keep its
+// tombstones forever.
 type SweepPolicy struct {
+	Namespaces       map[string]bool
 	TombstonesBefore int64
 	Absent           func(namespace string, row Row) bool
 }
@@ -49,7 +56,7 @@ func (s *FileStore) Sweep(policy SweepPolicy) ([]SweepResult, error) {
 		}
 		for _, file := range files {
 			namespace, ok := strings.CutSuffix(file.Name(), ".json")
-			if !ok || file.IsDir() || !namespacePattern.MatchString(namespace) {
+			if !ok || file.IsDir() || !namespacePattern.MatchString(namespace) || !policy.Namespaces[namespace] {
 				continue
 			}
 			result, err := s.sweepNamespace(user.Name(), namespace, policy)

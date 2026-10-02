@@ -114,7 +114,7 @@ test('the web contract pins generic per-user state and every client namespace', 
   assert.match(section, /`\{"turn":<n>,"pos":\{"session":"<id>","offset":<n>,"ts":"<rfc3339\|''>"\}\|null,"at":<ms>,"unread":<bool>,"updated":<ms>\}`/)
   assert.match(section, /never moves `turn` or `pos` backward unless the newer row is a\s+deliberate unread/)
   assert.match(section, /never write a\s+delete into this namespace/)
-  assert.match(section, /tombstones older than 30 days[\s\S]*more than 7 days[\s\S]*older cursor is answered\s+with every current row/)
+  assert.match(section, /only in\s+agent-keyed namespaces[\s\S]*never removes their rows\s+or purges their tombstones[\s\S]*tombstones older than 30 days[\s\S]*more than 7 days[\s\S]*older cursor is answered\s+with every current row[\s\S]*the next sweep\s+removes it again/)
   assert.match(section, /65,536 bytes/)
   assert.match(section, /409[\s\S]*413[\s\S]*503/)
   assert.match(section, /`state-changed`[\s\S]*`\{"namespace":"<namespace>","rev":<current-namespace-revision>\}`/)

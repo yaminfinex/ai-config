@@ -8,13 +8,19 @@ export type DividerSnapshot = Readonly<{ pos: ReadPosition | null, settled: bool
 
 export const initialDividerSnapshot: DividerSnapshot = { pos: null, settled: false, active: false, unread: false }
 
+function samePosition(a: ReadPosition | null, b: ReadPosition | null) {
+  return a === b || (a !== null && b !== null && a.session === b.session && a.offset === b.offset)
+}
+
 // nextDividerSnapshot returns previous itself when nothing moved. An
 // arrival before the agent's marker has loaded settles on the marker once
-// it arrives.
+// it arrives. A deliberate unread holds its position (reading never
+// advances it), so a new position while it stays unread is another mark,
+// here or on another device, and moves the divider too.
 export function nextDividerSnapshot(previous: DividerSnapshot, active: boolean, marker: ReadMarker | undefined): DividerSnapshot {
   const unread = Boolean(marker?.unread)
   const arriving = active && !previous.active
-  const marked = unread && !previous.unread
+  const marked = unread && (!previous.unread || !samePosition(marker?.pos ?? null, previous.pos))
   const settled = arriving ? false : previous.settled
   const take = active && (arriving || marked || (!settled && marker !== undefined))
   const next = take ? { pos: marker?.pos ?? null, settled: marker !== undefined, active, unread } : { ...previous, settled, active, unread }
