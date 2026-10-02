@@ -342,6 +342,7 @@ impl Render for Shell {
 }
 
 pub fn run() {
+    crate::local::log_panics(crate::local::logs());
     harness::start_clock();
     let script = harness::script().unwrap_or_else(|e| {
         eprintln!("harness: {e}");

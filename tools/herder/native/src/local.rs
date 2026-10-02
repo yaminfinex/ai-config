@@ -1,7 +1,9 @@
 //! What stays on this Mac, under `~/Library/Application Support/herder-native/`: `prefs.json` (text
 //! scale, rows, visible agents, seen marks, drafts), `outbox.json` (unsent state rows, saved before
 //! every send) and `snapshot.json` (the last board and state rows, applied synchronously at boot
-//! before anything live starts).
+//! before anything live starts). A panic's message and backtrace are appended to
+//! `~/Library/Logs/herder-native/panic.log` (`log_panics`): the bundle has no stderr, and a panic in an
+//! event handler aborts the app.
 //!
 //! One writer for all of them (`Disk`): every save carries a sequence number from `next_seq`, an older
 //! save never lands on top of a newer one, and each file is written to a temporary name and renamed
@@ -93,6 +95,37 @@ impl Disk {
     }
 }
 
+/// Append every panic's message, thread and backtrace to `dir/panic.log`, then run the hook that was
+/// installed before (the default prints it and the panic goes on, so a panic across the platform's
+/// event callback still aborts).
+pub fn log_panics(dir: PathBuf) {
+    let before = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+        let at = at.map_or(0, |d| d.as_secs());
+        let thread = std::thread::current();
+        let thread = thread.name().unwrap_or("unnamed");
+        let entry = format!("--- {at} (unix s), thread '{thread}'\n{info}\n{backtrace}\n");
+        let _ = std::fs::create_dir_all(&dir).and_then(|()| {
+            use std::io::Write;
+            let path = dir.join("panic.log");
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)?;
+            file.write_all(entry.as_bytes())
+        });
+        before(info);
+    }));
+}
+
+/// `~/Library/Logs/herder-native`.
+pub fn logs() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join("Library/Logs/herder-native")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,6 +142,23 @@ mod tests {
         // A directory that cannot exist: its parent is a file.
         let blocked = Disk::at(dir.join(OUTBOX).join("x"));
         assert!(blocked.write(OUTBOX, b"x", next_seq()).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_panic_is_appended_to_the_log_with_its_backtrace() {
+        let dir = std::env::temp_dir().join(format!("herder-native-panic-{}", std::process::id()));
+        log_panics(dir.clone());
+        let caught = std::panic::catch_unwind(|| panic!("wheel went wrong"));
+        // Back to the default hook, so other tests' panics print as usual.
+        drop(std::panic::take_hook());
+        assert!(caught.is_err());
+        let log = std::fs::read_to_string(dir.join("panic.log")).unwrap();
+        assert!(log.contains("wheel went wrong"), "{log}");
+        assert!(
+            log.contains("a_panic_is_appended_to_the_log"),
+            "a backtrace: {log}"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
