@@ -33,7 +33,7 @@
 //! from that row on; A3) · `wheel:<x>,<y>,<l|p>,<dx>,<dy>` (one wheel event at a window point, in a
 //! mouse's lines or a trackpad's pixels, through `Window::dispatch_event`; wheel-fix) · `point:<x>,<y>`
 //! and `drag:<x>,<y>,<x2>,<y2>` (a real left click, or press, move and let go, at window points, the same
-//! way; G1). Units add `type:` as they need it.
+//! way; G1; `fast:` draws no frame between press and release). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
@@ -198,7 +198,8 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
             // `point:x,y`: a real left click at a window point (move, down, up), through the window's
             // event path, so what the element under it does is what a pointer gets.
             // `drag:x,y,x2,y2`: pressed at the first point, moved to the second and let go there.
-            "point" | "drag" => match drag(arg) {
+            // `fast:x,y`: the same click with no frame drawn between press and release.
+            "point" | "drag" | "fast" => match drag(arg) {
                 Some((from, to)) => {
                     let (button, modifiers) = (MouseButton::Left, Modifiers::default());
                     let moved = |position, pressed_button| {
@@ -225,10 +226,13 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                             click_count: 1,
                         }),
                     ];
-                    for input in inputs {
+                    let last = inputs.len() - 1;
+                    for (i, input) in inputs.into_iter().enumerate() {
                         let _ = cx.update(|window, cx| {
                             window.dispatch_event(input, cx);
-                            window.draw(cx).clear(cx);
+                            if op != "fast" || i == last {
+                                window.draw(cx).clear(cx);
+                            }
                         });
                     }
                     metric(format!("{op} {arg}"));

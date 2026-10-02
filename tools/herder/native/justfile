@@ -213,17 +213,29 @@ check-mouse port="4414":
     noted+=" draw key:a draw notes:0:focused: click:crumb wait:400 draw expect: notes:0:closed"
     scenario noted "" "$noted quit"
     grep -q "GET /api/agents/mupu/entries?limit=12 " "$home/clicks.fake" || { echo "check-mouse: no card read for mupu"; exit 1; }
-    # Links by a real pointer (G1; `point:` sends move, down and up through the window), 1400×900: in
-    # grill-confirm-lubo's last answer and in its latest card the mention `kono` opens confirm-fresh-kono
+    # Links by a real pointer (G1; `point:` sends move, down and up through the window), 1400×900: at
+    # grill-confirm-lubo's tail, in its last answer and in its latest card the mention `kono` opens confirm-fresh-kono
     # as a preview; in riko, the `Pull 453` URL is opened
     # (logged, never done, in a scripted run) and the path `submit.rs` is resolved.
-    lubo="wait:1500 summon:agent:grill-confirm-lubo wait:1500 draw key:g wait:800 draw find:**kono**+is+ready wait:300 draw"
+    lubo="wait:1500 summon:agent:grill-confirm-lubo wait:1500 draw draw"
     kono="wait:400 draw expect:confirm-fresh-kono+preview"
-    HERDER_NATIVE_WINDOW=1400x900 scenario links "" "$lubo point:44,587 $kono quit" "$lubo point:43,732 $kono quit" \
+    HERDER_NATIVE_WINDOW=1400x900 scenario links "" "$lubo point:44,527 $kono quit" "$lubo point:43,672 $kono quit" \
         "wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw point:40,130 wait:200 point:100,156 wait:400 draw quit"
     grep -q "platform: would open https://github.com/infinex-xyz/boomerang/pull/453" "$home/links.log" || { echo "check-mouse: the URL was not opened"; exit 1; }
     seen links "GET /api/resolve?q=submit.rs" 1
-    echo "check-mouse: ok (click selects, double-click zooms in, a tab click switches agent, lens › zooms out, both from the composer and the notes editor too, cards read their tails; real clicks on a mention in an answer and in a card open its preview, a URL opens and a path resolves)"
+    # After selecting text by a drag (one across the URL itself), one click on each link opens it once:
+    # a click with a frame between press and release, and a fast one with none (a tap; `transcript::replay`).
+    # The drags open nothing.
+    riko="wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw"
+    pull="$riko find:Pull+453 wait:300 draw draw"
+    HERDER_NATIVE_WINDOW=1400x900 scenario selected "" \
+        "$pull drag:60,222,400,222 wait:200 draw drag:40,130,400,130 wait:200 draw point:40,130 wait:300 draw drag:60,222,400,222 wait:200 draw fast:40,130 wait:300 draw drag:60,222,400,222 wait:200 draw fast:100,156 wait:400 draw quit"
+    HERDER_NATIVE_WINDOW=1400x900 scenario named "" \
+        "$riko find:asked+chief+mihe wait:300 draw draw drag:60,222,400,222 wait:200 draw fast:120,172 wait:400 draw expect:fees-program-design-lifo+preview quit"
+    opened=$(grep -c "platform: would open https://github.com/infinex-xyz/boomerang/pull/453" "$home/selected.log" || true)
+    [ "$opened" = 2 ] || { echo "check-mouse: after a selection the URL opened $opened times, expected 2"; exit 1; }
+    seen selected "GET /api/resolve?q=submit.rs" 1
+    echo "check-mouse: ok (click selects, double-click zooms in, a tab click switches agent, lens › zooms out, both from the composer and the notes editor too, cards read their tails; real clicks on a mention in an answer and in a card open its preview, a URL opens and a path resolves, each once, also right after selecting text, and a drag opens nothing)"
 
 # Activity runs (F2), through `scripts/scenario.sh`: zoomed on mupu, both recorded pages group into web's 19 rows
 # and 9 runs (`testdata/runs-web.json`); `o` opens the lowest run on screen (at the tail, the last one) and

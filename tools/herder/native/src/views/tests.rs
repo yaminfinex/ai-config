@@ -1457,6 +1457,8 @@ mod layout {
                 .flex()
                 .flex_col()
                 .on_action(open)
+                // The window's selection layer, as the app's root (the kit's `Root`) draws it.
+                .child(gpui_kit::base::TextSelectionLayer)
                 .child(body)
         }
     }
@@ -1875,12 +1877,16 @@ mod layout {
         assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
     }
 
-    /// G1: a real pointer click (move, down, up through the window) on each kind of link routes as
-    /// before: a URL to the browser, a name to its preview tab, a path to be resolved and opened; in an
-    /// answer, an operator's card, and another agent's card shown as the latest activity.
+    /// G1: right after a drag selects text (one across the link itself, which opens nothing), a real
+    /// click on each kind of link, pressed and let go within the frame that still shows the selection,
+    /// routes it once as before: a URL to the browser, a name to its preview tab, a path to be
+    /// resolved and opened; in an answer, an operator's card, and another agent's card shown as the
+    /// latest activity. Without `transcript::replay` the click is dropped.
     #[gpui_kit::test]
-    fn a_real_click_on_a_link_routes_it_by_kind(cx: &mut TestAppContext) {
+    fn a_click_on_a_link_after_a_selection_routes_it_once(cx: &mut TestAppContext) {
         use crate::store::condense::Seg;
+        use gpui_kit::base::TextSelection;
+        use gpui_kit::{MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
         let long = |s: &str| s.repeat(40);
         let answer = |text: String| Item::Assistant(vec![Seg::Text(text)]);
         let card = |text: String, operator| Item::Delivery {
@@ -1945,8 +1951,52 @@ mod layout {
                 false => latest.expect("the latest block").bottom() + px(y - 10.),
             };
             let p = point(at.left() + px(x), y);
-            cx.simulate_mouse_move(p, None, Modifiers::default());
-            cx.simulate_click(p, Modifiers::default());
+            // First a drag across the line, the link with it: it selects, and opens nothing.
+            let m = Modifiers::default();
+            let to = point(p.x + px(250.), p.y);
+            cx.simulate_mouse_move(p, None, m);
+            cx.simulate_event(MouseDownEvent {
+                button: MouseButton::Left,
+                position: p,
+                modifiers: m,
+                click_count: 1,
+                first_mouse: false,
+            });
+            cx.simulate_mouse_move(to, Some(MouseButton::Left), m);
+            cx.simulate_event(MouseUpEvent {
+                button: MouseButton::Left,
+                position: to,
+                modifiers: m,
+                click_count: 1,
+            });
+            draw(cx);
+            let selected = cx.update(TextSelection::selected_text);
+            assert!(!selected.is_empty(), "the drag selected");
+            let dragged = body.read_with(cx, |b, _| b.links.len());
+            assert_eq!(
+                (dragged, cx.opened_url()),
+                (0, opened.clone()),
+                "a drag opens nothing"
+            );
+            // Then one click on the link, pressed and let go within the frame that shows the selection
+            // (a tap): no frame is drawn between.
+            cx.update(|window, cx| {
+                let press = MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: p,
+                    modifiers: m,
+                    click_count: 1,
+                    first_mouse: false,
+                };
+                window.dispatch_event(PlatformInput::MouseDown(press), cx);
+                let release = MouseUpEvent {
+                    button: MouseButton::Left,
+                    position: p,
+                    modifiers: m,
+                    click_count: 1,
+                };
+                window.dispatch_event(PlatformInput::MouseUp(release), cx);
+            });
             cx.run_until_parked();
             let mut got = body.read_with(cx, |b, _| b.links.clone());
             got = got.into_iter().map(|l| format!("link {l}")).collect();
