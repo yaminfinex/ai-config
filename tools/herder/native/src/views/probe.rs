@@ -5,6 +5,7 @@ use crate::store::Store;
 use crate::store::condense::Row;
 use crate::store::condense::Seg;
 use crate::store::transcript::Item;
+use crate::views::capture::Capture;
 use crate::views::composer;
 use crate::views::lens::{self, Pick, State, Ui};
 use crate::views::notes::Notes;
@@ -13,7 +14,7 @@ use crate::views::space::{Summon, Tab, Zoomed, zoomed};
 use crate::views::transcript::{Fold, OpenLink, Scroll, long};
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `parts`, `jump` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `capture`, `list`, `said`, `header`, `rows`, `parts`, `jump` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
     let agent = ui.zoomed_agent();
@@ -28,6 +29,17 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             let text = ui.composer.state.read(cx).value();
             format!("{}:{text}", focused(ui.composer.focus_handle(cx)))
         }
+        // The capture chip or popover (F7): `none`, `chip:<focus>:<quote>`, `open:<focus>:<text>`.
+        "capture" => match &ui.capture.draft {
+            None => "none".into(),
+            Some(d) => {
+                let focus = focused(ui.capture.focus_handle(cx));
+                match d.open {
+                    false => format!("chip:{focus}:{}", d.quote),
+                    true => format!("open:{focus}:{}", ui.capture.text),
+                }
+            }
+        },
         // The line under the composer.
         "says" => agent.map_or_else(String::new, |a| composer::status(store, a).0),
         // The zoomed agent's note count, then the editor: `closed`, or its focus and text.
@@ -171,9 +183,14 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
         Some(SharedString::from(note.id.clone()))
     };
     match (what, i) {
+        // The capture chip, a click on which saves the quote.
         ("capture", _) => {
-            ui.notes.selection.as_ref().filter(|(a, _)| a == agent)?;
-            notes(Notes::Capture)
+            let chip = ui
+                .capture
+                .draft
+                .as_ref()
+                .filter(|d| d.agent == agent && !d.open);
+            chip.map(|_| Capture::Save.boxed_clone())
         }
         ("sendall", _) => {
             let shown = note("0").is_some() && !store.hand_off_blocked(agent);
@@ -192,12 +209,6 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
         ("delete", i) => card(Card::Delete(note(i)?)),
         _ => None,
     }
-}
-
-/// Stand in for a pointer selection of `text` in the zoomed transcript (the harness cannot drag).
-pub fn select(ui: &mut Ui, text: &str) {
-    let agent = ui.zoomed_agent().map(String::from);
-    ui.notes.selected(agent, text);
 }
 
 /// Scroll the zoomed transcript so the first row with `text` in an item (as debug-printed) is at the

@@ -1,13 +1,13 @@
 //! The notes strip (U5, F6): the zoomed agent's notes, right above the composer: a header (the count,
-//! "Send all", add, and capture of the transcript selection), the list (`views::notes_list`, web's
+//! "Send all" and add), the list (`views::notes_list`, web's
 //! keyboard list), the editor, the last action's confirmation and why anything was not saved. More than a
 //! few notes collapse to their count until the list is entered. Notes are added, captured and edited in
 //! one small editor (`Notes > Input`, so none of the composer's chords fire there), in the card of the
 //! note it edits, and handed into the composer draft, the chosen ones or all. The records and their sync
-//! are `store::notes`; the editor, the last transcript selection and the confirmation are view state here.
+//! are `store::notes`; the editor and the confirmation are view state here. A transcript selection is
+//! noted where it was made (`views::capture`, F7).
 //!
-//! Keys (ARCHITECTURE §4). In the zoom: `a` add (the transcript selection, if any, as its quote), `c`
-//! capture the transcript selection, `p` hand every note to the composer; the list's are in
+//! Keys (ARCHITECTURE §4). In the zoom: `a` add, `p` hand every note to the composer; the list's are in
 //! `notes_list`. In the editor: `enter` or `cmd-enter` save, `shift-enter` a new line, `escape` cancel.
 //! `alt-enter` in the composer queues its draft as a note (`views::composer`).
 
@@ -27,7 +27,6 @@ use std::time::Duration;
 #[action(namespace = notes, no_json)]
 pub enum Notes {
     Add,
-    Capture,
     /// `p` or "Send all": every note into the composer.
     HandOff,
     Save,
@@ -50,9 +49,6 @@ pub struct View {
     pub(super) editing: Option<Editing>,
     /// Text for the editor at the next render.
     load: Option<String>,
-    /// The transcript selection when the pointer last let go, trimmed, with the agent it was made on;
-    /// what `c` captures and `a` quotes. Gone once the zoom leaves that agent.
-    pub(super) selection: Option<(String, String)>,
     /// Why the editor's text was not saved.
     problem: Option<&'static str>,
     pub(super) open: bool,
@@ -91,7 +87,6 @@ impl View {
             text: String::new(),
             editing: None,
             load: None,
-            selection: None,
             problem: None,
             open: false,
             list: notes_list::State::new(cx),
@@ -103,15 +98,6 @@ impl View {
 
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.read(cx).focus_handle(cx)
-    }
-
-    /// The pointer let go on `agent`'s transcript with `text` selected (blank: none). Whether it changed.
-    pub fn selected(&mut self, agent: Option<String>, text: &str) -> bool {
-        let text = Some(text.trim()).filter(|t| !t.is_empty());
-        let next = agent.zip(text.map(str::to_string));
-        let changed = self.selection != next;
-        self.selection = next;
-        changed
     }
 
     pub(super) fn say(&mut self, what: impl Into<String>) {
@@ -147,7 +133,7 @@ pub(super) fn count(n: usize) -> String {
     format!("{n} note{}", if n == 1 { "" } else { "s" })
 }
 
-/// Drop what belonged to another agent (the editor, the selections), before a frame is drawn; load the
+/// Drop what belonged to another agent (the editor, the list's selection), before a frame is drawn; load the
 /// editor's text. Focus left in a list that is no longer drawn goes back to the box (or the zoom).
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     let agent = ui.zoomed_agent().map(String::from);
@@ -159,9 +145,6 @@ pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     }
     let focused = notes_list::sync(&mut notes.list, &ids, window);
     let other = |a: &String| Some(a) != agent.as_ref();
-    if notes.selection.as_ref().is_some_and(|(a, _)| other(a)) {
-        notes.selection = None;
-    }
     let mut leave = false;
     if notes.editing.as_ref().is_some_and(|e| other(&e.agent)) {
         notes.editing = None;
@@ -263,14 +246,7 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
     };
     let notes = &mut ui.notes;
     match key {
-        Notes::Add => {
-            let quote = notes.selection.take_if(|(a, _)| *a == agent).map(|s| s.1);
-            begin(ui, &agent, None, quote, Focus::Out);
-        }
-        Notes::Capture => match notes.selection.take_if(|(a, _)| *a == agent) {
-            Some((_, quote)) => begin(ui, &agent, None, Some(quote), Focus::Out),
-            None => return Vec::new(),
-        },
+        Notes::Add => begin(ui, &agent, None, None, Focus::Out),
         Notes::HandOff => return hand_off(store, ui, agent.clone(), ids(store, &agent)),
         Notes::Save => {
             let Some(editing) = &notes.editing else {
@@ -359,8 +335,7 @@ pub(super) fn editor(v: &View, quote: Option<&str>, t: TypeScale) -> Div {
     el.children(quote).child(input).child(hint)
 }
 
-/// The strip for `agent`: nothing while it has no notes, no editor open, no selection to capture and
-/// nothing to say.
+/// The strip for `agent`: nothing while it has no notes, no editor open and nothing to say.
 pub fn render<H: Host>(
     store: &Store,
     ui: &Ui,
@@ -371,11 +346,10 @@ pub fn render<H: Host>(
     let v = &ui.notes;
     let notes: Vec<_> = store.notes_of(agent).collect();
     let editing = v.editing.as_ref().filter(|e| e.agent == agent);
-    let selection = v.selection.as_ref().filter(|(a, _)| a == agent);
     let said = v.said();
     let problems = problems(store, v, agent);
     let quiet = said.is_none() && problems.is_empty();
-    if notes.is_empty() && editing.is_none() && selection.is_none() && quiet {
+    if notes.is_empty() && editing.is_none() && quiet {
         return None;
     }
     let (n, open) = (notes.len(), notes.len() <= SHOWN || v.open);
@@ -397,12 +371,7 @@ pub fn render<H: Host>(
             true => h.child(dim("Send all unavailable")),
             false => h.child(chip("sendall", "Send all  p".into(), Notes::HandOff, t)),
         })
-        .child(chip("add", "+ note  a".into(), Notes::Add, t))
-        .children(selection.map(|(_, s)| {
-            chip("capture", format!("❝ {}  c", line(s)), Notes::Capture, t)
-                .max_w(t.px(420.))
-                .truncate()
-        }));
+        .child(chip("add", "+ note  a".into(), Notes::Add, t));
     let list = notes_list::render(store, ui, agent, editing, open, t, cx);
     let new = editing.filter(|e| e.note.is_none());
     let said = said.map(|s| dim(s).text_size(t.small).text_color(rgb(pal::INK)));

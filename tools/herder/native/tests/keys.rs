@@ -42,7 +42,6 @@ fn no_navigation_key_fires_inside_an_input_or_terminal() {
         "tab",
         "shift-tab",
         "a",
-        "c",
         "p",
     ];
     let mut fired_somewhere = 0;
@@ -159,7 +158,8 @@ fn composer_chords_win_in_the_box_only_and_focus_keys_stay_in_the_zoom() {
 
 /// U5: the notes editor (`Notes > Input`) saves on `enter` / `cmd-enter` and cancels on `escape`; none
 /// of the composer's chords fire there (`alt-enter` is bound to nothing), and `alt-enter` in the box
-/// queues the draft as a note. `a` `c` `p` act in the zoom only, and type in either input.
+/// queues the draft as a note. `a` `p` act in the zoom only, and type in either input; `c` (U5's capture
+/// of the selection) is gone with F7's type-to-capture.
 #[test]
 fn notes_editor_keys_stay_in_the_editor() {
     use views::composer::Compose;
@@ -194,11 +194,8 @@ fn notes_editor_keys_stay_in_the_editor() {
         got.is_some_and(|a| a.partial_eq(&Compose::Queue)),
         "`alt-enter` in the box"
     );
-    for (key, want) in [
-        ("a", Notes::Add),
-        ("c", Notes::Capture),
-        ("p", Notes::HandOff),
-    ] {
+    assert!(first("c", &["Lens", "Space"]).is_none(), "`c` is bound");
+    for (key, want) in [("a", Notes::Add), ("p", Notes::HandOff)] {
         let got = first(key, &["Lens", "Space"]);
         assert!(
             got.is_some_and(|a| a.partial_eq(&want)),
@@ -306,5 +303,81 @@ fn the_notes_list_keys_win_in_the_list_and_nothing_else_fires_there() {
     assert!(
         first("up", &["Lens", "Space"]).is_none(),
         "`up` in the zoom"
+    );
+}
+
+/// F7: while a transcript selection is live its capture chip holds focus (`Capture`), and no lens or
+/// zoom key fires: every one bound without a modifier (or with shift) is captured instead, so a
+/// printable one types into the note (the chip's key listener, `views::capture`), and the chip's own
+/// `enter` / `space` open it, `cmd-enter` sends and `escape` cancels. In the popover's box (`Capture >
+/// Input`) `enter` saves, `cmd-enter` sends, `escape` cancels and `shift-enter` is the box's new line.
+/// Modifier chords keep their meaning (`cmd-q`, the text scale; the kit's Root has `cmd-c`).
+#[test]
+fn a_live_selection_captures_every_zoom_key() {
+    use views::capture::Capture;
+    let keymap = Keymap::new(views::bindings());
+    let first = |key: &str, stack: &[&str]| {
+        let stack: Vec<KeyContext> = stack
+            .iter()
+            .map(|c| KeyContext::parse(c).unwrap())
+            .collect();
+        let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse(key).unwrap()], &stack);
+        hits.first().map(|b| b.action().boxed_clone())
+    };
+    let chip = ["Lens", "Space", "Capture"];
+    let popover = ["Lens", "Space", "Capture", "Input"];
+    let own = |key: &str| match key {
+        "enter" | "space" => Some(Capture::Open),
+        "escape" => Some(Capture::Cancel),
+        _ => None,
+    };
+    let mut zoom_keys = 0;
+    for binding in views::bindings() {
+        let [k] = binding.keystrokes() else { continue };
+        let m = k.modifiers();
+        if m.platform || m.control || m.alt {
+            continue;
+        }
+        let key = k.unparse();
+        let zoomed = first(&key, &["Lens", "Space"]).is_some();
+        zoom_keys += usize::from(zoomed);
+        let got = first(&key, &chip);
+        match own(&key) {
+            Some(want) => assert!(
+                got.is_some_and(|a| a.partial_eq(&want)),
+                "`{key}` on the chip"
+            ),
+            None => assert!(got.is_none(), "`{key}` fires with a selection live"),
+        }
+        let typed = ["enter", "escape"].contains(&key.as_str());
+        assert!(
+            typed || first(&key, &popover).is_none(),
+            "`{key}` fires in the popover"
+        );
+    }
+    assert!(zoom_keys > 20, "the zoom's keys were checked");
+    for (key, stack, want) in [
+        ("cmd-enter", &chip[..], Capture::Send),
+        ("enter", &popover, Capture::Save),
+        ("cmd-enter", &popover, Capture::Send),
+        ("escape", &popover, Capture::Cancel),
+    ] {
+        let got = first(key, stack);
+        assert!(
+            got.is_some_and(|a| a.partial_eq(&want)),
+            "`{key}` in {stack:?}"
+        );
+    }
+    assert!(
+        first("shift-enter", &popover).is_none(),
+        "`shift-enter` is bound"
+    );
+    for key in ["cmd-q", "cmd-=", "cmd--", "cmd-0"] {
+        assert!(first(key, &chip).is_some(), "`{key}` lost its meaning");
+    }
+    // Without a selection, the zoom's keys are back.
+    assert!(
+        first("j", &["Lens", "Space"])
+            .is_some_and(|a| a.partial_eq(&views::transcript::Scroll::Lines(1)))
     );
 }

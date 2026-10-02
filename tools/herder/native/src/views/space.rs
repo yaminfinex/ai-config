@@ -10,6 +10,7 @@
 use crate::store::spaces::{Move, Space};
 use crate::store::transcript;
 use crate::store::{Event, Store};
+use crate::views::capture::{self, Capture};
 use crate::views::composer::{self, Compose};
 use crate::views::lens::{self, Nav, State, Ui};
 use crate::views::markdown::{AGENT, PATH};
@@ -352,6 +353,7 @@ pub fn render<H: Host>(
             _ => Vec::new(),
         }))
         .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
+        .on_action(on(cx, |store, ui, c: &Capture| capture::act(store, ui, c)))
         .on_action(on(cx, |store, ui, c: &Card| notes_list::act(store, ui, c)))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
@@ -366,5 +368,6 @@ pub fn render<H: Host>(
         .child(body::render(store, ui, zoom, t, cx))
         .children(current.and_then(|agent| notes::render(store, ui, agent, t, cx)))
         .children(current.map(|agent| composer::render(store, ui, agent, t, cx)))
+        .children(current.and_then(|agent| capture::render(ui, agent, t, cx)))
         .into_any_element()
 }

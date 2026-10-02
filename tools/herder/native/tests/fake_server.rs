@@ -523,6 +523,79 @@ fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
     std::fs::remove_file(blocked).unwrap();
 }
 
+/// F7: a quick send from the capture popover is in the prefs on disk before its POST (the fake reads
+/// the file as it arrives). The app stopping there, before the answer (the fake hangs up), the next boot
+/// finds it and adds it to the agent's draft, after what was there, without sending it again. A failed
+/// save posts nothing.
+#[test]
+fn a_quick_send_is_saved_before_it_posts_and_a_restart_keeps_it_unsent() {
+    use herder_native::store::Prefs;
+    use herder_native::store::composer::{Failure, Step as C};
+    let text = "from mupu's transcript:\n> the reducer\n\nok".to_string();
+    let mut prefs = Prefs::default();
+    prefs.drafts.insert("mupu".into(), "mine".into());
+    prefs.quick.insert("mupu".into(), text.clone());
+    let bytes = local::encode(&prefs);
+    let (disk, dir) = scratch("quick");
+    let saved = dir.join(local::PREFS);
+    let want = bytes.clone();
+    let (base, log) = serve(move |_, _| {
+        let on_disk = std::fs::read(&saved).ok() == Some(want.clone());
+        Reply::Json(if on_disk { 599 } else { 500 }, "{}".into())
+    });
+    let message = ("mupu".into(), text.clone());
+    let event = save_then_message(
+        &disk,
+        &Client::new(base),
+        &bytes,
+        local::next_seq(),
+        message,
+    );
+    let Event::Compose(C::Sent {
+        result: Err(Failure::Rejected(599, _)),
+        ..
+    }) = event
+    else {
+        panic!("posted before the prefs were saved: {event:?}")
+    };
+    let log = log.lock().unwrap().clone();
+    assert_eq!(log.len(), 1, "posted once: {log:?}");
+    // The fake answered 599 only when the prefs were already on disk; the answer is dropped here, as if
+    // the app had stopped. The next boot:
+    let mut store = Store::default();
+    let effects = store.apply(Event::PrefsLoaded(disk.load_prefs().unwrap()));
+    assert_eq!(store.prefs.drafts["mupu"], format!("mine\n\n{text}"));
+    assert!(store.prefs.quick.is_empty());
+    assert!(
+        !effects.iter().any(|e| matches!(e, Effect::Message { .. })),
+        "{effects:?}"
+    );
+    assert!(effects.contains(&Effect::Persist(herder_native::store::Persist::Prefs)));
+    std::fs::remove_dir_all(dir).unwrap();
+    // The prefs cannot be saved: nothing is posted.
+    let (_, blocked) = scratch("quick-blocked");
+    std::fs::write(&blocked, "a file where the directory should be").unwrap();
+    let (base, log) = serve(|_, _| Reply::Json(200, "{}".into()));
+    let blocked_disk = Disk::at(blocked.join("state"));
+    let message = ("mupu".into(), text);
+    let event = save_then_message(
+        &blocked_disk,
+        &Client::new(base),
+        &bytes,
+        local::next_seq(),
+        message,
+    );
+    let Event::Compose(C::Sent {
+        result: Err(Failure::NotSaved(_)),
+        ..
+    }) = event
+    else {
+        panic!("{event:?}")
+    };
+    assert!(log.lock().unwrap().is_empty(), "nothing reached the server");
+    std::fs::remove_file(blocked).unwrap();
+}
+
 /// Any 2xx is a send that landed, whatever its body: a malformed one or a 204's empty one. A state row
 /// is retired by the POST (the pull does not hold it), and each send is posted once.
 #[test]
