@@ -41,7 +41,7 @@ export function AgentHeaderIdentity({ name }: { name: string }) {
   </div>
 }
 
-export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus, onMarkUnread }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void, onMarkUnread: (index?: number) => void }) {
+export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus, onMarkUnread, unread, onMarkRead }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void, onMarkUnread: (index?: number) => void, unread: boolean, onMarkRead: () => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -154,7 +154,8 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
           {entries.length > 0 && <footer className="transcript-read-footer">
             <span>{marker?.at ? `viewed at ${viewedAtLabel(marker.at, now)}` : 'not viewed yet'}</span>
             <span aria-hidden="true">·</span>
-            {marker?.unread ? <span>marked unread</span> : <button type="button" onClick={() => onMarkUnread()}>mark unread</button>}
+            {marker?.unread && <><span>marked unread</span><span aria-hidden="true">·</span></>}
+            {unread ? <button type="button" onClick={onMarkRead}>mark read</button> : <button type="button" onClick={() => onMarkUnread()}>mark unread</button>}
           </footer>}
         </>}
       </section>

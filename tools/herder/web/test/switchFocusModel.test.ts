@@ -57,7 +57,7 @@ const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceC
 
 test('rail, ⌥Tab switcher and ⇧⌥←/→ all switch through the focusing wrapper', () => {
   assert.match(controller, /const switchSpaceFocusing = useSwitchSpaceFocusing\(apiRef, switchSpace\)/)
-  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*switchSpace: switchSpaceFocusing, markUnread \}\)/)
+  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*switchSpace: switchSpaceFocusing, toggleRead \}\)/)
   assert.match(controller, /useSpaceSwitcher\(\{[^}]*switchSpace: switchSpaceFocusing \}\)/)
   assert.match(controller, /switch: switchSpaceFocusing,/)
 })

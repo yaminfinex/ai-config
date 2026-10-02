@@ -2,13 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   agentAttention,
+  agentUnread,
   agentsInDock,
   attentionLabel,
   boardAgents,
   markerKeepSet,
+  markReadUpdates,
   readUpdates,
   seedUpdates,
   spaceAttention,
+  spaceMenuItems,
   storedSpaceAgents,
   totalAttention,
   turnEnd,
@@ -223,4 +226,69 @@ test('labels read naturally for every count combination', () => {
 
 test('the folded total counts an agent open in two spaces once', () => {
   assert.deepEqual(totalAttention([{ unread: ['a', 'b'], blocked: ['c'] }, { unread: ['a'], blocked: ['c', 'd'] }]), { unread: ['a', 'b'], blocked: ['c', 'd'] })
+})
+
+const at = (offset: number) => ({ session: 's1', offset, ts: `t${offset}` })
+
+test('an agent can be marked read while marked unread (blocked too) or a newer turn ended, never otherwise', () => {
+  const listening = pane('mavu', 'listening', { turn_end_id: 5 })
+  assert.equal(agentUnread(listening, m(4)), true, 'a new turn')
+  assert.equal(agentUnread(listening, m(5)), false, 'read')
+  assert.equal(agentUnread(listening, { ...m(5), unread: true }), true, 'a mark unread')
+  assert.equal(agentUnread(pane('mavu', 'blocked', { turn_end_id: 5 }), { ...m(5), unread: true }), true, 'a mark unread while blocked')
+  assert.equal(agentUnread(pane('mavu', 'listening'), m(0)), false, 'no turn end')
+  assert.equal(agentUnread(listening, undefined), false, 'no baseline yet')
+})
+
+test('mark read writes what a dwell read would, at once, and skips agents already read', () => {
+  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 7 }), pane('ziru', 'listening', { turn_end_id: 3 })])
+  const markers: ReadMarkers = { mavu: { turn: 5, pos: at(100), at: 10, unread: false }, ziru: { turn: 3, pos: at(50), at: 10, unread: false } }
+  assert.deepEqual(markReadUpdates({ markers, board, names: ['mavu', 'ziru'], positions: { mavu: at(900) }, now: 2000 }),
+    { mavu: { turn: 7, pos: at(900), at: 2000, unread: false } }, 'the tail where loaded; ziru is already read')
+  assert.deepEqual(markReadUpdates({ markers, board, names: ['mavu'], positions: {}, now: 2000 }),
+    { mavu: { turn: 7, pos: at(100), at: 2000, unread: false } }, 'no loaded transcript: the position held')
+  const held = { ...markers, ziru: { turn: 3, pos: at(20), at: 10, unread: true } }
+  assert.deepEqual(markReadUpdates({ markers: held, board, names: ['ziru'], positions: { ziru: at(60) }, now: 2000 }),
+    { ziru: { turn: 3, pos: at(60), at: 2000, unread: false } }, 'a held mark unread is cleared without arming')
+  assert.deepEqual(markReadUpdates({ markers: { mavu: { turn: 9, pos: at(500), at: 10, unread: true } }, board, names: ['mavu'], positions: { mavu: at(400) }, now: 2000 }),
+    { mavu: { turn: 9, pos: at(500), at: 2000, unread: false } }, 'reading never moves backward')
+})
+
+test('the read toggle flips an agent between read and unread', () => {
+  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 7 })])
+  const row = board.workspaces[0]!.tabs[0]!.panes[0]
+  let markers: ReadMarkers = { mavu: m(6) }
+  const toggle = () => {
+    if (agentUnread(row, markers.mavu)) markers = { ...markers, ...markReadUpdates({ markers, board, names: ['mavu'], positions: {}, now: 3000 }) }
+    else markers = { ...markers, mavu: { ...markers.mavu!, unread: true } }
+  }
+  toggle()
+  assert.deepEqual(markers.mavu, { turn: 7, pos: null, at: 3000, unread: false }, 'a new turn: marked read')
+  toggle()
+  assert.equal(markers.mavu!.unread, true, 'read: marked unread')
+  toggle()
+  assert.equal(agentUnread(row, markers.mavu), false, 'marked unread: read again')
+})
+
+test('a space marks read exactly the agents its badge counts, over unread, read and no-turn agents', () => {
+  const board = boardOf([
+    pane('mavu', 'listening', { turn_end_id: 7 }),
+    pane('ziru', 'listening', { turn_end_id: 3 }),
+    pane('kelo', 'listening'),
+    pane('pira', 'listening'),
+    pane('tano', 'blocked', { turn_end_id: 9 }),
+  ])
+  const markers: ReadMarkers = { mavu: m(5), ziru: m(3), kelo: m(0), pira: { ...m(0), unread: true }, tano: m(2) }
+  const agents = ['mavu', 'ziru', 'kelo', 'pira', 'tano']
+  const attention = spaceAttention(board, agents, markers)
+  assert.deepEqual(attention.unread, ['mavu', 'pira'])
+  assert.deepEqual(spaceMenuItems(attention), [{ id: 'read', label: 'Mark all read' }])
+  const updates = markReadUpdates({ markers, board, names: attention.unread, positions: {}, now: 4000 })
+  assert.deepEqual(updates, {
+    mavu: { turn: 7, pos: null, at: 4000, unread: false },
+    pira: { turn: 0, pos: null, at: 4000, unread: false },
+  })
+  const after = spaceAttention(board, agents, { ...markers, ...updates })
+  assert.deepEqual(after, { unread: [], blocked: ['tano'] }, 'blocked stays loud')
+  assert.deepEqual(spaceMenuItems(after), [], 'nothing left to mark: no menu')
 })

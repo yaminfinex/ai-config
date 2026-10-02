@@ -99,6 +99,16 @@ test('the divider waits for a marker that loads after arrival, and moves on a ma
   assert.equal(nextDividerSnapshot(initialDividerSnapshot, false, marker(5, 300)).pos, null, 'never taken while not active')
 })
 
+test('a mark read while open moves the divider to the read position, so it disappears', () => {
+  const arrived = nextDividerSnapshot(initialDividerSnapshot, true, marker(5, 300))
+  const marked = nextDividerSnapshot(arrived, true, marker(5, 200, 1000, true))
+  assert.deepEqual(marked.pos, pos(200))
+  const read = nextDividerSnapshot(marked, true, marker(5, 600, 2000))
+  assert.deepEqual(read.pos, pos(600), 'marked read here or on another device')
+  assert.equal(dividerIndex(transcript, 's1', read.pos), -1)
+  assert.equal(nextDividerSnapshot(read, true, marker(6, 600, 3000)), read)
+})
+
 test('a repeated mark unread while already unread moves the divider again', () => {
   const arrived = nextDividerSnapshot(initialDividerSnapshot, true, marker(5, 300))
   const first = nextDividerSnapshot(arrived, true, marker(5, 200, 1000, true))
@@ -110,9 +120,10 @@ test('a repeated mark unread while already unread moves the divider again', () =
   const remote = nextDividerSnapshot(again, true, marker(5, 100, 1000, true))
   assert.deepEqual(remote.pos, pos(100), 'a second mark from another device moves it')
   assert.equal(nextDividerSnapshot(remote, true, marker(5, 100, 1000, true)), remote, 'the same mark again changes nothing')
-  // Once read, advancing positions leave it frozen until the next arrival.
+  // Marked read, it follows to the read position; then advancing positions
+  // leave it frozen until the next arrival.
   const read = nextDividerSnapshot(remote, true, marker(6, 500))
-  assert.deepEqual(read.pos, pos(100))
+  assert.deepEqual(read.pos, pos(500))
   assert.equal(nextDividerSnapshot(read, true, marker(6, 600)), read, 'ordinary reading still never moves it')
 })
 

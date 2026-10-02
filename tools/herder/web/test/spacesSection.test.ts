@@ -44,7 +44,8 @@ test('the history menu effect registers Escape to close (reddens: Escape listene
 
 test('rows reorder vertically: the drop side follows the pointer against the row midpoint', () => {
   assert.equal((source.match(/event\.clientY >= rect\.top \+ rect\.height \/ 2/g) ?? []).length, 2, 'drag over and drop use the same vertical midpoint')
-  assert.doesNotMatch(source, /clientX/)
+  // The space menu opens at the pointer; the drag handlers never read it.
+  assert.doesNotMatch(source.slice(source.indexOf('onDragStart='), source.indexOf('onDragEnd=')), /clientX/)
   assert.match(source, /const destination = targetIndex - \(sourceIndex < targetIndex \? 1 : 0\) \+ \(after \? 1 : 0\)\s+props\.reorder\(sourceID, destination\)/)
 })
 
@@ -134,4 +135,15 @@ test('the bottom SpaceStrip and its overflow model are gone', () => {
     .map((name) => readFileSync(new URL(`../src/features/spaces/${name}`, import.meta.url), 'utf8')).join('\n')
   assert.doesNotMatch(`${app}\n${controller}\n${spaces}`, /SpaceStrip|spaceOverflow|workspace-switcher-slot/)
   assert.doesNotMatch(styles, /\.space-strip|\.space-chip|\.space-overflow|\.space-more|\.space-measure-rack|\.workspace-switcher-slot/)
+})
+
+test('a space row opens "Mark all read" from its context menu only while it has unread', () => {
+  assert.match(source, /if \(spaceMenuItems\(attentionOf\(space\.id\)\)\.length === 0\) return\n\s+event\.preventDefault\(\)/)
+  assert.match(source, /onContextMenu=\{\(event\) => openSpaceMenu\(space,/)
+  assert.match(source, /event\.key === 'ContextMenu' \|\| event\.key === 'F10' && event\.shiftKey/)
+  assert.match(source, /props\.markAllRead\(menuSpace\)/)
+  assert.match(source, /const spaceMenu = usePositionedMenu\(\)/)
+  assert.match(controller, /markAllRead: spaceAttention\.markSpaceRead,/)
+  assert.match(attentionHook, /const markSpaceRead = useCallback\(\(spaceID: string\) => markRead\(attention\[spaceID\]\?\.unread \?\? \[\]\)/)
+  assert.match(attentionHook, /if \(agentUnread\(findAgentRow\(board, name\), store\.markers\(\)\[name\]\)\) markRead\(\[name\]\)\n\s+else markUnread\(name\)/, '⌥U toggles')
 })

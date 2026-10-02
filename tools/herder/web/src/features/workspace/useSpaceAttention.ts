@@ -5,10 +5,13 @@ import { queryKeys } from '../../api/client'
 import type { Board, EntriesPage } from '../../types'
 import { useDOMEvent } from '../../shared/lifecycle'
 import { panelParams } from '../layout/dockLayout'
+import { findAgentRow } from '../../shared/agentStatus'
 import {
+  agentUnread,
   dwelledAgents,
   latestPosition,
   markLastTurnUnread,
+  markReadUpdates,
   markUnreadAt,
   markerKeepSet,
   nextArmed,
@@ -135,7 +138,22 @@ export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpace
     })
   }, [queryClient, store])
 
+  // markRead marks agents read now, as a dwell read would (a space's "Mark
+  // all read" passes every agent counted in its badge); one already read is
+  // left alone.
+  const markRead = useCallback((names: readonly string[]) => {
+    const positions = Object.fromEntries(names.map((name) => [name, transcriptEnd(queryClient, name)]))
+    store.apply(markReadUpdates({ markers: store.markers(), board, names, positions, now: Date.now() }))
+  }, [board, queryClient, store])
+
+  // toggleRead is ⌥U: an unread agent is marked read, a read one unread.
+  const toggleRead = useCallback((name: string) => {
+    if (agentUnread(findAgentRow(board, name), store.markers()[name])) markRead([name])
+    else markUnread(name)
+  }, [board, markRead, markUnread, store])
+
   const attention = useMemo(() => Object.fromEntries(Object.entries(openBySpace)
     .map(([id, agents]) => [id, spaceAttention(board, agents, markers)])) as Record<string, SpaceAttention>, [board, markers, openBySpace])
-  return { attention, markUnread }
+  const markSpaceRead = useCallback((spaceID: string) => markRead(attention[spaceID]?.unread ?? []), [attention, markRead])
+  return { attention, markUnread, markRead, toggleRead, markSpaceRead }
 }

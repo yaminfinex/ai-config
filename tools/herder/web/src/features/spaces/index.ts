@@ -15,7 +15,7 @@ export {
   type SpacesInitialization,
   type SpaceResult,
 } from './spacesModel.ts'
-export { agentsInDock, attentionLabel, markerKeepSet, quietAttention, readUpdates, seedUpdates, spaceAttention, storedSpaceAgents, totalAttention, turnEnd, type SpaceAttention } from './spaceAttentionModel.ts'
+export { agentsInDock, agentUnread, attentionLabel, markerKeepSet, markReadUpdates, quietAttention, readUpdates, seedUpdates, spaceAttention, spaceMenuItems, storedSpaceAgents, totalAttention, turnEnd, type SpaceAttention } from './spaceAttentionModel.ts'
 export { nextArmed, type ReadMarker, type ReadMarkers, type ReadPosition } from './readMarkerModel.ts'
 export { dividerIndex, latestPosition, markLastTurnUnread, markUnreadAt, viewedAtLabel } from './readPositionModel.ts'
 export { ReadMarkersProvider, useReadMarker, useReadMarkers, useReadMarkersContext } from './ReadMarkersProvider.tsx'

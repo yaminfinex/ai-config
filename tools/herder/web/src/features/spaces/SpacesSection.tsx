@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type SyntheticEvent } from 'react'
+import { createPortal } from 'react-dom'
+import { usePositionedMenu } from '../../shared/usePositionedMenu.tsx'
 import type { SpaceDefinition, SpaceResult } from './spacesModel.ts'
 import type { SpacesStatus } from './spacesStore.ts'
-import { attentionLabel, quietAttention, totalAttention, type SpaceAttention } from './spaceAttentionModel.ts'
+import { attentionLabel, quietAttention, spaceMenuItems, totalAttention, type SpaceAttention } from './spaceAttentionModel.ts'
 
 type Props = {
   enabled: boolean
@@ -19,6 +21,7 @@ type Props = {
   reorder: (id: string, targetIndex: number) => SpaceResult<SpaceDefinition>
   close: (id: string) => SpaceResult<unknown>
   reopen: (id: string) => SpaceResult<unknown>
+  markAllRead: (id: string) => void
   announcement: string
 }
 
@@ -41,6 +44,8 @@ export function SpacesSection(props: Props) {
   const [dragging, setDragging] = useState<string | null>(null)
   const draggingID = useRef<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string, after: boolean } | null>(null)
+  const spaceMenu = usePositionedMenu()
+  const [menuSpace, setMenuSpace] = useState('')
 
   useEffect(() => { if (editing) input.current?.select() }, [editing])
   useEffect(() => {
@@ -73,6 +78,14 @@ export function SpacesSection(props: Props) {
     if (result.ok) setEditing(null)
   }
   const attentionOf = (id: string) => props.attention[id] ?? quietAttention
+  // A space's menu opens only while it has something to offer.
+  const openSpaceMenu = (space: SpaceDefinition, at: { x: number, y: number }, source: HTMLElement, event: SyntheticEvent) => {
+    if (spaceMenuItems(attentionOf(space.id)).length === 0) return
+    event.preventDefault()
+    setMenuSpace(space.id)
+    spaceMenu.open(at, source)
+  }
+  const menuItems = spaceMenuItems(attentionOf(menuSpace))
   const total = totalAttention(props.items.map((space) => attentionOf(space.id)))
 
   return <section className={`spaces-section${props.collapsed ? ' collapsed' : ''}`} aria-label="Spaces">
@@ -140,7 +153,13 @@ export function SpacesSection(props: Props) {
               }} />
             : <button type="button" className="space-name" aria-current={active ? 'true' : undefined}
               aria-label={`${space.name}, ${attentionLabel(attention)}`} title={space.name}
-              onClick={() => props.switch(space.id)} onDoubleClick={() => beginRename(space)} onKeyDown={(event) => {
+              onClick={() => props.switch(space.id)} onDoubleClick={() => beginRename(space)}
+              onContextMenu={(event) => openSpaceMenu(space, { x: event.clientX, y: event.clientY }, event.currentTarget, event)} onKeyDown={(event) => {
+                if (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey) {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  openSpaceMenu(space, { x: rect.left, y: rect.bottom }, event.currentTarget, event)
+                  return
+                }
                 if (event.key === 'Enter' || event.key === 'F2') {
                   if (space.id === props.activeID) beginRename(space)
                   if (event.key === 'F2') event.preventDefault()
@@ -157,6 +176,13 @@ export function SpacesSection(props: Props) {
         </li>
       })}
     </ul>}
+    {spaceMenu.position && menuItems.length > 0 && createPortal(<div ref={spaceMenu.menuRef} className="dock-tab-menu" role="menu" aria-label="Space actions"
+      style={{ left: spaceMenu.position.x, top: spaceMenu.position.y }}>
+      {menuItems.map((item) => <button type="button" role="menuitem" key={item.id} onClick={() => {
+        spaceMenu.close()
+        props.markAllRead(menuSpace)
+      }}>{item.label}</button>)}
+    </div>, document.body)}
     <span className="visually-hidden" role="status" aria-live="polite">{props.announcement}</span>
   </section>
 }
