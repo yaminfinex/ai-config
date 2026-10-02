@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getAgent, queryKeys } from '../../api/client'
 import { appendComposerDraft } from '../../composerState'
@@ -28,6 +29,9 @@ import { useNoteCapture } from '../notes/useNoteCapture'
 import { useGroupNotes, useNotes } from '../notes/NotesProvider'
 import { queueComposerNote } from '../notes/noteQueue'
 import { agentHeaderIdentity } from '../../shared/agentIdentity'
+import { usePositionedMenu } from '../../shared/usePositionedMenu.tsx'
+import { dividerIndex, useReadMarker, viewedAtLabel } from '../spaces/index.ts'
+import { blockMenuIndex, initialDividerSnapshot, nextDividerSnapshot } from './transcriptReadModel'
 
 export function AgentHeaderIdentity({ name }: { name: string }) {
   const identity = agentHeaderIdentity(name)
@@ -37,7 +41,7 @@ export function AgentHeaderIdentity({ name }: { name: string }) {
   </div>
 }
 
-export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void }) {
+export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus, onMarkUnread }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void, onMarkUnread: (index?: number) => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -66,6 +70,20 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
   const retired = agent?.bus_status === 'retired'
   const composerReadOnly = retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly
   const hasNotes = useGroupNotes(name).length > 0
+  const marker = useReadMarker(name)
+  const [divider, setDivider] = useState(initialDividerSnapshot)
+  const nextDivider = nextDividerSnapshot(divider, active && !screenMode, marker)
+  if (nextDivider !== divider) setDivider(nextDivider)
+  const dividerAt = dividerIndex(entries, entriesQuery.data?.sessionId, divider.pos)
+  const blockMenu = usePositionedMenu()
+  const [blockMenuEntry, setBlockMenuEntry] = useState(-1)
+  const onTranscriptContextMenu = (event: MouseEvent<HTMLElement>) => {
+    const index = blockMenuIndex(event.target instanceof Element ? event.target : null, window.getSelection()?.toString() ?? '')
+    if (index === null) return
+    event.preventDefault()
+    setBlockMenuEntry(index)
+    blockMenu.open({ x: event.clientX, y: event.clientY }, event.currentTarget)
+  }
   const [notesFocusRequest, setNotesFocusRequest] = useState(0)
   // The capture chip's quick send is the Composer's own send sequence. Only viewer
   // attribution counts as read-only here; a retired agent is simply not on the live roster.
@@ -126,16 +144,24 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
     {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} active={active} onFocus={() => onTerminalFocus(screenPaneID)} onBlur={() => onTerminalFocus(undefined)} /> : <div className="transcript-viewport">
-      <section className="transcript" data-follow-scroll aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick}>
+      <section className="transcript" data-follow-scroll aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick} onContextMenu={onTranscriptContextMenu}>
         {unavailable ? <PanelState className="transcript-unavailable" title={unavailable.title} detail={unavailable.detail}>
           {unavailableParent && <button type="button" onClick={() => onOpenAgent(unavailableParent)}>Open parent</button>}
         </PanelState> : <>
           <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
           {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
-          <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} />
+          <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} dividerAt={dividerAt} />
+          {entries.length > 0 && <footer className="transcript-read-footer">
+            <span>{marker?.at ? `viewed at ${viewedAtLabel(marker.at, now)}` : 'not viewed yet'}</span>
+            <span aria-hidden="true">·</span>
+            {marker?.unread ? <span>marked unread</span> : <button type="button" onClick={() => onMarkUnread()}>mark unread</button>}
+          </footer>}
         </>}
       </section>
       {fileResolver.element}
+      {blockMenu.position && createPortal(<div ref={blockMenu.menuRef} className="dock-tab-menu" role="menu" aria-label="Transcript actions" style={{ left: blockMenu.position.x, top: blockMenu.position.y }}>
+        <button type="button" role="menuitem" onClick={() => { blockMenu.close(false); onMarkUnread(blockMenuEntry) }}>Mark unread from here</button>
+      </div>, document.body)}
       <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onBottom={transcriptFollow.jumpToBottom} />
     </div>}
     {liveTailPaneID && <TranscriptLiveTail paneID={liveTailPaneID} status={liveStatus} onTailPane={onTailPane} />}

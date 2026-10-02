@@ -60,6 +60,7 @@ function actions(calls: string[]): ShellShortcutActions {
     goToTop: () => { calls.push('top'); return true },
     goToBottom: () => { calls.push('bottom'); return true },
     toggleMaximize: () => { calls.push('maximize'); return true },
+    markUnread: () => { calls.push('unread'); return true },
   }
 }
 
@@ -105,6 +106,7 @@ test('editable targets stay dead through the real tinykeys-bound handler', () =>
     dispatch(target, { key: 'ArrowUp', code: 'ArrowUp', altKey: true })
     dispatch(target, { key: 'ArrowDown', code: 'ArrowDown', altKey: true })
     dispatch(target, { key: 'Enter', code: 'Enter', altKey: true })
+    dispatch(target, { key: 'Dead', code: 'KeyU', altKey: true })
     assert.deepEqual(calls, [])
     assert.equal(isEditableShortcutTarget(target), true)
   } finally {
@@ -181,6 +183,31 @@ test('Option Enter uses its physical code for the maximize toggle', () => {
   } finally {
     unsubscribe()
   }
+})
+
+test('Option U marks the active agent unread by physical code, Mac dead key included', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), 'Macintosh')
+  try {
+    assert.equal(dispatch(target, { key: 'Dead', code: 'KeyU', altKey: true }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: '¨', code: 'KeyU', altKey: true }).defaultPrevented, true)
+    dispatch(target, { key: 'u', code: 'KeyU' })
+    assert.deepEqual(calls, ['unread', 'unread'])
+  } finally {
+    unsubscribe()
+  }
+  const linux = new EventTarget()
+  const linuxCalls: string[] = []
+  const unbind = bindShellShortcuts(linux as unknown as Window, actions(linuxCalls), 'Linux')
+  try {
+    dispatch(linux, { key: 'u', code: 'KeyU', altKey: true })
+    assert.deepEqual(linuxCalls, ['unread'])
+  } finally {
+    unbind()
+  }
+  assert.equal(shortcutLabels('Macintosh').markUnread, '⌥U')
+  assert.equal(shortcutLabels('Linux').markUnread, 'Alt+U')
 })
 
 test('shortcut reference labels are platform-aware and Escape stays neutral', () => {

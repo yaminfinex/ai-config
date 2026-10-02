@@ -123,3 +123,16 @@ export function cleanRows(entries: TranscriptEntry[], relationships: CleanRowRel
   flush()
   return rows
 }
+
+// cleanRowSpan is the first and last transcript entry a clean row draws.
+export function cleanRowSpan(row: CleanRow): { first: number, last: number } {
+  if (row.type === 'entry') return { first: row.index, last: row.index }
+  const indices = row.activities.map((activity) => activity.index)
+  return { first: Math.min(...indices), last: Math.max(...indices) }
+}
+
+// dividerRow is the clean row the "new" divider sits above: the first one
+// drawing the entry at entryIndex or a later one. -1 for none.
+export function dividerRow(rows: readonly CleanRow[], entryIndex: number): number {
+  return entryIndex < 0 ? -1 : rows.findIndex((row) => cleanRowSpan(row).last >= entryIndex)
+}

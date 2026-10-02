@@ -65,6 +65,7 @@ import {
   type SpacesStore,
   type SpacesInitialization,
   type LegacyLayoutFamilies,
+  useReadMarkersContext,
 } from '../spaces/index.ts'
 
 function sameGitFileState(left: GitFileState, right: GitFileState) {
@@ -125,6 +126,7 @@ function initializeBrowserSpaces(): SpacesRuntime {
 
 export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'missing' }>) {
   const { stateChanged: onNotesStateChanged } = useNotes()
+  const { stateChanged: onReadMarkersStateChanged } = useReadMarkersContext()
   const [quickOpen, setQuickOpen] = useState(false)
   const [quickOpenMode, setQuickOpenMode] = useState<QuickOpenMode>({ kind: 'normal' })
   const [shortcutReference, setShortcutReference] = useState(false)
@@ -391,7 +393,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     void spacesSyncRef.current?.stateChanged(namespace, rev)
     onMembersStateChanged(namespace, rev)
     onNotesStateChanged(namespace, rev)
-  }, [onMembersStateChanged, onNotesStateChanged])
+    onReadMarkersStateChanged(namespace, rev)
+  }, [onMembersStateChanged, onNotesStateChanged, onReadMarkersStateChanged])
   useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane, onStateChanged)
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
@@ -558,8 +561,9 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   }, [layout.notesRail.collapsed, layout.setNotesRail])
   // Deliberate switches (rail, ⌥Tab, ⇧⌥←/→) land in the new space's composer.
   const switchSpaceFocusing = useSwitchSpaceFocusing(apiRef, switchSpace)
-  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace: switchSpaceFocusing })
   const spaceAttention = useSpaceAttention({ apiRef, revision, board: boardQuery.data, spaces, activeSpaceID, activeAgents: agentNames })
+  const markUnread = spaceAttention.markUnread
+  useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace: switchSpaceFocusing, markUnread })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceFocusing })
 
   const activeAgentStatus = activeParams?.kind === 'agent' ? agentBusStatus(boardQuery.data, activeParams.name) : '-'
@@ -574,8 +578,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
     setAgentScreenPane, setAgentTailPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
-    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace,
-  }), [closePanel, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
+    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread,
+  }), [closePanel, markUnread, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
   const data = useMemo<WorkspaceDataValue>(() => ({
     board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
     spaces, activeSpaceID, activePanel: activeParams ? { id: activePanelID, params: activeParams } : null,

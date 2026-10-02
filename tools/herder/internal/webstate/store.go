@@ -74,8 +74,12 @@ type storedRow struct {
 }
 
 type namespaceData struct {
-	Revision uint64               `json:"rev"`
-	Rows     map[string]storedRow `json:"rows"`
+	Revision uint64 `json:"rev"`
+	// Floor is the revision of the last sweep that removed rows. A cursor
+	// below it may have missed a removal, so Since answers it with every
+	// current row, as for a cursor of zero.
+	Floor uint64               `json:"floor,omitempty"`
+	Rows  map[string]storedRow `json:"rows"`
 }
 
 type namespaceState struct {
@@ -191,7 +195,7 @@ func (s *FileStore) Upsert(user, namespace string, rows []Row) ([]string, uint64
 		return nil, state.data.Revision, fmt.Errorf("%w: namespace would contain %d rows including tombstones; limit is %d", ErrRowLimit, len(state.data.Rows)+newRows, s.limits.MaxRows)
 	}
 
-	next := namespaceData{Revision: state.data.Revision, Rows: make(map[string]storedRow, len(state.data.Rows)+newRows)}
+	next := namespaceData{Revision: state.data.Revision, Floor: state.data.Floor, Rows: make(map[string]storedRow, len(state.data.Rows)+newRows)}
 	for key, value := range state.data.Rows {
 		next.Rows[key] = value
 	}
@@ -228,7 +232,7 @@ func (s *FileStore) Since(user, namespace string, revision uint64) ([]Row, uint6
 	}
 	changed := make([]storedRow, 0)
 	for _, candidate := range state.data.Rows {
-		if revision == 0 || candidate.Revision > revision {
+		if revision < state.data.Floor || candidate.Revision > revision {
 			changed = append(changed, candidate)
 		}
 	}

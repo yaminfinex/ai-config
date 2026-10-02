@@ -373,9 +373,9 @@ semantic attribution refusal.
 GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
   are the one generic persistence surface for small, attributed browser-state
   records. State is isolated first by the resolved web user and then by a short
-  lowercase dotted namespace. The two client namespaces currently in use are
-  `spaces` and `notes`; adding a namespace does not add another endpoint or
-  stream.
+  lowercase dotted namespace. The client namespaces currently in use are
+  `spaces`, `spaces.members`, `notes` and `read.markers`; adding a namespace
+  does not add another endpoint or stream.
 
   A row is
   `{"key":"<record-id>","value":<json>,"updated":123,"writeID":"<writer-id>","deleted":false}`.
@@ -409,6 +409,37 @@ GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
   retries until an attributed pull succeeds, 413 holds the rejected queue until
   the next local mutation, and transient/offline/503 failures use capped
   backoff.
+
+  `read.markers` holds what the owner has read of each agent, shared by
+  every browser. The key is the agent's bus name and the value is
+  `{"turn":<n>,"pos":{"session":"<id>","offset":<n>,"ts":"<rfc3339|''>"}|null,"at":<ms>,"unread":<bool>,"updated":<ms>}`.
+  `turn` is the newest board `turn_end_id` read (0 while unknown); `pos` is
+  the last transcript entry read, by session ID and byte offset, or null
+  before any transcript was read; `at` is when it was read (0 for never);
+  `unread` is a deliberate "mark unread". The server stores the value
+  opaquely; the merge rules are the clients': the newer version wins, but a
+  merge never moves `turn` or `pos` backward unless the newer row is a
+  deliberate unread. Positions compare by offset within one session; across
+  sessions the one with the newer `at` is ahead. A client that holds a
+  further read than the winning row republishes it, so every browser and
+  the server converge. Silent baselines and the one-time import of the old
+  browser-local markers are written with `updated:1`, so any real write
+  wins over them. Clients prune their local copy only; they never write a
+  delete into this namespace.
+
+  The serve sweeps stored state at start and then hourly. It removes
+  tombstones older than 30 days in every namespace, and removes
+  `read.markers` rows outright (no tombstone) when the agent is off the
+  hcom roster, the agent store last saw or closed it more than 7 days ago
+  (or never), and the row itself is more than 7 days old. Without a
+  readable roster or agent store the absence rule is skipped. A namespace
+  that loses rows takes one new revision, publishes `state-changed`, and
+  sets a floor at that revision: a pull from an older cursor is answered
+  with every current row, as if from zero. A swept row simply stops
+  appearing; clients keep their copy until their own pruning drops it. A
+  client offline for longer than 30 days still holding a row whose
+  tombstone was purged can write it back on its next upsert; that is
+  accepted as an ordinary write.
 
 GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   The classified, immutable Claude session entry stream. The server

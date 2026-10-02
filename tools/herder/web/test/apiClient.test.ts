@@ -106,11 +106,15 @@ test('generic state reads and writes pin the namespace endpoint shape', async ()
   ])
 })
 
-test('the web contract pins generic per-user state and both client namespaces', () => {
+test('the web contract pins generic per-user state and every client namespace', () => {
   const contract = readFileSync(new URL('../../docs/web-api-contract.md', import.meta.url), 'utf8')
   const section = contract.slice(contract.indexOf('## Per-user browser state'), contract.indexOf('GET `/api/agents/', contract.indexOf('## Per-user browser state')))
   assert.match(section, /GET `\/api\/state\/\{namespace\}\?since=\{rev\}` and POST `\/api\/state\/\{namespace\}`/)
-  assert.match(section, /`spaces` and `notes`/)
+  assert.match(section, /`spaces`, `spaces\.members`, `notes` and `read\.markers`/)
+  assert.match(section, /`\{"turn":<n>,"pos":\{"session":"<id>","offset":<n>,"ts":"<rfc3339\|''>"\}\|null,"at":<ms>,"unread":<bool>,"updated":<ms>\}`/)
+  assert.match(section, /never moves `turn` or `pos` backward unless the newer row is a\s+deliberate unread/)
+  assert.match(section, /never write a\s+delete into this namespace/)
+  assert.match(section, /tombstones older than 30 days[\s\S]*more than 7 days[\s\S]*older cursor is answered\s+with every current row/)
   assert.match(section, /65,536 bytes/)
   assert.match(section, /409[\s\S]*413[\s\S]*503/)
   assert.match(section, /`state-changed`[\s\S]*`\{"namespace":"<namespace>","rev":<current-namespace-revision>\}`/)
