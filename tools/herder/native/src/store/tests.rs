@@ -2209,6 +2209,47 @@ pub(crate) mod composer {
         store
     }
 
+    /// F7's quick send (`cmd-enter` in the capture popover, web's): the note's text goes on its own, the
+    /// draft untouched whether it lands or not, except that text which did not land is added to the
+    /// draft (web appends it to the prompt). One send at a time, as the box's.
+    #[test]
+    fn a_quick_send_leaves_the_draft_and_keeps_what_did_not_land_in_it() {
+        let quick = |store: &mut Store, text: &str| {
+            let (agent, text) = ("mupu".into(), text.into());
+            store.apply(Event::Compose(C::Quick { agent, text }))
+        };
+        let mut store = zoomed("mupu", Some("listening"));
+        edit(&mut store, "mupu", "mine");
+        let effects = quick(&mut store, "a note");
+        assert_eq!(messages(&effects), [("mupu".into(), "a note".into())]);
+        assert!(store.busy("mupu"));
+        assert!(
+            messages(&quick(&mut store, "another")).is_empty(),
+            "one at a time"
+        );
+        assert!(messages(&send(&mut store, "mupu", false)).is_empty());
+        sent(&mut store, "mupu", Ok(()));
+        assert_eq!(store.prefs.drafts["mupu"], "mine");
+        // Not landed: kept after the draft.
+        quick(&mut store, "a note");
+        let effects = sent(
+            &mut store,
+            "mupu",
+            Err(Failure::NoAnswer("timed out".into())),
+        );
+        assert!(effects.contains(&Effect::Persist(Persist::Prefs)));
+        assert_eq!(store.prefs.drafts["mupu"], "mine\n\na note");
+        assert!(matches!(store.sends.get("mupu"), Some(Sending::Failed(_))));
+        // A quick send that lands with the draft equal to it still leaves the draft.
+        edit(&mut store, "mupu", "same");
+        quick(&mut store, "same");
+        sent(&mut store, "mupu", Ok(()));
+        assert_eq!(store.prefs.drafts["mupu"], "same");
+        // Read-only: nothing goes.
+        let mut store = zoomed("mupu", Some("retired"));
+        assert!(messages(&quick(&mut store, "a note")).is_empty());
+    }
+
     #[test]
     fn drafts_are_kept_per_agent_and_persisted() {
         let mut store = zoomed("mupu", Some("listening"));

@@ -14,6 +14,9 @@ pub enum Step {
     /// `cmd-enter`: send `agent`'s draft. `file_back` (`cmd-shift-enter`): once it lands, mark the agent
     /// seen as it stood when sent and leave the zoom for the lens.
     Send { agent: String, file_back: bool },
+    /// `cmd-enter` in the capture popover (F7): send `text` (a note, as web's `noteTransferText`) on its
+    /// own, the draft untouched (web's quick send). If it fails, the text is added to the draft.
+    Quick { agent: String, text: String },
     /// The server's answer, or why it was never asked.
     Sent {
         agent: String,
@@ -48,6 +51,8 @@ pub enum Sending {
     InFlight {
         text: String,
         file_back: Option<Seen>,
+        /// A quick send (`Step::Quick`): its text is not the draft.
+        quick: bool,
     },
     Failed(Failure),
 }
@@ -129,17 +134,44 @@ impl Store {
                 let flight = Sending::InFlight {
                     text: text.clone(),
                     file_back,
+                    quick: false,
+                };
+                self.sends.insert(agent.clone(), flight);
+                out.push(Effect::Message { agent, text });
+            }
+            Step::Quick { agent, text } => {
+                if self.can_send(&agent).is_err() || self.busy(&agent) || text.trim().is_empty() {
+                    return;
+                }
+                let flight = Sending::InFlight {
+                    text: text.clone(),
+                    file_back: None,
+                    quick: true,
                 };
                 self.sends.insert(agent.clone(), flight);
                 out.push(Effect::Message { agent, text });
             }
             Step::Sent { agent, result } => {
-                let Some(Sending::InFlight { text, file_back }) = self.sends.remove(&agent) else {
+                let Some(Sending::InFlight {
+                    text,
+                    file_back,
+                    quick,
+                }) = self.sends.remove(&agent)
+                else {
                     return;
                 };
+                // A quick send that did not land is kept in the draft, as web appends it to the prompt.
+                if quick && result.is_err() {
+                    let draft = drafts.entry(agent.clone()).or_default();
+                    *draft = match draft.is_empty() {
+                        true => text.clone(),
+                        false => format!("{draft}\n\n{text}"),
+                    };
+                    out.push(Effect::Persist(Persist::Prefs));
+                }
                 match result {
                     Ok(()) => {
-                        if drafts.get(&agent) == Some(&text) {
+                        if !quick && drafts.get(&agent) == Some(&text) {
                             drafts.remove(&agent);
                             out.push(Effect::Persist(Persist::Prefs));
                         }

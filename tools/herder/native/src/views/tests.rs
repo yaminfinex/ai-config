@@ -2011,6 +2011,76 @@ mod layout {
         }
     }
 
+    /// maki's G1 P3: only a tap (pressed and let go with no frame between) on a frame that showed a
+    /// selection is replayed. A click with a frame drawn between press and release goes through as it
+    /// is, and still routes once.
+    #[gpui_kit::test]
+    fn a_click_with_a_frame_between_press_and_release_is_not_replayed(cx: &mut TestAppContext) {
+        use crate::store::condense::Seg;
+        use gpui_kit::base::TextSelection;
+        use gpui_kit::{MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
+        let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
+        body.update(cx, |b, cx| {
+            let text = format!("[{}](src/views/transcript.rs)", "transcript ".repeat(40));
+            let tr = b.store.transcript.open.as_mut().unwrap();
+            tr.items
+                .insert((u64::MAX - 1, 0), Item::Assistant(vec![Seg::Text(text)]));
+            cx.notify();
+        });
+        draw(cx);
+        draw(cx);
+        let n = rows(&body, cx).len();
+        let at = row(&body, n - 1, cx);
+        let p = point(at.left() + px(700.), at.top() + px(42.));
+        let m = Modifiers::default();
+        let (left, one) = (MouseButton::Left, 1);
+        let down = |position| MouseDownEvent {
+            button: left,
+            position,
+            modifiers: m,
+            click_count: one,
+            first_mouse: false,
+        };
+        let up = |position| MouseUpEvent {
+            button: left,
+            position,
+            modifiers: m,
+            click_count: one,
+        };
+        let replays = |cx: &mut VisualTestContext| {
+            body.read_with(cx, |b, _| b.ui.transcript.taps.replays.get())
+        };
+        let select = |cx: &mut VisualTestContext| {
+            let to = point(p.x + px(250.), p.y);
+            cx.simulate_mouse_move(p, None, m);
+            cx.simulate_event(down(p));
+            cx.simulate_mouse_move(to, Some(left), m);
+            cx.simulate_event(up(to));
+            draw(cx);
+            assert!(!cx.update(TextSelection::selected_text).is_empty());
+        };
+        let links = |cx: &mut VisualTestContext| body.read_with(cx, |b, _| b.links.len());
+        select(cx);
+        // Down, a frame, up: as it is.
+        cx.update(|window, cx| window.dispatch_event(PlatformInput::MouseDown(down(p)), cx));
+        draw(cx);
+        cx.update(|window, cx| window.dispatch_event(PlatformInput::MouseUp(up(p)), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            (replays(cx), links(cx)),
+            (0, 1),
+            "a click with a frame between"
+        );
+        // A tap: replayed once.
+        select(cx);
+        cx.update(|window, cx| {
+            window.dispatch_event(PlatformInput::MouseDown(down(p)), cx);
+            window.dispatch_event(PlatformInput::MouseUp(up(p)), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!((replays(cx), links(cx)), (1, 2), "a tap");
+    }
+
     /// The owner's crash (10-02, every wheel): leaving the watched tail is published from the list's
     /// scroll handler, which the list calls inside its own borrow, and reducing it asked the list again
     /// ("RefCell already mutably borrowed"). A mouse's lines and a trackpad's pixels, over prose, the
@@ -2505,5 +2575,316 @@ mod lens_cards {
             lines,
             Some(format!("{:?}", gpui_kit::Length::from(t.line * 5.)))
         );
+    }
+}
+
+/// F7: type-to-capture with real pointer and key events in a headless window: the zoom, its transcript
+/// (mupu's recorded pages, an answer added at the tail) under the kit's selection layer, and the chip.
+mod capture_events {
+    use crate::store::condense::Seg;
+    use crate::store::notes::Step as N;
+    use crate::store::tests::transcript_pages::{drive, history};
+    use crate::store::tests::{board, fleet_frame, loaded};
+    use crate::store::transcript::Item;
+    use crate::store::{Effect, Event, Store, composer, spaces};
+    use crate::views::capture::{self, Capture};
+    use crate::views::lens::Ui;
+    use crate::views::space::Zoom;
+    use crate::views::transcript::{self, Scroll};
+    use crate::views::{Host, bind, on, theme};
+    use gpui_kit::base::{TextSelection, TextSelectionLayer};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
+        MouseDownEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, Styled as _,
+        TestAppContext, VisualTestContext, Window, div, point, px, size,
+    };
+
+    struct Shell {
+        store: Store,
+        ui: Ui,
+        /// What reached the store, and the effects it answered with.
+        events: Vec<Event>,
+        effects: Vec<Effect>,
+        scrolled: usize,
+    }
+
+    impl Host for Shell {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+            // Only the notes and sends: the transcript's own (following the tail) would render again.
+            if matches!(event, Event::Note(_) | Event::Compose(_)) {
+                self.events.push(event.clone());
+                self.effects.extend(self.store.apply(event));
+                cx.notify();
+            }
+        }
+
+        fn copy(&mut self, _: String, _: &mut Context<Self>) {}
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            capture::sync(&mut self.ui, window, cx);
+            let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
+            let zoom = ui.zoom.clone().unwrap();
+            let scroll = cx.listener(|s: &mut Shell, _: &Scroll, _, _| s.scrolled += 1);
+            let space = div()
+                .id("space")
+                .key_context("Space")
+                .track_focus(&ui.zoom_focus)
+                .on_action(scroll)
+                .on_action(on(cx, |store, ui, c: &Capture| capture::act(store, ui, c)))
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(transcript::render(store, ui, &zoom, t, cx))
+                .children(capture::render(ui, "mupu", t, cx));
+            div()
+                .size_full()
+                .key_context("Lens")
+                .child(TextSelectionLayer)
+                .child(space)
+        }
+    }
+
+    /// Zoomed on a writable mupu, its transcript read, `text` the last answer; focus on the zoom.
+    fn open<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+    ) -> (Entity<Shell>, &'a mut VisualTestContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+            bind(cx);
+        });
+        let text = text.to_string();
+        let (shell, cx) = cx.add_window_view(move |window, cx| {
+            let mut store = loaded();
+            store.apply(fleet_frame(board()));
+            let space = store.spaces[0].id.clone();
+            let view = spaces::Move::View {
+                space: space.clone(),
+                agent: Some("mupu".into()),
+            };
+            let effects = store.apply(Event::Lens(view));
+            drive(&mut store, effects, &history("mupu"), usize::MAX);
+            let tr = store.transcript.open.as_mut().unwrap();
+            tr.items
+                .insert((u64::MAX - 1, 0), Item::Assistant(vec![Seg::Text(text)]));
+            assert!(store.can_send("mupu").is_ok());
+            let mut ui = Ui::new(window, cx);
+            ui.zoom = Some(Zoom {
+                space,
+                agent: Some("mupu".into()),
+            });
+            window.focus(&ui.zoom_focus, cx);
+            Shell {
+                store,
+                ui,
+                events: Vec::new(),
+                effects: Vec::new(),
+                scrolled: 0,
+            }
+        });
+        cx.simulate_resize(size(px(1400.), px(900.)));
+        draw(cx);
+        draw(cx);
+        (shell, cx)
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+    }
+
+    /// The last answer's first line: where a drag across it starts.
+    fn line(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Point<Pixels> {
+        let at = shell.read_with(cx, |s, _| {
+            let painted = s.ui.transcript.painted.borrow();
+            *painted.rows.iter().max_by_key(|(i, _)| **i).unwrap().1
+        });
+        point(at.left() + px(36.), at.top() + px(42.))
+    }
+
+    /// A real drag across 200px of the last answer's first line.
+    fn select(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        let (p, m, left) = (line(shell, cx), Modifiers::default(), MouseButton::Left);
+        let to = point(p.x + px(200.), p.y);
+        cx.simulate_mouse_move(p, None, m);
+        cx.simulate_event(MouseDownEvent {
+            button: left,
+            position: p,
+            modifiers: m,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.simulate_mouse_move(to, Some(left), m);
+        cx.simulate_event(MouseUpEvent {
+            button: left,
+            position: to,
+            modifiers: m,
+            click_count: 1,
+        });
+        draw(cx);
+        assert!(
+            !cx.update(TextSelection::selected_text).is_empty(),
+            "the drag selected"
+        );
+    }
+
+    /// The capture as the harness asks it: `none`, `chip:<quote>`, `open:<text>`.
+    fn shown(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> String {
+        shell.read_with(cx, |s, _| match &s.ui.capture.draft {
+            None => "none".into(),
+            Some(d) if d.open => format!("open:{}", s.ui.capture.text),
+            Some(d) => format!("chip:{}", d.quote),
+        })
+    }
+
+    fn keys(cx: &mut VisualTestContext, keys: &str) {
+        for key in keys.split(' ') {
+            cx.simulate_keystrokes(key);
+            draw(cx);
+        }
+    }
+
+    const TEXT: &str = "Everything in this window has been handled, and nothing else waits.";
+
+    #[gpui_kit::test]
+    fn typing_after_a_selection_notes_it_with_that_key_and_nothing_scrolls(
+        cx: &mut TestAppContext,
+    ) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        let chip = shown(&shell, cx);
+        assert!(
+            chip.starts_with("chip:") && chip.contains("in this window"),
+            "{chip}"
+        );
+        let quote = chip.trim_start_matches("chip:").to_string();
+        // The chip sits under the selected line, at its left.
+        let p = line(&shell, cx);
+        let at = shell.read_with(cx, |s, _| s.ui.capture.draft.as_ref().unwrap().at);
+        assert!(at.y > p.y && at.y < p.y + px(30.), "{at:?} under {p:?}");
+        assert_eq!(at.x, p.x);
+        // Every key types: `j` would scroll the zoom.
+        keys(cx, "j k g");
+        assert_eq!(shown(&shell, cx), "open:jkg");
+        assert_eq!(
+            shell.read_with(cx, |s, _| s.scrolled),
+            0,
+            "a zoom key fired"
+        );
+        keys(cx, "shift-enter o enter");
+        let (events, effects) = shell.read_with(cx, |s, _| (s.events.clone(), s.effects.clone()));
+        let [
+            Event::Note(N::Add {
+                group,
+                text,
+                quote: q,
+                ..
+            }),
+        ] = &events[..]
+        else {
+            panic!("{events:?}")
+        };
+        assert_eq!(
+            (&**group, &**text, q.as_deref()),
+            ("mupu", "jkg\no", Some(&*quote))
+        );
+        // Written as every note is: into the outbox (saved before it is posted, `save_then_send`).
+        assert!(effects.contains(&Effect::Persist(crate::store::Persist::Outbox)));
+        let posts = effects
+            .iter()
+            .filter(|e| matches!(e, Effect::Post { .. }))
+            .count();
+        assert_eq!(posts, 1);
+        let note = shell.read_with(cx, |s, _| s.store.notes_of("mupu").next().cloned());
+        assert_eq!(note.and_then(|n| n.quote), Some(quote));
+        // Closed, the selection is cleared and the zoom's keys are back.
+        assert_eq!(shown(&shell, cx), "none");
+        assert!(cx.update(TextSelection::selected_text).is_empty());
+        keys(cx, "j");
+        assert_eq!(shell.read_with(cx, |s, _| s.scrolled), 1);
+    }
+
+    #[gpui_kit::test]
+    fn enter_opens_it_empty_escape_keeps_nothing_and_gives_the_keys_back(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        keys(cx, "enter");
+        assert_eq!(shown(&shell, cx), "open:");
+        keys(cx, "o k escape");
+        assert_eq!(shown(&shell, cx), "none");
+        // On the chip too.
+        select(&shell, cx);
+        keys(cx, "escape");
+        assert_eq!(shown(&shell, cx), "none");
+        assert!(cx.update(TextSelection::selected_text).is_empty());
+        let (events, scrolled) = shell.read_with(cx, |s, _| (s.events.len(), s.scrolled));
+        assert_eq!((events, scrolled), (0, 0));
+        keys(cx, "j");
+        assert_eq!(
+            shell.read_with(cx, |s, _| s.scrolled),
+            1,
+            "the keys are back"
+        );
+    }
+
+    /// `cmd-c` copies the selection (the kit's Root) and leaves the chip as it is: no note opens.
+    #[gpui_kit::test]
+    fn a_copy_does_not_open_the_note(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        keys(cx, "cmd-c");
+        assert!(
+            shown(&shell, cx).starts_with("chip:"),
+            "{}",
+            shown(&shell, cx)
+        );
+        assert!(!cx.update(TextSelection::selected_text).is_empty());
+    }
+
+    /// `cmd-enter` sends web's note text to the agent on its own (`composer::Step::Quick`): no note,
+    /// the draft untouched.
+    #[gpui_kit::test]
+    fn cmd_enter_sends_the_note_to_the_agent(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        let quote = shown(&shell, cx).trim_start_matches("chip:").to_string();
+        keys(cx, "o k cmd-enter");
+        let (events, effects) = shell.read_with(cx, |s, _| (s.events.clone(), s.effects.clone()));
+        let text = format!("from mupu's transcript:\n> {quote}\n\nok");
+        assert!(
+            matches!(&events[..], [Event::Compose(composer::Step::Quick { agent, text: t })] if agent == "mupu" && *t == text),
+            "{events:?}"
+        );
+        let message = Effect::Message {
+            agent: "mupu".into(),
+            text,
+        };
+        assert!(effects.contains(&message), "{effects:?}");
+        assert_eq!(shown(&shell, cx), "none");
+    }
+
+    /// A click anywhere else closes it, typed text and all (web's).
+    #[gpui_kit::test]
+    fn a_click_elsewhere_closes_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        keys(cx, "o");
+        cx.simulate_click(point(px(1300.), px(20.)), Modifiers::default());
+        draw(cx);
+        assert_eq!(shown(&shell, cx), "none");
+        assert_eq!(shell.read_with(cx, |s, _| s.events.len()), 0);
     }
 }

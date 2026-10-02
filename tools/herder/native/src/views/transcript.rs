@@ -13,11 +13,12 @@
 //! mentions and paths linked by `markdown::link`; a click on one dispatches `OpenLink`, which the zoom
 //! shell handles: an agent in this space becomes its tab, any other opens as a preview tab (never a
 //! member), and a path resolves and opens in VS Code. Reaching the bottom counts as viewing. Text
-//! selected here with the pointer is offered to the notes strip for capture (U5).
+//! selected here with the pointer gets a capture chip under it (`views::capture`, F7).
 
 use crate::store::condense::{self, Pill, Row, Seg};
 use crate::store::transcript::{Item, Key, Step, Tone, Transcript};
 use crate::store::{Effect, Event, Store};
+use crate::views::capture;
 use crate::views::entries::{
     self, answer, bits, card, chevron, expander, header, md_detail, mono, now, queued, stamp,
     system, time, toned,
@@ -94,16 +95,20 @@ pub struct View {
     /// while it lays them out).
     width: Cell<Pixels>,
     /// A click on a link right after a selection (`replay`).
-    taps: Rc<Taps>,
+    pub(super) taps: Rc<Taps>,
 }
 
 /// What `replay` needs across a click: whether the last frame drew a selection, where the press went
-/// down (and whether that frame drew one), and whether the release now going out is a replay.
+/// down if no frame was drawn since (and whether the frame under it drew one), and whether the release
+/// now going out is a replay (and how many were: the tests count them). And where the last left press
+/// went down, where a selection starts.
 #[derive(Default)]
-struct Taps {
+pub(super) struct Taps {
     selected: Cell<bool>,
     press: Cell<Option<(Point<Pixels>, bool)>>,
     replaying: Cell<bool>,
+    pub(super) replays: Cell<u32>,
+    from: Cell<Point<Pixels>>,
 }
 
 #[derive(Default)]
@@ -621,14 +626,18 @@ pub fn render<H: Host>(
             .child(format!("{n}  ✕"))
             .on_click(dismiss)
     });
-    // Where the pointer lets go, the selection it made is what `c` (or the strip's chip) captures.
-    let let_go = cx.listener(|h: &mut H, _: &MouseUpEvent, window, cx| {
+    // Where the pointer lets go, the selection it made gets the capture chip, under it.
+    let taps = view.taps.clone();
+    let let_go = cx.listener(move |h: &mut H, e: &MouseUpEvent, window, cx| {
         let text = TextSelection::selected_text(window, cx);
         let ui = h.parts().1;
-        let agent = ui.zoomed_agent().map(String::from);
-        if ui.notes.selected(agent, &text) {
-            cx.notify();
-        }
+        let Some(agent) = ui.zoomed_agent().map(String::from) else {
+            return;
+        };
+        let column = ui.transcript.list.viewport_bounds().left() + t.css(PAD);
+        let at = capture::anchor(taps.from.get(), e.position, column, t.line);
+        capture::offer(ui, &agent, &text, at, window, cx);
+        cx.notify();
     });
     replay(body, &view.taps)
         .capture_any_mouse_up(let_go)
@@ -1109,16 +1118,21 @@ pub(super) fn name(kind: &str, generation: u64, (offset, sub): Key) -> String {
 /// that shows a selection, so a click pressed and let go before the next frame (a tap) found none and
 /// did nothing. Its release (a still one, left button, the frame under the press drew a selection) is
 /// held, a fresh frame drawn, and the same release sent again, once: then the link under it hears it.
-/// A drag, or a click with a frame between press and release, goes through as it is.
+/// A drag, or a click with a frame between press and release (each frame forgets the press), goes
+/// through as it is.
 fn replay(body: Div, taps: &Rc<Taps>) -> Div {
     let at = taps.clone();
     let shown = move |_, window: &mut Window, cx: &mut App| {
         at.selected.set(TextSelection::has_selection(window, cx));
+        at.press.set(None);
     };
     let at = taps.clone();
     let pressed = move |e: &MouseDownEvent, _: &mut Window, _: &mut App| {
         let left = e.button == MouseButton::Left && e.click_count == 1;
         at.press.set(left.then(|| (e.position, at.selected.get())));
+        if e.button == MouseButton::Left {
+            at.from.set(e.position);
+        }
     };
     let at = taps.clone();
     let released = move |e: &MouseUpEvent, window: &mut Window, cx: &mut App| {
@@ -1132,6 +1146,7 @@ fn replay(body: Div, taps: &Rc<Taps>) -> Div {
         window.defer(cx, move |window, cx| {
             window.draw(cx).clear(cx);
             at.replaying.set(true);
+            at.replays.set(at.replays.get() + 1);
             window.dispatch_event(PlatformInput::MouseUp(up), cx);
             at.replaying.set(false);
         });

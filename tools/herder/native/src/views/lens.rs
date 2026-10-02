@@ -65,6 +65,8 @@ pub enum Focus {
     Box,
     Editor,
     List,
+    /// The capture chip or popover (F7).
+    Capture,
     Out,
 }
 
@@ -74,6 +76,7 @@ pub struct Ui {
     pub(super) zoom_focus: FocusHandle,
     pub(super) composer: crate::views::composer::View,
     pub(super) notes: crate::views::notes::View,
+    pub(super) capture: crate::views::capture::View,
     state: State,
 }
 
@@ -124,6 +127,7 @@ impl Ui {
             zoom_focus,
             composer: crate::views::composer::View::new(window, cx),
             notes: crate::views::notes::View::new(window, cx),
+            capture: crate::views::capture::View::new(window, cx),
             state: State::default(),
         }
     }

@@ -15,9 +15,11 @@
 //! space; U4) · `says:<text>` (the line under the composer contains it) · `has:<text>` (the composer's
 //! `box:` contains it) · `notes:<n>:<closed|focused:text|idle:text>` (the zoomed agent's notes and the
 //! notes editor; U5) · `header:<text>` (the lens header contains it; U6) · `rows:<text>` (the zoomed transcript's list,
-//! `R+rows,+N+runs,+K+open`; F2) · `select:<text>` (as if the pointer had selected it in the transcript) ·
+//! `R+rows,+N+runs,+K+open`; F2) · `capture:<none|chip:focus:quote|open:focus:text>` (the capture chip
+//! or popover, F7; contains) ·
 //! `tap:<keystroke>` (as `key:`, but bound to nothing is fine) ·
-//! `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` (what a click on the notes strip
+//! `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` (what a click on the capture chip
+//! or the notes strip
 //! dispatches, `i` the zoomed agent's note, newest-updated first, `edit` a double-click on it; it fails when
 //! there is no such thing to click) · `list:<focused|idle>:<selected>@<cursor>` (the notes list: the
 //! selected notes' indexes, comma-separated, and the cursor's, `-` for none; F6) · `said:<text>` (the
@@ -128,8 +130,6 @@ pub trait Probe {
     fn ask(&self, op: &str, window: &Window, cx: &App) -> Option<String>;
     /// The action a click dispatches, for `link`, `summon` and `click` (`None`: nothing to click).
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>>;
-    /// Stand in for a pointer selection in the transcript, for `select:`.
-    fn select(&self, text: &str, cx: &mut App);
     /// Scroll the transcript to the first row holding `text`, for `find:` (`false`: none does); with
     /// `open`, open the first run from there on too, for `run:`.
     fn find(&self, text: &str, open: bool, cx: &mut App) -> bool;
@@ -161,10 +161,6 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
                 Err(e) => fail(format!("{op} {arg}: {e}")),
             },
-            "select" => {
-                let _ = cx.update(|_, cx| probe.select(&arg.replace('+', " "), cx));
-                metric(format!("select {arg}"));
-            }
             "find" | "run" => {
                 match cx.update(|_, cx| probe.find(&arg.replace('+', " "), op == "run", cx)) {
                     Ok(true) => metric(format!("find {arg}")),
@@ -259,12 +255,13 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                     _ => fail(format!("{op} {arg}: nothing to click")),
                 }
             }
-            "expect" | "box" | "has" | "says" | "notes" | "list" | "said" | "header"
-            | "selected" | "rows" | "parts" | "tools" | "jump" => {
+            "expect" | "box" | "has" | "says" | "notes" | "capture" | "list" | "said"
+            | "header" | "selected" | "rows" | "parts" | "tools" | "jump" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");
-                let part = matches!(op, "says" | "said" | "has" | "header") && got.contains(&want);
+                let part = matches!(op, "says" | "said" | "has" | "header" | "capture")
+                    && got.contains(&want);
                 match got == want || part {
                     true => metric(format!("{op} {arg}: ok")),
                     false => fail(format!("{op} {arg}: got `{got}`")),

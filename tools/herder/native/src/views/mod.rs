@@ -5,10 +5,12 @@
 //!
 //! One file per surface, added by the unit that needs it: `lens` (U2, the home rows and cards), `space`
 //! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5, the strip) and its
-//! keyboard list `notes_list` (F6); `probe` answers the harness. `theme` holds the palette and the type
-//! scale. This file holds what they share: the key table and its help, the agent chrome (glyph, label,
-//! pill), and the window's `Frame` with the working-dot `Pulse`.
+//! keyboard list `notes_list` (F6), `capture` (F7, type-to-capture at a transcript selection); `probe`
+//! answers the harness. `theme` holds the palette and the type scale. This file holds what they share:
+//! the key table and its help, the agent chrome (glyph, label, pill), and the window's `Frame` with the
+//! working-dot `Pulse`.
 
+pub mod capture;
 pub mod composer;
 pub mod entries;
 pub mod lens;
@@ -35,10 +37,10 @@ use theme::{TypeScale, pal};
 actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 /// Navigation letters bind here (ARCHITECTURE §4): a predicate sees the whole focus stack, so a
-/// focused Input, Terminal or notes list anywhere below turns them off. App-wide chords bind on `Lens`
-/// alone.
-pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList";
-pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList";
+/// focused Input, Terminal or notes list anywhere below turns them off, as does a live transcript
+/// selection (its capture chip holds focus, F7). App-wide chords bind on `Lens` alone.
+pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList && !Capture";
+pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList && !Capture";
 
 pub fn bind(cx: &mut App) {
     cx.bind_keys(bindings());
@@ -105,11 +107,7 @@ pub fn bindings() -> Vec<KeyBinding> {
     let focus = [("/", Compose::Focus), ("r", Compose::Focus)];
     keys.extend(focus.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     use notes::Notes;
-    let note = [
-        ("a", Notes::Add),
-        ("c", Notes::Capture),
-        ("p", Notes::HandOff),
-    ];
+    let note = [("a", Notes::Add), ("p", Notes::HandOff)];
     keys.extend(note.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     keys.push(KeyBinding::new("o", transcript::ToggleRun, Some(SPACE)));
     let editor = [
@@ -118,6 +116,20 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("escape", Notes::Cancel),
     ];
     keys.extend(editor.map(|(k, a)| KeyBinding::new(k, a, Some(notes::EDITOR))));
+    use capture::Capture;
+    let chip = [
+        ("enter", Capture::Open),
+        ("space", Capture::Open),
+        ("cmd-enter", Capture::Send),
+        ("escape", Capture::Cancel),
+    ];
+    keys.extend(chip.map(|(k, a)| KeyBinding::new(k, a, Some(capture::CHIP))));
+    let popover = [
+        ("enter", Capture::Save),
+        ("cmd-enter", Capture::Send),
+        ("escape", Capture::Cancel),
+    ];
+    keys.extend(popover.map(|(k, a)| KeyBinding::new(k, a, Some(capture::EDITOR))));
     use notes_list::List;
     let list = [
         ("up", List::Move(-1, false)),
@@ -171,9 +183,13 @@ o             open / close the lowest run
 ⌘⏎ / ⌘⇧⏎      send / send and back to the lens
 ⌥⏎            keep the box as a note
 esc (in box)  leave the box
-a / c         add a note / note the selection
+a             add a note
 p             notes into the box
 ↑ (in box)    into the notes
+
+selected text
+type / ⏎      a note on it, the key typed / empty
+⏎ ⌘⏎ / esc    save / send to the agent / cancel
 
 notes
 ↑ ↓ ⇧↑ ⇧↓     move / extend the selection
@@ -227,6 +243,7 @@ pub fn on<A: Action, H: Host>(
             (Some(Focus::Box), _) if writable => ui.composer.focus_handle(cx),
             (Some(Focus::Editor), _) => ui.notes.focus_handle(cx),
             (Some(Focus::List), _) => ui.notes.list.focus.clone(),
+            (Some(Focus::Capture), _) => ui.capture.focus_handle(cx),
             (None, Some(held)) => held,
             _ => ui.focus_target().clone(),
         };

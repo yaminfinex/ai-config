@@ -77,9 +77,13 @@ check-composer port="4411":
 #          editor kept; cmd-enter saves the note;
 # edit     a click on a note edits it (emptied, the save is refused and the editor stays), enter saves and
 #          leaves the editor; a second click on its ✕ deletes it;
-# capture  a selection on mupu is gone once the zoom moves to chief-mihe (`c` captures nothing, there or back
-#          on mupu); a new one is offered as a chip, its click captures it from the focused composer, enter
-#          saves;
+# capture  (F7) a real drag over mupu's answer puts the focused "＋ Add note" chip under it; it is gone once the
+#          zoom moves to chief-mihe (and back); dragged again, a typed `o` opens the popover with it typed, `k`
+#          follows, enter saves one note with the quote (one POST, the quote in it);
+# dropped  a letter on the chip types (k opens the popover, nothing scrolls); esc closes it and keeps nothing,
+#          then the zoom's keys work again (k scrolls); a click elsewhere closes a chip; nothing is written;
+# sent     cmd-enter in the popover sends web's note text (source, quote, comment) to mupu: one message, no
+#          note, the draft untouched;
 # handoff  `p` moves both notes into mupu's composer draft (web's hand-off text) and deletes them; after a
 #          relaunch the draft holds them and the notes stay deleted;
 # queue    alt-enter in the composer keeps its draft as a note and clears the box;
@@ -105,7 +109,17 @@ check-notes port="4412":
     run "" empty 0 "$zoom notes:0:closed shot:u5-empty quit"
     run --notes editor 1 "$zoom notes:2:closed shot:u5-notes key:a draw notes:2:focused: key:enter draw notes:2:focused: key:n key:j key:[ key:] key:a key:c key:p key:/ draw notes:2:focused:nj[]acp/ tap:alt-enter tap:cmd-shift-enter draw box:idle: notes:2:focused:nj[]acp/ shot:u5-editing key:cmd-enter wait:800 draw notes:3:closed box:idle: quit"
     run --notes edit 2 "$zoom click:edit:0 draw notes:2:focused:check+the+outbox+after+a+409 key:cmd-a key:backspace draw notes:2:focused: key:enter draw notes:2:focused: shot:u5-refused key:o key:k key:enter wait:800 draw notes:2:closed box:idle: click:delete:1 draw notes:2:closed shot:u5-delete click:delete:1 wait:800 draw notes:1:closed quit"
-    run --notes capture 1 "$zoom select:the+reducer+owns+every+mutation draw shot:u5-chip link:herder-agent:chief-mihe wait:600 draw key:c draw notes:0:closed link:herder-agent:mupu wait:1500 draw expect:mupu+preview key:c draw notes:2:closed select:the+reducer+owns+every+mutation key:/ draw box:focused: click:capture draw notes:2:focused: key:o key:k draw shot:u5-capture key:enter wait:800 draw notes:3:closed quit"
+    drag="drag:30,210,250,210 draw" # across the first line of mupu's last-but-one answer, at the tail
+    capture="$zoom $drag capture:chip:focused:Everything+in+this+window shot:f7-chip link:herder-agent:chief-mihe wait:600 draw capture:none"
+    capture+=" link:herder-agent:mupu wait:1500 draw expect:mupu+preview capture:none $drag key:o draw key:k draw capture:open:focused:ok shot:f7-popover"
+    run --notes capture 1 "$capture key:enter wait:800 draw notes:3:closed capture:none said:Saved. box:idle: quit"
+    grep -q 'state notes: .*Everything in this window has been h' "$home/capture.fake" || { echo "check-notes: capture: no quote posted"; exit 1; }
+    dropped="$zoom $drag key:k draw capture:open:focused:k jump:hidden key:escape draw capture:none notes:2:closed jump:hidden"
+    dropped+=" key:k draw jump:shown key:shift-g draw $drag capture:chip:focused point:600,60 draw capture:none"
+    run --notes dropped 0 "$dropped quit"
+    scenario sent --notes "$zoom $drag key:o draw key:k draw key:cmd-enter wait:800 draw capture:none notes:2:closed said:Sending+a+note+to+mupu box:idle: quit"
+    seen sent "state notes:" 0
+    seen sent "message to mupu: {.text.:.from mupu's transcript:.*n> Everything in this window has been h.*nok.}" 1
     run --notes handoff 1 "$zoom key:p wait:800 draw notes:0:closed has:from+mupu's+transcript: has:check+the+outbox+after+a+409 shot:u5-handoff quit" "$zoom notes:0:closed has:from+mupu's+transcript: has:check+the+outbox+after+a+409 quit"
     run "" queue 1 "$zoom key:/ draw key:h key:i draw box:focused:hi key:alt-enter wait:800 draw box:focused: notes:1:closed shot:u5-queued quit"
     up="$zoom key:/ draw key:up draw"
@@ -128,7 +142,7 @@ check-notes port="4412":
     armed+=" click:note:0 click:note:1:cmd click:note:1:cmd draw list:focused:0@1 key:e draw notes:2:focused:ask+it+to+split+this"
     run --notes armed 0 "$armed quit"
     grep -q 'platform: would copy "from mupu.s transcript:\\n> the reducer owns\\n> every mutation\\n\\nok"' "$home/keyed.log" || { echo "check-notes: keyed: not copied"; exit 1; }
-    echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, selection per agent, capture with quote, hand-off into the draft survives a relaunch, alt-enter queues, the list by key and click: move, select, hand off the chosen and land on the next, delete twice and any other key disarms, edit the cursor's note in place, copy, no other key fires there)"
+    echo "check-notes: ok (empty strip hidden, editor keys type and never send, refused saves keep the editor, edit and delete by click, type-to-capture at the selection (saved with its quote, esc keeps nothing and gives the keys back, a click elsewhere closes it, cmd-enter sends), a capture per agent, hand-off into the draft survives a relaunch, alt-enter queues, the list by key and click: move, select, hand off the chosen and land on the next, delete twice and any other key disarms, edit the cursor's note in place, copy, no other key fires there)"
 
 # Alert scenarios (U6), each through `scripts/scenario.sh`, whose fake serve's `--turn` frames finish agents'
 # turns while the app runs. A scripted run is test mode (`platform_mac::quiet`): nothing is posted, no
