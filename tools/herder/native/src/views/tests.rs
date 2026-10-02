@@ -1407,7 +1407,7 @@ mod layout {
     use crate::store::{Event, Store};
     use crate::views::lens::Ui;
     use crate::views::space::Zoom;
-    use crate::views::transcript::{self, Fold, Mark};
+    use crate::views::transcript::{self, Fold, Mark, OpenLink};
     use crate::views::{Host, theme};
     use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt as _;
@@ -1422,6 +1422,8 @@ mod layout {
         ui: Ui,
         /// Reduce what the view dispatches, as the shell does (else the test reads the pages itself).
         reduce: bool,
+        /// The links clicked through to the shell (`OpenLink`).
+        links: Vec<String>,
     }
 
     impl Host for Body {
@@ -1448,7 +1450,14 @@ mod layout {
             let zoom = self.ui.zoom.clone().unwrap();
             let t = theme::type_scale(1.);
             let body = transcript::render(&self.store, &self.ui, &zoom, t, cx);
-            div().size_full().flex().flex_col().child(body)
+            let open = cx.listener(|b, link: &OpenLink, _, _| b.links.push(link.0.to_string()));
+            use gpui_kit::InteractiveElement as _;
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .on_action(open)
+                .child(body)
         }
     }
 
@@ -1475,6 +1484,7 @@ mod layout {
                 store,
                 ui,
                 reduce: false,
+                links: Vec::new(),
             }
         });
         cx.simulate_resize(size(px(width), px(height)));
@@ -1865,6 +1875,92 @@ mod layout {
         assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
     }
 
+    /// G1: a real pointer click (move, down, up through the window) on each kind of link routes as
+    /// before: a URL to the browser, a name to its preview tab, a path to be resolved and opened; in an
+    /// answer, an operator's card, and another agent's card shown as the latest activity.
+    #[gpui_kit::test]
+    fn a_real_click_on_a_link_routes_it_by_kind(cx: &mut TestAppContext) {
+        use crate::store::condense::Seg;
+        let long = |s: &str| s.repeat(40);
+        let answer = |text: String| Item::Assistant(vec![Seg::Text(text)]);
+        let card = |text: String, operator| Item::Delivery {
+            sender: "kono".into(),
+            text,
+            operator,
+            head: Box::default(),
+        };
+        let tool = Item::Tool {
+            name: "Bash".into(),
+            summary: "ls".into(),
+            input: "{}".into(),
+            result: None,
+        };
+        // (items appended at the tail; where to click: across, and down from the last row's top, or up
+        // from the latest block's bottom (negative: its 4, the card's 1 + 9 and the text's 6, then
+        // half a line); what opens). A long link fills its lines; the name starts the answer at 29.
+        let url = |n| format!("[{}](https://example.com/pull/{n})", long("Pull "));
+        let path = format!("[{}](src/views/transcript.rs)", long("transcript "));
+        let name = "confirm-fresh-kono asked.".to_string();
+        let to = "link herder-path:src/views/transcript.rs";
+        let cases: [(Vec<Item>, (f32, f32), &str); 5] = [
+            (
+                vec![answer(url(1))],
+                (700., 42.),
+                "url https://example.com/pull/1",
+            ),
+            (
+                vec![answer(name)],
+                (36., 42.),
+                "link herder-agent:confirm-fresh-kono",
+            ),
+            (vec![answer(path.clone())], (700., 42.), to),
+            (vec![card(path, true)], (700., 42.5), to),
+            (
+                vec![tool, card(url(2), false)],
+                (100., -30.),
+                "url https://example.com/pull/2",
+            ),
+        ];
+        // The test platform keeps the last URL it was asked to open.
+        let mut opened = None;
+        for (items, (x, y), want) in cases {
+            let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
+            body.update(cx, |b, cx| {
+                // The board, whose names the mentions link.
+                let event = frame(&b.store, board());
+                drop(b.store.apply(event));
+                let tr = b.store.transcript.open.as_mut().unwrap();
+                for (sub, item) in items.into_iter().enumerate() {
+                    tr.items.insert((u64::MAX - 1, sub as u16), item);
+                }
+                cx.notify();
+            });
+            draw(cx);
+            draw(cx);
+            let n = rows(&body, cx).len();
+            let at = row(&body, n - 1, cx);
+            let latest = mark(&body, Mark::Member((u64::MAX - 1, 1)), cx);
+            let y = match y > 0. {
+                true => at.top() + px(y),
+                false => latest.expect("the latest block").bottom() + px(y - 10.),
+            };
+            let p = point(at.left() + px(x), y);
+            cx.simulate_mouse_move(p, None, Modifiers::default());
+            cx.simulate_click(p, Modifiers::default());
+            cx.run_until_parked();
+            let mut got = body.read_with(cx, |b, _| b.links.clone());
+            got = got.into_iter().map(|l| format!("link {l}")).collect();
+            let url = cx.opened_url();
+            got.extend(
+                url.clone()
+                    .filter(|u| opened.as_ref() != Some(u))
+                    .map(|u| format!("url {u}")),
+            );
+            opened = url;
+            assert_eq!(got, [want], "clicked at {p:?} in {at:?}");
+        }
+    }
+
     /// The owner's crash (10-02, every wheel): leaving the watched tail is published from the list's
     /// scroll handler, which the list calls inside its own borrow, and reducing it asked the list again
     /// ("RefCell already mutably borrowed"). A mouse's lines and a trackpad's pixels, over prose, the
@@ -2244,5 +2340,120 @@ mod members {
         for (ms, want) in cases {
             assert_eq!(took(ms), want, "{ms}ms");
         }
+    }
+}
+
+/// G1: lens cards in a lane are equally tall, and their text wraps and is cut with an ellipsis.
+mod lens_cards {
+    use crate::store::cards::Got;
+    use crate::store::spaces::Row;
+    use crate::store::tests::{board, frame, loaded};
+    use crate::store::{Event, Store};
+    use crate::views::lens::{self, Ui};
+    use crate::views::{Host, theme};
+    use gpui_kit::{
+        Context, IntoElement, Render, Styled as _, TestAppContext, TextOverflow, WhiteSpace,
+        Window, px, size,
+    };
+
+    struct Lens {
+        store: Store,
+        ui: Ui,
+    }
+
+    impl Host for Lens {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        fn dispatch(&mut self, _: Event, _: &mut Context<Self>) {}
+
+        fn copy(&mut self, _: String, _: &mut Context<Self>) {}
+    }
+
+    impl Render for Lens {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let t = theme::type_scale(1.);
+            lens::render(&self.store, &self.ui, t, window.viewport_size(), cx)
+        }
+    }
+
+    #[gpui_kit::test]
+    fn the_cards_of_a_lane_are_as_tall_however_much_they_say(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+        });
+        let mut store = loaded();
+        store.apply(frame(&store, board()));
+        // Every space in focus; conductor-line's card has a long answer, the others their status.
+        let ids: Vec<String> = store.spaces.iter().map(|s| s.id.clone()).collect();
+        for id in &ids {
+            store.prefs.rows.insert(id.clone(), Row::Focus);
+        }
+        let entries = serde_json::from_str::<crate::api::Entries>(include_str!(
+            "../../testdata/agents/conductor-line/tail.json"
+        ))
+        .unwrap()
+        .entries;
+        let space = store
+            .spaces
+            .iter()
+            .find(|s| s.agents().any(|a| a == "conductor-line"));
+        let space = space.expect("conductor-line's space").id.clone();
+        store.prefs.visible.insert(space, "conductor-line".into());
+        let turn = store.fleet.agents["conductor-line"].turn_end;
+        store.apply(Event::Card(Got {
+            agent: "conductor-line".into(),
+            turn,
+            result: Ok(entries),
+        }));
+        let long = store.cards.text("conductor-line").expect("an answer").len();
+        assert!(long > 400, "long enough to be cut: {long}");
+        let (lens, cx) = cx.add_window_view(move |window, cx| Lens {
+            store,
+            ui: Ui::new(window, cx),
+        });
+        cx.simulate_resize(size(px(1400.), px(900.)));
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let heights: Vec<f32> = lens.read_with(cx, |l, _| {
+            let cards = l.ui.cards.borrow();
+            ids.iter()
+                .filter_map(|id| cards.get(id))
+                .map(|b| f32::from(b.size.height))
+                .collect()
+        });
+        assert_eq!(heights.len(), ids.len(), "every card laid out");
+        assert!(
+            heights.windows(2).all(|w| (w[0] - w[1]).abs() < 0.5),
+            "one height in the lane: {heights:?}"
+        );
+    }
+
+    #[test]
+    fn a_card_s_text_wraps_and_is_cut_with_an_ellipsis() {
+        let t = theme::type_scale(1.);
+        let mut text = lens::body("a long answer ".repeat(40), 5, t);
+        let style = text.style();
+        assert_eq!(style.text.line_clamp, Some(5));
+        assert!(
+            matches!(style.text.text_overflow, Some(TextOverflow::Truncate(ref s)) if s == "…")
+        );
+        assert_ne!(
+            style.text.white_space,
+            Some(WhiteSpace::Nowrap),
+            "wraps at words"
+        );
+        let lines = style.min_size.height.map(|h| format!("{h:?}"));
+        assert_eq!(
+            lines,
+            Some(format!("{:?}", gpui_kit::Length::from(t.line * 5.)))
+        );
     }
 }

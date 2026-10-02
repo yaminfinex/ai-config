@@ -874,7 +874,9 @@ impl<H: Host> Paint<'_, H> {
         let text = text.style(style).code_block_actions(|_, _, _| Empty);
         let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
             Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
-            None if url.starts_with("http://") || url.starts_with("https://") => cx.open_url(url),
+            None if url.starts_with("http://") || url.starts_with("https://") => {
+                crate::platform_mac::open(url, cx)
+            }
             None => {}
         });
         sideways(div().w_full().max_w(t.css(900.)).child(text))
