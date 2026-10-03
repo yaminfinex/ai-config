@@ -296,8 +296,10 @@ capture's quick send too); a refused one writes nothing. The zoom's agent is the
 reports focus-in only in an active window, so `dock::sync` reads which panel holds focus whenever it runs,
 after every action and on every shell render (a focus change refreshes the window), with no timer of its
 own (`follow`; the panel's root takes focus on any press, before the transcript's selection can swallow
-it). A tab dropped anywhere, its own group too (a reorder), is the zoom's and takes focus. A mention opens
-in the focused group, with `alt` beside it (the first other group in the layout, not the nearest on
+it). A tab dropped anywhere, its own group too (a reorder), is the zoom's and takes focus. Focus left on
+an element the dock lays out anew goes with it (the transcript's text after a click, under a maximize:
+G2); the dock's `on_focus_lost` gives it back to the zoom's panel, so the keys never need a click. A
+mention opens in the focused group, with `alt` beside it (the first other group in the layout, not the nearest on
 screen: a declared limitation; else a new one to the right); an agent already open is shown, not
 re-opened. The store is told the focused
 agent and every other group's shown tab (`Move::View{agent, beside}`, only when that changes); only the
@@ -316,7 +318,10 @@ Focus follows the zoom after every action (`views::on`), with one exception (U4)
 zoom that holds focus (the composer, U5's notes) keeps it while the zoom stays on the same agent (a clicked
 path or mention of that agent); the composer takes it on `/` `r` (only when the agent can be written to)
 and gives it back to the zoom on `escape`. A mention that opens another agent moves focus to the zoom, so
-the box never types into an agent the owner did not pick. The composer's chords are handled on its own
+the box never types into an agent the owner did not pick. A link (a URL, a mention, a path) shows the
+pointer under the mouse, the kit's `TextView`'s own; web also brightens a hovered link and thickens its
+underline (`styles.css` `.inline-link:hover`), which the kit cannot do for one link (one link colour, no
+hovered-link state): a declared limitation (G2). The composer's chords are handled on its own
 element, so they act only on the focused box. `cmd-shift-enter` leaves the zoom only once the send lands
 (`Effect::FiledBack`), marking seen only the agent as it stood when sent (a later turn still needs you, and
 an unread mark set meanwhile stays; a block that ends during the flight is not acknowledged again); a failure stays on that agent, preview included, saying why. The
@@ -511,10 +516,10 @@ are restated rather than split: what did not belong in them has moved out (`view
 |  |  | `views/entries.rs` | 529 |
 |  |  | `views/capture.rs` | 452 |
 |  |  | `views/panel.rs` | 160 |
-|  |  | `views/dock.rs` | 894 |
+|  |  | `views/dock.rs` | 902 |
 |  |  | `views/tabs.rs` | 361 |
 
-About 12,175 lines for Rung 1, tests excluded (DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 12,183 lines for Rung 1, tests excluded (G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

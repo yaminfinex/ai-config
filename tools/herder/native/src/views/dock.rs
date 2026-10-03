@@ -79,6 +79,7 @@ pub struct Dock {
     /// What the store was last told is on screen: the focused agent and those beside it.
     pub(super) told: Option<(Option<String>, Vec<String>)>,
     _changed: Subscription,
+    _lost: Subscription,
 }
 
 impl Dock {
@@ -321,6 +322,12 @@ fn open<H: Host>(
             changed(h, window, cx);
         }
     });
+    // Focus on an element the dock lays out anew (the transcript's selection, under a maximize, a drop or
+    // a close) goes with it, and the zoom's keys with it: the zoom's panel takes focus back.
+    let lost = cx.on_focus_lost(window, |h: &mut H, window, cx| {
+        let target = h.parts().1.focus_target().clone();
+        window.focus(&target, cx);
+    });
     Dock {
         space: zoom.space.clone(),
         area,
@@ -330,6 +337,7 @@ fn open<H: Host>(
         held: None,
         told: None,
         _changed: changed,
+        _lost: lost,
     }
 }
 
