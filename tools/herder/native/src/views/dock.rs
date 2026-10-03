@@ -995,6 +995,7 @@ fn tab(
             .flex()
             .items_center()
             .justify_center()
+            .pr(t.css(7.))
             .pb(px(1.))
             .text_size(t.css(15.))
             .text_color(rgb(pal::SLATE))

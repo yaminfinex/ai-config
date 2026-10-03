@@ -28,7 +28,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 | `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). `store::cards` holds the lens cards' text (F4). | `api::types` |
 | `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. `views::notes` is the notes strip (header, editor, transfers) and `views::notes_list` its keyboard list (selection, keys, cards; F6); `views::capture` notes a transcript selection where it was made (F7). `views::panel` is one agent's set of them (DK1). | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
-| `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
+| `local` | `prefs.json`, `layouts.json` (DK2), `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
 | `platform_mac` | The AppKit calls GPUI lacks: window ordering, dock badge, activation policy, the hotkey bridge. | objc2 |
 | `terminal` | A local PTY running `et`/`ssh -t`, emulated by `alacritty_terminal`, painted by a view (Rung 2). | alacritty_terminal |
 | `harness` | `HERDER_NATIVE_SCRIPT` steps: keys, screenshots and metrics, never taking focus. | gpui-kit |
@@ -77,7 +77,7 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   (pulls in flight coalesce), ask for the viewer again while it is `Unknown`, and expect a fresh `fleet`. A changed `hello.buildIdentity` shows "server updated" and never reloads by itself.
 - **Transcript wakes.** One stream, subscribed with `agents=` to the agents of the zoomed space (plus a
   previewed outsider), and to none on the lens. A transcript is open for each agent panel on screen
-  (`Move::View`'s focused agent and those `beside` it, DK1: the zoom shows one), each its own generation,
+  (`Move::View`'s focused agent and each other dock group's shown tab `beside` it, DK2), each its own generation,
   and a panel off screen lets its rows go. An `entry:` frame only means "read forward from
   `next_offset`". Wakes coalesce without a timer: one forward read in flight, and a wake meanwhile sets
   `again`, which reads once more when it lands. A `message` frame addressed to the open agent refreshes its
@@ -197,14 +197,18 @@ a transcript selection, F7), `Input` (any kit text input), `Terminal` (a termina
 | `Notes > Input` | the notes editor's own (`enter` and `cmd-enter` save, `escape` cancels, U5); `shift-enter` stays a new line |
 | `NotesList && !Input` | the notes list's keys (F6); not in the editor open in one of its cards |
 | `Capture && !Input` / `Capture > Input` | the capture chip's keys / its popover's (F7): while a selection is live no lens or zoom key fires |
-| `Terminal` | keys the terminal consumes (Rung 2); `cmd-w` `cmd-t` `cmd-1…9` stay on `Space` |
+| `Terminal` | keys the terminal consumes (Rung 2); `cmd-t` stays on `Space` |
 
 | Keys | Predicate | Action | Unit |
 |---|---|---|---|
 | `cmd-q`; `cmd-=` `cmd-shift-=` / `cmd--` / `cmd-0` | `Lens` | Quit; TextBigger / TextSmaller / TextReset | A0 |
 | `left right h l j k` `1 2 3` `v` `m u` `t s` `?` `enter` | `Lens && !Input && !Terminal` | move, set row, cycle visible, seen/unseen, card text/size, help, zoom in | U2 |
 | `n` / `N` | both navigation predicates | next needing you / and zoom in; after the spaces, `N` (and `n` zoomed) opens an agent in no space alone | U2, U6 |
-| `escape` `[` `]` `tab` `shift-tab` | `Space && !Input && !Terminal` | zoom out, prev/next space, prev/next agent | U2 |
+| `escape` `[` `]` | `Space && !Input && !Terminal` | zoom out, prev/next space | U2 |
+| `tab` `shift-tab`, `alt-right` `alt-left` | `Space && !Input && !Terminal` | the focused group's next / previous tab, wrapping, focused (the dock is asked at the next sync, never from inside its own handlers) | U2, DK2 |
+| `cmd-1…9` | `Space && !Input && !Terminal` | the focused group's tab N | DK2 |
+| `cmd-w` | `Space && !Input && !Terminal` | close the focused tab (a pinned one leaves the space) | DK2 |
+| `alt-enter` | `Space && !Input && !Terminal` | maximize the focused group / put it back (not kept) | DK2 |
 | `j k space shift-space g G` | `Space && !Input && !Terminal` | scroll the transcript | U3 |
 | `o` | `Space && !Input && !Terminal` | open / close the lowest run on screen, as laid out (none if none shows); a click on a run's pills does the same | F2 |
 | `/` `r` | `Space && !Input && !Terminal` | focus the composer | U4 |
@@ -217,7 +221,7 @@ a transcript selection, F7), `Input` (any kit text input), `Terminal` (a termina
 | `up` | `Composer > Input` | into the notes list, every note selected, when the box is empty or its caret at the start; else the kit's caret move (`notes_list::Up` propagates) | F6 |
 | `up` `down` / `shift-up` `shift-down` / `cmd-a` | `NotesList && !Input` | move the cursor / extend the selection from its anchor / select all | F6 |
 | `enter` / `backspace` `delete` / `e` / `cmd-c` / `escape` | `NotesList && !Input` | the selection into the composer / delete it (a second press; any other key disarms) / edit the cursor's note in place / copy (`Host::copy`; a scripted run logs it) / clear the selection, then back to the box | F6 |
-| `cmd-w` `cmd-t` `cmd-1…9` | `Space` | close panel, terminal, switch panel | Rung 2 |
+| `cmd-t` | `Space` | terminal | Rung 2 |
 | `ctrl-alt-cmd-h` | global (`global-hotkey`) | summon | U6 |
 
 **Mouse (F4).** A card click selects its space and a double-click zooms in (`lens::Pick`); a tab click
@@ -274,8 +278,27 @@ after every action (`views::on`, before focus is placed) and before each frame, 
 hidden panel to the zoom's. The panel's keys (scroll, `o`, folds, links, `/` `r`, notes, capture, list
 clicks) are handled on its element, the zoom's (`escape`, `[` `]`, `tab`, tab clicks, `n`) on the
 `Space` shell around it. Each panel draws through its own GPUI view, `AgentPanel`, cached and notified
-whenever the shell is (it observes it): the seam the dock (DK2) lays out side by side. It is only
-`Render`; making it `Focusable` is DK2's.
+whenever the shell is (it observes it): the seam the dock (DK2) lays out side by side.
+
+**The dock (DK2).** `views::dock` puts the zoomed space's panels on the kit's `DockArea` (one per zoom,
+rebuilt on entering another space; the lens stays home): tabs in groups, split side by side or stacked,
+drag and drop, divider resize and maximize are the kit's. `AgentPanel` is a kit panel (`BasePanel`,
+`Focusable`, `EventEmitter<PanelEvent>`, panel name `agent`, its dump `{"agent": name}`). A space's
+members are its pinned tabs; a tab of an agent that is not a member is a preview (italic, a hollow ring),
+at most one per group: a mention or an outsider opened there replaces it in place, and a double-click, a
+send from it, or a drag to another group pins it (`Move::Pin`, a `spaces.members` write). Closing a pinned
+tab (`cmd-w`, its ×, a middle-click) removes the member (`Move::Unpin`); closing a preview writes nothing.
+A member another device adds opens as a tab behind the focused group's shown one. The zoom's agent is the
+focused panel's: GPUI reports focus-in only in an active window, so `dock::sync` reads which panel holds
+focus each frame (`follow`; the panel's root takes focus on any press, before the transcript's selection
+can swallow it). A mention opens in the focused group, with `alt` beside it (the nearest other group, else
+a new one to the right); an agent already open is shown, not re-opened. The store is told the focused
+agent and every other group's shown tab (`Move::View{agent, beside}`, only when that changes); only the
+focused one is seen. Actions never touch the dock: they leave an `Ask` that the next sync carries out
+(the dock's callbacks run inside its own update). The tab strip is drawn to web's measurements
+(`dock::Strip`, a `TabGroupRenderer`: the kit's is private, always draws a menu and has no top line);
+the breadcrumb is a slim line above the dock. `just check-dock` and `views::tests`' `dock_events` drive
+it with real clicks, a real drag and keys.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -374,6 +397,7 @@ and unknown entries in an open run stay F2's pill and text; no letter spacing on
 | Server, `spaces.members` | per space: `{members:[{kind:agent,name}|{kind:file,root,path}], updated}` | shared with web |
 | Server, `notes` | notes, per agent | shared with web |
 | `prefs.json` | text scale, rows, visible agent per space, seen marks, drafts, pending quick sends (F7), hotkey | this Mac |
+| `layouts.json` | each space's dock as left (`{version, spaces: {id: the kit's dump of its tree}}`, DK2); written 250 ms after a change settles; a file of another `version` is ignored (the kit's own `load` never checks); reconciled with the members when the dock opens (each member once where it was, one preview per group, missing members added to the first group); maximize is not kept | this Mac |
 | `outbox.json` | unsent state rows (notes, spaces, members), written before each send attempt | this Mac |
 | `snapshot.json` | the last board, spaces, members and notes, for the first paint | this Mac |
 | `~/Library/Logs/herder-native/panic.log` | each panic's message, thread and backtrace, appended before the default hook (and the abort) | this Mac |
@@ -454,7 +478,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after DK1 (DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after DK2 (DK2 added `views/dock` for the dock in the zoom: its sync with the zoom, asks, previews and pins, layouts and their restore, and the tab strip drawn to web's measurements; and grew `store/spaces` by the members writes and the layouts, `views/space` lost the hand-drawn tab row; DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -462,25 +486,26 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 332 | `views/mod.rs` | 440 |
-| `api/client.rs` | 206 | `views/lens.rs` | 466 |
-| `api/sse.rs` | 194 | `views/space.rs` | 377 |
-| `store/mod.rs` | 452 | `views/transcript.rs` | 1371 |
+| `api/types.rs` | 332 | `views/mod.rs` | 448 |
+| `api/client.rs` | 206 | `views/lens.rs` | 470 |
+| `api/sse.rs` | 194 | `views/space.rs` | 363 |
+| `store/mod.rs` | 472 | `views/transcript.rs` | 1374 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 243 |
-| `store/fleet.rs` | 117 | `views/notes.rs` | 413 |
-| `store/spaces.rs` | 215 | `views/notes_list.rs` | 525 |
-| `store/attention.rs` | 281 | `views/probe.rs` | 267 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 414 |
+| `store/spaces.rs` | 314 | `views/notes_list.rs` | 525 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 273 |
 | `store/transcript.rs` | 652 | `views/markdown.rs` | 238 |
 | `store/condense.rs` | 439 | `views/theme.rs` | 261 |
-| `store/notes.rs` | 432 | `shell.rs` | 437 |
+| `store/notes.rs` | 432 | `shell.rs` | 449 |
 | `store/composer.rs` | 225 | `shell/io.rs` | 180 |
-| `local.rs` | 95 | `harness.rs` | 384 |
+| `local.rs` | 101 | `harness.rs` | 389 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 |  |  | `views/entries.rs` | 529 |
 |  |  | `views/capture.rs` | 449 |
-|  |  | `views/panel.rs` | 168 |
+|  |  | `views/panel.rs` | 160 |
+|  |  | `views/dock.rs` | 1148 |
 
-About 10,770 lines for Rung 1, tests excluded (DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 12,060 lines for Rung 1, tests excluded (DK2: +1,290; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

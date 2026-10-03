@@ -30,15 +30,23 @@ harness script:
     HERDER_NATIVE_SCRIPT="{{script}}" HERDER_NATIVE_SHOT_DIR=shots ./target/release/herder-native
 
 # Key scenario (A0): cmd-= through the real input path must reach TextBigger and persist 1.1.
-# Runs against a throwaway HOME so the owner's prefs are untouched.
-check-keys: build
-    #!/usr/bin/env sh
+# Runs against a throwaway HOME so the owner's prefs are untouched. Then (DK2) the dock's chords typed
+# in the composer change nothing.
+check-keys port="4418": build
+    #!/usr/bin/env bash
     set -eu
     home=$(mktemp -d)
     HOME="$home" HERDER_NATIVE_SCRIPT="wait:300 key:cmd-= wait:400 quit" ./target/release/herder-native
     prefs="$home/Library/Application Support/herder-native/prefs.json"
-    grep -q '"text_scale": 1.1' "$prefs" && echo "check-keys: ok (text_scale 1.1 persisted)"
+    grep -q '"text_scale": 1.1' "$prefs" || { echo "check-keys: text_scale not persisted"; exit 1; }
     rm -rf "$home"
+    # The dock's chords (DK2) never fire in the composer: the box keeps its text, the dock its tabs, and
+    # nothing is written (fake serve).
+    . scripts/scenario.sh check-keys {{port}}
+    dock="dock:mupu*+support-mifa+|+[conductor-line*~]"
+    scenario chords "" "wait:1500 key:enter wait:400 draw key:] wait:600 draw beside:herder-agent:conductor-line wait:800 draw $dock key:/ draw key:x tap:cmd-w tap:cmd-1 tap:cmd-9 tap:alt-left tap:alt-right draw box:focused:x $dock quit"
+    seen chords "POST" 0
+    echo "check-keys: ok (text_scale 1.1 persisted; cmd-w, cmd-1…9 and alt-left/right do nothing to the dock from the composer)"
 
 # Composer scenarios (U4), each through `scripts/scenario.sh` (fake serve, own HOME, must reach `quit`) and
 # with exactly the POSTs it expects:
@@ -280,6 +288,21 @@ check-entries port="4416":
     parts() { echo "parts:$1+status,+$2+notes"; }
     scenario entries "--queued mupu" "$zoom $(parts 0 0) click:status draw $(parts 1 0) shot:a2-status click:status draw $(parts 0 0) find:Internal( wait:300 draw click:internal draw $(parts 0 1) shot:a2-note click:internal draw $(parts 0 0) quit"
     echo "check-entries: ok (mupu's last cut status chip opens and closes by click, its internal note too; queued box in the shots)"
+
+# The dock in the zoom (DK2), through `scripts/scenario.sh` (fake serve, own HOME); in slack (mupu,
+# support-mifa): an alt-click on a mention opens it beside, in a new group to the right; a mention opened in
+# that group replaces its preview, and a double-click on the tab pins it (one members write); a real drag
+# moves a member's tab to the other group; tab, cmd-2 and alt-left step the focused group, alt-enter
+# maximizes it and back; cmd-w closes the pinned tab (it leaves the space: the second write), and a click
+# on a preview's × closes it (no write). A relaunch on the same HOME opens the dock as it was left.
+check-dock port="4417":
+    #!/usr/bin/env bash
+    . scripts/scenario.sh check-dock {{port}}
+    slack="wait:1500 key:enter wait:400 draw key:] wait:600 draw"
+    scenario dock "" "$slack dock:[mupu*]+support-mifa beside:herder-agent:conductor-line wait:800 draw dock:mupu*+support-mifa+|+[conductor-line*~] shot:dk2-split link:herder-agent:grill-confirm-lubo wait:800 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*~] click:pin:2 wait:300 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*] drag:154,42,1120,42 wait:300 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:tab draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-2 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:alt-left draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:max+mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-w wait:300 draw dock:mupu*+|+[support-mifa*] link:herder-agent:conductor-line wait:600 draw dock:mupu*+|+support-mifa+[conductor-line*~] click:close:2 wait:300 draw dock:mupu*+|+[support-mifa*] wait:600 quit" "$slack dock:[mupu*]+|+support-mifa* quit"
+    seen dock "state spaces.members" 2
+    seen dock "message to" 0
+    echo "check-dock: ok (alt-click opens beside, a preview replaces the group's and a double-click pins it, a real drag moves a tab across, tab keys step the focused group, alt-enter maximizes, cmd-w closes and unpins, a click on × closes a preview, a relaunch restores the dock)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.
