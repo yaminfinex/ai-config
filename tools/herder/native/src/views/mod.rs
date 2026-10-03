@@ -22,6 +22,7 @@ pub mod notes_list;
 pub mod panel;
 pub mod probe;
 pub mod space;
+pub mod tabs;
 #[cfg(test)]
 mod tests;
 pub mod theme;

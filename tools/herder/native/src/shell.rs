@@ -43,7 +43,8 @@ pub const APP_NAME: &str = "herder native";
 const APP_ID: &str = "dev.herder.native";
 /// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
-/// A dock edit (a drag, a divider, tab clicks) is written once it settles.
+/// Dock edits (a drag, a divider, tab clicks): the first opens a fixed window, and the latest layout is
+/// written when it ends (not a debounce that restarts on each edit).
 const LAYOUTS_COALESCE: Duration = Duration::from_millis(250);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
 

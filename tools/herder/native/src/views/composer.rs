@@ -85,8 +85,8 @@ pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     }
 }
 
-/// A composer key: `Focus` from the zoom, the rest from the box itself. A send from a preview tab pins
-/// it (DK2).
+/// A composer key: `Focus` from the zoom, the rest from the box itself. A send the store takes (`ready`)
+/// from a preview tab pins it (DK2); one it refuses writes nothing.
 pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
     let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
@@ -96,7 +96,10 @@ pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
             agent: agent.clone(),
             file_back,
         });
-        let mut out = dock::pin_tab(store, ui, &agent);
+        let mut out = match store.ready(&agent) {
+            true => dock::pin_tab(store, ui, &agent),
+            false => Vec::new(),
+        };
         out.push(send);
         out
     };

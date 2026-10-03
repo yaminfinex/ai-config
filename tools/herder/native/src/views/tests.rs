@@ -3184,11 +3184,23 @@ fn a_saved_dock_is_reconciled_with_the_members() {
         )),
         "y dropped: the tab before it shows"
     );
+    let mut marked = group(&["a", "gone", "p"], 2);
+    marked.children[2].info =
+        PanelInfo::panel(serde_json::json!({ "agent": "p", "preview": true }));
+    assert_eq!(
+        restore(&split(vec![marked], vec![0.]), &members),
+        Some(Tree::Split(
+            Axis::Horizontal,
+            vec![(tabs(&["a", "p"], 1), None)]
+        )),
+        "p was saved as the group's preview: gone (a member removed since) goes"
+    );
     assert_eq!(restore(&split(vec![], vec![]), &members), None);
     assert_eq!(restore(&tab("a"), &members), None, "not a tree of groups");
 }
 
 mod dock_events {
+    use crate::api::Member;
     use crate::store::spaces::{Layouts, Move};
     use crate::store::tests::{board, fleet_frame, loaded, space_of};
     use crate::store::{Event, Store};
@@ -3287,7 +3299,11 @@ mod dock_events {
                 }
             });
             *keep.borrow_mut() = Some(shell.clone());
-            gpui_kit::base::Root::new(shell, window, cx)
+            let dots = shell.read(cx).ui.dots.clone();
+            let frame = gpui_kit::AppContext::new(cx, |cx| {
+                crate::views::Frame::new(shell.into(), dots, cx)
+            });
+            gpui_kit::base::Root::new(frame, window, cx)
         });
         let shell = made.borrow_mut().take().unwrap();
         cx.simulate_resize(size(px(1400.), px(900.)));
@@ -3535,9 +3551,28 @@ mod dock_events {
         );
     }
 
-    /// A send from a preview pins it.
+    /// How many times `who` was pinned.
+    fn pins(shell: &Entity<Shell>, cx: &mut VisualTestContext, who: &str) -> usize {
+        shell.read_with(cx, |s, _| {
+            let pin = |m: &&Move| matches!(m, Move::Pin { agent, .. } if agent == who);
+            s.moves.iter().filter(pin).count()
+        })
+    }
+
+    /// `agent` loaded, so the store takes a send to it.
+    fn writable(shell: &Entity<Shell>, cx: &mut VisualTestContext, agent: &str) {
+        shell.update(cx, |s, _| {
+            let detail = include_str!("../../testdata/agents/mupu/detail.json");
+            let t = s.store.transcript.open.get_mut(agent).unwrap();
+            t.detail = Some(serde_json::from_str(detail).unwrap());
+            assert!(s.store.can_send(agent).is_ok());
+        });
+    }
+
+    /// A send the store takes from a preview pins it, once; one it refuses (nothing to send, the agent
+    /// not loaded) writes nothing.
     #[gpui_kit::test]
-    fn a_send_from_a_preview_pins_it(cx: &mut TestAppContext) {
+    fn a_send_from_a_preview_pins_it_and_a_refused_one_does_not(cx: &mut TestAppContext) {
         let (shell, cx) = open(cx);
         act(cx, OpenLink("herder-agent:mupu".into(), false));
         cx.update(|window, cx| {
@@ -3546,7 +3581,207 @@ mod dock_events {
             window.focus(&state, cx);
         });
         draw(cx);
+        shell.read_with(cx, |s, _| assert!(!s.store.ready("mupu")));
         act(cx, crate::views::composer::Compose::Send);
+        assert_eq!(
+            pins(&shell, cx, "mupu"),
+            0,
+            "a refused send wrote the members"
+        );
+        writable(&shell, cx, "mupu");
+        shell.update(cx, |s, _| {
+            s.store.prefs.drafts.insert("mupu".into(), "hello".into());
+        });
+        draw(cx);
+        shell.read_with(cx, |s, _| assert!(s.store.ready("mupu")));
+        act(cx, crate::views::composer::Compose::Send);
+        assert_eq!(pins(&shell, cx, "mupu"), 1);
         assert!(pinned(&shell, cx, "mupu"));
+    }
+
+    /// A quoted note's quick send (capture) from a preview pins it too, as web's does.
+    #[gpui_kit::test]
+    fn a_quick_send_from_a_preview_pins_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        writable(&shell, cx, "mupu");
+        shell.update(cx, |s, cx| {
+            let panel = s.ui.panels.get_mut("mupu").unwrap();
+            panel.capture.draft = Some(crate::views::capture::Draft {
+                agent: "mupu".into(),
+                quote: "a quote".into(),
+                at: point(px(50.), px(100.)),
+                open: true,
+            });
+            let send = crate::views::capture::Capture::Send;
+            let events = crate::views::capture::act(&s.store, &mut s.ui, &send);
+            let quick = |e: &Event| {
+                matches!(
+                    e,
+                    Event::Compose(crate::store::composer::Step::Quick { .. })
+                )
+            };
+            assert!(events.iter().any(quick));
+            for e in events {
+                s.dispatch(e, cx);
+            }
+        });
+        draw(cx);
+        assert_eq!(pins(&shell, cx, "mupu"), 1);
+        assert!(pinned(&shell, cx, "mupu"));
+    }
+
+    /// A click in the other group's strip (its □) maximizes that group, and the zoom moves to its tab.
+    #[gpui_kit::test]
+    fn the_other_groups_maximize_holds(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        click(cx, 681., 42.);
+        let now = dock(&shell, cx);
+        assert!(now.starts_with("max "), "maximize undone: {now}");
+        assert_eq!(told(&shell, cx), (Some(SPACE[1].into()), vec![]));
+    }
+
+    /// The space's members as another device left them.
+    fn remote(
+        shell: &Entity<Shell>,
+        cx: &mut VisualTestContext,
+        edit: impl FnOnce(&mut Vec<Member>),
+    ) {
+        shell.update(cx, |s, cx| {
+            let id = s.ui.zoom.as_ref().unwrap().space.clone();
+            let space = s.store.spaces.iter_mut().find(|sp| sp.id == id).unwrap();
+            edit(&mut space.members);
+            cx.notify();
+        });
+        draw(cx);
+    }
+
+    fn without(name: &'static str) -> impl FnOnce(&mut Vec<Member>) {
+        move |m| m.retain(|m| !matches!(m, Member::Agent { name: n } if n == name))
+    }
+
+    /// A member another device removes stays open as a preview, unless its group has one: then its tab
+    /// closes, and the group keeps the preview it had (saved marked as such, for a relaunch). Nothing is
+    /// written back.
+    #[gpui_kit::test]
+    fn a_member_removed_elsewhere_leaves_one_preview_in_its_group(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        remote(&shell, cx, without(SPACE[2]));
+        let now = format!("{} [{}*] {}~", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(
+            dock(&shell, cx),
+            now,
+            "no preview there: it becomes the group's"
+        );
+        remote(&shell, cx, without(SPACE[0]));
+        let now = format!("[{}*] {}~", SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), now, "the group has a preview: it closes");
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        let now = format!("{} [mupu*~]", SPACE[1]);
+        assert_eq!(dock(&shell, cx), now, "the next preview replaces that one");
+        shell.read_with(cx, |s, _| {
+            let saved = serde_json::to_string(&s.store.layouts).unwrap();
+            assert!(
+                saved.contains(r#"{"agent":"mupu","preview":true}"#),
+                "{saved}"
+            );
+        });
+        remote(&shell, cx, without(SPACE[1]));
+        assert_eq!(
+            dock(&shell, cx),
+            "[mupu*~]",
+            "the zoom's own tab closes too"
+        );
+        assert_eq!(told(&shell, cx).0.as_deref(), Some("mupu"));
+        shell.read_with(cx, |s, _| {
+            assert!(s.moves.iter().all(|m| matches!(m, Move::View { .. })))
+        });
+    }
+
+    /// A member another device adds to a dock with no tab left opens there, the zoom's and focused.
+    #[gpui_kit::test]
+    fn a_member_added_to_an_empty_dock_is_focused(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        for _ in 0..3 {
+            act(cx, dock::Close(None));
+        }
+        assert!(told(&shell, cx).0.is_none());
+        remote(&shell, cx, |m| {
+            m.push(Member::Agent {
+                name: "mupu".into(),
+            })
+        });
+        assert_eq!(told(&shell, cx), (Some("mupu".into()), vec![]));
+        shell.read_with(cx, |s, _| assert_eq!(s.ui.zoomed_agent(), Some("mupu")));
+        cx.update(|window, cx| {
+            let focus = shell.read(cx).ui.panels["mupu"].focus.clone();
+            assert!(
+                focus.contains_focused(window, cx),
+                "the tab keys need it focused"
+            );
+        });
+    }
+
+    /// A tab dropped in its own group (moved there) is the zoom's and takes focus, as one dropped in
+    /// another group does.
+    #[gpui_kit::test]
+    fn a_tab_moved_in_its_group_takes_focus(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        cx.update(|window, cx| {
+            let area = shell.read(cx).ui.dock.as_ref().unwrap().area.clone();
+            let id = shell.read(cx).ui.panels[SPACE[0]].id;
+            let tree = area.read(cx).layout(DockPlacement::Center).unwrap();
+            let node = tree.find_panel_node(id).unwrap();
+            let ix = Some(2);
+            let to = InsertTarget::Tabs {
+                node,
+                ix,
+                activate: true,
+            };
+            area.update(cx, |a, cx| a.move_panel(id, to, window, cx));
+        });
+        draw(cx);
+        assert_eq!(told(&shell, cx).0.as_deref(), Some(SPACE[0]));
+        let now = format!("{} {} [{}*] | mupu*~", SPACE[1], SPACE[2], SPACE[0]);
+        assert_eq!(dock(&shell, cx), now);
+    }
+
+    /// The same by a real drag: the left group's first tab dragged onto its strip's empty end.
+    #[gpui_kit::test]
+    fn a_tab_dragged_in_its_group_takes_focus(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        let left = gpui_kit::MouseButton::Left;
+        cx.simulate_mouse_down(point(px(80.), px(42.)), left, Modifiers::none());
+        cx.simulate_mouse_move(point(px(100.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_move(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_up(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        assert_eq!(
+            told(&shell, cx).0.as_deref(),
+            Some(SPACE[0]),
+            "{}",
+            dock(&shell, cx)
+        );
+        let now = format!("{} {} [{}*] | mupu*~", SPACE[1], SPACE[2], SPACE[0]);
+        assert_eq!(dock(&shell, cx), now);
+    }
+
+    /// A key right after focus moved into another group, before a frame, acts on that group.
+    #[gpui_kit::test]
+    fn a_key_after_a_focus_move_acts_on_the_new_group(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        cx.update(|window, cx| {
+            let focus = shell.read(cx).ui.panels[SPACE[1]].focus.clone();
+            window.focus(&focus, cx);
+        });
+        cx.dispatch_action(space::Zoomed::Agent(1));
+        draw(cx);
+        assert_eq!(told(&shell, cx).0.as_deref(), Some(SPACE[2]));
     }
 }

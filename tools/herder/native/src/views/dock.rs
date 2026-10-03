@@ -2,32 +2,31 @@
 //! by side or stacked, on the kit's dock (`DockArea`: groups, splits, drag and drop, resize, maximize).
 //! A space's members are its pinned tabs; a tab of an agent that is not a member is a preview (italic,
 //! a hollow dot), at most one in a group, replaced by the next one opened there and pinned (made a
-//! member) by a double-click, a send, or a drag to another group. Closing a pinned tab removes the
-//! member, as web's does.
+//! member) by a double-click, a send the store takes, or a drag to another group. Closing a pinned tab
+//! removes the member, as web's does. A member removed on another device stays as a preview, or closes
+//! if its group has one (`leave`).
 //!
-//! The zoom's agent is the focused panel's: focus moving into a panel moves it (`focused`), and an
-//! action that names another agent opens or shows its tab and focuses it (`sync`). The store is told
+//! The zoom's agent is the focused panel's: focus moving into a panel moves it (`follow`, read at each
+//! sync: after every action and whenever the shell renders, not on a timer), and an action that names
+//! another agent opens or shows its tab and focuses it (`sync`). "Beside" is the first other group in
+//! the layout, not the nearest one on screen (a declared limitation). The store is told
 //! what is on screen, the focused agent and each other group's shown tab (`Move::View`), whenever that
-//! changes. The tab strip is drawn here to web's measurements (`Strip`); the rest of the dock's look is
-//! the kit's.
+//! changes. The tab strip is drawn to web's measurements (`tabs`); the rest of the dock's look is the
+//! kit's.
 //!
-//! Each space's dock is kept as laid out (`Event::Layout` on every change, written to `layouts.json` once
-//! it settles) and opened that way on the next zoom in, reconciled with the members (`restore`); a dock
+//! Each space's dock is kept as laid out (`Event::Layout` on every change; `layouts.json` is written at
+//! most every 250 ms, the latest dump at the end of a fixed window opened by the first change) and opened that way on the next zoom in, reconciled with the members (`restore`); a dock
 //! that cannot be restored opens on the members in one group. Maximize is not kept.
 
 use crate::store::spaces::{Move, Space};
 use crate::store::{Event, Store};
 use crate::views::lens::Ui;
 use crate::views::panel::{AgentPanel, Panel};
-use crate::views::space::{Anim, Tab, Zoom};
-use crate::views::theme::{MONO_T, TypeScale, pal, type_scale};
-use crate::views::{Host, pill};
-use gpui_kit::base::ResizeHandleContext;
+use crate::views::space::{Anim, Zoom};
+use crate::views::{Host, tabs};
 use gpui_kit::component::Placement;
 use gpui_kit::component::dock::*;
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -69,8 +68,9 @@ pub struct Dock {
     pub(super) area: Entity<DockArea>,
     /// The members as last synced: one that joins since (another device) opens as a tab.
     members: Vec<String>,
-    /// Each tab's group as last synced: a tab found in another was dragged there.
-    groups: HashMap<PanelId, NodeId>,
+    /// Each group's tabs as last synced: a tab found in another group was dragged there; a group with
+    /// the same tabs in another order had one dropped in it, the one it shows (a drop shows it).
+    groups: Vec<(NodeId, Vec<PanelId>)>,
     /// The group focus was last in, where a tab opens.
     group: Option<NodeId>,
     /// The agent whose panel held focus at the last sync: focus found in another since moved there (a
@@ -111,14 +111,14 @@ impl Dock {
     }
 }
 
-fn agent_of(ui: &Ui, id: PanelId) -> Option<&str> {
+pub(super) fn agent_of(ui: &Ui, id: PanelId) -> Option<&str> {
     ui.panels
         .iter()
         .find(|(_, p)| p.id == id)
         .map(|(a, _)| a.as_str())
 }
 
-fn members(store: &Store, space: &str) -> Vec<String> {
+pub(super) fn members(store: &Store, space: &str) -> Vec<String> {
     let space = store.spaces.iter().find(|s| s.id == space);
     space
         .into_iter()
@@ -164,21 +164,27 @@ pub fn sync<H: Host>(
     if live {
         follow(ui, window, cx);
         join(ui, store, window, cx);
+        leave(ui, store, window, cx);
         show(ui, beside, window, cx);
     }
     let Some(dock) = ui.dock.as_mut() else {
         return Vec::new();
     };
     let shown = dock.shown(cx);
-    // A group maximized over the zoom's agent's: the zoom moves to what shows.
+    // A group maximized over the zoom's agent's, or a tab in a dock that had none (a member added on
+    // another device): the zoom moves to what shows, and focus with it from an empty dock.
     let on = |a: &str| ui.panels.get(a).is_some_and(|p| shown.contains(&p.id));
-    if live && !ui.zoomed_agent().is_none_or(on) {
+    if live && !ui.zoomed_agent().is_some_and(on) {
         let first = shown
             .first()
             .and_then(|id| agent_of(ui, *id))
             .map(String::from);
+        let gained = ui.zoomed_agent().is_none();
         if let (Some(first), Some(zoom)) = (first, ui.zoom.as_mut()) {
             zoom.agent = Some(first);
+            if gained {
+                window.focus(ui.focus_target(), cx);
+            }
         }
     }
     let Some(dock) = ui.dock.as_mut() else {
@@ -186,11 +192,11 @@ pub fn sync<H: Host>(
     };
     let tabs = dock.tabs(cx);
     dock.groups = tabs
-        .iter()
-        .flat_map(|(node, panels, _)| panels.iter().map(|p| (*p, *node)))
+        .into_iter()
+        .map(|(node, panels, _)| (node, panels))
         .collect();
     dock.members = members(store, &zoom.space);
-    let held: Vec<PanelId> = dock.groups.keys().copied().collect();
+    let held: Vec<PanelId> = dock.groups.iter().flat_map(|g| g.1.clone()).collect();
     drop_panels(ui, window, cx, |p| held.contains(&p.id));
     let mut strand = false;
     let focused = window.focused(cx);
@@ -282,7 +288,7 @@ fn open<H: Host>(
 ) -> Dock {
     let host = cx.entity().downgrade();
     let area = cx.new(|cx| {
-        let skin = Rc::new(Skin {
+        let skin = Rc::new(tabs::Skin {
             kit: DockSkin::new(cx),
             host,
         });
@@ -319,7 +325,7 @@ fn open<H: Host>(
         space: zoom.space.clone(),
         area,
         members: members(store, &zoom.space),
-        groups: HashMap::new(),
+        groups: Vec::new(),
         group: None,
         held: None,
         told: None,
@@ -335,7 +341,8 @@ pub(super) enum Tree {
 }
 
 /// A space's saved dock (the kit's dump of its tree) as it can open now: each member once, where it
-/// was; in each group at most one preview (an agent not a member), the first; the members not in it
+/// was; in each group at most one preview (an agent not a member), the one saved as its preview (`mark`)
+/// else the first (a member removed while the app was closed shows as one); the members not in it
 /// added to its first group; empty groups and splits gone. `None` when nothing is left, or the dump is
 /// not a tree of agent tabs.
 pub(super) fn restore(saved: &PanelState, members: &[String]) -> Option<Tree> {
@@ -362,19 +369,34 @@ fn reconcile(state: &PanelState, members: &[String], placed: &mut Vec<String>) -
             (!children.is_empty()).then_some(Tree::Split(axis, children))
         }
         PanelInfo::Tabs { active_index } => {
-            let (mut agents, mut active, mut preview) = (Vec::new(), 0, false);
+            fn agent(tab: &PanelState) -> Option<&str> {
+                match &tab.info {
+                    PanelInfo::Panel(info) => info.get("agent").and_then(|a| a.as_str()),
+                    _ => None,
+                }
+            }
+            let marked = |tab: &&PanelState| match &tab.info {
+                PanelInfo::Panel(info) => info.get("preview") == Some(&true.into()),
+                _ => false,
+            };
+            let outside = state.children.iter().filter(|t| {
+                agent(t).is_some_and(|a| {
+                    !members.iter().any(|m| m == a) && !placed.iter().any(|p| p == a)
+                })
+            });
+            let preview = outside.clone().find(marked).or(outside.clone().next());
+            let preview = preview.and_then(agent).map(String::from);
+            let (mut agents, mut active) = (Vec::new(), 0);
             for (i, tab) in state.children.iter().enumerate() {
-                let PanelInfo::Panel(info) = &tab.info else {
-                    continue;
-                };
-                let Some(agent) = info.get("agent").and_then(|a| a.as_str()) else {
+                let Some(agent) = agent(tab) else {
                     continue;
                 };
                 let member = members.iter().any(|m| m == agent);
-                if placed.iter().any(|p| p == agent) || (!member && preview) {
+                if placed.iter().any(|p| p == agent)
+                    || (!member && preview.as_deref() != Some(agent))
+                {
                     continue;
                 }
-                preview |= !member;
                 if i <= *active_index {
                     active = agents.len();
                 }
@@ -564,6 +586,42 @@ fn join<H: Host>(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut Conte
     }
 }
 
+/// A member removed since the last sync (another device) stays open as a preview, unless its group has
+/// one: then its tab closes, so a group keeps at most one preview, the one it had.
+fn leave<H: Host>(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut Context<H>) {
+    let Some(dock) = ui.dock.as_ref() else {
+        return;
+    };
+    let now = members(store, &dock.space);
+    let gone: Vec<String> = dock
+        .members
+        .iter()
+        .filter(|m| !now.contains(m))
+        .cloned()
+        .collect();
+    for agent in gone {
+        let (Some(dock), Some(id)) = (ui.dock.as_ref(), ui.panels.get(&agent).map(|p| p.id)) else {
+            continue;
+        };
+        let tabs = dock.tabs(cx);
+        let Some((_, panels, _)) = tabs.iter().find(|t| t.1.contains(&id)) else {
+            continue;
+        };
+        let others = panels.iter().filter(|p| **p != id);
+        let preview = others
+            .filter_map(|p| agent_of(ui, *p))
+            .any(|a| !now.iter().any(|m| m == a));
+        if !preview {
+            continue;
+        }
+        let zoomed = ui.zoomed_agent() == Some(agent.as_str());
+        close(ui, &agent, window, cx);
+        if zoomed {
+            window.focus(ui.focus_target(), cx);
+        }
+    }
+}
+
 /// Close `agent`'s tab. Closing the zoom's moves it to the tab now shown in that group, else any.
 fn close<H: Host>(ui: &mut Ui, agent: &str, window: &mut Window, cx: &mut Context<H>) {
     let (Some(dock), Some(p)) = (ui.dock.as_ref(), ui.panels.get(agent)) else {
@@ -659,18 +717,30 @@ fn tell(ui: &mut Ui, space: &str, cx: &App) -> Vec<Event> {
 }
 
 /// The layout changed (a tab dragged, a split resized, a group closed): a preview dragged to another
-/// group is pinned, and a tab dragged anywhere is the zoom's and takes focus.
+/// group is pinned, and a tab dropped anywhere, its own group too, is the zoom's and takes focus.
 fn changed<H: Host>(h: &mut H, window: &mut Window, cx: &mut Context<H>) {
     let (store, ui) = h.parts();
     let Some(dock) = ui.dock.as_ref() else {
         return;
     };
-    let moved: Vec<PanelId> = dock
-        .tabs(cx)
+    let tabs = dock.tabs(cx);
+    let was = |p: &PanelId| dock.groups.iter().find(|g| g.1.contains(p)).map(|g| g.0);
+    let moved: Vec<PanelId> = tabs
         .iter()
         .flat_map(|(node, panels, _)| panels.iter().map(move |p| (*p, *node)))
-        .filter(|(p, node)| dock.groups.get(p).is_some_and(|was| was != node))
+        .filter(|(p, node)| was(p).is_some_and(|was| was != *node))
         .map(|(p, _)| p)
+        .collect();
+    let reordered = tabs.iter().filter(|(node, panels, _)| {
+        let same = |old: &Vec<PanelId>| {
+            old.len() == panels.len() && panels.iter().all(|p| old.contains(p))
+        };
+        dock.groups
+            .iter()
+            .any(|(n, old)| n == node && old != panels && same(old))
+    });
+    let reordered: Vec<PanelId> = reordered
+        .filter_map(|(_, p, ix)| p.get(*ix).copied())
         .collect();
     let space = dock.space.clone();
     let mut events = Vec::new();
@@ -683,8 +753,12 @@ fn changed<H: Host>(h: &mut H, window: &mut Window, cx: &mut Context<H>) {
             events.push(pin(&space, &agent));
         }
     }
-    if let [id] = moved.as_slice()
-        && let Some(agent) = agent_of(ui, *id).map(String::from)
+    let dropped = match (moved.as_slice(), reordered.as_slice()) {
+        ([id], _) | ([], [id]) => Some(*id),
+        _ => None,
+    };
+    if let Some(id) = dropped
+        && let Some(agent) = agent_of(ui, id).map(String::from)
         && let Some(zoom) = ui.zoom.as_mut()
     {
         zoom.agent = Some(agent);
@@ -695,17 +769,35 @@ fn changed<H: Host>(h: &mut H, window: &mut Window, cx: &mut Context<H>) {
         .dock
         .as_ref()
         .filter(|d| d.space == space && !space.is_empty());
-    let dump = dump.map(|d| d.area.read(cx).dump(cx).center);
+    let mut dump = dump.map(|d| d.area.read(cx).dump(cx).center);
+    if let Some(dump) = dump.as_mut() {
+        mark(dump, &members);
+    }
     if let Some(dock) = dump.and_then(|d| serde_json::to_value(d).ok()) {
         events.push(Event::Layout { space, dock });
     }
-    if !moved.is_empty() && !ui.focus_target().is_focused(window) {
+    if dropped.is_some() && !ui.focus_target().is_focused(window) {
         window.focus(&ui.focus_target().clone(), cx);
     }
     for e in events {
         h.dispatch(e, cx);
     }
     cx.notify();
+}
+
+/// Each tab of an agent not a member marked a preview in `state` (the kit's dump), so a restore keeps
+/// it over a member removed since, which shows as one too (`restore`).
+fn mark(state: &mut PanelState, members: &[String]) {
+    if let PanelInfo::Panel(info) = &mut state.info
+        && let Some(agent) = info.get("agent").and_then(|a| a.as_str())
+        && !members.iter().any(|m| m == agent)
+        && let Some(info) = info.as_object_mut()
+    {
+        info.insert("preview".into(), true.into());
+    }
+    for c in &mut state.children {
+        mark(c, members);
+    }
 }
 
 /// The event that makes `agent` a member of `space` (a preview pinned).
@@ -752,352 +844,6 @@ pub(super) fn empty(ui: &Ui, cx: &App) -> bool {
     ui.dock
         .as_ref()
         .is_none_or(|d| d.tabs(cx).iter().all(|t| t.1.is_empty()))
-}
-
-/// The dock's look: the kit's, but for the tab strip (`Strip`).
-struct Skin<H> {
-    kit: Rc<DockSkin>,
-    host: WeakEntity<H>,
-}
-
-impl<H: Host> DockAreaRenderer for Skin<H> {
-    fn render_split_handle(
-        &self,
-        handle: &ResizeHandleContext,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        self.kit.render_split_handle(handle, window, cx)
-    }
-
-    fn split_frame(
-        &self,
-        node: NodeId,
-        axis: Axis,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Stateful<Div> {
-        self.kit
-            .split_frame(node, axis, window, cx)
-            .bg(rgb(pal::RULE))
-    }
-
-    fn build_placeholder(
-        &self,
-        state: &PanelState,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<Arc<dyn BasePanelView>> {
-        self.kit.build_placeholder(state, window, cx)
-    }
-
-    fn tab_group_renderer(&self) -> Rc<dyn TabGroupRenderer> {
-        Rc::new(Strip {
-            host: self.host.clone(),
-        })
-    }
-}
-
-/// A group's tab strip, web's (`.dv-tabs-and-actions-container`, measured): 32 tall on the panel colour
-/// under a 1px rule; each tab mono 12, divided by a rule, the shown one on the ground under a 2px blue
-/// line, the focused group's in ink and the rest dim; a preview italic after a hollow dot; the status
-/// dot, the tool, needs-you, and ×; the group's □ (maximize) at the right.
-struct Strip<H> {
-    host: WeakEntity<H>,
-}
-
-impl<H: Host> TabGroupRenderer for Strip<H> {
-    fn frame(&self, _: &TabGroupContext, _: &mut Window, _: &mut App) -> Stateful<Div> {
-        div().id("tab-group").bg(rgb(pal::GROUND))
-    }
-
-    fn render_tab_bar(&self, group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
-        let Some(host) = self.host.upgrade() else {
-            return div().into_any_element();
-        };
-        let (store, ui) = host.read(cx).view();
-        let t = type_scale(store.prefs.text_scale);
-        let space = ui
-            .zoom
-            .as_ref()
-            .or(ui.anim.as_ref().and_then(Anim::leaving));
-        let members = space.map(|z| members(store, &z.space)).unwrap_or_default();
-        let focused = ui.zoomed_agent();
-        let shown = group.active_panel().map(|p| p.panel_id(cx));
-        let ids: Vec<PanelId> = group.panels().iter().map(|p| p.panel_id(cx)).collect();
-        let here = ids
-            .iter()
-            .any(|id| agent_of(ui, *id) == focused && focused.is_some());
-        let tabs: Vec<AnyElement> = ids
-            .iter()
-            .enumerate()
-            .filter_map(|(ix, id)| {
-                let agent = agent_of(ui, *id)?.to_string();
-                let state = TabState {
-                    shown: Some(*id) == shown,
-                    lit: here && Some(*id) == shown,
-                    preview: !members.contains(&agent),
-                };
-                Some(tab(store, &agent, ix, state, group, t, cx))
-            })
-            .collect();
-        let (droppable, node, count) = (group.is_droppable(), group.node(), ids.len());
-        let rest = div()
-            .id("tab-rest")
-            .h_full()
-            .flex_1()
-            .min_w(t.css(32.))
-            .when(droppable, |el| {
-                let g = group.clone();
-                el.drag_over::<DragPanel>(|el, _, _, _| el.bg(rgb(pal::SELECT)))
-                    .on_drop(move |d: &DragPanel, window, cx| {
-                        let ix = (d.source() == node).then(|| count.saturating_sub(1));
-                        g.drop_panel(d.clone(), ix, false, window, cx);
-                    })
-            });
-        let max = div()
-            .id("tab-max")
-            .flex_none()
-            .h_full()
-            .px(t.css(9.))
-            .flex()
-            .items_center()
-            .cursor_pointer()
-            .hover(|s| s.bg(rgb(pal::WASH)))
-            .on_click({
-                let g = group.clone();
-                move |_, window, cx| g.toggle_zoom(window, cx)
-            })
-            .child(
-                div()
-                    .size(t.css(11.))
-                    .border_1()
-                    .rounded(t.css(1.5))
-                    .border_color(rgb(pal::SLATE)),
-            );
-        div()
-            .id("tab-strip")
-            .flex_none()
-            .overflow_hidden()
-            .flex()
-            .h(t.css(32.))
-            .bg(rgb(pal::PANEL))
-            .border_b_1()
-            .border_color(rgb(pal::RULE))
-            .font_family(MONO_T)
-            .text_size(t.css(12.))
-            .children(tabs)
-            .child(rest)
-            .child(max)
-            .into_any_element()
-    }
-
-    fn render_active_panel(
-        &self,
-        panel: AnyView,
-        _: &TabGroupContext,
-        _: &mut Window,
-        _: &mut App,
-    ) -> AnyElement {
-        let style = StyleRefinement::default().size_full();
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .child(panel.cached(style))
-            .into_any_element()
-    }
-
-    fn render_drop_indicator(
-        &self,
-        indicator: DropIndicator,
-        _: &mut Window,
-        _: &mut App,
-    ) -> Option<AnyElement> {
-        let to = indicator.to();
-        let el = div().absolute().left(to.origin().x).top(to.origin().y);
-        let el = el
-            .w(to.size().width)
-            .h(to.size().height)
-            .bg(rgba(0x31406B99));
-        Some(
-            el.border_2()
-                .border_color(rgb(pal::BLUE))
-                .into_any_element(),
-        )
-    }
-}
-
-#[derive(Clone, Copy)]
-struct TabState {
-    shown: bool,
-    /// Shown in the focused group.
-    lit: bool,
-    preview: bool,
-}
-
-/// One tab (web's `.herder-dock-tab`): a click shows it, a double-click pins it, a middle-click or its
-/// × closes it; it drags to another place in the dock.
-fn tab(
-    store: &Store,
-    agent: &str,
-    ix: usize,
-    s: TabState,
-    group: &TabGroupContext,
-    t: TypeScale,
-    cx: &App,
-) -> AnyElement {
-    let name = SharedString::from(agent.to_string());
-    let a = store.fleet.agents.get(agent);
-    let bus = a.map_or("", |a| a.bus_status.as_str());
-    let tool: &str = match a.map(|a| a.tool.as_str()).unwrap_or("") {
-        "claude" => "✱",
-        "codex" => "⬡",
-        "" | "-" => "",
-        other => &other[..other.len().min(2)],
-    };
-    let dot = || div().flex_none().size(t.css(7.)).rounded_full();
-    let ring = s
-        .preview
-        .then(|| dot().border_1().border_color(rgb(pal::BLUE)));
-    let title = div()
-        .overflow_hidden()
-        .text_ellipsis()
-        .whitespace_nowrap()
-        .child(name.clone());
-    let title = title.when(s.preview, |el| el.italic().text_color(rgb(pal::SLATE)));
-    let label = div()
-        .flex()
-        .min_w_0()
-        .items_center()
-        .gap(t.css(5.))
-        .children(ring)
-        .child(title);
-    let meta = div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(t.css(4.))
-        .text_color(rgb(pal::SLATE));
-    let meta = meta.child(dot().bg(rgb(dot_color(bus))));
-    let meta = meta.when(!tool.is_empty(), |el| {
-        el.child(div().text_size(t.css(10.)).child(tool.to_string()))
-    });
-    let meta = meta.when(store.agent_needs_you(agent), |el| el.child(pill(1, t)));
-    let close = {
-        let name = name.clone();
-        div()
-            .id(SharedString::from(format!("tab-close-{agent}")))
-            .flex_none()
-            .h_full()
-            .w(t.css(25.))
-            .ml_auto()
-            .flex()
-            .items_center()
-            .justify_center()
-            .pr(t.css(7.))
-            .pb(px(1.))
-            .text_size(t.css(15.))
-            .text_color(rgb(pal::SLATE))
-            .hover(|s| s.bg(rgb(pal::WASH)).text_color(rgb(pal::INK)))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(move |_, window, cx| {
-                cx.stop_propagation();
-                window.dispatch_action(Box::new(Close(Some(name.clone()))), cx);
-            })
-            .child("×")
-    };
-    let (pick, pinned, gone) = (
-        Tab(name.clone()),
-        Pin(name.clone()),
-        Close(Some(name.clone())),
-    );
-    let drag = group.drag_panel(ix, cx).filter(|_| group.is_draggable());
-    let g = group.clone();
-    div()
-        .id(SharedString::from(format!("tab-{agent}")))
-        .relative()
-        .min_w(t.css(48.))
-        .max_w(t.css(220.))
-        .h_full()
-        .flex()
-        .items_center()
-        .gap(t.css(8.))
-        .pl(t.css(11.))
-        .border_r_1()
-        .border_color(rgb(pal::RULE))
-        .bg(rgb(if s.shown { pal::GROUND } else { pal::PANEL }))
-        .text_color(rgb(if s.lit { pal::INK } else { pal::SLATE }))
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(move |e, window, cx| match e.click_count() {
-            2 => window.dispatch_action(pinned.boxed_clone(), cx),
-            _ => window.dispatch_action(pick.boxed_clone(), cx),
-        })
-        .on_aux_click(move |e, window, cx| {
-            if e.is_middle_click() {
-                cx.stop_propagation();
-                window.dispatch_action(gone.boxed_clone(), cx);
-            }
-        })
-        .when_some(drag, |el, drag| {
-            let name = name.clone();
-            el.on_drag(drag, move |d, offset, _, cx| {
-                d.set_drag_offset(offset);
-                let name = name.clone();
-                cx.new(|_| Dragged(name))
-            })
-        })
-        .when(group.is_droppable(), |el| {
-            el.drag_over::<DragPanel>(|el, _, _, _| el.border_l_2().border_color(rgb(pal::BLUE)))
-                .on_drop(move |d: &DragPanel, window, cx| {
-                    g.drop_panel(d.clone(), Some(ix), true, window, cx)
-                })
-        })
-        .when(s.shown, |el| {
-            el.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(2.))
-                    .bg(rgb(pal::BLUE)),
-            )
-        })
-        .child(label)
-        .child(meta)
-        .child(close)
-        .into_any_element()
-}
-
-fn dot_color(bus: &str) -> u32 {
-    match bus {
-        "active" => pal::BLUE,
-        "listening" => pal::OPERATOR,
-        "blocked" => pal::RED,
-        "retired" => pal::QUEUE_TITLE,
-        _ => 0x565A66,
-    }
-}
-
-/// A tab being dragged.
-struct Dragged(SharedString);
-
-impl Render for Dragged {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .px(px(11.))
-            .py(px(6.))
-            .bg(rgb(pal::GROUND))
-            .border_1()
-            .border_color(rgb(pal::EDGE))
-            .text_color(rgb(pal::INK))
-            .font_family(MONO_T)
-            .text_size(px(12.))
-            .opacity(0.85)
-            .child(self.0.clone())
-    }
 }
 
 /// The tabs, group by group as laid out, for the harness (`probe`).
