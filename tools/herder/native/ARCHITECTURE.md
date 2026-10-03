@@ -172,8 +172,10 @@ Derived shapes are in `store`:
     `Choices{query, line, candidates, total}`, and `Step::Choose{pick}` opens one or closes them. Nothing
     matching says so, and that some roots were not fully searched. Web opens only the single strong match:
     the agent's own root is native's rule (the brief). The serve ranks the agent's canonical root first
-    within a tier; the cwd here is lexical, so through a symlink the two differ and the choices are
-    offered (a declared limit: the serve does not say which root is the agent's). Each resolve is
+    within a tier; the cwd here is lexical, so through a symlink the two differ. A match in the serve's
+    agent root ranks first and the choices are offered; but a symlinked cwd whose lexical parent is also
+    a live root may auto-open that lexical parent repo when it alone holds a strong match (an accepted
+    limit: the serve does not say which root is the agent's). Each resolve is
     numbered (`What::Resolve{id}`) and only the transcript's latest unanswered one is taken: an older
     click's answer, or one after the choices were answered or closed, is dropped (web's `AbortController`).
 - **`cards::Cards`** (F4) — each focus and watch card's visible agent's last assistant answer, cleaned as

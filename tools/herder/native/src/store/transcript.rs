@@ -711,8 +711,9 @@ const FUZZY_SCORE_PER_CHAR: i64 = 20;
 /// under the agent's own root (the git top level holding its `cwd`); so does the only strong one when
 /// every root answered completely. Anything else left is a choice; nothing left, a notice. The serve
 /// ranks the agent's canonical root first within a tier, so the two agree unless the cwd runs through
-/// a symlink: then the lexical root here is not the serve's, and the choices are offered (a declared
-/// limit: the serve does not say which root is the agent's).
+/// a symlink: then the lexical root here is not the serve's. Where the serve's agent root holds a match
+/// it ranks first and the choices are offered; where only the lexical parent, also a live root, holds
+/// one, that repo opens (an accepted limit: the serve does not say which root is the agent's).
 fn pick<'a>(r: &'a Resolved, query: &str, cwd: Option<&str>) -> Pick<'a> {
     let Some(top) = r.candidates.first() else {
         return Pick::Nothing;
