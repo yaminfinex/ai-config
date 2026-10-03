@@ -113,6 +113,13 @@ pub enum StreamEvent {
 #[derive(Clone, Debug)]
 pub enum Event {
     PrefsLoaded(Prefs),
+    /// `layouts.json`, read at boot: kept only when written by this version (`spaces::LAYOUTS`).
+    LayoutsLoaded(spaces::Layouts),
+    /// A space's dock as it now stands (DK2), the kit's dump of its tree; saved, never sent.
+    Layout {
+        space: String,
+        dock: serde_json::Value,
+    },
     /// The disk snapshot. Refused once anything live has arrived.
     Snapshot(Snapshot),
     OutboxLoaded(Outbox),
@@ -165,6 +172,7 @@ pub enum Fetch {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Persist {
     Prefs,
+    Layouts,
     Outbox,
     Snapshot,
 }
@@ -254,6 +262,8 @@ pub struct Store {
     pub server_updated: bool,
     pub viewer: Attribution,
     pub prefs: Prefs,
+    /// Each space's dock as last left (`layouts.json`), rebuilt on zooming in (`views::dock`).
+    pub layouts: spaces::Layouts,
     pub fleet: fleet::Fleet,
     pub spaces: Vec<spaces::Space>,
     pub notes: Vec<notes::Note>,
@@ -285,6 +295,16 @@ impl Store {
             Event::PrefsLoaded(p) => {
                 self.prefs = p;
                 self.recover(&mut out);
+            }
+            Event::LayoutsLoaded(l) if l.version == spaces::LAYOUTS => self.layouts = l,
+            Event::LayoutsLoaded(l) => {
+                eprintln!("local: ignoring layouts.json version {}", l.version)
+            }
+            Event::Layout { space, dock } => {
+                if self.layouts.spaces.get(&space) != Some(&dock) {
+                    self.layouts.spaces.insert(space, dock);
+                    out.push(Effect::Persist(Persist::Layouts));
+                }
             }
             Event::Snapshot(snap) => {
                 if !self.live {

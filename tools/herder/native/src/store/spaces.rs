@@ -31,6 +31,28 @@ impl Space {
     }
 }
 
+/// The version `layouts.json` is written as; a file of another is ignored and each dock opens on its
+/// members. The kit's own `load` never checks its version, so this is ours.
+pub const LAYOUTS: u32 = 1;
+
+/// Each space's dock as the owner left it, local to this Mac (`layouts.json`): the kit's dump of the
+/// dock's tree (splits, groups, tabs by agent), reconciled with the members when rebuilt. Maximize is
+/// not kept.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Layouts {
+    pub version: u32,
+    pub spaces: BTreeMap<String, serde_json::Value>,
+}
+
+impl Default for Layouts {
+    fn default() -> Self {
+        Layouts {
+            version: LAYOUTS,
+            spaces: BTreeMap::new(),
+        }
+    }
+}
+
 /// Which lens row a space sits in; the owner's choice. A space never placed sits in `Watch`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

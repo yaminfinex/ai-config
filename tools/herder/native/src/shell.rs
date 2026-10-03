@@ -43,6 +43,8 @@ pub const APP_NAME: &str = "herder native";
 const APP_ID: &str = "dev.herder.native";
 /// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
+/// A dock edit (a drag, a divider, tab clicks) is written once it settles.
+const LAYOUTS_COALESCE: Duration = Duration::from_millis(250);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
 
 pub struct Shell {
@@ -63,6 +65,9 @@ impl Shell {
         let (mut store, disk) = (Store::default(), Disk::home());
         if let Some(prefs) = disk.load_prefs() {
             store.apply(Event::PrefsLoaded(prefs));
+        }
+        if let Some(layouts) = disk.load_layouts() {
+            store.apply(Event::LayoutsLoaded(layouts));
         }
         // Local state first, synchronously: nothing live has started yet, so nothing can be overwritten.
         if let Some(snapshot) = disk.load_snapshot() {
@@ -267,6 +272,7 @@ impl Shell {
     fn bytes(&self, file: Persist) -> (&'static str, Vec<u8>, u64) {
         let (name, bytes) = match file {
             Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
+            Persist::Layouts => (local::LAYOUTS, local::encode(&self.store.layouts)),
             Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
             Persist::Snapshot => (local::SNAPSHOT, local::encode(&self.store.snapshot())),
         };
@@ -281,6 +287,7 @@ impl Shell {
         }
         let delay = match file {
             Persist::Prefs => PREFS_COALESCE,
+            Persist::Layouts => LAYOUTS_COALESCE,
             _ => SNAPSHOT_COALESCE,
         };
         cx.spawn(async move |this, cx| {

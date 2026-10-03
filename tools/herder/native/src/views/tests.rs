@@ -1440,7 +1440,8 @@ mod layout {
         }
 
         fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
-            if self.reduce {
+            // The dock keeping its layout is not what these read.
+            if self.reduce && !matches!(event, Event::Layout { .. }) {
                 let effects = transcript::reduce(&mut self.store, &self.ui, event);
                 self.effects.extend(effects);
                 cx.notify();
@@ -3126,8 +3127,69 @@ mod capture_events {
 
 /// The dock (DK2) in a window: the zoom shell drawn as the app draws it (`space::render`, the dock
 /// with its panels), real keys and clicks, and every event the views send applied to the store.
+/// Layout reconcile on load: a saved dock opens with each member once where it was, one preview per
+/// group (the first), members missing from it added to its first group, emptied groups and splits gone,
+/// and the shown tab kept or the one before it.
+#[test]
+fn a_saved_dock_is_reconciled_with_the_members() {
+    use crate::views::dock::{Tree, restore};
+    use gpui_kit::component::dock::{PanelInfo, PanelState};
+    use gpui_kit::{Axis, px};
+    let tab = |agent: &str| {
+        let mut s = PanelState::new("agent");
+        s.info = PanelInfo::panel(serde_json::json!({ "agent": agent }));
+        s
+    };
+    let group = |agents: &[&str], active| PanelState {
+        panel_name: "TabPanel".into(),
+        children: agents.iter().map(|a| tab(a)).collect(),
+        info: PanelInfo::tabs(active),
+    };
+    let split = |children: Vec<PanelState>, sizes: Vec<f32>| PanelState {
+        panel_name: "StackPanel".into(),
+        children,
+        info: PanelInfo::stack(sizes.into_iter().map(px).collect(), Axis::Horizontal),
+    };
+    let saved = split(
+        vec![
+            group(&["a", "gone", "p1", "p2", "b"], 4),
+            group(&["a", "p3", "c"], 2),
+            group(&["gone"], 0),
+        ],
+        vec![600., 500., 300.],
+    );
+    let members: Vec<String> = ["a", "b", "c", "d"].map(String::from).into();
+    let tabs = |agents: &[&str], active| Tree::Tabs {
+        agents: agents.iter().map(|a| a.to_string()).collect(),
+        active,
+    };
+    assert_eq!(
+        restore(&saved, &members),
+        Some(Tree::Split(
+            Axis::Horizontal,
+            vec![
+                (tabs(&["a", "gone", "b", "d"], 2), Some(px(600.))),
+                (tabs(&["p3", "c"], 1), Some(px(500.))),
+            ]
+        )),
+        "gone is the first group's preview, so p1 and p2 go; a once; d appended"
+    );
+    let shown_gone = split(vec![group(&["a", "x", "y"], 2)], vec![0.]);
+    let members = ["a".to_string()];
+    assert_eq!(
+        restore(&shown_gone, &members),
+        Some(Tree::Split(
+            Axis::Horizontal,
+            vec![(tabs(&["a", "x"], 1), None)]
+        )),
+        "y dropped: the tab before it shows"
+    );
+    assert_eq!(restore(&split(vec![], vec![]), &members), None);
+    assert_eq!(restore(&tab("a"), &members), None, "not a tree of groups");
+}
+
 mod dock_events {
-    use crate::store::spaces::Move;
+    use crate::store::spaces::{Layouts, Move};
     use crate::store::tests::{board, fleet_frame, loaded, space_of};
     use crate::store::{Event, Store};
     use crate::views::lens::Ui;
@@ -3191,6 +3253,14 @@ mod dock_events {
 
     /// Zoomed into perps (three members) on its second, focused.
     fn open(cx: &mut TestAppContext) -> (Entity<Shell>, &mut VisualTestContext) {
+        launch(cx, Layouts::default())
+    }
+
+    /// `open`, with `layouts` read from disk at boot.
+    fn launch(
+        cx: &mut TestAppContext,
+        layouts: Layouts,
+    ) -> (Entity<Shell>, &mut VisualTestContext) {
         cx.update(|cx| {
             theme::seed(cx);
             gpui_kit::init(cx);
@@ -3202,6 +3272,7 @@ mod dock_events {
         let (_, cx) = cx.add_window_view(move |window, cx| {
             let shell = gpui_kit::AppContext::new(cx, |cx| {
                 let mut store = loaded();
+                store.apply(Event::LayoutsLoaded(layouts));
                 store.apply(fleet_frame(board()));
                 let space = space_of(&store, SPACE[0]).id.clone();
                 let mut ui = Ui::new(cx);
@@ -3428,6 +3499,40 @@ mod dock_events {
         assert!(pinned(&shell, cx, "mupu"));
         let tabs = format!("{} {} {}", SPACE[0], SPACE[1], SPACE[2]);
         assert_eq!(dock(&shell, cx), format!("{tabs} [mupu*]"));
+    }
+
+    /// Restore after relaunch: the dock as left (its groups in order, the preview, each group's shown
+    /// tab) is saved as it changes, and the next launch opens the space on it; maximize is not kept.
+    #[gpui_kit::test]
+    fn a_dock_opens_after_a_relaunch_as_it_was_left(cx: &mut TestAppContext) {
+        let (shell, vcx) = open(cx);
+        act(vcx, OpenLink("herder-agent:mupu".into(), true));
+        vcx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let area = ui.dock.as_ref().unwrap().area.clone();
+            let (id, mupu) = (ui.panels[SPACE[2]].id, ui.panels["mupu"].id);
+            let tree = area.read(cx).layout(DockPlacement::Center).unwrap();
+            let right = tree.find_panel_node(mupu).unwrap();
+            let to = InsertTarget::Tabs {
+                node: right,
+                ix: None,
+                activate: true,
+            };
+            area.update(cx, |a, cx| a.move_panel(id, to, window, cx));
+        });
+        draw(vcx);
+        vcx.simulate_keystrokes("alt-enter");
+        draw(vcx);
+        let left = format!("max {} {}* | mupu~ [{}*]", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, vcx), left);
+        let layouts = shell.read_with(vcx, |s, _| s.store.layouts.clone());
+        let (shell, vcx) = launch(cx, layouts);
+        let again = format!("{} [{}*] | mupu~ {}*", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(
+            dock(&shell, vcx),
+            again,
+            "opened on its second, not maximized"
+        );
     }
 
     /// A send from a preview pins it.

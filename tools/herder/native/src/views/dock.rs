@@ -10,6 +10,10 @@
 //! what is on screen, the focused agent and each other group's shown tab (`Move::View`), whenever that
 //! changes. The tab strip is drawn here to web's measurements (`Strip`); the rest of the dock's look is
 //! the kit's.
+//!
+//! Each space's dock is kept as laid out (`Event::Layout` on every change, written to `layouts.json` once
+//! it settles) and opened that way on the next zoom in, reconciled with the members (`restore`); a dock
+//! that cannot be restored opens on the members in one group. Maximize is not kept.
 
 use crate::store::spaces::{Move, Space};
 use crate::store::{Event, Store};
@@ -291,14 +295,20 @@ fn open<H: Host>(
         .with_renderer(skin)
     });
     let mut agents = members(store, &zoom.space);
-    let preview = zoom.agent.clone().filter(|a| !agents.contains(a));
-    agents.extend(preview);
-    let at = agents.iter().position(|a| Some(a) == zoom.agent.as_ref());
-    let mut tabs = DockLayout::tabs();
-    for agent in &agents {
-        tabs = tabs.panel_view(panel(ui, agent, window, cx), cx);
-    }
-    let layout = DockLayout::h_split().child(tabs.active_index(at.unwrap_or(0)), None);
+    let saved = store.layouts.spaces.get(&zoom.space).cloned();
+    let saved = saved.and_then(|v| serde_json::from_value::<PanelState>(v).ok());
+    let tree = match saved.and_then(|s| restore(&s, &agents)) {
+        Some(tree) => tree,
+        None => {
+            let preview = zoom.agent.clone().filter(|a| !agents.contains(a));
+            agents.extend(preview);
+            let at = agents.iter().position(|a| Some(a) == zoom.agent.as_ref());
+            let active = at.unwrap_or(0);
+            let tabs = (Tree::Tabs { agents, active }, None);
+            Tree::Split(Axis::Horizontal, vec![tabs])
+        }
+    };
+    let layout = build(ui, &tree, window, cx);
     area.update(cx, |a, cx| a.set_center(layout, window, cx));
     let changed = cx.subscribe_in(&area, window, |h: &mut H, _, e: &DockEvent, window, cx| {
         if let DockEvent::LayoutChanged = e {
@@ -314,6 +324,99 @@ fn open<H: Host>(
         held: None,
         told: None,
         _changed: changed,
+    }
+}
+
+/// A dock as laid out by agent: splits of groups, each group's tabs and the one it shows.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Tree {
+    Split(Axis, Vec<(Tree, Option<Pixels>)>),
+    Tabs { agents: Vec<String>, active: usize },
+}
+
+/// A space's saved dock (the kit's dump of its tree) as it can open now: each member once, where it
+/// was; in each group at most one preview (an agent not a member), the first; the members not in it
+/// added to its first group; empty groups and splits gone. `None` when nothing is left, or the dump is
+/// not a tree of agent tabs.
+pub(super) fn restore(saved: &PanelState, members: &[String]) -> Option<Tree> {
+    let mut placed = Vec::new();
+    let mut tree = reconcile(saved, members, &mut placed)?;
+    let missing = members.iter().filter(|m| !placed.contains(m)).cloned();
+    first_tabs(&mut tree)?.extend(missing);
+    Some(tree)
+}
+
+fn reconcile(state: &PanelState, members: &[String], placed: &mut Vec<String>) -> Option<Tree> {
+    match &state.info {
+        PanelInfo::Stack { sizes, axis } => {
+            let axis = if *axis == 0 {
+                Axis::Horizontal
+            } else {
+                Axis::Vertical
+            };
+            let children = state.children.iter().enumerate().filter_map(|(i, c)| {
+                let size = sizes.get(i).copied().filter(|s| *s > Pixels::ZERO);
+                Some((reconcile(c, members, placed)?, size))
+            });
+            let children: Vec<_> = children.collect();
+            (!children.is_empty()).then_some(Tree::Split(axis, children))
+        }
+        PanelInfo::Tabs { active_index } => {
+            let (mut agents, mut active, mut preview) = (Vec::new(), 0, false);
+            for (i, tab) in state.children.iter().enumerate() {
+                let PanelInfo::Panel(info) = &tab.info else {
+                    continue;
+                };
+                let Some(agent) = info.get("agent").and_then(|a| a.as_str()) else {
+                    continue;
+                };
+                let member = members.iter().any(|m| m == agent);
+                if placed.iter().any(|p| p == agent) || (!member && preview) {
+                    continue;
+                }
+                preview |= !member;
+                if i <= *active_index {
+                    active = agents.len();
+                }
+                placed.push(agent.to_string());
+                agents.push(agent.to_string());
+            }
+            (!agents.is_empty()).then_some(Tree::Tabs { agents, active })
+        }
+        PanelInfo::Panel(_) => None,
+    }
+}
+
+fn first_tabs(tree: &mut Tree) -> Option<&mut Vec<String>> {
+    match tree {
+        Tree::Tabs { agents, .. } => Some(agents),
+        Tree::Split(_, children) => children.first_mut().and_then(|c| first_tabs(&mut c.0)),
+    }
+}
+
+/// The kit's layout for `tree`, a panel made for each agent.
+fn build<H: Host>(
+    ui: &mut Ui,
+    tree: &Tree,
+    window: &mut Window,
+    cx: &mut Context<H>,
+) -> DockLayout {
+    match tree {
+        Tree::Split(axis, children) => {
+            let split = match axis {
+                Axis::Horizontal => DockLayout::h_split(),
+                Axis::Vertical => DockLayout::v_split(),
+            };
+            children.iter().fold(split, |split, (child, size)| {
+                split.child(build(ui, child, window, cx), *size)
+            })
+        }
+        Tree::Tabs { agents, active } => {
+            let tabs = agents.iter().fold(DockLayout::tabs(), |tabs, agent| {
+                tabs.panel_view(panel(ui, agent, window, cx), cx)
+            });
+            tabs.active_index(*active)
+        }
     }
 }
 
@@ -587,6 +690,15 @@ fn changed<H: Host>(h: &mut H, window: &mut Window, cx: &mut Context<H>) {
         zoom.agent = Some(agent);
     }
     events.extend(sync(ui, store, window, cx));
+    // Kept for the next zoom in, and the next launch (`layouts.json`); an agent alone has no space.
+    let dump = ui
+        .dock
+        .as_ref()
+        .filter(|d| d.space == space && !space.is_empty());
+    let dump = dump.map(|d| d.area.read(cx).dump(cx).center);
+    if let Some(dock) = dump.and_then(|d| serde_json::to_value(d).ok()) {
+        events.push(Event::Layout { space, dock });
+    }
     if !moved.is_empty() && !ui.focus_target().is_focused(window) {
         window.focus(&ui.focus_target().clone(), cx);
     }

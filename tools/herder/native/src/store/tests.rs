@@ -3952,3 +3952,33 @@ fn pinning_and_closing_tabs_write_the_members() {
         "nothing to write"
     );
 }
+
+/// Each space's dock is kept locally: a change is saved (once, the same dump twice is no change), and a
+/// `layouts.json` of another version is ignored, so every dock opens on its members.
+#[test]
+fn layouts_are_saved_on_change_and_another_version_is_ignored() {
+    use crate::store::spaces::{LAYOUTS, Layouts};
+    let mut store = loaded();
+    let dock = serde_json::json!({"panel_name": "StackPanel"});
+    let layout = || Event::Layout {
+        space: "s1".into(),
+        dock: dock.clone(),
+    };
+    assert_eq!(
+        store.apply(layout()),
+        vec![Effect::Persist(Persist::Layouts)]
+    );
+    assert_eq!(store.apply(layout()), Vec::new(), "unchanged");
+    assert_eq!(store.layouts.spaces["s1"], dock);
+
+    let saved = |version| Layouts {
+        version,
+        spaces: [("s2".to_string(), dock.clone())].into(),
+    };
+    let mut fresh = Store::default();
+    fresh.apply(Event::LayoutsLoaded(saved(LAYOUTS + 1)));
+    assert!(fresh.layouts.spaces.is_empty(), "another version");
+    assert_eq!(fresh.layouts.version, LAYOUTS);
+    fresh.apply(Event::LayoutsLoaded(saved(LAYOUTS)));
+    assert_eq!(fresh.layouts.spaces["s2"], dock);
+}

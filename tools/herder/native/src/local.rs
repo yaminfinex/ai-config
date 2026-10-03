@@ -1,5 +1,5 @@
 //! What stays on this Mac, under `~/Library/Application Support/herder-native/`: `prefs.json` (text
-//! scale, rows, visible agents, seen marks, drafts), `outbox.json` (unsent state rows, saved before
+//! scale, rows, visible agents, seen marks, drafts), `layouts.json` (each space's dock, DK2), `outbox.json` (unsent state rows, saved before
 //! every send) and `snapshot.json` (the last board and state rows, applied synchronously at boot
 //! before anything live starts). A panic's message and backtrace are appended to
 //! `~/Library/Logs/herder-native/panic.log` (`log_panics`): the bundle has no stderr, and a panic in an
@@ -9,6 +9,7 @@
 //! save never lands on top of a newer one, and each file is written to a temporary name and renamed
 //! into place.
 
+use crate::store::spaces::Layouts;
 use crate::store::{Outbox, Prefs, Snapshot};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -19,6 +20,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const PREFS: &str = "prefs.json";
+pub const LAYOUTS: &str = "layouts.json";
 pub const OUTBOX: &str = "outbox.json";
 pub const SNAPSHOT: &str = "snapshot.json";
 
@@ -68,6 +70,10 @@ impl Disk {
 
     pub fn load_prefs(&self) -> Option<Prefs> {
         self.load(PREFS)
+    }
+
+    pub fn load_layouts(&self) -> Option<Layouts> {
+        self.load(LAYOUTS)
     }
 
     pub fn load_outbox(&self) -> Option<Outbox> {
