@@ -14,10 +14,10 @@ use crate::store::composer::{Failure, ReadOnly, Sending, Step};
 use crate::store::notes::Step as NoteStep;
 use crate::store::{Attribution, Event, Store};
 use crate::views::lens::{Focus, Ui};
-use crate::views::notes_list;
 use crate::views::space::{self, Zoomed};
 use crate::views::theme::{SANS_T, TypeScale, pal};
 use crate::views::{Host, on, settle_later};
+use crate::views::{dock, notes_list};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::*;
@@ -69,36 +69,39 @@ impl View {
     }
 }
 
-/// Before a frame is drawn: the zoomed agent's box shows its draft. A landed file-back hands focus to
-/// the lens wherever it was in the departing zoom.
+/// Before a frame is drawn: each shown panel's box shows its agent's draft. A landed file-back hands
+/// focus to the lens wherever it was in the departing zoom.
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     if ui.focus.take() == Some(Focus::Out) {
         window.focus(ui.focus_target(), cx);
     }
-    let Some(agent) = ui.zoomed_agent() else {
-        return;
-    };
-    let draft = store.prefs.drafts.get(agent).map_or("", String::as_str);
-    let Some(view) = ui.panel().map(|p| &p.composer) else {
-        return;
-    };
-    if view.state.read(cx).value() != draft {
-        let draft = draft.to_string();
-        view.state
-            .update(cx, |s, cx| s.set_value(draft, window, cx));
+    for (agent, p) in ui.panels.iter().filter(|(_, p)| p.shown) {
+        let draft = store.prefs.drafts.get(agent).map_or("", String::as_str);
+        let state = &p.composer.state;
+        if state.read(cx).value() != draft {
+            let draft = draft.to_string();
+            state.update(cx, |s, cx| s.set_value(draft, window, cx));
+        }
     }
 }
 
-/// A composer key: `Focus` from the zoom, the rest from the box itself.
-pub fn act(ui: &mut Ui, key: Compose) -> Vec<Event> {
+/// A composer key: `Focus` from the zoom, the rest from the box itself. A send the store takes (`ready`)
+/// from a preview tab pins it (DK2); one it refuses writes nothing.
+pub fn act(store: &Store, ui: &mut Ui, key: Compose) -> Vec<Event> {
     let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
     };
     let send = |file_back| {
-        vec![Event::Compose(Step::Send {
+        let send = Event::Compose(Step::Send {
             agent: agent.clone(),
             file_back,
-        })]
+        });
+        let mut out = match store.ready(&agent) {
+            true => dock::pin_tab(store, ui, &agent),
+            false => Vec::new(),
+        };
+        out.push(send);
+        out
     };
     match key {
         Compose::Focus => ui.focus = Some(Focus::Box),
@@ -172,7 +175,7 @@ pub fn render<H: Host>(
     };
     let input = div()
         .key_context("Composer")
-        .on_action(on(cx, |_, ui, c: &Compose| act(ui, *c)))
+        .on_action(on(cx, |store, ui, c: &Compose| act(store, ui, *c)))
         .on_action(up)
         .child(input);
     // Web's `.send-box`: padding 7 14 5 on the panel under a rule; its footer 4 below the box, the keys

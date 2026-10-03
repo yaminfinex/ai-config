@@ -20,7 +20,7 @@ use crate::views::lens::{Focus, State, Ui};
 use crate::views::notes::{self, stamp};
 use crate::views::panel::Panel;
 use crate::views::theme::{MONO_T, SANS_T, TypeScale, pal};
-use crate::views::{Host, dim};
+use crate::views::{Host, dim, dock};
 use gpui_kit::base::TextSelection;
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::{Sizable as _, Size};
@@ -258,7 +258,10 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Capture) -> Vec<Event> {
             // The box says how it went (sending…, or why not: the text is then in the draft).
             say(ui, format!("Sending a note to {agent}…"));
             close(ui);
-            return vec![Event::Compose(SendStep::Quick { agent, text })];
+            // A send from a preview tab pins it, as the composer's does (DK2).
+            let mut out = dock::pin_tab(store, ui, &agent);
+            out.push(Event::Compose(SendStep::Quick { agent, text }));
+            return out;
         }
         // Saved. `⌘⏎` too while the agent cannot take a message now (native's rule: read-only, or a send
         // of its in flight, which web would not wait for; web adds the text to a read-only agent's

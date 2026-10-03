@@ -7,6 +7,8 @@
 use crate::api::{Member, MembersValue, SpaceValue, StateRow};
 use crate::store::attention::mark_seen;
 use crate::store::fleet::Fleet;
+use crate::store::notes::Stamp;
+use crate::store::sync::{Ns, Step as SyncStep};
 use crate::store::{Effect, Persist, Prefs, Store};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -26,6 +28,28 @@ impl Space {
             Member::Agent { name } => Some(name.as_str()),
             Member::File { .. } => None,
         })
+    }
+}
+
+/// The version `layouts.json` is written as; a file of another is ignored and each dock opens on its
+/// members. The kit's own `load` never checks its version, so this is ours.
+pub const LAYOUTS: u32 = 1;
+
+/// Each space's dock as the owner left it, local to this Mac (`layouts.json`): the kit's dump of the
+/// dock's tree (splits, groups, tabs by agent), reconciled with the members when rebuilt. Maximize is
+/// not kept.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Layouts {
+    pub version: u32,
+    pub spaces: BTreeMap<String, serde_json::Value>,
+}
+
+impl Default for Layouts {
+    fn default() -> Self {
+        Layouts {
+            version: LAYOUTS,
+            spaces: BTreeMap::new(),
+        }
     }
 }
 
@@ -97,6 +121,18 @@ pub enum Move {
     SetRow { space: String, row: Row },
     /// Show the space's (by id) next agent on its card.
     CycleVisible(String),
+    /// A preview tab pinned (DK2): the agent joins the space, last (a `spaces.members` write).
+    Pin {
+        space: String,
+        agent: String,
+        stamp: Stamp,
+    },
+    /// A pinned tab closed: the agent leaves the space.
+    Unpin {
+        space: String,
+        agent: String,
+        stamp: Stamp,
+    },
 }
 
 /// The lens: spaces in rows, the agent each card shows, and where `n` goes next.
@@ -105,6 +141,31 @@ impl Store {
         let (fleet, prefs) = (&self.fleet, &mut self.prefs);
         let space = |id: &str| self.spaces.iter().find(|s| s.id == id);
         let changed = match m {
+            Move::Pin {
+                space,
+                agent,
+                stamp,
+            } => {
+                let joins = |m: &mut Vec<Member>| {
+                    let member = agent_member(&agent);
+                    if !m.contains(&member) {
+                        m.push(member);
+                    }
+                };
+                return self.members_edit(&space, stamp, joins, out);
+            }
+            Move::Unpin {
+                space,
+                agent,
+                stamp,
+            } => {
+                return self.members_edit(
+                    &space,
+                    stamp,
+                    |m| m.retain(|m| *m != agent_member(&agent)),
+                    out,
+                );
+            }
             Move::View {
                 space,
                 agent,
@@ -129,6 +190,39 @@ impl Store {
         if changed {
             out.push(Effect::Persist(Persist::Prefs));
         }
+    }
+
+    /// Write `space`'s members as `edit` leaves them, files and all (web's `{members, updated}` row),
+    /// if that changes them.
+    fn members_edit(
+        &mut self,
+        space: &str,
+        stamp: Stamp,
+        edit: impl FnOnce(&mut Vec<Member>),
+        out: &mut Vec<Effect>,
+    ) {
+        let Some(s) = self.spaces.iter().find(|s| s.id == space) else {
+            return;
+        };
+        let mut members = s.members.clone();
+        edit(&mut members);
+        if members == s.members {
+            return;
+        }
+        let previous = self.sync[&Ns::Members]
+            .rows
+            .get(space)
+            .map_or(0, |r| r.updated);
+        let updated = stamp.now.max(previous + 1);
+        let value = serde_json::json!({ "members": members, "updated": updated });
+        let row = StateRow {
+            key: space.to_string(),
+            value,
+            updated,
+            write_id: stamp.write,
+            deleted: false,
+        };
+        self.sync_step(Ns::Members, SyncStep::Edit(vec![row]), out);
     }
 
     /// The spaces in lens order: focus, watch, background, each row in the store's order.
@@ -212,4 +306,9 @@ fn cycle_visible(space: &Space, fleet: &Fleet, prefs: &mut Prefs) -> bool {
         .unwrap_or(current);
     let before = prefs.visible.insert(space.id.clone(), next.to_string());
     before.as_deref() != Some(next)
+}
+
+fn agent_member(name: &str) -> Member {
+    let name = name.to_string();
+    Member::Agent { name }
 }

@@ -23,8 +23,8 @@ use crate::local::{self, Disk};
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, capture, composer, lens, markdown,
-    notes, notes_list, panel, probe, space, theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, capture, composer, dock, lens, markdown,
+    notes, notes_list, probe, space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -43,6 +43,9 @@ pub const APP_NAME: &str = "herder native";
 const APP_ID: &str = "dev.herder.native";
 /// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
+/// Dock edits (a drag, a divider, tab clicks): the first opens a fixed window, and the latest layout is
+/// written when it ends (not a debounce that restarts on each edit).
+const LAYOUTS_COALESCE: Duration = Duration::from_millis(250);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
 
 pub struct Shell {
@@ -63,6 +66,9 @@ impl Shell {
         let (mut store, disk) = (Store::default(), Disk::home());
         if let Some(prefs) = disk.load_prefs() {
             store.apply(Event::PrefsLoaded(prefs));
+        }
+        if let Some(layouts) = disk.load_layouts() {
+            store.apply(Event::LayoutsLoaded(layouts));
         }
         // Local state first, synchronously: nothing live has started yet, so nothing can be overwritten.
         if let Some(snapshot) = disk.load_snapshot() {
@@ -267,6 +273,7 @@ impl Shell {
     fn bytes(&self, file: Persist) -> (&'static str, Vec<u8>, u64) {
         let (name, bytes) = match file {
             Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
+            Persist::Layouts => (local::LAYOUTS, local::encode(&self.store.layouts)),
             Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
             Persist::Snapshot => (local::SNAPSHOT, local::encode(&self.store.snapshot())),
         };
@@ -281,6 +288,7 @@ impl Shell {
         }
         let delay = match file {
             Persist::Prefs => PREFS_COALESCE,
+            Persist::Layouts => LAYOUTS_COALESCE,
             _ => SNAPSHOT_COALESCE,
         };
         cx.spawn(async move |this, cx| {
@@ -311,7 +319,12 @@ impl Render for Shell {
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        panel::sync(&mut self.ui, &self.store, window, cx);
+        let events = dock::sync(&mut self.ui, &self.store, window, cx);
+        if !events.is_empty() {
+            cx.defer_in(window, |s, _, cx| {
+                events.into_iter().for_each(|e| s.dispatch(e, cx))
+            });
+        }
         composer::sync(&mut self.ui, &self.store, window, cx);
         notes::sync(&mut self.ui, &self.store, window, cx);
         capture::sync(&mut self.ui, window, cx);
@@ -412,7 +425,7 @@ impl harness::Probe for Entity<Shell> {
 
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>> {
         let s = self.read(cx);
-        probe::action(&s.store, &s.ui, op, arg)
+        probe::action(&s.store, &s.ui, op, arg, cx)
     }
 
     fn find(&self, text: &str, open: bool, cx: &mut App) -> bool {

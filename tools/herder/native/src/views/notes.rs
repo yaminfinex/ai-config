@@ -16,6 +16,7 @@ use crate::store::sync::{Hold, Ns};
 use crate::store::{Event, Store};
 use crate::views::lens::{Focus, State, Ui};
 use crate::views::notes_list;
+use crate::views::panel::Panel;
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
@@ -147,16 +148,16 @@ pub(super) fn strip(ui: &mut State) -> Option<&mut View> {
     ui.panel_mut().map(|p| &mut p.notes)
 }
 
-/// Before a frame is drawn: the list keeps only what is listed, and the editor's text loads. Focus left
-/// in a list that is no longer drawn goes back to the box (or the panel).
+/// Before a frame is drawn, in each shown panel: the list keeps only what is listed, and the editor's
+/// text loads. Focus left in a list that is no longer drawn goes back to the box (or the panel).
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
-    let Some(agent) = ui.zoomed_agent().map(String::from) else {
-        return;
-    };
-    let (ids, writable) = (ids(store, &agent), store.can_send(&agent).is_ok());
-    let Some(p) = ui.panel_mut() else {
-        return;
-    };
+    for (agent, p) in ui.panels.iter_mut().filter(|(_, p)| p.shown) {
+        sync_one(store, agent, p, window, cx);
+    }
+}
+
+fn sync_one(store: &Store, agent: &str, p: &mut Panel, window: &mut Window, cx: &mut App) {
+    let (ids, writable) = (ids(store, agent), store.can_send(agent).is_ok());
     let notes = &mut p.notes;
     let focused = notes_list::sync(&mut notes.list, &ids, window);
     let shown = !ids.is_empty() && (ids.len() <= SHOWN || notes.open);

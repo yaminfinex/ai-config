@@ -13,6 +13,7 @@
 
 pub mod capture;
 pub mod composer;
+pub mod dock;
 pub mod entries;
 pub mod lens;
 pub mod markdown;
@@ -21,6 +22,7 @@ pub mod notes_list;
 pub mod panel;
 pub mod probe;
 pub mod space;
+pub mod tabs;
 #[cfg(test)]
 mod tests;
 pub mod theme;
@@ -93,6 +95,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("]", Zoomed::Space(1)),
         ("tab", Zoomed::Agent(1)),
         ("shift-tab", Zoomed::Agent(-1)),
+        ("alt-right", Zoomed::Agent(1)),
+        ("alt-left", Zoomed::Agent(-1)),
     ];
     let mut keys = vec![
         KeyBinding::new("cmd-q", Quit, Some("Lens")),
@@ -105,6 +109,11 @@ pub fn bindings() -> Vec<KeyBinding> {
     keys.extend(home.map(|(k, a)| KeyBinding::new(k, a, Some(HOME))));
     keys.extend(next.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     keys.extend(zoom.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
+    // The dock's (DK2): close, maximize, the focused group's nth tab.
+    keys.push(KeyBinding::new("cmd-w", dock::Close(None), Some(SPACE)));
+    keys.push(KeyBinding::new("alt-enter", dock::Maximize, Some(SPACE)));
+    let nth = (1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), dock::Nth(n), Some(SPACE)));
+    keys.extend(nth);
     keys.extend(scroll.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     let focus = [("/", Compose::Focus), ("r", Compose::Focus)];
     keys.extend(focus.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
@@ -225,7 +234,7 @@ pub trait Host: Sized + 'static {
 }
 
 /// An action handler: `f` reads the store, moves the view state and returns the events to dispatch;
-/// then the zoom's panels follow it (`panel::sync`) and focus follows the zoomed agent's panel (its keys
+/// then the zoom's dock and panels follow it (`dock::sync`) and focus follows the zoomed agent's panel (its keys
 /// are live only while it has focus), except that an input in it (the composer, the notes editor) keeps
 /// focus while the zoom stays put (a clicked link) and either takes or leaves it when asked; a
 /// transition that started gets its end scheduled.
@@ -238,8 +247,8 @@ pub fn on<A: Action, H: Host>(
         let before = ui.anim.as_ref().map(space::Anim::seq);
         let said = notes::said_seq(ui);
         let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
-        let events = f(store, ui, action);
-        panel::sync(ui, store, window, cx);
+        let mut events = f(store, ui, action);
+        events.extend(dock::sync(ui, store, window, cx));
         let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
         let writable = ui.zoomed_agent().is_some_and(|a| store.can_send(a).is_ok());
         let target = match (ui.focus.take(), held, ui.panel()) {

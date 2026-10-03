@@ -9,6 +9,7 @@
 use crate::store::fleet::Agent;
 use crate::store::spaces::{Move, Row, Space, Stop};
 use crate::store::{Conn, Event, Store};
+use crate::views::dock::{Ask, Dock};
 use crate::views::panel::Panel;
 use crate::views::space::{self, Anim, Zoom};
 use crate::views::theme::{TypeScale, pal};
@@ -103,8 +104,11 @@ pub struct State {
     pub(super) cards: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
     pub dots: Dots,
     /// The zoomed space's agent panels by agent (DK1): the zoom's agent's is shown and focused, the
-    /// others hidden (`panel::sync`).
+    /// others hidden (`dock::sync`).
     pub(super) panels: BTreeMap<String, Panel>,
+    /// The zoomed space's dock (DK2), and what actions asked of it since it was last synced.
+    pub(super) dock: Option<Dock>,
+    pub(super) asks: Vec<Ask>,
     /// Herder web, where a transcript's mermaid diagram links to.
     pub(super) web: String,
 }

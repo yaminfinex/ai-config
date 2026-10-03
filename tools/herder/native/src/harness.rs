@@ -6,9 +6,12 @@
 //! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
 //! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) · `draw` (one
-//! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches) ·
+//! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches;
+//! `beside:<url>` the same with alt held, DK2) ·
 //! `summon:<tag>` (what clicking a notification tagged so dispatches, without activating the app; U6) ·
-//! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) ·
+//! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) · `dock:<text>` (the
+//! zoom's dock: groups split by `|`, `*` on each group's shown tab, `~` on a preview, the focused one in
+//! brackets, `max` first while maximized; DK2) ·
 //! `cpuscroll:<keystroke>x<n>` (`n` keystrokes, each followed by a timed `Window::draw`: the frame's CPU
 //! cost, occluded or not) · `start:<ms>` (draws every 16 ms until the open transcript has paged back to
 //! its start; fails after `ms`) · `box:<focused|idle>:<text>` (the composer's focus and text, `+` for a
@@ -25,6 +28,8 @@
 //! selected notes' indexes, comma-separated, and the cursor's, `-` for none; F6) · `said:<text>` (the
 //! notes strip's confirmation line contains it) · `click:<card:i|card2:i|tab:i|crumb>` (a click on the lens's card
 //! `i` in lens order, a double-click on it, a click on the zoom's tab `i` or on `lens ›`; F4) ·
+//! `click:<close:i|pin:i|max>` (the dock's tab `i`, every group's in order: its ×, a double-click on it;
+//! the focused group's □; DK2) ·
 //! `selected:<space>` (the selected card's space name, `+` for a space) · `jump:<shown|hidden>` and
 //! `click:jump` (jump-to-bottom over the transcript, and a click on it; A1) · `find:<text>` (scrolls the
 //! transcript so the first loaded row holding it is at the top, for side-by-side shots; A1) · `parts:<text>`
@@ -245,7 +250,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
                 None => fail(format!("wheel {arg}: want x,y,l|p,dx,dy")),
             },
-            "link" | "summon" | "click" => {
+            "link" | "beside" | "summon" | "click" => {
                 let ok = cx.update(|window, cx| {
                     let action = probe.action(op, arg, cx);
                     action.map(|a| window.dispatch_action(a, cx)).is_some()
@@ -256,7 +261,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
             }
             "expect" | "box" | "has" | "says" | "notes" | "capture" | "list" | "said"
-            | "header" | "selected" | "rows" | "parts" | "tools" | "jump" => {
+            | "header" | "selected" | "rows" | "parts" | "tools" | "jump" | "dock" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");

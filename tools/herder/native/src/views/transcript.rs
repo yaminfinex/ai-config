@@ -45,10 +45,10 @@ pub enum Scroll {
     Bottom,
 }
 
-/// A clicked `herder-agent:` or `herder-path:` link.
+/// A clicked `herder-agent:` or `herder-path:` link, and whether `alt` was held (open beside).
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = transcript, no_json)]
-pub struct OpenLink(pub SharedString);
+pub struct OpenLink(pub SharedString, pub bool);
 
 /// Open or close an item's part (`View::open`): a click on a fold, a status chip or an internal note.
 #[derive(Clone, Copy, Debug, PartialEq, Action)]
@@ -976,7 +976,10 @@ impl<H: Host> Paint<'_, H> {
         let style = theme::prose(t).with_foreground(rgb(ink).into());
         let text = text.style(style).code_block_actions(|_, _, _| Empty);
         let text = text.on_link_click(|url, _, window, cx| match markdown::route(url) {
-            Some(link) => window.dispatch_action(Box::new(OpenLink(link.into())), cx),
+            Some(link) => {
+                let beside = window.modifiers().alt;
+                window.dispatch_action(Box::new(OpenLink(link.into(), beside)), cx)
+            }
             None if url.starts_with("http://") || url.starts_with("https://") => {
                 crate::platform_mac::open(url, cx)
             }
