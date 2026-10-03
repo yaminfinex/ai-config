@@ -1,4 +1,4 @@
-//! The zoom body: the zoomed agent's transcript in compact mode, over a context strip and above its
+//! An agent panel's body (`panel`): its transcript in compact mode, over a context strip and above its
 //! queued messages. A GPUI `list` anchored at the bottom follows the tail while it is at the bottom.
 //! Its rows are `condense::rows` of the store's items: a standalone item, or a run of activity drawn
 //! as one strip of pills that a click (or `o`) opens to its members. A run has no key of its own; it is
@@ -25,7 +25,6 @@ use crate::views::entries::{
 };
 use crate::views::lens::{State, Ui};
 use crate::views::markdown::{self, Mentions};
-use crate::views::space::Zoom;
 use crate::views::theme::{self, MONO_T, SANS_T, TypeScale, pal, type_scale};
 use crate::views::{Host, dim};
 use gpui_kit::base::{Scrollbar, ScrollbarMode};
@@ -91,6 +90,10 @@ pub struct View {
     pub(super) painted: Rc<RefCell<Painted>>,
     /// What was read when a page grew the head, for `hold`.
     anchor: Cell<Option<Anchor>>,
+    /// The session the rows are from; hidden, the session and what was read (`None`: the tail), until
+    /// the rows are back to there (`restore`).
+    session: RefCell<Option<String>>,
+    kept: RefCell<Option<(Option<String>, Anchor)>>,
     /// The list's width as last laid out, which cards indent by a share of (rows cannot ask the list
     /// while it lays them out).
     width: Cell<Pixels>,
@@ -156,6 +159,13 @@ struct Anchor {
 
 impl Default for View {
     fn default() -> Self {
+        View::new("")
+    }
+}
+
+impl View {
+    /// `web`: herder web's address, where a mermaid diagram links to.
+    pub fn new(web: &str) -> Self {
         let list = ListState::new(0, ListAlignment::Bottom, px(1200.));
         list.set_follow_mode(FollowMode::Tail);
         View {
@@ -164,17 +174,51 @@ impl Default for View {
             open: RefCell::default(),
             runs: RefCell::default(),
             md: RefCell::default(),
-            web: String::new(),
+            web: web.to_string(),
             wheel: Cell::default(),
             painted: Rc::default(),
             anchor: Cell::default(),
+            session: RefCell::default(),
+            kept: RefCell::default(),
             width: Cell::default(),
             taps: Rc::default(),
         }
     }
-}
 
-impl View {
+    /// The panel is hidden: keep where it was read, unless at the tail, and let the rows go. Hidden
+    /// again before its rows were back there, where it was read still stands.
+    pub(super) fn hide(&self) {
+        let following = self.list.is_following_tail();
+        let at = (!following).then(|| self.reading(&self.rows.borrow().2));
+        let session = self.session.take();
+        if let Some(a) = at.flatten() {
+            *self.kept.borrow_mut() = Some((session, a));
+        }
+        self.clear();
+    }
+
+    /// Shown again, its rows read afresh: once they reach where it was read in the same session, back
+    /// there (`hold`). Whether the page before is still to be read for it.
+    fn restore(&self, tr: &Transcript) -> bool {
+        let Some((session, a)) = self.kept.take() else {
+            return false;
+        };
+        if !tr.loaded() || tr.session != session {
+            // Not read yet: wait. Another session: its tail.
+            if !tr.loaded() {
+                *self.kept.borrow_mut() = Some((session, a));
+            }
+            return false;
+        }
+        let reached = tr.items.keys().next().is_some_and(|&k| k <= a.key);
+        if reached || tr.at_start() {
+            self.anchor.set(Some(a));
+            return false;
+        }
+        *self.kept.borrow_mut() = Some((session, a));
+        true
+    }
+
     /// Zoomed out: let the rows and their linked text go.
     pub fn clear(&self) {
         self.list.reset(0);
@@ -195,6 +239,10 @@ impl View {
         let mut md = self.md.borrow_mut();
         if md.0 != mentions || !same || md.1.len() > MD_CACHE {
             *md = (mentions, HashMap::new());
+        }
+        // Read on every frame: a tail can land under the generation a loading frame already drew.
+        if *self.session.borrow() != t.session {
+            self.session.replace(t.session.clone());
         }
         if same && rows.1 == t.items.len() {
             return;
@@ -449,8 +497,7 @@ pub fn gap(prev: Option<Kind>, next: Kind) -> f32 {
 }
 
 /// `o`: open or close the lowest run on screen.
-pub fn toggle_lowest(ui: &State) -> Vec<Event> {
-    let view = &ui.transcript;
+pub fn toggle_lowest(view: &View) -> Vec<Event> {
     let list = &view.list;
     let rows = view.rows.borrow();
     // As laid out: following the tail, the list keeps no top to ask.
@@ -486,7 +533,7 @@ fn top(list: &ListState) -> usize {
 /// Leaving the bottom is published as it happens (a scroll key, the wheel), so a fleet frame drained
 /// before the next render does not land as seen. Coming back is seen by that render.
 fn left(store: &Store, view: &View, following: bool) -> Option<Event> {
-    let open = store.transcript.open.as_ref()?;
+    let open = store.transcript.open.get(&view.rows.borrow().0.0)?;
     (open.tail && !following).then(|| view.tail(false))
 }
 
@@ -494,22 +541,23 @@ fn left(store: &Store, view: &View, following: bool) -> Option<Event> {
 /// scrollbar's handle moves the list without its scroll handler) is published first, so a fleet frame
 /// that lands before the next render is not seen.
 pub fn reduce(store: &mut Store, ui: &State, event: Event) -> Vec<Effect> {
-    let view = &ui.transcript;
-    let left = left(store, view, view.list.is_following_tail());
-    let mut effects = left.map(|e| store.apply(e)).unwrap_or_default();
+    let views = ui.panels.values().map(|p| &p.transcript);
+    let left: Vec<Event> =
+        (views.filter_map(|v| left(store, v, v.list.is_following_tail()))).collect();
+    let mut effects: Vec<Effect> = left.into_iter().flat_map(|e| store.apply(e)).collect();
     effects.extend(store.apply(event));
     effects
 }
 
 /// Herder web's address (the shell's server), for diagram links.
 pub fn set_web(ui: &mut State, base: &str) {
-    ui.transcript.web = base.trim_end_matches('/').to_string();
+    ui.web = base.trim_end_matches('/').to_string();
 }
 
 /// A scroll key: lines are three text lines, pages most of the viewport. `g` goes to the top of the
 /// loaded rows, which reads the page before.
-pub fn scroll(store: &Store, ui: &mut State, s: Scroll) -> Vec<Event> {
-    let list = &ui.transcript.list;
+pub fn scroll(store: &Store, view: &View, s: Scroll) -> Vec<Event> {
+    let list = &view.list;
     let line = type_scale(store.prefs.text_scale).line * 3.;
     let page = list.viewport_bounds().size.height * 0.9;
     // The wheel's arithmetic: `scroll_by` counts from the follow anchor (the content's end, not the
@@ -524,50 +572,51 @@ pub fn scroll(store: &Store, ui: &mut State, s: Scroll) -> Vec<Event> {
         Scroll::Top => list.scroll_to(ListOffset::default()),
         Scroll::Bottom => list.set_follow_mode(FollowMode::Tail),
     }
-    let view = &ui.transcript;
     left(store, view, view.list.is_following_tail())
         .into_iter()
         .collect()
 }
 
-/// The body under the tabs.
+/// `agent`'s panel's body.
 pub fn render<H: Host>(
     store: &Store,
     ui: &Ui,
-    zoom: &Zoom,
+    agent: &str,
     t: TypeScale,
     cx: &mut Context<H>,
 ) -> Div {
     let body = div().flex_1().min_h_0().flex().flex_col();
-    let Some(name) = zoom.agent.as_deref() else {
-        return body.p(t.css(24.)).child(dim("No agents in this space."));
-    };
-    let tr = store.transcript.open.as_ref().filter(|tr| tr.agent == name);
-    let Some(tr) = tr else {
+    let (tr, view) = (store.transcript.open.get(agent), ui.panels.get(agent));
+    let (Some(tr), Some(view)) = (tr, view.map(|p| &p.transcript)) else {
         // Morphing back to the lens, the transcript is already gone.
         return body.when(ui.zoom.is_some(), |b| {
             b.p(t.css(24.)).child(dim("loading…"))
         });
     };
-    let view = &ui.transcript;
+    let name = agent.to_string();
     view.sync(tr, store);
-    let hold = hold(view, t, cx.weak_entity());
+    let back = view.restore(tr);
+    let hold = hold(view, &name, t, cx.weak_entity());
     *view.painted.borrow_mut() = Painted::default();
     view.width.set(view.list.viewport_bounds().size.width);
-    // Read the page before while the viewport's top is near the first rows (or there are none).
+    // Read the page before while the viewport's top is near the first rows (or there are none), or
+    // until where a hidden panel was read is back.
     let top = top(&view.list);
     let more = tr.loaded() && !tr.at_start() && !tr.paging() && !tr.blocked();
-    if more && top < PREFETCH {
-        let event = Event::Transcript(Step::Older);
+    if more && (top < PREFETCH || back) {
+        let event = Event::Transcript(Step::Older(name.clone()));
         cx.spawn(async move |host, cx| host.update(cx, |h, cx| h.dispatch(event, cx)))
             .detach();
     }
     // Following the bottom is watching the tail: the store sees what lands (`attention::watch`). Seen
     // here, it is read again as it is dispatched, and the store drops it if the transcript moved on.
     if view.list.is_following_tail() != tr.tail {
-        let follow = |h: &mut H, cx: &mut Context<H>| {
-            let view = &h.view().1.transcript;
-            let event = view.tail(view.list.is_following_tail());
+        let agent = name.clone();
+        let follow = move |h: &mut H, cx: &mut Context<H>| {
+            let Some(p) = h.view().1.panels.get(&agent) else {
+                return;
+            };
+            let event = p.transcript.tail(p.transcript.list.is_following_tail());
             h.dispatch(event, cx)
         };
         cx.spawn(async move |host, cx| host.update(cx, follow))
@@ -577,12 +626,13 @@ pub fn render<H: Host>(
     // borrow: anything that asks the list from there panics (the owner's crash, 10-02). So published
     // just after, deferred to the end of this event's effects, before any other event or frame.
     if !view.wheel.replace(true) {
-        let host = cx.weak_entity();
+        let (host, agent) = (cx.weak_entity(), name.clone());
         let wheel = move |e: &ListScrollEvent, _: &mut Window, cx: &mut App| {
-            let following = e.is_following_tail;
+            let (following, agent) = (e.is_following_tail, agent.clone());
             let publish = move |h: &mut H, cx: &mut Context<H>| {
                 let (store, ui) = h.view();
-                if let Some(event) = left(store, &ui.transcript, following) {
+                let view = ui.panels.get(&agent).map(|p| &p.transcript);
+                if let Some(event) = view.and_then(|v| left(store, v, following)) {
                     h.dispatch(event, cx)
                 }
             };
@@ -603,9 +653,9 @@ pub fn render<H: Host>(
     } else if tr.items.is_empty() {
         note("(nothing readable yet)")
     } else {
-        let host = cx.weak_entity();
+        let (host, agent) = (cx.weak_entity(), name.clone());
         let rows = list(view.list.clone(), move |ix, _, cx| match host.upgrade() {
-            Some(host) => row::<H>(host.read(cx).view(), ix, t, host.downgrade()),
+            Some(host) => row::<H>(host.read(cx).view(), &agent, ix, t, host.downgrade()),
             None => div().into_any_element(),
         });
         // With web's overlay scrollbar and jump-to-bottom.
@@ -620,8 +670,10 @@ pub fn render<H: Host>(
     let waiting = tr.detail.as_ref().and_then(|d| d.queued.as_deref());
     let waiting = waiting.filter(|_| !tr.retired()).and_then(|q| queued(q, t));
     let notice = tr.notice().map(|n| {
-        let dismiss = cx
-            .listener(|h, _: &ClickEvent, _, cx| h.dispatch(Event::Transcript(Step::Dismiss), cx));
+        let agent = name.clone();
+        let dismiss = cx.listener(move |h, _: &ClickEvent, _, cx| {
+            h.dispatch(Event::Transcript(Step::Dismiss(agent.clone())), cx)
+        });
         let el = div().id("notice").px(t.css(PAD)).py(t.css(4.));
         el.text_size(t.small)
             .text_color(rgb(pal::AMBER))
@@ -631,10 +683,10 @@ pub fn render<H: Host>(
     // A drag that started here and ends anywhere in the window (`on_mouse_up_out`, as web's window
     // `pointerup`); a release over the transcript alone is only heard while over it.
     let let_go = || {
-        let taps = view.taps.clone();
+        let (taps, agent) = (view.taps.clone(), name.clone());
         cx.listener(move |h: &mut H, e: &MouseUpEvent, window, cx| {
             if e.button == MouseButton::Left && taps.dragging.replace(false) {
-                released(h, &taps, e.position, t, window, cx);
+                released(h, &agent, &taps, e.position, t, window, cx);
             }
         })
     };
@@ -653,6 +705,7 @@ pub fn render<H: Host>(
 /// chip, under it.
 fn released<H: Host>(
     h: &mut H,
+    agent: &str,
     taps: &Taps,
     to: Point<Pixels>,
     t: TypeScale,
@@ -660,13 +713,12 @@ fn released<H: Host>(
     cx: &mut Context<H>,
 ) {
     let text = TextSelection::selected_text(window, cx);
-    let ui = h.parts().1;
-    let Some(agent) = ui.zoomed_agent().map(String::from) else {
+    let Some(p) = h.parts().1.panels.get_mut(agent) else {
         return;
     };
-    let column = ui.transcript.list.viewport_bounds().left() + t.css(PAD);
+    let column = p.transcript.list.viewport_bounds().left() + t.css(PAD);
     let at = capture::anchor(taps.from.get(), to, column, t.line);
-    capture::offer(ui, &agent, &text, at, window, cx);
+    capture::offer(p, agent, &text, at, window, cx);
     cx.notify();
 }
 
@@ -724,8 +776,10 @@ fn strip<H: Host>(store: &Store, tr: &Transcript, t: TypeScale, cx: &mut Context
     let cwd = d
         .and_then(|d| d.cwd.clone())
         .or_else(|| store.fleet.agents.get(&tr.agent)?.cwd.clone());
-    let open =
-        cx.listener(|h, _: &ClickEvent, _, cx| h.dispatch(Event::Transcript(Step::OpenCwd), cx));
+    let agent = tr.agent.clone();
+    let open = cx.listener(move |h, _: &ClickEvent, _, cx| {
+        h.dispatch(Event::Transcript(Step::OpenCwd(agent.clone())), cx)
+    });
     let cwd = cwd.map(|c| {
         let link = div().id("cwd").cursor_pointer().on_click(open);
         link.text_color(rgb(pal::ACC)).child(format!("{c} ↗"))
@@ -749,13 +803,16 @@ fn strip<H: Host>(store: &Store, tr: &Transcript, t: TypeScale, cx: &mut Context
 /// One row of the list: an item, or a run.
 fn row<H: Host>(
     (store, ui): (&Store, &Ui),
+    agent: &str,
     ix: usize,
     t: TypeScale,
     host: WeakEntity<H>,
 ) -> AnyElement {
-    let view = &ui.transcript;
+    let Some(view) = ui.panels.get(agent).map(|p| &p.transcript) else {
+        return div().into_any_element();
+    };
     let rows = view.rows.borrow();
-    let tr = store.transcript.open.as_ref();
+    let tr = store.transcript.open.get(agent);
     let tr = tr.filter(|tr| tr.agent == rows.0.0);
     let (Some(tr), Some(&r)) = (tr, rows.2.get(ix)) else {
         return div().into_any_element();
@@ -819,10 +876,12 @@ impl<H: Host> Paint<'_, H> {
         let n = members().count() - usize::from(latest.is_some());
         let pills = condense::pills(members().take(n).map(|(_, item)| item));
         let keys: Vec<Key> = members().take(n).map(|(&key, _)| key).collect();
-        let host = self.host.clone();
+        let (host, agent) = (self.host.clone(), tr.agent.clone());
         let toggle = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
             let _ = host.update(cx, |h, cx| {
-                h.parts().1.transcript.toggle((first, last), ix);
+                if let Some(p) = h.parts().1.panels.get(&agent) {
+                    p.transcript.toggle((first, last), ix);
+                }
                 cx.notify();
             });
         };
@@ -1199,13 +1258,18 @@ fn record<T>(
 /// Keeps what is read in place when a page grows the head (`View::anchor`): before the list lays out,
 /// lays the row now holding the anchor out of sight, finds the same mark in it (else takes the row's
 /// top) and scrolls so that sits where it was. However the row grew or rewrapped, above or below.
-fn hold<H: Host>(view: &View, t: TypeScale, host: WeakEntity<H>) -> Option<impl IntoElement> {
+fn hold<H: Host>(
+    view: &View,
+    agent: &str,
+    t: TypeScale,
+    host: WeakEntity<H>,
+) -> Option<impl IntoElement> {
     let a = view.anchor.take()?;
     let ix = view.rows.borrow().2.partition_point(|r| r.last() < a.key);
-    let (list, painted) = (view.list.clone(), view.painted.clone());
+    let (list, painted, agent) = (view.list.clone(), view.painted.clone(), agent.to_string());
     let measure = move |_, window: &mut Window, cx: &mut App| {
         let Some(h) = host.upgrade() else { return };
-        let mut el = row::<H>(h.read(cx).view(), ix, t, host.clone());
+        let mut el = row::<H>(h.read(cx).view(), &agent, ix, t, host.clone());
         let width = AvailableSpace::Definite(list.viewport_bounds().size.width);
         let space = size(width, AvailableSpace::MinContent);
         // Far above the window: measured, never seen or hit.

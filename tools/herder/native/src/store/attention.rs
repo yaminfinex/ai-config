@@ -219,21 +219,21 @@ impl Store {
         }
     }
 
-    /// Owner ruling (2026-10-01): while the owner watches an agent's tail (frontmost, zoomed on it, its
-    /// transcript following the bottom), what lands is seen as it arrives: a new turn or block neither
-    /// counts nor alerts.
+    /// Owner ruling (2026-10-01): while the owner watches an agent's tail (frontmost, its panel focused,
+    /// its transcript following the bottom), what lands is seen as it arrives: a new turn or block
+    /// neither counts nor alerts. A panel beside it is not watched (owner, 2026-10-03).
     pub(super) fn watch(&mut self, out: &mut Vec<Effect>) {
         let front = self.alerts.front;
-        let open = self.transcript.open.as_ref().filter(|t| t.tail && front);
+        let open = self.transcript.focused().filter(|t| t.tail && front);
         if open.is_some_and(|t| mark_seen(&mut self.prefs.seen, &self.fleet, &t.agent)) {
             out.push(Effect::Persist(Persist::Prefs));
         }
     }
 
-    /// The agent the owner is looking at: zoomed in on it (its transcript is open) with the app
+    /// The agent the owner is looking at: its panel focused (its transcript is open) with the app
     /// frontmost. It is never alerted.
     pub(super) fn looking_at(&self) -> Option<&str> {
-        let open = self.transcript.open.as_ref()?;
+        let open = self.transcript.focused()?;
         self.alerts.front.then_some(open.agent.as_str())
     }
 

@@ -35,7 +35,7 @@ fn zoomed(ui: &State) -> Option<(&str, Option<&str>)> {
 /// The `View` moves among `events`.
 fn viewed(events: Vec<Event>) -> Vec<(String, Option<String>)> {
     let views = events.into_iter().filter_map(|e| match e {
-        Event::Lens(Move::View { space, agent }) => Some((space, agent)),
+        Event::Lens(Move::View { space, agent, .. }) => Some((space, agent)),
         _ => None,
     });
     views.collect()
@@ -225,7 +225,11 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
     store.apply(fleet_frame(b.clone()));
     store.apply(Event::Front(true));
     let (space, agent) = (space_of(&store, "mupu").id.clone(), Some("mupu".into()));
-    let effects = store.apply(Event::Lens(Move::View { space, agent }));
+    let effects = store.apply(Event::Lens(Move::View {
+        space,
+        agent,
+        beside: Vec::new(),
+    }));
     let read = effects.into_iter().find_map(|e| match e {
         Effect::Fetch(Fetch::Transcript(r)) if matches!(r.what, What::Page(_)) => Some(r),
         _ => None,
@@ -235,15 +239,14 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
     let got = Ok(Got::Page(Box::new(page)));
     store.apply(Event::Transcript(Step::Read(read.unwrap(), got)));
     // A render: the list mirrors the rows and follows the bottom, and says so.
-    let mut ui = State::default();
-    ui.transcript
-        .sync(store.transcript.open.as_ref().unwrap(), &store);
-    store.apply(ui.transcript.tail(true));
+    let view = transcript::View::default();
+    view.sync(store.transcript.focused().unwrap(), &store);
+    store.apply(view.tail(true));
     bump(&mut b, "mupu", 1);
     store.apply(frame(&store, b.clone()));
     assert!(!store.agent_needs_you("mupu"), "watched as it lands");
     // `g`, then a fleet frame before any render.
-    for event in transcript::scroll(&store, &mut ui, Scroll::Top) {
+    for event in transcript::scroll(&store, &view, Scroll::Top) {
         store.apply(event);
     }
     bump(&mut b, "mupu", 1);
@@ -699,7 +702,7 @@ mod notes_events {
     use crate::views::notes::{self, Notes};
     use crate::views::notes_list::{self, Card};
     use crate::views::space::Zoom;
-    use crate::views::{Host, bind, composer, on, theme};
+    use crate::views::{Host, bind, composer, on, panel, theme};
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
         Context, ElementId, Entity, InteractiveElement as _, IntoElement, Modifiers,
@@ -744,9 +747,16 @@ mod notes_events {
 
     impl Render for Shell {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            panel::sync(&mut self.ui, &self.store, window, cx);
             composer::sync(&mut self.ui, &self.store, window, cx);
             notes::sync(&mut self.ui, &self.store, window, cx);
             let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
+            let panel = div().track_focus(&ui.panel().unwrap().focus).size_full();
+            let panel = panel
+                .flex()
+                .flex_col()
+                .children(notes::render(store, ui, "mupu", t, cx))
+                .child(composer::render(store, ui, "mupu", t, cx));
             let zoom = div()
                 .id("space")
                 .key_context("Space")
@@ -754,10 +764,7 @@ mod notes_events {
                 .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
                 .on_action(on(cx, |store, ui, c: &Card| notes_list::act(store, ui, c)))
                 .size_full()
-                .flex()
-                .flex_col()
-                .children(notes::render(store, ui, "mupu", t, cx))
-                .child(composer::render(store, ui, "mupu", t, cx));
+                .child(panel);
             div().size_full().key_context("Lens").child(zoom)
         }
     }
@@ -799,9 +806,9 @@ mod notes_events {
         let rows: Vec<StateRow> = (ids.iter().rev().enumerate())
             .map(|(i, id)| row(id, "mupu", 1_000 + i as i64))
             .collect();
-        let (shell, cx) = cx.add_window_view(move |window, cx| {
+        let (shell, cx) = cx.add_window_view(move |_, cx| {
             let store = zoomed("mupu", Some("listening"));
-            let mut ui = Ui::new(window, cx);
+            let mut ui = Ui::new(cx);
             let space = store.spaces[0].id.clone();
             ui.zoom = Some(Zoom {
                 space,
@@ -841,11 +848,11 @@ mod notes_events {
     ) -> (Vec<String>, Option<String>, Option<String>) {
         shell.read_with(cx, |s, _| {
             let ids = notes::ids(&s.store, "mupu");
-            let picked = &s.ui.notes.list.picked;
+            let picked = &s.ui.panel().unwrap().notes.list.picked;
             (
                 picked.chosen(&ids),
                 picked.cursor.clone(),
-                s.ui.notes.said(),
+                s.ui.panel().unwrap().notes.said(),
             )
         })
     }
@@ -886,11 +893,16 @@ mod notes_events {
         let editing = |cx: &mut VisualTestContext| {
             cx.update(|window, cx| {
                 let s = shell.read(cx);
-                let focused = s.ui.notes.focus_handle(cx).is_focused(window);
+                let focused =
+                    s.ui.panel()
+                        .unwrap()
+                        .notes
+                        .focus_handle(cx)
+                        .is_focused(window);
                 (
-                    s.ui.notes.editing.is_some(),
+                    s.ui.panel().unwrap().notes.editing.is_some(),
                     focused,
-                    s.ui.notes.text.clone(),
+                    s.ui.panel().unwrap().notes.text.clone(),
                 )
             })
         };
@@ -970,7 +982,7 @@ mod notes_events {
         assert_eq!(shell.read_with(cx, |s, _| s.copied.clone()), ["note a"]);
         // Focus leaving the list disarms too.
         cx.update(|window, cx| {
-            let box_ = shell.read(cx).ui.composer.focus_handle(cx);
+            let box_ = shell.read(cx).ui.panel().unwrap().composer.focus_handle(cx);
             window.focus(&box_, cx);
             window.render_frame(cx);
         });
@@ -992,7 +1004,7 @@ mod notes_events {
         cx.update(|window, cx| window.press("e", cx));
         cx.run_until_parked();
         let edited = shell.read_with(cx, |s, _| {
-            let editing = s.ui.notes.editing.as_ref();
+            let editing = s.ui.panel().unwrap().notes.editing.as_ref();
             editing.and_then(|e| e.note.as_ref()).map(|n| n.id.clone())
         });
         assert_eq!(edited.as_deref(), Some("b"));
@@ -1003,7 +1015,7 @@ mod notes_events {
         cx: &mut TestAppContext,
     ) {
         let (shell, cx) = open(cx, &["a", "b", "c", "d"]);
-        shell.update(cx, |s, _| s.ui.notes.open = true);
+        shell.update(cx, |s, _| s.ui.panel_mut().unwrap().notes.open = true);
         let hand_off = |cx: &mut VisualTestContext, saved: Result<(), String>| {
             click(cx, "b", Modifiers::none());
             cx.update(|window, cx| window.press("enter", cx));
@@ -1029,7 +1041,7 @@ mod notes_events {
         // Back into the list from the emptied box: the cursor is still on c.
         shell.update(cx, |s, _| s.store.prefs.drafts.clear());
         cx.update(|window, cx| {
-            let box_ = shell.read(cx).ui.composer.focus_handle(cx);
+            let box_ = shell.read(cx).ui.panel().unwrap().composer.focus_handle(cx);
             window.focus(&box_, cx);
         });
         cx.update(|window, cx| window.press("up", cx));
@@ -1040,11 +1052,11 @@ mod notes_events {
 
 /// F2: where regrouped rows splice into the list, and which runs stay open as pages land.
 mod runs {
+    use crate::store::Store;
     use crate::store::condense::{self, Row};
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{drive, history, items, open, reference, wake};
-    use crate::store::transcript::{Key, Step};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::Key;
     use crate::views::transcript::{View, plan};
 
     /// The rows of `agent`'s history from `a` to `b`, read whole.
@@ -1076,7 +1088,7 @@ mod runs {
         let mut joined = 0;
         loop {
             let old = condense::rows(items(&store));
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -1109,7 +1121,7 @@ mod runs {
     }
 
     fn sync(view: &View, store: &Store) {
-        view.sync(store.transcript.open.as_ref().unwrap(), store);
+        view.sync(store.transcript.focused().unwrap(), store);
     }
 
     /// The first and last runs among the view's rows, with their row indices.
@@ -1161,7 +1173,7 @@ mod runs {
         // Pages before join the top run, the wake grows the bottom one.
         let mut joined = false;
         loop {
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -1214,11 +1226,11 @@ mod runs {
 /// A2: answers' parts, entry headers and cards.
 mod entries {
     use crate::api::AgentDetail;
+    use crate::store::Store;
     use crate::store::condense::{self, Seg};
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{drive, history, items, open};
-    use crate::store::transcript::{Item, Key, Step};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::{Item, Key};
     use crate::views::entries::{Bit, Card, bits, queued_age, stamp, waited};
     use crate::views::transcript::{Fold, View, long};
 
@@ -1251,7 +1263,7 @@ mod entries {
         let (mut opened, mut was) = (Vec::new(), Vec::new());
         let mut regrouped = false;
         loop {
-            view.sync(store.transcript.open.as_ref().unwrap(), &store);
+            view.sync(store.transcript.focused().unwrap(), &store);
             for is in [status as fn(&Seg) -> bool, note] {
                 // The last such answer: pages before only add earlier ones.
                 if let Some(fold) = part(&store, is).filter(|f| !opened.contains(f)) {
@@ -1272,7 +1284,7 @@ mod entries {
             for (fold, at) in opened.iter().zip(&was) {
                 regrouped |= row_of(&store, fold.0) != *at;
             }
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -1400,15 +1412,16 @@ mod entries {
 mod layout {
     use crate::api::types::Entry;
     use crate::store::condense::{self, Row};
+    use crate::store::spaces::Move;
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{self, drive, history, items, open, reference};
     use crate::store::tests::{board, bump, frame};
-    use crate::store::transcript::{Item, Key, Step};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::{Item, Key};
+    use crate::store::{Effect, Event, Store};
     use crate::views::lens::Ui;
     use crate::views::space::Zoom;
     use crate::views::transcript::{self, Fold, Mark, OpenLink};
-    use crate::views::{Host, theme};
+    use crate::views::{Host, panel, theme};
     use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
@@ -1420,8 +1433,10 @@ mod layout {
     struct Body {
         store: Store,
         ui: Ui,
-        /// Reduce what the view dispatches, as the shell does (else the test reads the pages itself).
+        /// Reduce what the view dispatches, as the shell does (else the test reads the pages itself),
+        /// keeping the effects for the test to answer.
         reduce: bool,
+        effects: Vec<Effect>,
         /// The links clicked through to the shell (`OpenLink`).
         links: Vec<String>,
     }
@@ -1437,7 +1452,8 @@ mod layout {
 
         fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
             if self.reduce {
-                drop(transcript::reduce(&mut self.store, &self.ui, event));
+                let effects = transcript::reduce(&mut self.store, &self.ui, event);
+                self.effects.extend(effects);
                 cx.notify();
             }
         }
@@ -1446,10 +1462,11 @@ mod layout {
     }
 
     impl Render for Body {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            panel::sync(&mut self.ui, &self.store, window, cx);
             let zoom = self.ui.zoom.clone().unwrap();
-            let t = theme::type_scale(1.);
-            let body = transcript::render(&self.store, &self.ui, &zoom, t, cx);
+            let (agent, t) = (zoom.agent.unwrap(), theme::type_scale(1.));
+            let body = transcript::render(&self.store, &self.ui, &agent, t, cx);
             let open = cx.listener(|b, link: &OpenLink, _, _| b.links.push(link.0.to_string()));
             use gpui_kit::InteractiveElement as _;
             div()
@@ -1478,14 +1495,15 @@ mod layout {
         let mut store = loaded();
         let effects = open(&mut store, agent);
         drive(&mut store, effects, served_of(agent, served), limit);
-        let (body, cx) = cx.add_window_view(move |window, cx| {
-            let mut ui = Ui::new(window, cx);
+        let (body, cx) = cx.add_window_view(move |_, cx| {
+            let mut ui = Ui::new(cx);
             let (space, agent) = ("none".into(), Some(agent.into()));
             ui.zoom = Some(Zoom { space, agent });
             Body {
                 store,
                 ui,
                 reduce: false,
+                effects: Vec::new(),
                 links: Vec::new(),
             }
         });
@@ -1509,13 +1527,15 @@ mod layout {
     }
 
     fn row(body: &Entity<Body>, ix: usize, cx: &mut VisualTestContext) -> Bounds<Pixels> {
-        body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().rows[&ix])
+        body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.painted.borrow().rows[&ix]
+        })
     }
 
     /// Where `was` (a member, or a pill holding its key) last laid out.
     fn mark(body: &Entity<Body>, was: Mark, cx: &mut VisualTestContext) -> Option<Bounds<Pixels>> {
         body.read_with(cx, |b, _| {
-            let painted = b.ui.transcript.painted.borrow();
+            let painted = b.ui.panel().unwrap().transcript.painted.borrow();
             painted
                 .marks
                 .iter()
@@ -1525,7 +1545,9 @@ mod layout {
     }
 
     fn screen(body: &Entity<Body>, cx: &mut VisualTestContext) -> Bounds<Pixels> {
-        body.read_with(cx, |b, _| b.ui.transcript.list.viewport_bounds())
+        body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.list.viewport_bounds()
+        })
     }
 
     /// Read the page before and then, when `wake`, what the served file has after; then lay out once.
@@ -1538,7 +1560,7 @@ mod layout {
     ) {
         body.update(cx, |b, cx| {
             let all = served_of(agent, served);
-            let effects = b.store.apply(Event::Transcript(Step::Older));
+            let effects = b.store.apply(crate::store::tests::older(&b.store));
             drive(&mut b.store, effects, all, limit);
             if wake {
                 let effects = b.store.apply(transcript_pages::wake(&b.store, agent));
@@ -1579,7 +1601,7 @@ mod layout {
     /// Scroll the top row so the viewport's top is `y` into it.
     fn scroll(body: &Entity<Body>, y: Pixels, cx: &mut VisualTestContext) {
         body.read_with(cx, |b, _| {
-            let list = &b.ui.transcript.list;
+            let list = &b.ui.panel().unwrap().transcript.list;
             list.scroll_to(ListOffset {
                 item_ix: 0,
                 offset_in_item: y,
@@ -1594,7 +1616,9 @@ mod layout {
         let Row::Run(first, last) = rows(body, cx)[0] else {
             panic!("the top row is a run")
         };
-        body.read_with(cx, |b, _| b.ui.transcript.toggle((first, last), 0));
+        body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.toggle((first, last), 0)
+        });
         scroll(body, px(0.), cx);
         let keys: Vec<Key> = body.read_with(cx, |b, _| {
             items(&b.store)
@@ -1602,7 +1626,14 @@ mod layout {
                 .map(|(k, _)| *k)
                 .collect()
         });
-        let most = body.read_with(cx, |b, _| b.ui.transcript.list.max_offset_for_scrollbar().y);
+        let most = body.read_with(cx, |b, _| {
+            b.ui.panel()
+                .unwrap()
+                .transcript
+                .list
+                .max_offset_for_scrollbar()
+                .y
+        });
         let top = row(body, 0, cx).top();
         let mut reach = Vec::new();
         for &key in keys.iter().take(3) {
@@ -1729,7 +1760,15 @@ mod layout {
         scroll(&body, px(0.), cx);
         // The first pill on the strip's last line (what the viewport's top reads, of a line), the
         // viewport's top just above it.
-        let pills = body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().marks.clone());
+        let pills = body.read_with(cx, |b, _| {
+            b.ui.panel()
+                .unwrap()
+                .transcript
+                .painted
+                .borrow()
+                .marks
+                .clone()
+        });
         let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
         let pills: Vec<_> = pills.into_iter().filter(|(m, _)| inside(m)).collect();
         let (read, b) = *pills
@@ -1770,7 +1809,7 @@ mod layout {
         let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
         let key = rows(&body, cx)[2].first();
         body.read_with(cx, |b, _| {
-            let list = &b.ui.transcript.list;
+            let list = &b.ui.panel().unwrap().transcript.list;
             list.scroll_to(ListOffset {
                 item_ix: 2,
                 offset_in_item: px(0.),
@@ -1801,7 +1840,7 @@ mod layout {
                     item_ix: ix,
                     offset_in_item: px(y),
                 };
-                b.ui.transcript.list.scroll_to(at);
+                b.ui.panel().unwrap().transcript.list.scroll_to(at);
             });
         };
         let count = rows(&body, cx).len();
@@ -1832,13 +1871,13 @@ mod layout {
             let live = frame(&b.store, board.clone());
             b.store.apply(live);
             b.store.apply(Event::Front(true));
-            b.store.apply(b.ui.transcript.tail(true));
+            b.store.apply(b.ui.panel().unwrap().transcript.tail(true));
             bump(&mut board, "mupu", 1);
             let landed = frame(&b.store, board.clone());
             transcript::reduce(&mut b.store, &b.ui, landed);
             assert!(!b.store.agent_needs_you("mupu"), "watched as it lands");
             // The scrollbar's handle moves the list without its scroll handler.
-            let list = &b.ui.transcript.list;
+            let list = &b.ui.panel().unwrap().transcript.list;
             ScrollbarHandle::set_offset(list, point(px(0.), px(0.)));
             assert!(!list.is_following_tail(), "dragged to the top");
             bump(&mut board, "mupu", 1);
@@ -1851,8 +1890,10 @@ mod layout {
     #[gpui_kit::test]
     fn o_at_the_tail_opens_the_last_run_when_it_shows(cx: &mut TestAppContext) {
         let (body, cx) = body(cx, "mupu", (usize::MAX, usize::MAX), (900., 700.));
-        body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
-        let (rows, _, open) = body.read_with(cx, |b, _| b.ui.transcript.census());
+        body.read_with(cx, |b, _| {
+            transcript::toggle_lowest(&b.ui.panel().unwrap().transcript)
+        });
+        let (rows, _, open) = body.read_with(cx, |b, _| b.ui.panel().unwrap().transcript.census());
         assert_eq!(open, 1);
         let last = row(&body, rows - 1, cx);
         assert!(last.size.height > px(0.));
@@ -1865,16 +1906,30 @@ mod layout {
         let rows = rows(&body, cx);
         let n = rows.len();
         assert!(matches!(rows[n - 1], Row::One(_)) && matches!(rows[n - 2], Row::Run(..)));
-        let screen = body.read_with(cx, |b, _| b.ui.transcript.list.viewport_bounds());
+        let screen = body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.list.viewport_bounds()
+        });
         let run = body.read_with(cx, |b, _| {
-            b.ui.transcript.painted.borrow().rows.get(&(n - 2)).copied()
+            b.ui.panel()
+                .unwrap()
+                .transcript
+                .painted
+                .borrow()
+                .rows
+                .get(&(n - 2))
+                .copied()
         });
         assert!(
             run.is_none_or(|b| b.bottom() <= screen.top()),
             "the run is off screen"
         );
-        body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
-        assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
+        body.read_with(cx, |b, _| {
+            transcript::toggle_lowest(&b.ui.panel().unwrap().transcript)
+        });
+        assert_eq!(
+            body.read_with(cx, |b, _| b.ui.panel().unwrap().transcript.census().2),
+            0
+        );
     }
 
     /// G1: right after a drag selects text (one across the link itself, which opens nothing), a real
@@ -1935,7 +1990,7 @@ mod layout {
                 // The board, whose names the mentions link.
                 let event = frame(&b.store, board());
                 drop(b.store.apply(event));
-                let tr = b.store.transcript.open.as_mut().unwrap();
+                let tr = b.store.transcript.open.values_mut().next().unwrap();
                 for (sub, item) in items.into_iter().enumerate() {
                     tr.items.insert((u64::MAX - 1, sub as u16), item);
                 }
@@ -2011,6 +2066,119 @@ mod layout {
         }
     }
 
+    /// DK1: a panel hidden behind another tab lets its rows go; shown again, it reads its tail afresh,
+    /// pages back as far as where it was read, pages beyond its first screen, and is back there, to the
+    /// pixel. Its session is the one its tail landed with after a frame drawn while loading, and hidden
+    /// again before it was back, where it was read still stands (remi's DK1 P2s).
+    #[gpui_kit::test]
+    fn a_hidden_panel_comes_back_where_it_was_read(cx: &mut TestAppContext) {
+        let (agent, served) = ("conductor-line", (usize::MAX, 100));
+        let (body, cx) = body(cx, agent, served, (720., 600.));
+        let (space, other) = body.read_with(cx, |b, _| {
+            let s = crate::store::tests::space_of(&b.store, agent);
+            let other = s.agents().find(|a| *a != agent).unwrap();
+            (s.id.clone(), other.to_string())
+        });
+        let show = move |b: &mut Body, a: &str| {
+            let (space, agent) = (space.clone(), Some(a.to_string()));
+            b.ui.zoom = Some(Zoom {
+                space: space.clone(),
+                agent: agent.clone(),
+            });
+            let beside = Vec::new();
+            b.store.apply(Event::Lens(Move::View {
+                space,
+                agent,
+                beside,
+            }))
+        };
+        let all = served_of(agent, served.0);
+        // Away and back, a frame drawn before the tail lands: the panel has no session yet.
+        body.update(cx, |b, cx| {
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        let effects = body.update(cx, |b, cx| {
+            cx.notify();
+            show(b, agent)
+        });
+        draw(cx);
+        body.update(cx, |b, cx| {
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        draw(cx);
+        older(&body, agent, served, false, cx);
+        older(&body, agent, served, false, cx);
+        body.read_with(cx, |b, _| {
+            let list = &b.ui.panel().unwrap().transcript.list;
+            list.scroll_to(ListOffset {
+                item_ix: 2,
+                offset_in_item: px(10.),
+            });
+        });
+        draw(cx);
+        let read = rows(&body, cx)[2].first();
+        let was = row(&body, 2, cx).top() - screen(&body, cx).top();
+        // Another member's tab: the panel is hidden, its transcript closed.
+        body.update(cx, |b, cx| {
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        body.read_with(cx, |b, _| {
+            assert!(!b.store.transcript.open.contains_key(agent));
+            assert_eq!(b.ui.panels[agent].transcript.census().0, 0, "its rows went");
+        });
+        // Back, its tail read, and away again before the page before it asked for lands.
+        body.update(cx, |b, cx| {
+            b.reduce = true;
+            let effects = show(b, agent);
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        draw(cx);
+        draw(cx);
+        body.update(cx, |b, cx| {
+            assert_eq!(b.effects.len(), 1, "the page before asked for");
+            b.effects.clear();
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        // Back: the tail is read again, and the panel asks for each page before it until that row.
+        body.update(cx, |b, cx| {
+            let effects = show(b, agent);
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        let mut back = 0;
+        loop {
+            draw(cx);
+            draw(cx);
+            let pages = body.update(cx, |b, cx| {
+                let effects = std::mem::take(&mut b.effects);
+                cx.notify();
+                drive(&mut b.store, effects, all, served.1)
+            });
+            // Only pages before (the views may not name the api's `Page`).
+            let before = |p: &[_]| p.iter().all(|p| format!("{p:?}").starts_with("Before"));
+            match pages.len() {
+                0 => break,
+                1 if before(&pages) => back += 1,
+                _ => panic!("{pages:?}"),
+            }
+        }
+        assert!(
+            back >= 2,
+            "back to the page it was read in, then on as the top nears"
+        );
+        let ix = rows(&body, cx).iter().position(|r| r.first() == read);
+        let now = row(&body, ix.unwrap(), cx).top() - screen(&body, cx).top();
+        assert!((now - was).abs() < px(0.5), "{was:?} → {now:?}");
+    }
+
     /// maki's G1 P3: only a tap (pressed and let go with no frame between) on a frame that showed a
     /// selection is replayed. A click with a frame drawn between press and release goes through as it
     /// is, and still routes once.
@@ -2022,7 +2190,7 @@ mod layout {
         let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
         body.update(cx, |b, cx| {
             let text = format!("[{}](src/views/transcript.rs)", "transcript ".repeat(40));
-            let tr = b.store.transcript.open.as_mut().unwrap();
+            let tr = b.store.transcript.open.values_mut().next().unwrap();
             tr.items
                 .insert((u64::MAX - 1, 0), Item::Assistant(vec![Seg::Text(text)]));
             cx.notify();
@@ -2048,7 +2216,9 @@ mod layout {
             click_count: one,
         };
         let replays = |cx: &mut VisualTestContext| {
-            body.read_with(cx, |b, _| b.ui.transcript.taps.replays.get())
+            body.read_with(cx, |b, _| {
+                b.ui.panel().unwrap().transcript.taps.replays.get()
+            })
         };
         let select = |cx: &mut VisualTestContext| {
             let to = point(p.x + px(250.), p.y);
@@ -2090,7 +2260,7 @@ mod layout {
         let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
         let out = body.update(cx, |b, cx| {
             b.reduce = true;
-            let tr = b.store.transcript.open.as_ref().unwrap();
+            let tr = b.store.transcript.focused().unwrap();
             let rows = condense::rows(&tr.items);
             let (ix, first, last) = rows.iter().enumerate().rev().find_map(|(ix, r)| match *r {
                 Row::Run(first, last) => Some((ix, first, last)),
@@ -2106,8 +2276,8 @@ mod layout {
                     }
                 )
             })?;
-            b.ui.transcript.toggle((first, last), ix);
-            b.ui.transcript.fold(Fold(key, 0));
+            b.ui.panel().unwrap().transcript.toggle((first, last), ix);
+            b.ui.panel().unwrap().transcript.fold(Fold(key, 0));
             cx.notify();
             Some(transcript::name("tool", tr.generation, key) + "-out")
         });
@@ -2130,11 +2300,11 @@ mod layout {
         ];
         for (position, delta) in cases {
             body.update(cx, |b, cx| {
-                b.ui.transcript.list.scroll_to(ListOffset {
+                b.ui.panel().unwrap().transcript.list.scroll_to(ListOffset {
                     item_ix: usize::MAX,
                     offset_in_item: px(0.),
                 });
-                let event = b.ui.transcript.tail(true);
+                let event = b.ui.panel().unwrap().transcript.tail(true);
                 drop(b.store.apply(event));
                 cx.notify();
             });
@@ -2147,8 +2317,11 @@ mod layout {
             });
             draw(cx);
             let (tail, following) = body.read_with(cx, |b, _| {
-                let tail = b.store.transcript.open.as_ref().unwrap().tail;
-                (tail, b.ui.transcript.list.is_following_tail())
+                let tail = b.store.transcript.focused().unwrap().tail;
+                (
+                    tail,
+                    b.ui.panel().unwrap().transcript.list.is_following_tail(),
+                )
             });
             assert_eq!(
                 tail, following,
@@ -2162,7 +2335,7 @@ mod layout {
     fn an_open_tool_shows_its_input_and_output_and_closed_hides_them(cx: &mut TestAppContext) {
         let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
         let opened = body.update(cx, |b, cx| {
-            let tr = b.store.transcript.open.as_ref().unwrap();
+            let tr = b.store.transcript.focused().unwrap();
             let rows = condense::rows(&tr.items);
             let (ix, first, last) = rows.iter().enumerate().rev().find_map(|(ix, r)| match *r {
                 Row::Run(first, last) => Some((ix, first, last)),
@@ -2177,8 +2350,8 @@ mod layout {
                 } if !r.text.is_empty() => Some((key, input.clone(), r.text.clone())),
                 _ => None,
             })?;
-            b.ui.transcript.toggle((first, last), ix);
-            b.ui.transcript.fold(Fold(key, 0));
+            b.ui.panel().unwrap().transcript.toggle((first, last), ix);
+            b.ui.panel().unwrap().transcript.fold(Fold(key, 0));
             cx.notify();
             Some((
                 transcript::name("tool", tr.generation, key),
@@ -2199,7 +2372,7 @@ mod layout {
         assert_eq!(label("output", cx).as_deref(), Some("OUTPUT"));
         assert_eq!(label("out", cx), Some(output));
         body.update(cx, |b, cx| {
-            b.ui.transcript.fold(Fold(key, 0));
+            b.ui.panel().unwrap().transcript.fold(Fold(key, 0));
             cx.notify();
         });
         draw(cx);
@@ -2356,11 +2529,11 @@ mod prose {
 
 /// A3: a run's members.
 mod members {
+    use crate::store::Store;
     use crate::store::condense;
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{drive, history, items, open};
-    use crate::store::transcript::{Item, Step, ToolResult};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::{Item, ToolResult};
     use crate::views::entries::{dot, lasted, took};
     use crate::views::theme::pal;
     use crate::views::transcript::{Fold, View};
@@ -2377,7 +2550,7 @@ mod members {
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, 7);
         let view = View::default();
-        view.sync(store.transcript.open.as_ref().unwrap(), &store);
+        view.sync(store.transcript.focused().unwrap(), &store);
         let tools = items(&store).iter().rev();
         let mut tools = tools.filter(|(_, i)| {
             matches!(
@@ -2393,10 +2566,10 @@ mod members {
         let was = tool_row(&store, key);
         let mut regrouped = false;
         loop {
-            view.sync(store.transcript.open.as_ref().unwrap(), &store);
+            view.sync(store.transcript.focused().unwrap(), &store);
             assert_eq!(view.tools(items(&store)), (1, 1), "open with its output");
             regrouped |= tool_row(&store, key) != was;
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -2535,9 +2708,9 @@ mod lens_cards {
         }));
         let long = store.cards.text("conductor-line").expect("an answer").len();
         assert!(long > 400, "long enough to be cut: {long}");
-        let (lens, cx) = cx.add_window_view(move |window, cx| Lens {
+        let (lens, cx) = cx.add_window_view(move |_, cx| Lens {
             store,
-            ui: Ui::new(window, cx),
+            ui: Ui::new(cx),
         });
         cx.simulate_resize(size(px(1400.), px(900.)));
         cx.run_until_parked();
@@ -2592,7 +2765,7 @@ mod capture_events {
     use crate::views::lens::Ui;
     use crate::views::space::Zoom;
     use crate::views::transcript::{self, Scroll};
-    use crate::views::{Host, bind, on, theme};
+    use crate::views::{Host, bind, on, panel, theme};
     use gpui_kit::base::TextSelection;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
@@ -2634,10 +2807,10 @@ mod capture_events {
 
     impl Render for Shell {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            panel::sync(&mut self.ui, &self.store, window, cx);
             crate::views::composer::sync(&mut self.ui, &self.store, window, cx);
             capture::sync(&mut self.ui, window, cx);
             let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
-            let zoom = ui.zoom.clone().unwrap();
             // A zoom key that runs while text is selected breaks the rule.
             let scroll = cx.listener(|s: &mut Shell, _: &Scroll, window, cx| {
                 s.scrolled += 1;
@@ -2650,11 +2823,16 @@ mod capture_events {
                 .on_action(scroll)
                 .on_action(on(cx, |store, ui, c: &Capture| capture::act(store, ui, c)))
                 .size_full()
-                .flex()
-                .flex_col()
-                .child(transcript::render(store, ui, &zoom, t, cx))
-                .child(crate::views::composer::render(store, ui, "mupu", t, cx))
-                .children(capture::render(ui, "mupu", t, cx));
+                .child(
+                    div()
+                        .track_focus(&ui.panel().unwrap().focus)
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(transcript::render(store, ui, "mupu", t, cx))
+                        .child(crate::views::composer::render(store, ui, "mupu", t, cx))
+                        .children(capture::render(ui, "mupu", t, cx)),
+                );
             div().size_full().key_context("Lens").child(space)
         }
     }
@@ -2693,14 +2871,15 @@ mod capture_events {
             let view = spaces::Move::View {
                 space: space.clone(),
                 agent: Some("mupu".into()),
+                beside: Vec::new(),
             };
             let effects = store.apply(Event::Lens(view));
             drive(&mut store, effects, &history("mupu"), usize::MAX);
-            let tr = store.transcript.open.as_mut().unwrap();
+            let tr = store.transcript.open.values_mut().next().unwrap();
             tr.items
                 .insert((u64::MAX - 1, 0), Item::Assistant(vec![Seg::Text(text)]));
             assert!(store.can_send("mupu").is_ok());
-            let mut ui = Ui::new(window, cx);
+            let mut ui = Ui::new(cx);
             ui.zoom = Some(Zoom {
                 space,
                 agent: Some("mupu".into()),
@@ -2725,7 +2904,7 @@ mod capture_events {
     /// The last answer's first line: where a drag across it starts.
     fn line(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Point<Pixels> {
         let at = shell.read_with(cx, |s, _| {
-            let painted = s.ui.transcript.painted.borrow();
+            let painted = s.ui.panel().unwrap().transcript.painted.borrow();
             *painted.rows.iter().max_by_key(|(i, _)| **i).unwrap().1
         });
         point(at.left() + px(36.), at.top() + px(42.))
@@ -2764,9 +2943,9 @@ mod capture_events {
 
     /// The capture as the harness asks it: `none`, `chip:<quote>`, `open:<text>`.
     fn shown(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> String {
-        shell.read_with(cx, |s, _| match &s.ui.capture.draft {
+        shell.read_with(cx, |s, _| match &s.ui.panel().unwrap().capture.draft {
             None => "none".into(),
-            Some(d) if d.open => format!("open:{}", s.ui.capture.text),
+            Some(d) if d.open => format!("open:{}", s.ui.panel().unwrap().capture.text),
             Some(d) => format!("chip:{}", d.quote),
         })
     }
@@ -2794,7 +2973,9 @@ mod capture_events {
         let quote = chip.trim_start_matches("chip:").to_string();
         // The chip sits under the selected line, at its left.
         let p = line(&shell, cx);
-        let at = shell.read_with(cx, |s, _| s.ui.capture.draft.as_ref().unwrap().at);
+        let at = shell.read_with(cx, |s, _| {
+            s.ui.panel().unwrap().capture.draft.as_ref().unwrap().at
+        });
         assert!(at.y > p.y && at.y < p.y + px(30.), "{at:?} under {p:?}");
         assert_eq!(at.x, p.x);
         // Every key types: `j` would scroll the zoom.

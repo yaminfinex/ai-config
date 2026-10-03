@@ -24,7 +24,7 @@ use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
     Frame, Host, Quit, TextBigger, TextReset, TextSmaller, capture, composer, lens, markdown,
-    notes, notes_list, probe, space, theme,
+    notes, notes_list, panel, probe, space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -100,7 +100,7 @@ impl Shell {
             })
             .detach();
         }
-        let mut ui = lens::Ui::new(window, cx);
+        let mut ui = lens::Ui::new(cx);
         transcript_view::set_web(&mut ui, &base_url());
         Shell {
             store,
@@ -311,6 +311,7 @@ impl Render for Shell {
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        panel::sync(&mut self.ui, &self.store, window, cx);
         composer::sync(&mut self.ui, &self.store, window, cx);
         notes::sync(&mut self.ui, &self.store, window, cx);
         capture::sync(&mut self.ui, window, cx);

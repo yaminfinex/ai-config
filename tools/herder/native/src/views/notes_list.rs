@@ -233,9 +233,9 @@ pub(super) fn disarm_on_keys<H: Host>(cx: &mut Context<H>) {
             .action
             .as_ref()
             .is_some_and(|a| a.partial_eq(&List::Delete));
-        let list = &mut host.parts().1.notes.list;
-        if !delete && !list.armed.is_empty() {
-            list.armed.clear();
+        let panels = host.parts().1.panels.values_mut();
+        let mut armed = panels.map(|p| &mut p.notes.list.armed);
+        if !delete && armed.any(|a| !std::mem::take(a).is_empty()) {
             cx.notify();
         }
     })
@@ -265,9 +265,9 @@ pub fn enter(store: &Store, ui: &mut Ui) -> Vec<Event> {
         return Vec::new();
     };
     let ids = ids(store, agent);
-    if !ids.is_empty() {
-        ui.notes.open = true;
-        let list = &mut ui.notes.list;
+    if let Some(v) = notes::strip(ui).filter(|_| !ids.is_empty()) {
+        v.open = true;
+        let list = &mut v.list;
         list.armed.clear();
         list.picked.all(&ids);
         list.reveal(&ids);
@@ -282,7 +282,9 @@ pub fn keys(store: &Store, ui: &mut Ui, key: List) -> Vec<Event> {
         return Vec::new();
     };
     let ids = ids(store, &agent);
-    let list = &mut ui.notes.list;
+    let Some(list) = notes::strip(ui).map(|v| &mut v.list) else {
+        return Vec::new();
+    };
     let chosen = list.picked.chosen(&ids);
     match key {
         List::Move(by, extend) => list.picked.step(&ids, by, extend),
@@ -299,7 +301,9 @@ pub fn keys(store: &Store, ui: &mut Ui, key: List) -> Vec<Event> {
             }
         }
     }
-    ui.notes.list.reveal(&ids);
+    if let Some(v) = notes::strip(ui) {
+        v.list.reveal(&ids);
+    }
     Vec::new()
 }
 
@@ -312,9 +316,10 @@ pub fn act(store: &Store, ui: &mut Ui, card: &Card) -> Vec<Event> {
     ui.focus = Some(Focus::List);
     match card {
         Card::Pick { id, command, shift } => {
-            let list = &mut ui.notes.list;
-            list.armed.clear();
-            list.picked.click(&ids, id, *command, *shift);
+            if let Some(v) = notes::strip(ui) {
+                v.list.armed.clear();
+                v.list.picked.click(&ids, id, *command, *shift);
+            }
             Vec::new()
         }
         Card::Edit(id) => notes::edit(store, ui, &agent, id),
@@ -324,14 +329,16 @@ pub fn act(store: &Store, ui: &mut Ui, card: &Card) -> Vec<Event> {
 
 /// Delete `chosen` on the second press: the first arms it (`armed` says so).
 fn delete(ui: &mut Ui, ids: &[String], chosen: Vec<String>) -> Vec<Event> {
-    let list = &mut ui.notes.list;
-    if list.armed != chosen {
-        list.armed = chosen;
+    let Some(v) = notes::strip(ui) else {
+        return Vec::new();
+    };
+    if v.list.armed != chosen {
+        v.list.armed = chosen;
         return Vec::new();
     }
-    list.armed.clear();
-    list.remove(ids, &chosen);
-    ui.notes.say(format!("Deleted {}.", count(chosen.len())));
+    v.list.armed.clear();
+    v.list.remove(ids, &chosen);
+    v.say(format!("Deleted {}.", count(chosen.len())));
     let stamp = notes::stamp();
     vec![Event::Note(Step::Delete { ids: chosen, stamp })]
 }
@@ -340,8 +347,8 @@ fn delete(ui: &mut Ui, ids: &[String], chosen: Vec<String>) -> Vec<Event> {
 /// after a delete, the note after them is selected (web's `applyRemovalSelection`). A failed save
 /// deletes nothing and never comes here; a note changed meanwhile stays, so is not among `removed`.
 pub fn handed_off(ui: &mut Ui, agent: &str, order: &[String], removed: &[String]) {
-    if ui.zoomed_agent() == Some(agent) {
-        ui.notes.list.remove(order, removed);
+    if let Some(p) = ui.panels.get_mut(agent) {
+        p.notes.list.remove(order, removed);
     }
 }
 
@@ -463,7 +470,7 @@ pub(super) fn render<H: Host>(
     t: TypeScale,
     cx: &mut Context<H>,
 ) -> Option<Div> {
-    let v = &ui.notes;
+    let v = &ui.panels.get(agent)?.notes;
     let notes: Vec<&Note> = store.notes_of(agent).collect();
     let edited = editing.and_then(|e| e.note.as_ref());
     let kept = edited.filter(|n| !notes.iter().any(|m| m.id == n.id));
@@ -479,12 +486,15 @@ pub(super) fn render<H: Host>(
         .on_action(on(cx, |store, ui, key: &List| keys(store, ui, *key)))
         .on_action(cx.listener(|host: &mut H, _: &Copy, _, cx| {
             let (store, ui) = host.view();
+            let picked = ui.panel().map(|p| &p.notes.list.picked);
             let agent = ui.zoomed_agent().unwrap_or("");
-            if let Some((text, said)) = copied(store, agent, &ui.notes.list.picked) {
+            if let Some((text, said)) = picked.and_then(|p| copied(store, agent, p)) {
                 host.copy(text, cx);
                 let ui = host.parts().1;
-                let before = ui.notes.said.as_ref().map(|s| s.0);
-                ui.notes.say(said);
+                let before = notes::said_seq(ui);
+                if let Some(v) = notes::strip(ui) {
+                    v.say(said);
+                }
                 notes::fade_later(ui, before, cx);
             }
             cx.notify();

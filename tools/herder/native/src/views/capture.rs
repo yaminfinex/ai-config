@@ -1,4 +1,4 @@
-//! Type-to-capture (F7), web's `NoteCaptureChip`: text the pointer selects in the zoomed agent's
+//! Type-to-capture (F7), web's `NoteCaptureChip`: text the pointer selects in an agent panel's
 //! transcript gets a focused "＋ Add note" chip just under it. While it is up, no lens or zoom key fires
 //! (their predicates exclude `Capture`): a printable key opens the popover with that key typed, `⏎` or
 //! space opens it empty, `⌘⏎` sends the quote alone, `esc` cancels and a click on the chip saves the
@@ -16,8 +16,9 @@
 use crate::store::composer::Step as SendStep;
 use crate::store::notes::{Note, Step, transfer_text};
 use crate::store::{Event, Store};
-use crate::views::lens::{Focus, Ui};
-use crate::views::notes::stamp;
+use crate::views::lens::{Focus, State, Ui};
+use crate::views::notes::{self, stamp};
+use crate::views::panel::Panel;
 use crate::views::theme::{MONO_T, SANS_T, TypeScale, pal};
 use crate::views::{Host, dim};
 use gpui_kit::base::TextSelection;
@@ -64,23 +65,38 @@ pub(super) struct Draft {
 }
 
 impl View {
-    pub fn new<H: Host>(window: &mut Window, cx: &mut Context<H>) -> Self {
+    /// `agent`'s capture.
+    pub fn new<H: Host>(agent: &str, window: &mut Window, cx: &mut Context<H>) -> Self {
         let input = cx.new(|cx| {
             let s = TextareaState::new(window, cx).auto_grow(2, 8);
             s.placeholder("Add a comment… ⌘↵ send · ↵ queue")
         });
-        cx.subscribe(&input, |host: &mut H, state, event: &InputEvent, cx| {
-            if let InputEvent::Change = event {
-                host.parts().1.capture.text = state.read(cx).value().to_string();
-            }
-        })
+        let agent = agent.to_string();
+        let mine = agent.clone();
+        cx.subscribe(
+            &input,
+            move |host: &mut H, state, event: &InputEvent, cx| {
+                let panel = host.parts().1.panels.get_mut(&mine);
+                if let (InputEvent::Change, Some(p)) = (event, panel) {
+                    p.capture.text = state.read(cx).value().to_string();
+                }
+            },
+        )
         .detach();
         // Focus leaving it (Tab to the composer, anything) cancels it and clears the selection: the
         // zoom's keys never come back while a selection is live. Its own chip-to-box move is not leaving.
-        let left = |host: &mut H, window: &mut Window, cx: &mut Context<H>| {
-            let ui = host.parts().1;
-            if ui.capture.draft.is_some() && !ui.capture.focused(window, cx) {
-                ui.capture.draft = None;
+        let left = move |host: &mut H, window: &mut Window, cx: &mut Context<H>| {
+            let Some(v) = host
+                .parts()
+                .1
+                .panels
+                .get_mut(&agent)
+                .map(|p| &mut p.capture)
+            else {
+                return;
+            };
+            if v.draft.is_some() && !v.focused(window, cx) {
+                v.draft = None;
                 TextSelection::clear(window, cx);
                 cx.notify();
             }
@@ -88,7 +104,7 @@ impl View {
         let chip = cx.focus_handle();
         let boxed = input.read(cx).focus_handle(cx);
         let blurs = [
-            cx.on_blur(&chip, window, left),
+            cx.on_blur(&chip, window, left.clone()),
             cx.on_blur(&boxed, window, left),
         ];
         View {
@@ -134,10 +150,10 @@ pub fn anchor(
     point(left, bottom.y + line * 0.5 + px(6.))
 }
 
-/// The pointer let go on `agent`'s transcript with `text` selected, the chip at `at`: offer it, with
-/// focus. A release with nothing selected leaves an open one as it is (a click in it).
+/// The pointer let go on `agent`'s transcript (in panel `p`) with `text` selected, the chip at `at`:
+/// offer it, with focus. A release with nothing selected leaves an open one as it is (a click in it).
 pub fn offer(
-    ui: &mut Ui,
+    p: &mut Panel,
     agent: &str,
     text: &str,
     at: Point<Pixels>,
@@ -149,29 +165,20 @@ pub fn offer(
         return;
     }
     let (agent, quote) = (agent.to_string(), quote.to_string());
-    ui.capture.draft = Some(Draft {
+    p.capture.draft = Some(Draft {
         agent,
         quote,
         at,
         open: false,
     });
-    w.focus(&ui.capture.chip, cx);
+    w.focus(&p.capture.chip, cx);
 }
 
-/// Drop a capture left on another agent (focus back to the zoom); load the box; clear the selection.
+/// Before a frame: load the zoomed agent's popover box, and clear the selection when asked.
 pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
-    let agent = ui.zoomed_agent().map(String::from);
-    let v = &mut ui.capture;
-    if v.draft
-        .as_ref()
-        .is_some_and(|d| Some(&d.agent) != agent.as_ref())
-    {
-        if v.focused(window, cx) {
-            window.focus(ui.focus_target(), cx);
-        }
-        ui.capture.draft = None;
-    }
-    let v = &mut ui.capture;
+    let Some(v) = capture(ui) else {
+        return;
+    };
     if let Some(text) = v.load.take() {
         v.text = text.clone();
         // Typed, as web's `placeCaretAtEnd`: the caret after the first key.
@@ -185,27 +192,47 @@ pub fn sync(ui: &mut Ui, window: &mut Window, cx: &mut App) {
     }
 }
 
+/// The zoomed agent's capture.
+fn capture(ui: &mut State) -> Option<&mut View> {
+    ui.panel_mut().map(|p| &mut p.capture)
+}
+
 /// Open the popover with `first` typed (web's `expandWith`); it takes focus.
 fn open(ui: &mut Ui, first: String) {
-    if let Some(d) = ui.capture.draft.as_mut() {
+    let Some(v) = capture(ui) else {
+        return;
+    };
+    if let Some(d) = v.draft.as_mut() {
         d.open = true;
-        (ui.capture.load, ui.capture.clear) = (Some(first), true);
+        (v.load, v.clear) = (Some(first), true);
         ui.focus = Some(Focus::Capture);
     }
 }
 
 fn close(ui: &mut Ui) {
-    (ui.capture.draft, ui.capture.clear) = (None, true);
+    if let Some(v) = capture(ui) {
+        (v.draft, v.clear) = (None, true);
+    }
     ui.focus = Some(Focus::Out);
 }
 
+/// Something to say on the zoomed agent's notes strip.
+fn say(ui: &mut Ui, what: impl Into<String>) {
+    if let Some(v) = notes::strip(ui) {
+        v.say(what);
+    }
+}
+
 pub fn act(store: &Store, ui: &mut Ui, key: &Capture) -> Vec<Event> {
-    let Some(d) = ui.capture.draft.as_ref() else {
+    let Some(v) = capture(ui) else {
+        return Vec::new();
+    };
+    let Some(d) = v.draft.as_ref() else {
         return Vec::new();
     };
     let (agent, quote) = (d.agent.clone(), d.quote.clone());
     let text = match d.open {
-        true => ui.capture.text.trim().to_string(),
+        true => v.text.trim().to_string(),
         false => String::new(),
     };
     let add = Step::Add {
@@ -229,7 +256,7 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Capture) -> Vec<Event> {
             };
             let text = transfer_text(&note);
             // The box says how it went (sending…, or why not: the text is then in the draft).
-            ui.notes.say(format!("Sending a note to {agent}…"));
+            say(ui, format!("Sending a note to {agent}…"));
             close(ui);
             return vec![Event::Compose(SendStep::Quick { agent, text })];
         }
@@ -238,14 +265,12 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Capture) -> Vec<Event> {
         // prompt instead): kept, and said. Refused (too long), the popover stays and the strip says why.
         Capture::Save | Capture::Send => {
             if let Some(why) = store.refusal(&add) {
-                ui.notes.say(why);
+                say(ui, why);
                 return Vec::new();
             }
             match key {
-                Capture::Send => ui
-                    .notes
-                    .say(format!("{agent} cannot take a message now: saved.")),
-                _ => ui.notes.say("Saved."),
+                Capture::Send => say(ui, format!("{agent} cannot take a message now: saved.")),
+                _ => say(ui, "Saved."),
             }
             close(ui);
             return vec![Event::Note(add)];
@@ -268,16 +293,19 @@ pub fn render<H: Host>(
     t: TypeScale,
     cx: &mut Context<H>,
 ) -> Option<impl IntoElement> {
-    let v = &ui.capture;
-    let d = v.draft.as_ref().filter(|d| d.agent == agent)?;
-    // Anywhere else: gone, typed text and all (web). Focus goes back to the zoom only if it was here:
+    let v = &ui.panels.get(agent)?.capture;
+    let d = v.draft.as_ref()?;
+    // Anywhere else: gone, typed text and all (web). Focus goes back to the panel only if it was here:
     // what was clicked may have taken it already, or take it next (the composer).
-    let out = cx.listener(|h: &mut H, _: &MouseDownEvent, window, cx| {
-        let ui = h.parts().1;
-        if ui.capture.focused(window, cx) {
-            window.focus(&ui.focus_target().clone(), cx);
+    let mine = agent.to_string();
+    let out = cx.listener(move |h: &mut H, _: &MouseDownEvent, window, cx| {
+        let Some(p) = h.parts().1.panels.get_mut(&mine) else {
+            return;
+        };
+        if p.capture.focused(window, cx) {
+            window.focus(&p.focus, cx);
         }
-        ui.capture.draft = None;
+        p.capture.draft = None;
         cx.notify();
     });
     let shadow = BoxShadow {
@@ -302,7 +330,7 @@ pub fn render<H: Host>(
         .line_height(relative(1.5))
         .text_color(rgb(pal::INK));
     let card = match d.open {
-        false => card.child(chip(v, t, cx)),
+        false => card.child(chip(v, agent, t, cx)),
         true => card.w(t.css(332.)).p(t.css(8.)).child(popover(v, d, t)),
     };
     let at = anchored()
@@ -313,8 +341,9 @@ pub fn render<H: Host>(
 
 /// Web's `.note-capture-minimal-button`: padding 5 9, an accent rule rounded 5. A printable key opens
 /// the popover with it typed (space and `⏎` are bound: empty).
-fn chip<H: Host>(v: &View, t: TypeScale, cx: &mut Context<H>) -> Stateful<Div> {
-    let typed = cx.listener(|h: &mut H, e: &KeyDownEvent, window, cx| {
+fn chip<H: Host>(v: &View, agent: &str, t: TypeScale, cx: &mut Context<H>) -> Stateful<Div> {
+    let agent = agent.to_string();
+    let typed = cx.listener(move |h: &mut H, e: &KeyDownEvent, window, cx| {
         let k = &e.keystroke;
         let m = k.modifiers;
         let plain = !(m.platform || m.control || m.alt || m.function);
@@ -325,7 +354,9 @@ fn chip<H: Host>(v: &View, t: TypeScale, cx: &mut Context<H>) -> Stateful<Div> {
         let ui = h.parts().1;
         open(ui, first.clone());
         ui.focus = None;
-        window.focus(&ui.capture.focus_handle(cx), cx);
+        if let Some(p) = ui.panels.get(&agent) {
+            window.focus(&p.capture.focus_handle(cx), cx);
+        }
         cx.stop_propagation();
         cx.notify();
     });

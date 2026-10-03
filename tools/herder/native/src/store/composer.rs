@@ -79,8 +79,8 @@ impl Store {
         if !self.fleet.agents.contains_key(agent) {
             return Err(ReadOnly::OffBoard);
         }
-        let open = self.transcript.open.as_ref();
-        match open.filter(|t| t.agent == agent && t.detail.is_some()) {
+        let open = self.transcript.open.get(agent);
+        match open.filter(|t| t.detail.is_some()) {
             None => Err(ReadOnly::Pending),
             Some(t) if t.retired() => Err(ReadOnly::Retired),
             Some(_) => Ok(()),
