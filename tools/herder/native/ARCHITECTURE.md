@@ -274,7 +274,8 @@ after every action (`views::on`, before focus is placed) and before each frame, 
 hidden panel to the zoom's. The panel's keys (scroll, `o`, folds, links, `/` `r`, notes, capture, list
 clicks) are handled on its element, the zoom's (`escape`, `[` `]`, `tab`, tab clicks, `n`) on the
 `Space` shell around it. Each panel draws through its own GPUI view, `AgentPanel`, cached and notified
-whenever the shell is (it observes it): the seam the dock (DK2) lays out side by side.
+whenever the shell is (it observes it): the seam the dock (DK2) lays out side by side. It is only
+`Render`; making it `Focusable` is DK2's.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -464,7 +465,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `api/types.rs` | 332 | `views/mod.rs` | 440 |
 | `api/client.rs` | 206 | `views/lens.rs` | 466 |
 | `api/sse.rs` | 194 | `views/space.rs` | 377 |
-| `store/mod.rs` | 452 | `views/transcript.rs` | 1367 |
+| `store/mod.rs` | 452 | `views/transcript.rs` | 1371 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 243 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 413 |
 | `store/spaces.rs` | 215 | `views/notes_list.rs` | 525 |
@@ -479,7 +480,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 |  |  | `views/capture.rs` | 449 |
 |  |  | `views/panel.rs` | 168 |
 
-About 10,770 lines for Rung 1, tests excluded (DK1: +362; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 10,770 lines for Rung 1, tests excluded (DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

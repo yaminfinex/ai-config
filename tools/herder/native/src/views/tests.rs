@@ -2068,23 +2068,12 @@ mod layout {
 
     /// DK1: a panel hidden behind another tab lets its rows go; shown again, it reads its tail afresh,
     /// pages back as far as where it was read, pages beyond its first screen, and is back there, to the
-    /// pixel.
+    /// pixel. Its session is the one its tail landed with after a frame drawn while loading, and hidden
+    /// again before it was back, where it was read still stands (remi's DK1 P2s).
     #[gpui_kit::test]
     fn a_hidden_panel_comes_back_where_it_was_read(cx: &mut TestAppContext) {
         let (agent, served) = ("conductor-line", (usize::MAX, 100));
         let (body, cx) = body(cx, agent, served, (720., 600.));
-        older(&body, agent, served, false, cx);
-        older(&body, agent, served, false, cx);
-        body.read_with(cx, |b, _| {
-            let list = &b.ui.panel().unwrap().transcript.list;
-            list.scroll_to(ListOffset {
-                item_ix: 2,
-                offset_in_item: px(10.),
-            });
-        });
-        draw(cx);
-        let read = rows(&body, cx)[2].first();
-        let was = row(&body, 2, cx).top() - screen(&body, cx).top();
         let (space, other) = body.read_with(cx, |b, _| {
             let s = crate::store::tests::space_of(&b.store, agent);
             let other = s.agents().find(|a| *a != agent).unwrap();
@@ -2103,6 +2092,35 @@ mod layout {
                 beside,
             }))
         };
+        let all = served_of(agent, served.0);
+        // Away and back, a frame drawn before the tail lands: the panel has no session yet.
+        body.update(cx, |b, cx| {
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        let effects = body.update(cx, |b, cx| {
+            cx.notify();
+            show(b, agent)
+        });
+        draw(cx);
+        body.update(cx, |b, cx| {
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        draw(cx);
+        older(&body, agent, served, false, cx);
+        older(&body, agent, served, false, cx);
+        body.read_with(cx, |b, _| {
+            let list = &b.ui.panel().unwrap().transcript.list;
+            list.scroll_to(ListOffset {
+                item_ix: 2,
+                offset_in_item: px(10.),
+            });
+        });
+        draw(cx);
+        let read = rows(&body, cx)[2].first();
+        let was = row(&body, 2, cx).top() - screen(&body, cx).top();
         // Another member's tab: the panel is hidden, its transcript closed.
         body.update(cx, |b, cx| {
             show(b, &other);
@@ -2113,10 +2131,24 @@ mod layout {
             assert!(!b.store.transcript.open.contains_key(agent));
             assert_eq!(b.ui.panels[agent].transcript.census().0, 0, "its rows went");
         });
-        // Back: the tail is read again, and the panel asks for each page before it until that row.
-        let all = served_of(agent, served.0);
+        // Back, its tail read, and away again before the page before it asked for lands.
         body.update(cx, |b, cx| {
             b.reduce = true;
+            let effects = show(b, agent);
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        draw(cx);
+        draw(cx);
+        body.update(cx, |b, cx| {
+            assert_eq!(b.effects.len(), 1, "the page before asked for");
+            b.effects.clear();
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        // Back: the tail is read again, and the panel asks for each page before it until that row.
+        body.update(cx, |b, cx| {
             let effects = show(b, agent);
             drive(&mut b.store, effects, all, served.1);
             cx.notify();

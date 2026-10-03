@@ -185,12 +185,15 @@ impl View {
         }
     }
 
-    /// The panel is hidden: keep where it was read, unless at the tail, and let the rows go.
+    /// The panel is hidden: keep where it was read, unless at the tail, and let the rows go. Hidden
+    /// again before its rows were back there, where it was read still stands.
     pub(super) fn hide(&self) {
         let following = self.list.is_following_tail();
         let at = (!following).then(|| self.reading(&self.rows.borrow().2));
         let session = self.session.take();
-        *self.kept.borrow_mut() = at.flatten().map(|a| (session, a));
+        if let Some(a) = at.flatten() {
+            *self.kept.borrow_mut() = Some((session, a));
+        }
         self.clear();
     }
 
@@ -237,7 +240,8 @@ impl View {
         if md.0 != mentions || !same || md.1.len() > MD_CACHE {
             *md = (mentions, HashMap::new());
         }
-        if !same {
+        // Read on every frame: a tail can land under the generation a loading frame already drew.
+        if *self.session.borrow() != t.session {
             self.session.replace(t.session.clone());
         }
         if same && rows.1 == t.items.len() {
