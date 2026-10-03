@@ -307,7 +307,7 @@ check-dock port="4417":
 # Path clicks (G3), through `scripts/scenario.sh` (the fake serve answers `/api/resolve` from
 # testdata/resolve.json): zoomed on mupu (cwd /home/ubuntu/slack-eyes), a path in two worktrees offers both,
 # focused; down then enter opens the second, a click on a fresh offer's first opens it, esc closes one
-# opening nothing (the zoom stays); a path also in mupu's own root opens there at once, and a single match
+# opening nothing (the zoom stays); a real click on riko's `submit.rs` offers its two under the pointer; a path also in mupu's own root opens there at once, and a single match
 # opens at once, its root with a space kept as one argument. Each open is VS Code's CLI argv, logged.
 check-paths port="4419":
     #!/usr/bin/env bash
@@ -319,6 +319,9 @@ check-paths port="4419":
     closed="$two paths:focused:2@0 key:escape draw paths:none expect:mupu"
     single="link:herder-path:lib/own.rs wait:500 draw paths:none link:herder-path:notes.md:3 wait:500 draw paths:none"
     scenario paths "" "$zoom $picked $clicked $closed $single quit"
+    # By a real pointer: riko's `submit.rs` (check-mouse's links, 1400×900) offers two, under the click.
+    riko="wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw"
+    HERDER_NATIVE_WINDOW=1400x900 scenario pointed "" "$riko point:100,142 wait:500 draw draw paths:focused:2@0 shot:g3-paths-pointed key:escape draw paths:none quit"
     code() { grep -cF "platform: would run code [\"--remote\", \"ssh-remote+superset\", $1]" "$home/paths.log" || true; }
     wt="/tools/herder/native/src/views/paths.rs:9"
     [ "$(code "\"/home/ubuntu/wt/native-b\", \"-g\", \"/home/ubuntu/wt/native-b$wt\"")" = 1 ] || { echo "check-paths: enter did not open the second"; exit 1; }
@@ -328,7 +331,8 @@ check-paths port="4419":
     opened=$(grep -c "platform: would run code" "$home/paths.log" || true)
     [ "$opened" = 4 ] || { echo "check-paths: $opened opens, expected 4"; exit 1; }
     seen paths "GET /api/resolve?q=" 5
-    echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, esc closes; the agent's own root and a single match open at once; each open is the code CLI's argv)"
+    seen pointed "GET /api/resolve?q=submit.rs" 1
+    echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, esc closes; the agent's own root and a single match open at once; a real click offers under the pointer; each open is the code CLI's argv)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.

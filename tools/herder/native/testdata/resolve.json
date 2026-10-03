@@ -28,5 +28,15 @@
       {"root": "/home/ubuntu/my repo", "status": "complete"},
       {"root": "/home/ubuntu/slack-eyes", "status": "complete"}
     ]
+  },
+  "submit.rs": {
+    "candidates": [
+      {"root": "/home/ubuntu/boomerang", "path": "src/submit.rs", "kind": "file", "tier": "suffix", "score": 0},
+      {"root": "/home/ubuntu/wt/boomerang-fix", "path": "src/submit.rs", "kind": "file", "tier": "suffix", "score": 0}
+    ],
+    "roots": [
+      {"root": "/home/ubuntu/boomerang", "status": "complete"},
+      {"root": "/home/ubuntu/wt/boomerang-fix", "status": "complete"}
+    ]
   }
 }

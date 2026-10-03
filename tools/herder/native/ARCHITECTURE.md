@@ -26,10 +26,10 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 |---|---|---|
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
 | `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). `store::cards` holds the lens cards' text (F4). | `api::types` |
-| `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. `views::notes` is the notes strip (header, editor, transfers) and `views::notes_list` its keyboard list (selection, keys, cards; F6); `views::capture` notes a transcript selection where it was made (F7). `views::panel` is one agent's set of them (DK1). | `store`, gpui-kit |
+| `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. `views::notes` is the notes strip (header, editor, transfers) and `views::notes_list` its keyboard list (selection, keys, cards; F6); `views::capture` notes a transcript selection where it was made (F7); `views::paths` offers where a clicked path lives when that is not obvious (G3). `views::panel` is one agent's set of them (DK1). | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
 | `local` | `prefs.json`, `layouts.json` (DK2), `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
-| `platform_mac` | The AppKit calls GPUI lacks: window ordering, dock badge, activation policy, the hotkey bridge. | objc2 |
+| `platform_mac` | The AppKit calls GPUI lacks: window ordering, dock badge, activation policy, the hotkey bridge; opening a URL, and a file by VS Code's CLI (G3). | objc2 |
 | `terminal` | A local PTY running `et`/`ssh -t`, emulated by `alacritty_terminal`, painted by a view (Rung 2). | alacritty_terminal |
 | `harness` | `HERDER_NATIVE_SCRIPT` steps: keys, screenshots and metrics, never taking focus. | gpui-kit |
 
@@ -163,6 +163,14 @@ Derived shapes are in `store`:
     seeded from `tail.window.from` (tail responses carry no `prevOffset`) and then from each `before=` page's
     `prevOffset`; `0` means the start of the file. A `before=` response never touches `next_offset`.
   - `generation` (see §2). `rewindow`/`reset` clears everything and re-reads the tail.
+  - `choices` (G3): where a clicked path lives, when the store cannot tell. A path click (or the cwd's ↗)
+    asks `/api/resolve`; the answer drops weak results (web's `isConfidentResolution`: a top fuzzy match
+    below 20 per character is no match) and opens (`Effect::OpenFile{root, file, line}`, the candidate's
+    git root and its path; a folder opens its root alone) a strong one (exact or suffix) in the agent's own
+    root (the longest `roots[].root` holding its cwd), else the only strong one when every root was fully
+    searched; otherwise it keeps up to eight candidates as `Choices{query, line, candidates, total}`, and
+    `Step::Choose{pick}` opens one or closes them. Nothing matching says so, and that some roots were not
+    fully searched. Web opens only the single strong match: the agent's own root is native's rule (the brief).
 - **`cards::Cards`** (F4) — each focus and watch card's visible agent's last assistant answer, cleaned as
   the transcript is (`condense::clean`) with `<status>` stripped too; background cards carry none. One tail
   read (`limit=12`) per agent per turn, keyed on `turn_end_id`; at most four in flight; a result for an
@@ -186,7 +194,7 @@ the composer inside it has focus; single-letter navigation must exclude text sur
 
 Contexts (identifiers on elements): `Lens` (the root), `Space` (the zoom shell), `Composer` (around the
 composer's box, U4), `NotesList` (the notes strip's list, F6), `Capture` (the capture chip and popover at
-a transcript selection, F7), `Input` (any kit text input), `Terminal` (a terminal panel). Predicates:
+a transcript selection, F7), `Paths` (a clicked path's choices, G3), `Input` (any kit text input), `Terminal` (a terminal panel). Predicates:
 
 | Predicate | Used for |
 |---|---|
@@ -197,6 +205,7 @@ a transcript selection, F7), `Input` (any kit text input), `Terminal` (a termina
 | `Notes > Input` | the notes editor's own (`enter` and `cmd-enter` save, `escape` cancels, U5); `shift-enter` stays a new line |
 | `NotesList && !Input` | the notes list's keys (F6); not in the editor open in one of its cards |
 | `Capture && !Input` / `Capture > Input` | the capture chip's keys / its popover's (F7): while a selection is live no lens or zoom key fires |
+| `Paths` | a clicked path's choices (G3): deeper than `Space`, so its four keys win while it holds focus |
 | `Terminal` | keys the terminal consumes (Rung 2); `cmd-t` stays on `Space` |
 
 | Keys | Predicate | Action | Unit |
@@ -221,6 +230,7 @@ a transcript selection, F7), `Input` (any kit text input), `Terminal` (a termina
 | `up` | `Composer > Input` | into the notes list, every note selected, when the box is empty or its caret at the start; else the kit's caret move (`notes_list::Up` propagates) | F6 |
 | `up` `down` / `shift-up` `shift-down` / `cmd-a` | `NotesList && !Input` | move the cursor / extend the selection from its anchor / select all | F6 |
 | `enter` / `backspace` `delete` / `e` / `cmd-c` / `escape` | `NotesList && !Input` | the selection into the composer / delete it (a second press; any other key disarms) / edit the cursor's note in place / copy (`Host::copy`; a scripted run logs it) / clear the selection, then back to the box | F6 |
+| `up` `down` / `enter` / `escape` | `Paths` | move / open the cursor's candidate in VS Code / close | G3 |
 | `cmd-t` | `Space` | terminal | Rung 2 |
 | `ctrl-alt-cmd-h` | global (`global-hotkey`) | summon | U6 |
 
@@ -307,6 +317,17 @@ focused one is seen. Actions never touch the dock: they leave an `Ask` that the 
 top line; `Skin` delegates the rest of the dock's look to the kit's);
 the breadcrumb is a slim line above the dock. `just check-dock` and `views::tests`' `dock_events` drive
 it with real clicks, a real drag and keys.
+
+**Paths (G3).** A path in the transcript opens in VS Code, its git root as the window's folder and the file
+at its line: `code --remote ssh-remote+<vscode_host> <root> -g <root>/<path>[:line]`
+(`markdown::vscode`, run by `platform_mac::vscode`; web's `vscode://` URL when the CLI is missing). Which
+candidate is the store's (`Transcript::choices`, §3); when it keeps choices, `views::paths` draws them
+(web's `.selection-file-popover`: up to eight `root · path` rows, the root's last segment) under the press
+that clicked the path (`transcript::View::pressed`), and takes focus once as they land (`paths::sync`,
+before each frame: the answer comes back off the foreground). `up` `down` move, `enter` or a click opens,
+`escape`, a press anywhere else or focus leaving closes; each hands focus back to the panel. Its other keys
+reach the zoom's bindings (`Paths` excludes nothing). The cwd's ↗ opens the cwd's git root the same way.
+`just check-paths` (`paths`, `pointed`) and `views::tests`' `paths_events` drive it.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -458,7 +479,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   the owner keeps focus; no automated run brings a window on screen. It always quits when the script ends,
   and any failed step (a bad keystroke, a failed screenshot, an unknown step) exits non-zero. Any
   `HERDER_NATIVE_SCRIPT` run is test mode (`platform_mac::quiet`): notifications, the dock badge, the
-  summon chord and opening a URL (`platform_mac::open`: a web link, a file in VS Code) are logged no-ops. The harness knows no views: what it asks of them goes through
+  summon chord, opening a URL (`platform_mac::open`) and running VS Code's CLI (`platform_mac::vscode`, its argv logged) are logged no-ops. The harness knows no views: what it asks of them goes through
   the `harness::Probe` trait, which the shell implements with `views::probe` (`ask`, `action`, and
   `find`, which scrolls the first transcript row holding a text to the top, or the member holding it in
   an open run, for shots; `run:` opens the run from there too; a selection is a real `drag:`, F7),
@@ -466,7 +487,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
   `HERDER_URL` at `testdata/fake_serve.py` on loopback, never at the real serve (`scripts/scenario.sh`,
   shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Steps live
   in `src/harness.rs`'s module doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`,
-  `check-alerts`, `check-mouse`, `check-runs`, `check-entries`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
+  `check-alerts`, `check-mouse`, `check-runs`, `check-entries`, `check-dock`, `check-paths`) in the justfile's comments. Screenshots and presented-frame timings need an unlocked screen; CPU frame cost
   (`Window::draw` timed directly) does not.
 - **Perf** is acceptance at each rung, measured with the screen on: cold start < 300 ms, idle ≈ 0 % CPU,
   RSS < 150 MB with the 88 MB transcript and a terminal, keystroke to paint < 16 ms, smooth scrolling on
@@ -486,7 +507,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after DK2 (DK2 added `views/dock` for the dock in the zoom: its sync with the zoom, asks, previews and pins, layouts and their restore, and `views/tabs` for the tab strip drawn to web's measurements; and grew `store/spaces` by the members writes and the layouts, `views/space` lost the hand-drawn tab row; DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after G3 (G3 added `views/paths` for a clicked path's choices, and grew `store/transcript` by the pick rules and the choices, `views/markdown` by the CLI's argv, `platform_mac` by running it, and `probe` by `paths` and the picks; DK2 added `views/dock` for the dock in the zoom: its sync with the zoom, asks, previews and pins, layouts and their restore, and `views/tabs` for the tab strip drawn to web's measurements; and grew `store/spaces` by the members writes and the layouts, `views/space` lost the hand-drawn tab row; DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -494,27 +515,28 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 332 | `views/mod.rs` | 449 |
+| `api/types.rs` | 335 | `views/mod.rs` | 458 |
 | `api/client.rs` | 206 | `views/lens.rs` | 470 |
 | `api/sse.rs` | 194 | `views/space.rs` | 363 |
-| `store/mod.rs` | 472 | `views/transcript.rs` | 1374 |
+| `store/mod.rs` | 474 | `views/transcript.rs` | 1380 |
 | `store/sync.rs` | 312 | `views/composer.rs` | 246 |
 | `store/fleet.rs` | 117 | `views/notes.rs` | 414 |
 | `store/spaces.rs` | 314 | `views/notes_list.rs` | 525 |
-| `store/attention.rs` | 281 | `views/probe.rs` | 273 |
-| `store/transcript.rs` | 652 | `views/markdown.rs` | 238 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 290 |
+| `store/transcript.rs` | 742 | `views/markdown.rs` | 262 |
 | `store/condense.rs` | 439 | `views/theme.rs` | 261 |
-| `store/notes.rs` | 432 | `shell.rs` | 450 |
+| `store/notes.rs` | 432 | `shell.rs` | 452 |
 | `store/composer.rs` | 225 | `shell/io.rs` | 180 |
-| `local.rs` | 101 | `harness.rs` | 389 |
-| `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
+| `local.rs` | 101 | `harness.rs` | 390 |
+| `store/cards.rs` | 182 | `platform_mac.rs` | 130 |
 |  |  | `views/entries.rs` | 529 |
 |  |  | `views/capture.rs` | 452 |
-|  |  | `views/panel.rs` | 160 |
+|  |  | `views/panel.rs` | 171 |
 |  |  | `views/dock.rs` | 894 |
 |  |  | `views/tabs.rs` | 361 |
+|  |  | `views/paths.rs` | 197 |
 
-About 12,175 lines for Rung 1, tests excluded (DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 13,020 lines for Rung 1, tests excluded (G3: +384; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
