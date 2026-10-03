@@ -111,7 +111,7 @@ impl Shell {
         Shell {
             store,
             ui,
-            client: Client::new(base_url()),
+            client: client(),
             disk: Arc::new(disk),
             tx,
             stream: None,
@@ -149,6 +149,8 @@ impl Host for Shell {
             }
         );
         let scale = self.store.prefs.text_scale;
+        // What the store writes on its own (read markers) is stamped with the event's time.
+        self.store.clock = crate::views::notes::stamp();
         let effects = transcript_view::reduce(&mut self.store, &self.ui, event);
         if self.store.prefs.text_scale != scale {
             theme::apply(self.store.prefs.text_scale, cx);
@@ -447,4 +449,12 @@ fn summon(tag: &str, cx: &mut App) {
         window.activate_window();
         window.dispatch_action(Box::new(space::Summon(tag.to_string().into())), cx);
     });
+}
+
+/// The server's client; read-only in a scripted run with no `HERDER_URL`, which reads the live serve
+/// (`coldstart`) and must write nothing to it.
+fn client() -> Client {
+    let client = Client::new(base_url());
+    let live = platform_mac::quiet() && std::env::var_os("HERDER_URL").is_none();
+    if live { client.read_only() } else { client }
 }

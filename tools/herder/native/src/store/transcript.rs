@@ -15,6 +15,7 @@
 //! and a wake meanwhile asks for one more when it lands.
 
 use super::condense::{self, Seg};
+use super::markers::Pos;
 use super::{Effect, Fetch, Store, Wake};
 use crate::api::client::Page;
 use crate::api::{AgentDetail, Candidate, Entries, Entry, Kind, Resolved};
@@ -208,8 +209,14 @@ pub struct Transcript {
     detail_reading: bool,
     detail_again: bool,
     pub detail: Option<AgentDetail>,
-    /// The view follows the bottom (`Step::Tail`): what lands is seen as it arrives (`attention`).
+    /// The view follows the bottom (`Step::Tail`): what lands is read as it arrives (`markers`).
     pub tail: bool,
+    /// The newest entry read in (where reading reaches) and the one before it; the position just before
+    /// the latest turn's opener, with that opener's offset (`turn_start`).
+    pub end: Option<Pos>,
+    before_end: Option<Pos>,
+    opener: Option<Pos>,
+    opener_at: u64,
     /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
     /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
     notice: Option<(Op, String)>,
@@ -400,6 +407,21 @@ impl Transcript {
         self.session.is_some()
     }
 
+    /// Where reading resumes after a mark unread (web's `lastTurnStart` and `positionBefore`): just before
+    /// the latest turn's opener, else before the newest entry; `None` with nothing read in.
+    pub fn turn_start(&self) -> Option<Pos> {
+        let short = |e: &Pos| Pos {
+            offset: e.offset.saturating_sub(1),
+            ts: String::new(),
+            ..e.clone()
+        };
+        let before = self
+            .before_end
+            .clone()
+            .or_else(|| self.end.as_ref().map(short));
+        self.opener.clone().or(before)
+    }
+
     pub fn paging(&self) -> bool {
         self.back
     }
@@ -576,7 +598,19 @@ impl Transcript {
         }
         let back = matches!(page, Page::Before { .. });
         self.succeeded(if back { Op::Back } else { Op::Forward });
-        e.entries.into_iter().for_each(|entry| self.ingest(entry));
+        let mut prev: Option<(Kind, Pos)> = None;
+        for entry in e.entries {
+            let pos = self.session.clone().map(|session| Pos {
+                session,
+                offset: entry.byte_offset,
+                ts: entry.timestamp.clone(),
+            });
+            if let Some(pos) = pos {
+                self.reached(entry.kind, &pos, prev.as_ref());
+                prev = Some((entry.kind, pos));
+            }
+            self.ingest(entry);
+        }
         // A window of only hidden entries shows nothing: keep reading back until rows or the start.
         if self.items.is_empty() && !matches!(page, Page::From { .. }) {
             self.older(out);
@@ -587,6 +621,29 @@ impl Transcript {
             if take(&mut self.again) || (full && matches!(page, Page::From { .. })) {
                 self.forward(out);
             }
+        }
+    }
+
+    /// An entry read in at `pos`, after `prev` in its page: the newest moves `end`; a turn's opener (what
+    /// the owner or another agent sent; a delivery stub and its delivery open it together) moves `opener`
+    /// to just before it, the entry above or one byte short when it opens the page.
+    fn reached(&mut self, kind: Kind, pos: &Pos, prev: Option<&(Kind, Pos)>) {
+        if self.end.as_ref().is_none_or(|e| pos.offset > e.offset) {
+            self.before_end = self.end.replace(pos.clone());
+        }
+        use Kind::*;
+        let opens = matches!(
+            kind,
+            HumanPrompt | HcomDeliveryStub | HcomDelivery | TaskNotification
+        );
+        let paired = kind == HcomDelivery && prev.is_some_and(|p| p.0 == HcomDeliveryStub);
+        if opens && !paired && (self.opener.is_none() || pos.offset > self.opener_at) {
+            let before = prev.map(|p| p.1.clone()).unwrap_or_else(|| Pos {
+                offset: pos.offset.saturating_sub(1),
+                ts: String::new(),
+                ..pos.clone()
+            });
+            (self.opener, self.opener_at) = (Some(before), pos.offset);
         }
     }
 

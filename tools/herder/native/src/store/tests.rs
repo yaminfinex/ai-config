@@ -5,6 +5,7 @@ use crate::api::{Hello, Member, StateChanged, StateRows};
 use crate::store::fleet::Status;
 use crate::store::spaces::{Row, Stop};
 use crate::store::sync::Hold;
+use crate::store::{markers, transcript};
 use serde_json::json;
 
 pub(crate) fn board() -> Board {
@@ -16,6 +17,7 @@ fn fixture_rows(ns: Ns) -> StateRows {
         Ns::Spaces => include_str!("../../testdata/state-spaces.json"),
         Ns::Members => include_str!("../../testdata/state-spaces.members.json"),
         Ns::Notes => include_str!("../../testdata/state-notes.json"),
+        Ns::Markers => r#"{"rows": [], "rev": 1}"#,
     };
     serde_json::from_str(text).expect("state fixture decodes")
 }
@@ -221,45 +223,32 @@ fn notes_are_the_live_records() {
 }
 
 #[test]
-fn needs_you_follows_seen_marks() {
+fn needs_you_follows_read_markers() {
     let mut store = loaded();
     let mut b = board();
-    store.apply(fleet_frame(b.clone()));
-    let space = store
-        .spaces
-        .iter()
-        .find(|s| s.agents().any(|a| a == "mupu"))
-        .unwrap()
-        .clone();
+    let effects = store.apply(fleet_frame(b.clone()));
+    let space = space_of(&store, "mupu").clone();
     let turn = store.fleet.agents["mupu"]
         .turn_end
         .expect("mupu has finished a turn");
-    assert_eq!(
-        store.prefs.seen["mupu"].turn_end, turn,
-        "first sight seeds the baseline"
-    );
+    let seed = markers::baseline(turn);
+    assert_eq!(store.markers["mupu"], seed, "the first live board seeds it");
+    assert!(posted(&effects).iter().all(|r| r.updated == markers::WEAK));
     assert_eq!(store.needs_you(&space), 0);
 
-    // mupu finishes another turn.
-    let pane = b.workspaces[0].tabs[0]
-        .panes
-        .iter_mut()
-        .find(|p| p.agent == "mupu")
-        .unwrap();
-    pane.turn_end_id = Some(turn + 5);
-    store.apply(fleet_frame(b.clone()));
+    // mupu finishes another turn: unread until read.
+    bump(&mut b, "mupu", 5);
+    store.apply(frame(&store, b.clone()));
     assert_eq!(store.needs_you(&space), 1);
-
-    let view = spaces::Move::View {
-        space: space.id.clone(),
-        agent: Some("mupu".into()),
-        beside: Vec::new(),
-    };
-    let effects = marks(store.apply(Event::Lens(view)));
-    assert_eq!(effects, [Effect::Persist(Persist::Prefs), Effect::Badge(0)]);
+    clock(&mut store, 1_000);
+    let effects = watch(&mut store, "mupu", &[]);
+    assert_eq!(store.markers["mupu"].turn, turn + 5);
+    assert!(effects.contains(&Effect::Badge(0)));
     assert_eq!(store.needs_you(&space), 0);
 
-    // A working agent does not need you, whatever its marks say.
+    // Web's status gate: a listening agent already on its next turn (herdr working) still needs you for
+    // the one it ended; an inactive one never does.
+    store.apply(Event::Front(false));
     let pane = b.workspaces[0].tabs[0]
         .panes
         .iter_mut()
@@ -267,7 +256,15 @@ fn needs_you_follows_seen_marks() {
         .unwrap();
     pane.turn_end_id = Some(turn + 9);
     pane.herdr_status = "working".into();
-    store.apply(fleet_frame(b));
+    store.apply(frame(&store, b.clone()));
+    assert_eq!(store.needs_you(&space), 1);
+    let pane = b.workspaces[0].tabs[0]
+        .panes
+        .iter_mut()
+        .find(|p| p.agent == "mupu")
+        .unwrap();
+    pane.bus_status = "inactive".into();
+    store.apply(frame(&store, b));
     assert_eq!(store.needs_you(&space), 0);
 }
 
@@ -533,7 +530,11 @@ fn every_hello_catches_up_and_a_new_build_is_flagged() {
     // client sees, so the first hello pulls again from the cursor.
     let mut store = loaded();
     let effects = store.apply(hello("b1"));
-    assert_eq!(pulls(&effects).len(), 3, "the first hello pulls too");
+    assert_eq!(
+        pulls(&effects).len(),
+        Ns::ALL.len(),
+        "the first hello pulls too"
+    );
     assert!(pulls(&effects).iter().all(|(_, since)| *since > 0));
     assert!(!store.server_updated);
 
@@ -665,6 +666,65 @@ fn lens(m: spaces::Move) -> Event {
 fn marks(effects: Vec<Effect>) -> Vec<Effect> {
     let zoom = |e: &Effect| matches!(e, Effect::Stream { .. } | Effect::Fetch(_));
     effects.into_iter().filter(|e| !zoom(e)).collect()
+}
+
+/// The time the next events are reduced at, as the shell stamps each (`Store::clock`).
+pub(crate) fn clock(store: &mut Store, now: i64) {
+    let write = format!("w{now}");
+    let id = String::new();
+    store.clock = crate::store::notes::Stamp { now, id, write };
+}
+
+/// The dwell's second is up for the agent watched now.
+pub(crate) fn dwell(store: &mut Store) -> Vec<Effect> {
+    let token = store.reading.token;
+    store.apply(Event::Wake(Wake::Dwell(token)))
+}
+
+/// Read `agent` by the dwell: frontmost, zoomed on it (in its space, or alone), its tail read in (`all`
+/// served) and followed, and the second up. The dwell's effects.
+pub(crate) fn watch(store: &mut Store, agent: &str, all: &[crate::api::Entry]) -> Vec<Effect> {
+    store.apply(Event::Front(true));
+    let space = store.home(agent).map_or(String::new(), |s| s.id.clone());
+    let agent_name = Some(agent.to_string());
+    let effects = store.apply(lens(spaces::Move::View {
+        space,
+        agent: agent_name,
+        beside: Vec::new(),
+    }));
+    transcript_pages::drive(store, effects, all, transcript::PAGE as usize);
+    follow(store, agent, true);
+    dwell(store)
+}
+
+/// The view's word on whether `agent`'s open transcript follows the bottom.
+pub(crate) fn follow(store: &mut Store, agent: &str, tail: bool) -> Vec<Effect> {
+    let generation = store.transcript.open[agent].generation;
+    let agent = agent.to_string();
+    let step = transcript::Step::Tail {
+        agent,
+        generation,
+        tail,
+    };
+    store.apply(Event::Transcript(step))
+}
+
+/// The markers' POST in flight answered.
+pub(crate) fn posted_ok() -> Event {
+    let (ns, step) = (Ns::Markers, Step::Posted);
+    Event::Sync { ns, step }
+}
+
+/// The markers rows posted.
+fn posted(effects: &[Effect]) -> Vec<StateRow> {
+    let markers = |e: &Effect| match e {
+        Effect::Post {
+            ns: Ns::Markers,
+            rows,
+        } => Some(rows.clone()),
+        _ => None,
+    };
+    effects.iter().filter_map(markers).flatten().collect()
 }
 
 #[test]
@@ -799,53 +859,60 @@ fn next_needing_walks_the_rows_in_order_and_wraps() {
     assert_eq!(next(&store, Some(&slack)), Some(slack));
 }
 
+/// RM: `u` marks the space's agents unread and `m` marks its unread agents read, through the markers.
 #[test]
 fn read_and_unread_mark_the_whole_space() {
     let mut store = loaded();
     let mut b = board();
     store.apply(frame(&store, b.clone()));
+    clock(&mut store, 1_000);
     let slack = space_of(&store, "mupu").clone();
+    let on: Vec<&str> = slack
+        .agents()
+        .filter(|a| store.fleet.agents.contains_key(*a))
+        .collect();
+    assert_eq!(on, ["mupu", "support-mifa"]);
     assert_eq!(store.needs_you(&slack), 0);
 
-    // `u`: the space needs you, sticky across new boards, until a zoom-in.
+    // `u`: each of its agents on the board is marked unread, in one POST.
     let unread = || lens(spaces::Move::Unread(slack.id.clone()));
-    let marked = [Effect::Persist(Persist::Prefs), Effect::Badge(1)];
-    assert_eq!(store.apply(unread()), marked);
-    assert!(store.apply(unread()).is_empty(), "already unread");
+    store.apply(posted_ok());
+    let effects = store.apply(unread());
+    assert!(effects.contains(&Effect::Badge(2)));
+    let rows = posted(&effects);
+    assert_eq!(rows.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(), on);
+    assert!(
+        rows.iter()
+            .all(|r| r.value["unread"] == true && r.write_id == "w1000")
+    );
+    store.apply(posted_ok());
+    assert!(posted(&store.apply(unread())).is_empty(), "already unread");
+    store.apply(frame(&store, b.clone()));
+    assert_eq!(store.needs_you(&slack), 2);
+    assert_eq!(store.next_needing(None, false), Some(Stop::Space(&slack)));
+    assert!(posted(&store.apply(lens(spaces::Move::Unread("no-such-space".into())))).is_empty());
+
+    // `m`: the unread agents are read, their turns kept.
+    let read = || lens(spaces::Move::Read(slack.id.clone()));
+    store.apply(posted_ok());
+    let effects = store.apply(read());
+    assert!(effects.contains(&Effect::Badge(0)));
+    assert_eq!(posted(&effects).len(), 2);
+    assert!(store.markers.values().all(|m| !m.unread));
+    assert_eq!(store.markers["mupu"].at, 1_000);
+    // A turn ended since: `m` reads it, and leaves the agent already read alone.
+    bump(&mut b, "mupu", 2);
     store.apply(frame(&store, b.clone()));
     assert_eq!(store.needs_you(&slack), 1);
-    assert_eq!(store.next_needing(None, false), Some(Stop::Space(&slack)));
-    let view = |agent: &str| {
-        let agent = Some(agent.to_string());
-        lens(spaces::Move::View {
-            space: slack.id.clone(),
-            agent,
-            beside: Vec::new(),
-        })
-    };
+    store.apply(posted_ok());
+    let rows = posted(&store.apply(read()));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key, "mupu");
     assert_eq!(
-        marks(store.apply(view("support-mifa"))),
-        [Effect::Persist(Persist::Prefs), Effect::Badge(0)]
-    );
-    assert_eq!(store.needs_you(&slack), 0, "a zoom-in clears it");
-    assert!(
-        store
-            .apply(lens(spaces::Move::Unread("no-such-space".into())))
-            .is_empty()
-    );
-
-    // `m`: every agent in the space is read, and the unread mark goes too.
-    bump(&mut b, "mupu", 2);
-    bump(&mut b, "support-mifa", 2);
-    store.apply(frame(&store, b));
-    store.apply(unread());
-    assert_eq!(store.needs_you(&slack), 2);
-    assert_eq!(
-        store.apply(lens(spaces::Move::Read(slack.id.clone()))),
-        [Effect::Persist(Persist::Prefs), Effect::Badge(0)]
+        store.markers["mupu"].turn,
+        store.fleet.agents["mupu"].turn_end.unwrap()
     );
     assert_eq!(store.needs_you(&slack), 0);
-    assert!(store.prefs.unread.is_empty());
 }
 
 #[test]
@@ -2455,22 +2522,26 @@ pub(crate) mod composer {
     }
 
     #[test]
-    fn a_filed_back_send_acknowledges_only_what_was_there_when_sent() {
+    fn a_filed_back_send_reads_only_what_was_there_when_sent() {
         let mut store = zoomed("mupu", Some("listening"));
         let mut b = board();
         let space = space_of(&store, "mupu").clone();
         let turn = store.fleet.agents["mupu"].turn_end.unwrap();
-        store.prefs.seen.get_mut("mupu").unwrap().turn_end = turn - 1;
+        bump(&mut b, "mupu", 1);
+        let event = StreamEvent::Frame(Wire::Fleet(b.clone()));
+        let generation = store.stream;
+        store.apply(Event::Stream { generation, event });
         edit(&mut store, "mupu", "done here");
         assert_eq!(messages(&send(&mut store, "mupu", true)).len(), 1);
-        assert!(store.agent_needs_you("mupu"), "not seen until it lands");
+        assert!(store.agent_needs_you("mupu"), "not read until it lands");
         let filed = Effect::FiledBack {
             agent: "mupu".into(),
         };
         assert!(sent(&mut store, "mupu", Ok(())).contains(&filed));
-        assert_eq!(store.prefs.seen["mupu"].turn_end, turn);
-        // The owner moves to another agent; mupu finishes a newer turn and they mark its space unread
-        // before the send lands: both survive the landing.
+        assert_eq!(store.markers["mupu"].turn, turn + 1);
+        assert!(!store.agent_needs_you("mupu"));
+        // The owner moves to another agent and mupu finishes a newer turn before the send lands: the
+        // landing reads only the turn there when it was sent.
         edit(&mut store, "mupu", "again");
         send(&mut store, "mupu", true);
         let other = space.agents().find(|a| *a != "mupu").unwrap().to_string();
@@ -2485,13 +2556,14 @@ pub(crate) mod composer {
         let event = StreamEvent::Frame(Wire::Fleet(b.clone()));
         let generation = store.stream;
         store.apply(Event::Stream { generation, event });
-        store.apply(Event::Lens(spaces::Move::Unread(space.id.clone())));
         assert!(sent(&mut store, "mupu", Ok(())).contains(&filed));
-        assert!(store.agent_needs_you("mupu"), "the newer turn is unseen");
-        assert!(store.prefs.unread.contains(&space.id));
-        // A failure stays in the zoom, saying why, and acknowledges nothing.
+        assert!(store.agent_needs_you("mupu"), "the newer turn is unread");
+        assert_eq!(store.markers["mupu"].turn, turn + 1);
+        // A failure stays in the zoom, saying why, and reads nothing.
         let mut store = zoomed("mupu", Some("listening"));
-        store.prefs.seen.get_mut("mupu").unwrap().turn_end = turn - 1;
+        let event = StreamEvent::Frame(Wire::Fleet(b.clone()));
+        let generation = store.stream;
+        store.apply(Event::Stream { generation, event });
         edit(&mut store, "mupu", "once more");
         send(&mut store, "mupu", true);
         let effects = sent(&mut store, "mupu", Err(Failure::Unreachable("down".into())));
@@ -3190,6 +3262,13 @@ mod alerts {
         wake: Wake::Burst,
     };
 
+    fn board_turn(agent: &str) -> u64 {
+        let b = board();
+        let mut rows = crate::store::fleet::agent_rows(&b).into_iter();
+        rows.find_map(|(_, p)| (p.agent == agent).then_some(p.turn_end_id?))
+            .unwrap()
+    }
+
     /// A loaded store that has applied its first live board: the baseline.
     fn live() -> (Store, Board) {
         let mut store = loaded();
@@ -3230,9 +3309,19 @@ mod alerts {
     #[test]
     fn nothing_at_boot_or_snapshot() {
         let mut store = Store::default();
+        // The last session read mupu's turn then (its marker comes with the snapshot).
+        let turn = board_turn("mupu");
+        let marker = markers::value(&markers::baseline(turn), 5);
+        let row = StateRow {
+            key: "mupu".into(),
+            value: marker,
+            updated: 5,
+            write_id: "w".into(),
+            deleted: false,
+        };
         let snapshot = Snapshot {
             board: board(),
-            ..Default::default()
+            rows: [(Ns::Markers, vec![row])].into(),
         };
         let effects = store.apply(Event::Snapshot(snapshot));
         assert!(!effects.contains(&BURST));
@@ -3315,19 +3404,15 @@ mod alerts {
         };
         assert_eq!(notices(store.apply(Event::Wake(Wake::Burst))), [want]);
         let spaces = store.spaces.clone();
-        let seen = Event::Lens(spaces::Move::View {
-            space: String::new(),
-            agent: Some(alone.into()),
-            beside: Vec::new(),
-        });
-        let effects = store.apply(seen);
-        assert!(!store.agent_needs_you(alone), "seen");
+        let effects = watch(&mut store, alone, &[]);
+        assert!(!store.agent_needs_you(alone), "read");
         assert_eq!(store.spaces, spaces);
-        assert!(
-            !effects
-                .iter()
-                .any(|e| matches!(e, Effect::Post { .. } | Effect::Message { .. }))
-        );
+        let written = |e: &Effect| match e {
+            Effect::Post { ns, .. } => *ns != Ns::Markers,
+            _ => matches!(e, Effect::Message { .. }),
+        };
+        assert!(!effects.iter().any(written));
+        store.apply(Event::Front(false));
         block(&mut b, alone, true);
         assert!(store.apply(frame(&store, b)).contains(&BURST));
         let got = notices(store.apply(Event::Wake(Wake::Burst)));
@@ -3383,26 +3468,25 @@ mod alerts {
         })
     }
 
+    /// Web's status gate: a turn ended counts though the agent is already on its next (listening on the
+    /// bus, working in herdr); an inactive agent's never does.
     #[test]
-    fn a_turn_seen_working_alerts_once_it_stops() {
+    fn a_turn_counts_while_working_on_the_next_but_not_once_inactive() {
         let (mut store, mut b) = live();
         bump(&mut b, "mupu", 1);
         herdr(&mut b, "mupu", "working");
-        assert!(
-            !store.apply(fleet_frame(b.clone())).contains(&BURST),
-            "still working"
-        );
-        herdr(&mut b, "mupu", "idle");
-        assert!(
-            store.apply(fleet_frame(b.clone())).contains(&BURST),
-            "same turn, now idle"
-        );
+        assert!(store.apply(fleet_frame(b.clone())).contains(&BURST));
         assert_eq!(notices(store.apply(Event::Wake(Wake::Burst))).len(), 1);
-        // Working again and back without finishing a turn: that turn is spent.
-        herdr(&mut b, "mupu", "working");
-        store.apply(fleet_frame(b.clone()));
-        herdr(&mut b, "mupu", "idle");
+        bump(&mut b, "support-mifa", 1);
+        let panes = b.workspaces.iter_mut().flat_map(|w| &mut w.tabs);
+        for pane in panes
+            .flat_map(|t| &mut t.panes)
+            .filter(|p| p.agent == "support-mifa")
+        {
+            pane.bus_status = "inactive".into();
+        }
         assert!(!store.apply(fleet_frame(b)).contains(&BURST));
+        assert!(!store.agent_needs_you("support-mifa"));
     }
 
     #[test]
@@ -3525,17 +3609,14 @@ mod alerts {
         assert_eq!(badge(&effects), Some(2));
     }
 
-    /// Owner ruling (b): an agent in two spaces counts once in the total and on each card; a space
-    /// marked unread counts as one unless one of its agents already does.
+    /// Owner ruling (b): an agent in two spaces counts once in the total and on each card, also once
+    /// marked unread (RM: a space's `u` marks its agents).
     #[test]
     fn an_agent_in_two_spaces_counts_once() {
         let (mut store, mut b) = live();
         let slack = space_of(&store, "mupu").id.clone();
         let mut others = store.spaces.iter().filter(|s| s.id != slack);
-        let (other, third) = (
-            others.next().unwrap().id.clone(),
-            others.next().unwrap().id.clone(),
-        );
+        let other = others.next().unwrap().id.clone();
         let at = |store: &Store, id: &str| store.spaces.iter().position(|s| s.id == id).unwrap();
         let i = at(&store, &other);
         store.spaces[i].members.push(Member::Agent {
@@ -3547,41 +3628,48 @@ mod alerts {
         assert_eq!(store.needs_you_total(), 1);
         assert_eq!(store.needs_you(&store.spaces[at(&store, &slack)]), 1);
         assert_eq!(store.needs_you(&store.spaces[i]), 1);
-        // A marked space with no agent that counts adds one; marking one where mupu counts adds none.
-        let unread = |id: &str| Event::Lens(spaces::Move::Unread(id.into()));
-        assert_eq!(badge(&store.apply(unread(&third))), Some(2));
-        assert_eq!(badge(&store.apply(unread(&other))), None);
+        // Marking mupu's first space unread marks its agents: support-mifa counts too, mupu still once
+        // (the write re-derives the spaces, dropping the member pushed by hand above).
+        store.apply(posted_ok());
+        store.apply(Event::Lens(spaces::Move::Unread(slack.clone())));
         assert_eq!(store.needs_you_total(), 2);
+        assert_eq!(store.needs_you(&store.spaces[at(&store, &slack)]), 2);
     }
 
-    /// Owner ruling (c): watching an agent's tail, frontmost and zoomed on it, sees what lands: a turn,
-    /// then a block after that turn was seen, neither counts nor alerts. Scrolled up, it counts again.
+    /// Owner ruling (c), now by the dwell (RM): once an agent's tail has been watched a second, frontmost
+    /// and zoomed on it, what lands is read: a turn, then a block after it, neither counts nor alerts.
+    /// Scrolled up, it counts again.
     #[test]
     fn watching_the_tail_sees_what_lands() {
         let (mut store, mut b) = live();
-        store.apply(Event::Front(true));
-        store.apply(view(&store, "mupu"));
-        store.apply(tail(&store, true));
+        clock(&mut store, 1_000);
+        watch(&mut store, "mupu", &[]);
+        store.apply(posted_ok());
         bump(&mut b, "mupu", 1);
         let effects = store.apply(frame(&store, b.clone()));
         assert!(!effects.contains(&BURST) && badge(&effects).is_none());
-        assert!(!store.agent_needs_you("mupu"), "the turn is seen");
-        assert!(effects.contains(&Effect::Persist(Persist::Prefs)));
+        assert!(!store.agent_needs_you("mupu"), "the turn is read");
+        let rows = posted(&effects);
+        assert_eq!(rows.len(), 1, "one readThrough");
+        assert_eq!(rows[0].value["turn"], board_turn("mupu") + 1);
         block(&mut b, "mupu", true);
         let effects = store.apply(frame(&store, b.clone()));
         assert!(!effects.contains(&BURST) && badge(&effects).is_none());
-        assert!(!store.agent_needs_you("mupu"), "the block is seen");
+        assert!(!store.agent_needs_you("mupu"), "the block is viewed");
         // Not frontmost, the tail is not watched: a turn needs you and alerts. Coming forward at the
-        // tail sees it, before its burst ends.
+        // tail, the owner is looking at it (no notice) and the dwell reads it.
         store.apply(Event::Front(false));
+        block(&mut b, "mupu", false);
         bump(&mut b, "mupu", 1);
         let effects = store.apply(frame(&store, b.clone()));
         assert!(store.agent_needs_you("mupu") && effects.contains(&BURST));
         store.apply(Event::Front(true));
-        assert!(!store.agent_needs_you("mupu"), "coming forward sees it");
         assert!(notices(store.apply(Event::Wake(Wake::Burst))).is_empty());
+        assert!(store.agent_needs_you("mupu"), "not before the dwell");
+        dwell(&mut store);
+        assert!(!store.agent_needs_you("mupu"), "read");
         // Scrolled up, a new turn needs you (the app is still not alerting for the agent in view).
-        store.apply(tail(&store, false));
+        follow(&mut store, "mupu", false);
         bump(&mut b, "mupu", 1);
         let effects = store.apply(frame(&store, b));
         assert!(store.agent_needs_you("mupu"));
@@ -3602,15 +3690,12 @@ mod alerts {
             agent,
             beside,
         };
-        store.apply(Event::Lens(view));
+        let effects = store.apply(Event::Lens(view));
+        transcript_pages::drive(&mut store, effects, &[], transcript::PAGE as usize);
         for t in store.transcript.open.clone().into_values() {
-            let (agent, generation, tail) = (t.agent, t.generation, true);
-            store.apply(Event::Transcript(transcript::Step::Tail {
-                agent,
-                generation,
-                tail,
-            }));
+            follow(&mut store, &t.agent, true);
         }
+        dwell(&mut store);
         bump(&mut b, "mupu", 1);
         bump(&mut b, "orch-lega", 1);
         let effects = store.apply(frame(&store, b));
@@ -3636,11 +3721,15 @@ mod alerts {
         store.apply(Event::Front(true));
         store.apply(view(&store, "mupu"));
         let stale = tail(&store, true);
+        let read = |store: &mut Store, agent: &str| {
+            let effects = store.apply(view(store, agent));
+            transcript_pages::drive(store, effects, &[], transcript::PAGE as usize);
+        };
         let following = |store: &Store| store.transcript.focused().unwrap().tail;
         store.apply(view(&store, "orch-lega"));
         store.apply(stale.clone());
         assert!(!following(&store), "another agent's");
-        store.apply(view(&store, "mupu"));
+        read(&mut store, "mupu");
         store.apply(stale);
         assert!(!following(&store), "the zoom before's");
         bump(&mut b, "mupu", 1);
@@ -3648,6 +3737,7 @@ mod alerts {
         assert!(store.agent_needs_you("mupu"));
 
         store.apply(tail(&store, true));
+        dwell(&mut store);
         assert!(!store.agent_needs_you("mupu"), "a current one is taken");
         let stale = tail(&store, true);
         let agent = "mupu".into();
@@ -3981,4 +4071,394 @@ fn layouts_are_saved_on_change_and_another_version_is_ignored() {
     assert_eq!(fresh.layouts.version, LAYOUTS);
     fresh.apply(Event::LayoutsLoaded(saved(LAYOUTS)));
     assert_eq!(fresh.layouts.spaces["s2"], dock);
+}
+
+// Read markers (RM): web's merge, reading and attention (cross-checked against web's own code), the
+// dwell, arming, seeding and migration, and what a remote marker does.
+mod read_markers {
+    use super::transcript_pages::{drive, history};
+    use super::*;
+    use crate::store::fleet::Fleet;
+    use crate::store::markers::{Attention, Marker, Pos, WEAK};
+    use serde_json::{Value, from_value};
+
+    /// `testdata/markers-web.json`: unread, merges and reads made by web's own code.
+    fn web() -> Value {
+        serde_json::from_str(include_str!("../../testdata/markers-web.json")).unwrap()
+    }
+
+    fn set_bus(b: &mut Board, name: &str, status: &str) {
+        let placed = b.workspaces.iter_mut().flat_map(|w| &mut w.tabs);
+        let panes = placed.flat_map(|t| &mut t.panes).chain(&mut b.unplaced);
+        for pane in panes.filter(|p| p.agent == name) {
+            pane.bus_status = status.into();
+        }
+    }
+
+    #[test]
+    fn unread_merges_and_reads_match_webs_own_code() {
+        let web = web();
+        let mut b = board();
+        for (name, status) in web["bus"].as_object().unwrap() {
+            set_bus(&mut b, name, status.as_str().unwrap());
+        }
+        let mut fleet = Fleet::default();
+        fleet.ingest(b);
+        let rows: Vec<StateRow> = from_value(web["rows"].clone()).unwrap();
+        let read: BTreeMap<String, Marker> = (rows.iter())
+            .map(|r| (r.key.clone(), markers::parse(r).expect("web's row parses")))
+            .collect();
+        let (mut unread, mut blocked) = (Vec::new(), Vec::new());
+        for name in web["agents"].as_array().unwrap() {
+            let name = name.as_str().unwrap();
+            match markers::attention(fleet.agents.get(name), read.get(name)) {
+                Some(Attention::Unread) => unread.push(name),
+                Some(Attention::Blocked) => blocked.push(name),
+                None => {}
+            }
+        }
+        assert_eq!(
+            json!({"unread": unread, "blocked": blocked}),
+            web["attention"]
+        );
+        for case in web["merges"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let current: StateRow = from_value(case["current"].clone()).unwrap();
+            let incoming: StateRow = from_value(case["incoming"].clone()).unwrap();
+            let (row, repair) = markers::merge(Some(&current), incoming).unwrap();
+            assert_eq!(
+                serde_json::to_value(&row).unwrap(),
+                case["merged"],
+                "{name}"
+            );
+            assert_eq!(Some(repair), case["repair"].as_bool(), "{name}");
+        }
+        for case in web["reads"].as_array().unwrap() {
+            let name = case["name"].as_str().unwrap();
+            let marker: Option<Marker> = from_value(case["marker"].clone()).unwrap();
+            let turn: Option<u64> = from_value(case["turn"].clone()).unwrap();
+            let latest: Option<Pos> = from_value(case["latest"].clone()).unwrap();
+            let want: Option<Marker> = from_value(case["read"].clone()).unwrap();
+            let now = case["now"].as_i64().unwrap();
+            let got = markers::read_through(marker.as_ref(), turn, latest.as_ref(), now);
+            assert_eq!(got, want, "{name}");
+        }
+        // A row web would refuse is not merged.
+        let bad = StateRow {
+            key: "a".into(),
+            value: json!({"turn": -1, "pos": null, "at": 0, "unread": false}),
+            ..StateRow::default()
+        };
+        assert!(markers::merge(None, bad).is_none());
+    }
+
+    /// Where `alt-u` puts reading back (web's `markLastTurnUnread`): before the latest turn's opener, or
+    /// with none in the window before the newest entry.
+    #[test]
+    fn a_mark_unread_resumes_where_webs_does() {
+        let web = web();
+        let all = history("mupu");
+        for (limit, want) in [
+            (usize::MAX, "whole"),
+            (transcript::PAGE as usize, "last100"),
+        ] {
+            let mut store = loaded();
+            let effects = transcript_pages::open(&mut store, "mupu");
+            drive(&mut store, effects, &all, limit);
+            let start = store.transcript.open["mupu"].turn_start();
+            let want: Option<Pos> = from_value(web["turnStart"][want].clone()).unwrap();
+            assert_eq!(start, want, "{limit}");
+        }
+    }
+
+    /// A live store, its seed answered, the clock at `now`.
+    fn live(now: i64) -> (Store, Board) {
+        let mut store = loaded();
+        let b = board();
+        store.apply(fleet_frame(b.clone()));
+        store.apply(posted_ok());
+        clock(&mut store, now);
+        (store, b)
+    }
+
+    fn turn(store: &Store, agent: &str) -> u64 {
+        store.fleet.agents[agent].turn_end.unwrap()
+    }
+
+    fn remote(agent: &str, m: &Marker, updated: i64) -> Event {
+        let row = StateRow {
+            key: agent.into(),
+            value: markers::value(m, updated),
+            updated,
+            write_id: format!("web-{updated}"),
+            deleted: false,
+        };
+        let (rows, rev) = (vec![row], 9);
+        let step = Step::Pulled(StateRows { rows, rev });
+        Event::Sync {
+            ns: Ns::Markers,
+            step,
+        }
+    }
+
+    #[test]
+    fn seeding_waits_for_the_first_pull_and_a_live_board_and_is_weak() {
+        let mut store = Store::default();
+        store.apply(Event::Boot);
+        for ns in [Ns::Spaces, Ns::Members, Ns::Notes] {
+            store.apply(Event::Sync {
+                ns,
+                step: Step::Pulled(fixture_rows(ns)),
+            });
+        }
+        let effects = store.apply(fleet_frame(board()));
+        assert!(posted(&effects).is_empty(), "no POST before the first pull");
+        assert!(store.markers.is_empty());
+        // Another device's mupu stands; every other agent with a turn gets a weak baseline.
+        let theirs = markers::baseline(7);
+        let effects = store.apply(remote("mupu", &theirs, 50));
+        let rows = posted(&effects);
+        let turns = store.fleet.agents.values().filter(|a| a.turn_end.is_some());
+        assert_eq!(rows.len(), turns.count() - 1);
+        assert!(rows.iter().all(|r| r.updated == WEAK && r.key != "mupu"));
+        assert_eq!(store.markers["mupu"], theirs);
+        assert!(store.agent_needs_you("mupu"), "its turn ended after 7");
+        assert!(!store.agent_needs_you("support-mifa"), "a baseline");
+        // A disk snapshot's board is not live: nothing seeds from it.
+        let mut store = Store::default();
+        let board = board();
+        store.apply(Event::Snapshot(Snapshot {
+            board,
+            ..Snapshot::default()
+        }));
+        store.apply(Event::Boot);
+        let pulls = Ns::ALL.map(|ns| {
+            let step = Step::Pulled(fixture_rows(ns));
+            store.apply(Event::Sync { ns, step })
+        });
+        assert!(pulls.iter().all(|e| posted(e).is_empty()));
+    }
+
+    #[test]
+    fn a_404_pull_is_an_empty_one() {
+        let mut store = Store::default();
+        store.apply(Event::Boot);
+        let step = Step::PullFailed(Some(404));
+        let effects = store.apply(Event::Sync {
+            ns: Ns::Markers,
+            step,
+        });
+        assert!(store.sync[&Ns::Markers].pulled);
+        assert!(!effects.iter().any(|e| matches!(e, Effect::After { .. })));
+    }
+
+    #[test]
+    fn the_old_seen_marks_migrate_once_weakly_and_their_blocks_stay_local() {
+        let mut store = Store::default();
+        let b = board();
+        let mut probe = Fleet::default();
+        probe.ingest(b.clone());
+        let (mupu, orch) = (
+            probe.agents["mupu"].turn_end.unwrap(),
+            probe.agents["orch-lega"].turn_end.unwrap(),
+        );
+        let old = json!({"seen": {"mupu": {"turn_end": mupu - 2, "blocked": true}, "orch-lega": orch - 1}});
+        store.apply(Event::PrefsLoaded(from_value(old).unwrap()));
+        assert!(store.prefs.blocks.contains("mupu"), "its block stays local");
+        store.apply(Event::Boot);
+        for ns in Ns::ALL {
+            let step = Step::Pulled(fixture_rows(ns));
+            store.apply(Event::Sync { ns, step });
+        }
+        let effects = store.apply(fleet_frame(b));
+        assert!(effects.contains(&Effect::Persist(Persist::Prefs)));
+        let rows = posted(&effects);
+        let row = |k: &str| rows.iter().find(|r| r.key == k).unwrap();
+        assert_eq!(row("mupu").value["turn"], mupu - 2);
+        assert_eq!(row("orch-lega").value["turn"], orch - 1);
+        assert!(rows.iter().all(|r| r.updated == WEAK));
+        assert!(store.agent_needs_you("mupu") && store.agent_needs_you("orch-lega"));
+        assert!(store.prefs.seen.is_empty());
+        let saved = serde_json::to_value(&store.prefs).unwrap();
+        assert!(saved.get("seen").is_none() && saved.get("unread").is_none());
+        // Once: a later board writes nothing more.
+        store.apply(posted_ok());
+        assert!(posted(&store.apply(fleet_frame(board()))).is_empty());
+    }
+
+    #[test]
+    fn the_dwell_reads_the_focused_panel_after_a_second_frontmost_at_its_tail() {
+        let (mut store, mut b) = live(1_000);
+        bump(&mut b, "mupu", 1);
+        bump(&mut b, "support-mifa", 1);
+        store.apply(frame(&store, b.clone()));
+        store.apply(Event::Front(true));
+        let space = space_of(&store, "mupu").id.clone();
+        let (agent, beside) = (Some("mupu".into()), vec!["support-mifa".to_string()]);
+        let effects = store.apply(lens(spaces::Move::View {
+            space,
+            agent,
+            beside,
+        }));
+        let all = history("mupu");
+        drive(&mut store, effects, &all, transcript::PAGE as usize);
+        follow(&mut store, "support-mifa", true);
+        follow(&mut store, "mupu", true);
+        assert!(store.agent_needs_you("mupu"), "not before the second");
+        let stale = store.reading.token - 1;
+        store.apply(Event::Wake(Wake::Dwell(stale)));
+        assert!(store.agent_needs_you("mupu"), "an earlier dwell's timer");
+        let rows = posted(&dwell(&mut store));
+        assert_eq!(rows.len(), 1);
+        let end = all.last().unwrap();
+        let want = json!({
+            "turn": turn(&store, "mupu"),
+            "pos": {"session": "s1", "offset": end.byte_offset, "ts": end.timestamp},
+            "at": 1_000, "unread": false, "updated": 1_000,
+        });
+        assert_eq!((rows[0].key.as_str(), &rows[0].value), ("mupu", &want));
+        assert!(!store.agent_needs_you("mupu"));
+        assert!(
+            store.agent_needs_you("support-mifa"),
+            "the panel beside is not read"
+        );
+        // Scrolled up, or in the back, no dwell runs.
+        store.apply(posted_ok());
+        bump(&mut b, "mupu", 1);
+        follow(&mut store, "mupu", false);
+        store.apply(frame(&store, b.clone()));
+        assert!(posted(&dwell(&mut store)).is_empty());
+        follow(&mut store, "mupu", true);
+        store.apply(Event::Front(false));
+        assert!(posted(&dwell(&mut store)).is_empty());
+        assert!(store.agent_needs_you("mupu"));
+        store.apply(Event::Front(true));
+        assert!(store.agent_needs_you("mupu"), "a new second");
+        assert_eq!(posted(&dwell(&mut store)).len(), 1);
+        assert!(!store.agent_needs_you("mupu"));
+    }
+
+    #[test]
+    fn a_creeping_position_is_written_at_most_every_5s_and_a_turn_end_at_once() {
+        let (mut store, mut b) = live(1_000);
+        let all = history("mupu");
+        let n = all.len();
+        let rows = posted(&watch(&mut store, "mupu", &all[..n - 2]));
+        assert_eq!(rows[0].value["pos"]["offset"], all[n - 3].byte_offset);
+        store.apply(posted_ok());
+        // Entries land 2 s later: read in, not yet written.
+        clock(&mut store, 3_000);
+        let generation = store.stream;
+        let event = StreamEvent::Frame(Wire::Entry("mupu".into()));
+        let effects = store.apply(Event::Stream { generation, event });
+        assert_eq!(
+            drive(&mut store, effects, &all, transcript::PAGE as usize).len(),
+            1
+        );
+        let end = |store: &Store| store.transcript.open["mupu"].end.clone().unwrap();
+        assert_eq!(end(&store).offset, all[n - 1].byte_offset);
+        assert!(store.sync[&Ns::Markers].outbox.is_empty());
+        // Five seconds after the last write, the next event writes it.
+        clock(&mut store, 6_000);
+        let rows = posted(&store.apply(Event::Front(true)));
+        assert_eq!(rows[0].value["pos"]["offset"], all[n - 1].byte_offset);
+        store.apply(posted_ok());
+        // A turn end writes at once.
+        clock(&mut store, 6_100);
+        bump(&mut b, "mupu", 1);
+        let rows = posted(&store.apply(frame(&store, b)));
+        assert_eq!(rows[0].value["turn"], turn(&store, "mupu"));
+    }
+
+    #[test]
+    fn alt_u_marks_unread_until_the_agent_is_left_and_come_back_to() {
+        let (mut store, _) = live(1_000);
+        let all = history("mupu");
+        watch(&mut store, "mupu", &all);
+        store.apply(posted_ok());
+        clock(&mut store, 2_000);
+        let toggle = || lens(spaces::Move::Toggle("mupu".into()));
+        let rows = posted(&store.apply(toggle()));
+        let opener = store.transcript.open["mupu"].turn_start().unwrap();
+        assert!(opener.offset < all.last().unwrap().byte_offset);
+        let want = json!({
+            "turn": turn(&store, "mupu"),
+            "pos": {"session": opener.session, "offset": opener.offset, "ts": opener.ts},
+            "at": 1_000, "unread": true, "updated": 2_000,
+        });
+        assert_eq!(rows[0].value, want, "from the start of the latest turn");
+        assert!(store.agent_needs_you("mupu"));
+        store.apply(posted_ok());
+        // Still on it: the dwell holds the mark.
+        assert!(posted(&store.apply(Event::Front(true))).is_empty());
+        assert!(posted(&dwell(&mut store)).is_empty());
+        assert!(store.agent_needs_you("mupu"));
+        // Left for another agent and come back to: the dwell reads it.
+        watch(&mut store, "support-mifa", &[]);
+        store.apply(posted_ok());
+        clock(&mut store, 3_000);
+        let rows = posted(&watch(&mut store, "mupu", &all));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value["unread"], false);
+        assert!(!store.agent_needs_you("mupu"));
+        store.apply(posted_ok());
+        // `alt-u` on it unread marks it read at once; scrolled up, its position is the one kept.
+        store.apply(toggle());
+        store.apply(posted_ok());
+        follow(&mut store, "mupu", false);
+        clock(&mut store, 4_000);
+        let kept = store.markers["mupu"].pos.clone();
+        let rows = posted(&store.apply(toggle()));
+        assert_eq!(rows[0].value["unread"], false);
+        assert_eq!(store.markers["mupu"].pos, kept);
+        assert!(!store.agent_needs_you("mupu"));
+    }
+
+    #[test]
+    fn a_remote_read_stops_the_alert_and_clears_the_badge() {
+        let (mut store, mut b) = live(1_000);
+        bump(&mut b, "mupu", 1);
+        let effects = store.apply(frame(&store, b));
+        assert!(effects.contains(&Effect::Badge(1)));
+        assert!(effects.iter().any(|e| matches!(
+            e,
+            Effect::After {
+                wake: Wake::Burst,
+                ..
+            }
+        )));
+        // Web reads it before the burst ends.
+        let read = Marker {
+            at: 1_500,
+            ..markers::baseline(turn(&store, "mupu"))
+        };
+        let effects = store.apply(remote("mupu", &read, 1_500));
+        assert!(effects.contains(&Effect::Badge(0)));
+        assert!(!store.agent_needs_you("mupu"));
+        let notified = store.apply(Event::Wake(Wake::Burst));
+        assert!(!notified.iter().any(|e| matches!(e, Effect::Notify(_))));
+        // And the reverse: marked unread on web, it needs you here (the mark is quiet: no alert cause).
+        let unread = Marker {
+            unread: true,
+            ..read
+        };
+        let effects = store.apply(remote("mupu", &unread, 1_600));
+        assert!(effects.contains(&Effect::Badge(1)));
+    }
+
+    #[test]
+    fn a_stale_remote_row_is_merged_forward_and_republished() {
+        let (mut store, _) = live(5_000);
+        let mine = turn(&store, "mupu");
+        let stale = markers::baseline(mine - 5);
+        let rows = posted(&store.apply(remote("mupu", &stale, 100)));
+        assert_eq!(rows.len(), 1, "the repair");
+        assert_eq!(
+            (rows[0].updated, rows[0].write_id.as_str()),
+            (5_000, "w5000")
+        );
+        assert_eq!(rows[0].value["turn"], mine);
+        assert_eq!(rows[0].value["updated"], 5_000);
+        assert_eq!(store.markers["mupu"].turn, mine);
+    }
 }

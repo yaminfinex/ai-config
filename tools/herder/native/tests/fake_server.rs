@@ -307,7 +307,7 @@ fn a_dropped_stream_reconnects_and_repulls() {
     let repulls: Vec<&String> = log.iter().filter(|l| l.contains("since=6")).collect();
     assert_eq!(
         repulls.len(),
-        6,
+        8,
         "each hello (the first too) re-pulls every namespace from its cursor: {log:?}"
     );
     assert_eq!(store.spaces.len(), 1);

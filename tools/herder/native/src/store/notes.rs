@@ -54,7 +54,7 @@ pub fn derive(rows: &BTreeMap<String, StateRow>) -> Vec<Note> {
 }
 
 /// The time of day and fresh ids for a local edit; the caller makes them, as the store reads no clock.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Stamp {
     /// Milliseconds since the epoch.
     pub now: i64,

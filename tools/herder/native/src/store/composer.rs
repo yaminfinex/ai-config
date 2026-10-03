@@ -182,10 +182,11 @@ impl Store {
                         // Filed back: only a send that landed lets the owner leave the agent, and only
                         // what they saw when sending is seen: a turn since still needs them.
                         if let Some(then) = file_back {
-                            let seen = &mut self.prefs.seen;
-                            if attention::acknowledge(seen, &self.fleet, &agent, then) {
+                            let blocks = &mut self.prefs.blocks;
+                            if attention::acknowledge(blocks, &self.fleet, &agent, then) {
                                 out.push(Effect::Persist(Persist::Prefs));
                             }
+                            self.mark_read(&[&agent], Some(then.turn_end), out);
                             out.push(Effect::FiledBack { agent });
                         }
                     }

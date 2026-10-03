@@ -29,6 +29,8 @@ pub enum Zoomed {
     /// `tab` / `shift-tab`, `alt-right` / `alt-left`: the next or previous tab in the focused group,
     /// wrapping.
     Agent(isize),
+    /// `alt-u`: mark the zoomed agent read if it is unread, else unread (web's toggle; RM).
+    Read,
 }
 
 /// A clicked tab: show that agent in this zoom.
@@ -246,6 +248,10 @@ pub fn act(store: &Store, ui: &mut State, key: Zoomed) -> Vec<Event> {
     let Some(zoom) = ui.zoom.clone() else {
         return Vec::new();
     };
+    if key == Zoomed::Read {
+        let agent = zoom.agent.map(Move::Toggle);
+        return agent.map(Event::Lens).into_iter().collect();
+    }
     // Alone, there is no space to move through: only `escape` does anything.
     if zoom.alone() && key != Zoomed::Out {
         return Vec::new();
