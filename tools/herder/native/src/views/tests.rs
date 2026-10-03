@@ -3134,6 +3134,7 @@ mod dock_events {
     use crate::views::space::{self, Zoom};
     use crate::views::transcript::OpenLink;
     use crate::views::{Host, bind, dock, theme};
+    use gpui_kit::component::dock::{DockPlacement, InsertTarget};
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
         Context, Entity, InteractiveElement as _, IntoElement, Modifiers, ParentElement as _,
@@ -3376,5 +3377,71 @@ mod dock_events {
         shell.read_with(cx, |s, _| {
             assert!(s.moves.iter().all(|m| !matches!(m, Move::Unpin { .. })))
         });
+    }
+
+    fn pinned(shell: &Entity<Shell>, cx: &mut VisualTestContext, who: &str) -> bool {
+        shell.read_with(cx, |s, _| {
+            let pin = |m: &Move| matches!(m, Move::Pin { agent, .. } if agent == who);
+            s.moves.iter().any(pin) && space_of(&s.store, SPACE[0]).agents().any(|a| a == who)
+        })
+    }
+
+    /// A mention opens a preview in the focused group; the next one opened there replaces it, in its
+    /// place; a double-click on it pins it (the agent joins the space).
+    #[gpui_kit::test]
+    fn a_preview_replaces_the_groups_preview_and_a_double_click_pins_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        let tabs = format!("{} {} {}", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), format!("{tabs} [mupu*~]"));
+        act(cx, OpenLink("herder-agent:support-mifa".into(), false));
+        assert_eq!(dock(&shell, cx), format!("{tabs} [support-mifa*~]"));
+        shell.read_with(cx, |s, _| {
+            assert!(!s.ui.panels.contains_key("mupu"), "its panel went")
+        });
+        act(cx, dock::Pin("support-mifa".into()));
+        assert_eq!(dock(&shell, cx), format!("{tabs} [support-mifa*]"));
+        assert!(pinned(&shell, cx, "support-mifa"));
+    }
+
+    /// A preview dragged into another group is pinned (found by the layout's change), and it is the
+    /// zoom's: it took focus.
+    #[gpui_kit::test]
+    fn a_preview_dragged_to_another_group_is_pinned(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        cx.update(|window, cx| {
+            let area = shell.read(cx).ui.dock.as_ref().unwrap().area.clone();
+            let id = shell.read(cx).ui.panels["mupu"].id;
+            let tree = area.read(cx).layout(DockPlacement::Center).unwrap();
+            let left = tree
+                .find_panel_node(shell.read(cx).ui.panels[SPACE[0]].id)
+                .unwrap();
+            let to = InsertTarget::Tabs {
+                node: left,
+                ix: None,
+                activate: true,
+            };
+            area.update(cx, |a, cx| a.move_panel(id, to, window, cx));
+        });
+        draw(cx);
+        assert!(pinned(&shell, cx, "mupu"));
+        let tabs = format!("{} {} {}", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), format!("{tabs} [mupu*]"));
+    }
+
+    /// A send from a preview pins it.
+    #[gpui_kit::test]
+    fn a_send_from_a_preview_pins_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        cx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let state = ui.panel().unwrap().composer.focus_handle(cx);
+            window.focus(&state, cx);
+        });
+        draw(cx);
+        act(cx, crate::views::composer::Compose::Send);
+        assert!(pinned(&shell, cx, "mupu"));
     }
 }

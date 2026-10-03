@@ -47,7 +47,7 @@ check-keys: build
 # held    a held send shows "sending" and swallows a second cmd-enter;
 # drafts  drafts A -> B -> A across tabs and spaces; a path or same-agent link keeps the box focused, another
 #         agent's link gives focus to the zoom (no send);
-# failed  cmd-shift-enter on a preview answered 502 stays on the preview, saying why;
+# failed  cmd-shift-enter on a preview (which pins it, DK2) answered 502 stays on it, saying why;
 # fileback cmd-shift-enter stays "sending" until the (slow) send lands, then leaves for the lens, which
 #         takes focus even though escape moved it from the box to the zoom meanwhile (enter zooms in);
 # collide a 409 sender collision makes every box read-only.
@@ -60,11 +60,11 @@ check-composer port="4411":
         scenario "$2" "--message $1" "$4"
         seen "$2" "message to" "$3"
     }
-    run ok keys 1 "$zoom key:/ draw box:focused: key:n key:j key:[ key:] key:1 key:v key:? draw box:focused:nj[]1v? expect:mupu+preview shot:u4-draft key:cmd-enter wait:800 draw box:focused: shot:u4-empty key:escape draw box:idle: expect:mupu+preview quit"
+    run ok keys 1 "$zoom key:/ draw box:focused: key:n key:j key:[ key:] key:1 key:v key:? draw box:focused:nj[]1v? expect:mupu+preview shot:u4-draft key:cmd-enter wait:800 draw box:focused: shot:u4-empty key:escape draw box:idle: expect:mupu quit"
     run hold held 1 "$typed key:cmd-enter wait:400 draw says:sending shot:u4-sending key:x key:cmd-enter wait:300 draw box:focused:hi quit"
     run ok drafts 0 "wait:1500 key:enter wait:400 draw expect:chief-mihe key:/ draw key:a draw box:focused:a key:escape draw box:idle:a key:] wait:600 draw expect:mupu box:idle: key:tab wait:300 draw expect:support-mifa key:/ draw key:b draw box:focused:b key:escape key:shift-tab wait:300 draw expect:mupu box:idle: key:tab draw expect:support-mifa box:idle:b key:[ wait:600 draw expect:chief-mihe box:idle:a key:/ draw link:herder-path:src/main.rs wait:400 draw box:focused:a link:herder-agent:chief-mihe draw box:focused:a link:herder-agent:mupu wait:400 draw expect:mupu+preview box:idle: key:/ draw box:focused: quit"
-    run 502 failed 1 "$typed key:cmd-shift-enter wait:600 draw expect:mupu+preview box:focused:hi says:unreachable,+not+sent shot:u4-fileback-failed quit"
-    run slow fileback 1 "$typed key:cmd-shift-enter wait:300 draw expect:mupu+preview says:sending key:escape draw box:idle:hi wait:1500 draw expect: box:idle: key:enter wait:600 draw expect:chief-mihe quit"
+    run 502 failed 1 "$typed key:cmd-shift-enter wait:600 draw expect:mupu box:focused:hi says:unreachable,+not+sent shot:u4-fileback-failed quit"
+    run slow fileback 1 "$typed key:cmd-shift-enter wait:300 draw expect:mupu says:sending key:escape draw box:idle:hi wait:1500 draw expect: box:idle: key:enter wait:600 draw expect:chief-mihe quit"
     run 409 collide 1 "$typed key:cmd-enter wait:600 draw box:focused:hi says:sender+collision shot:u4-collision key:escape link:herder-agent:chief-mihe wait:400 draw says:read-only quit"
     echo "check-composer: ok (keys typed, one send each, held send not repeated, drafts per agent, link focus, file-back on success only, collision read-only)"
 
