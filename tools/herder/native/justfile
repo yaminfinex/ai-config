@@ -293,16 +293,18 @@ check-entries port="4416":
 # support-mifa): an alt-click on a mention opens it beside, in a new group to the right; a mention opened in
 # that group replaces its preview, and a double-click on the tab pins it (one members write); a real drag
 # moves a member's tab to the other group; tab, cmd-2 and alt-left step the focused group, alt-enter
-# maximizes it and back; cmd-w closes the pinned tab (it leaves the space: the second write), and a click
-# on a preview's × closes it (no write). A relaunch on the same HOME opens the dock as it was left.
+# maximizes it and back, and after a click on the transcript's text the next key still acts, in and out
+# (G2: the text's element goes with the layout, and focus returns to the panel); cmd-w closes the pinned
+# tab (it leaves the space: the second write), and a click on a preview's × closes it (no write). A
+# relaunch on the same HOME opens the dock as it was left.
 check-dock port="4417":
     #!/usr/bin/env bash
     . scripts/scenario.sh check-dock {{port}}
     slack="wait:1500 key:enter wait:400 draw key:] wait:600 draw"
-    scenario dock "" "$slack dock:[mupu*]+support-mifa beside:herder-agent:conductor-line wait:800 draw dock:mupu*+support-mifa+|+[conductor-line*~] shot:dk2-split link:herder-agent:grill-confirm-lubo wait:800 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*~] click:pin:2 wait:300 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*] drag:154,42,1120,42 wait:300 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:tab draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-2 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:alt-left draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:max+mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-w wait:300 draw dock:mupu*+|+[support-mifa*] link:herder-agent:conductor-line wait:600 draw dock:mupu*+|+support-mifa+[conductor-line*~] click:close:2 wait:300 draw dock:mupu*+|+[support-mifa*] wait:600 quit" "$slack dock:[mupu*]+|+support-mifa* quit"
+    scenario dock "" "$slack dock:[mupu*]+support-mifa beside:herder-agent:conductor-line wait:800 draw dock:mupu*+support-mifa+|+[conductor-line*~] shot:dk2-split point:1000,360 wait:300 draw key:alt-enter wait:300 draw dock:max+mupu*+support-mifa+|+[conductor-line*~] key:alt-enter wait:300 draw dock:mupu*+support-mifa+|+[conductor-line*~] point:1000,360 wait:300 draw key:alt-enter wait:300 draw point:1000,360 wait:300 draw key:alt-enter wait:300 draw dock:mupu*+support-mifa+|+[conductor-line*~] key:alt-enter wait:300 draw dock:max+mupu*+support-mifa+|+[conductor-line*~] key:alt-enter wait:300 draw dock:mupu*+support-mifa+|+[conductor-line*~] link:herder-agent:grill-confirm-lubo wait:800 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*~] click:pin:2 wait:300 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*] drag:154,42,1120,42 wait:300 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:tab draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-2 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:alt-left draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:max+mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-w wait:300 draw dock:mupu*+|+[support-mifa*] link:herder-agent:conductor-line wait:600 draw dock:mupu*+|+support-mifa+[conductor-line*~] click:close:2 wait:300 draw dock:mupu*+|+[support-mifa*] wait:600 quit" "$slack dock:[mupu*]+|+support-mifa* quit"
     seen dock "state spaces.members" 2
     seen dock "message to" 0
-    echo "check-dock: ok (alt-click opens beside, a preview replaces the group's and a double-click pins it, a real drag moves a tab across, tab keys step the focused group, alt-enter maximizes, cmd-w closes and unpins, a click on × closes a preview, a relaunch restores the dock)"
+    echo "check-dock: ok (alt-click opens beside, a preview replaces the group's and a double-click pins it, a real drag moves a tab across, tab keys step the focused group, alt-enter maximizes and the keys act after it with focus left on the text, in and out, cmd-w closes and unpins, a click on × closes a preview, a relaunch restores the dock)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.
