@@ -69,23 +69,19 @@ impl View {
     }
 }
 
-/// Before a frame is drawn: the zoomed agent's box shows its draft. A landed file-back hands focus to
-/// the lens wherever it was in the departing zoom.
+/// Before a frame is drawn: each shown panel's box shows its agent's draft. A landed file-back hands
+/// focus to the lens wherever it was in the departing zoom.
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
     if ui.focus.take() == Some(Focus::Out) {
         window.focus(ui.focus_target(), cx);
     }
-    let Some(agent) = ui.zoomed_agent() else {
-        return;
-    };
-    let draft = store.prefs.drafts.get(agent).map_or("", String::as_str);
-    let Some(view) = ui.panel().map(|p| &p.composer) else {
-        return;
-    };
-    if view.state.read(cx).value() != draft {
-        let draft = draft.to_string();
-        view.state
-            .update(cx, |s, cx| s.set_value(draft, window, cx));
+    for (agent, p) in ui.panels.iter().filter(|(_, p)| p.shown) {
+        let draft = store.prefs.drafts.get(agent).map_or("", String::as_str);
+        let state = &p.composer.state;
+        if state.read(cx).value() != draft {
+            let draft = draft.to_string();
+            state.update(cx, |s, cx| s.set_value(draft, window, cx));
+        }
     }
 }
 

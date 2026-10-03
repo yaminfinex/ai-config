@@ -3892,3 +3892,63 @@ mod cards {
         assert_eq!(store.cards.text("mupu"), Some("earlier"));
     }
 }
+
+/// DK2: pinning a preview tab makes its agent a member, last, and closing a pinned tab removes it; each
+/// is one `spaces.members` row (web's `{members, updated}`) in the outbox, newer than the
+/// row it replaces. Pinning a member, or unpinning an outsider, writes nothing.
+#[test]
+fn pinning_and_closing_tabs_write_the_members() {
+    use crate::store::notes::Stamp;
+    use crate::store::spaces::Move;
+    let mut store = loaded();
+    let space = space_of(&store, "mupu").id.clone();
+    let before = store.sync[&Ns::Members].rows[&space].updated;
+    let stamp = |now: i64| Stamp {
+        now,
+        id: String::new(),
+        write: format!("w{now}"),
+    };
+    let pin = |agent: &str, now| {
+        Event::Lens(Move::Pin {
+            space: space.clone(),
+            agent: agent.into(),
+            stamp: stamp(now),
+        })
+    };
+    let unpin = |agent: &str, now| {
+        Event::Lens(Move::Unpin {
+            space: space.clone(),
+            agent: agent.into(),
+            stamp: stamp(now),
+        })
+    };
+    let names = |store: &Store| -> Vec<String> {
+        let s = store.spaces.iter().find(|s| s.id == space).unwrap();
+        s.agents().map(String::from).collect()
+    };
+    store.apply(pin("orch-lega", 5));
+    assert_eq!(names(&store), ["mupu", "support-mifa", "orch-lega"]);
+    let row = &store.sync[&Ns::Members].outbox[&space];
+    assert_eq!(
+        (row.updated, row.write_id.as_str()),
+        (before + 1, "w5"),
+        "newer than the last"
+    );
+    assert_eq!(
+        row.value["members"][2],
+        serde_json::json!({"kind": "agent", "name": "orch-lega"})
+    );
+    assert_eq!(row.value["updated"], serde_json::json!(before + 1));
+    store.apply(unpin("mupu", i64::MAX / 2));
+    assert_eq!(names(&store), ["support-mifa", "orch-lega"]);
+    let row = &store.sync[&Ns::Members].outbox[&space];
+    assert_eq!(row.updated, i64::MAX / 2);
+    let pinned = store.sync[&Ns::Members].outbox[&space].clone();
+    store.apply(pin("orch-lega", i64::MAX / 2 + 9));
+    store.apply(unpin("chief-mihe", i64::MAX / 2 + 9));
+    assert_eq!(
+        store.sync[&Ns::Members].outbox[&space],
+        pinned,
+        "nothing to write"
+    );
+}

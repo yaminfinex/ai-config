@@ -23,8 +23,8 @@ use crate::local::{self, Disk};
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, capture, composer, lens, markdown,
-    notes, notes_list, panel, probe, space, theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, capture, composer, dock, lens, markdown,
+    notes, notes_list, probe, space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -311,7 +311,12 @@ impl Render for Shell {
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        panel::sync(&mut self.ui, &self.store, window, cx);
+        let events = dock::sync(&mut self.ui, &self.store, window, cx);
+        if !events.is_empty() {
+            cx.defer_in(window, |s, _, cx| {
+                events.into_iter().for_each(|e| s.dispatch(e, cx))
+            });
+        }
         composer::sync(&mut self.ui, &self.store, window, cx);
         notes::sync(&mut self.ui, &self.store, window, cx);
         capture::sync(&mut self.ui, window, cx);
@@ -412,7 +417,7 @@ impl harness::Probe for Entity<Shell> {
 
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>> {
         let s = self.read(cx);
-        probe::action(&s.store, &s.ui, op, arg)
+        probe::action(&s.store, &s.ui, op, arg, cx)
     }
 
     fn find(&self, text: &str, open: bool, cx: &mut App) -> bool {

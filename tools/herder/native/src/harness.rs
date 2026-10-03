@@ -245,7 +245,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
                 None => fail(format!("wheel {arg}: want x,y,l|p,dx,dy")),
             },
-            "link" | "summon" | "click" => {
+            "link" | "beside" | "summon" | "click" => {
                 let ok = cx.update(|window, cx| {
                     let action = probe.action(op, arg, cx);
                     action.map(|a| window.dispatch_action(a, cx)).is_some()
@@ -256,7 +256,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
             }
             "expect" | "box" | "has" | "says" | "notes" | "capture" | "list" | "said"
-            | "header" | "selected" | "rows" | "parts" | "tools" | "jump" => {
+            | "header" | "selected" | "rows" | "parts" | "tools" | "jump" | "dock" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");

@@ -236,7 +236,7 @@ check-mouse port="4414":
     lubo="wait:1500 summon:agent:grill-confirm-lubo wait:1500 draw draw"
     kono="wait:400 draw expect:confirm-fresh-kono+preview"
     HERDER_NATIVE_WINDOW=1400x900 scenario links "" "$lubo point:44,527 $kono quit" "$lubo point:43,672 $kono quit" \
-        "wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw point:40,130 wait:200 point:100,156 wait:400 draw quit"
+        "wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw point:40,116 wait:200 point:100,142 wait:400 draw quit"
     grep -q "platform: would open https://github.com/infinex-xyz/boomerang/pull/453" "$home/links.log" || { echo "check-mouse: the URL was not opened"; exit 1; }
     seen links "GET /api/resolve?q=submit.rs" 1
     # After selecting text by a drag (one across the URL itself), one click on each link opens it once:
@@ -245,9 +245,9 @@ check-mouse port="4414":
     riko="wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw"
     pull="$riko find:Pull+453 wait:300 draw draw"
     HERDER_NATIVE_WINDOW=1400x900 scenario selected "" \
-        "$pull drag:60,222,400,222 wait:200 draw drag:40,130,400,130 wait:200 draw point:40,130 wait:300 draw drag:60,222,400,222 wait:200 draw fast:40,130 wait:300 draw drag:60,222,400,222 wait:200 draw fast:100,156 wait:400 draw quit"
+        "$pull drag:60,208,400,208 wait:200 draw drag:40,116,400,116 wait:200 draw point:40,116 wait:300 draw drag:60,208,400,208 wait:200 draw fast:40,116 wait:300 draw drag:60,208,400,208 wait:200 draw fast:100,142 wait:400 draw quit"
     HERDER_NATIVE_WINDOW=1400x900 scenario named "" \
-        "$riko find:asked+chief+mihe wait:300 draw draw drag:60,222,400,222 wait:200 draw fast:120,172 wait:400 draw expect:fees-program-design-lifo+preview quit"
+        "$riko find:asked+chief+mihe wait:300 draw draw drag:60,208,400,208 wait:200 draw fast:120,158 wait:400 draw expect:fees-program-design-lifo+preview quit"
     opened=$(grep -c "platform: would open https://github.com/infinex-xyz/boomerang/pull/453" "$home/selected.log" || true)
     [ "$opened" = 2 ] || { echo "check-mouse: after a selection the URL opened $opened times, expected 2"; exit 1; }
     seen selected "GET /api/resolve?q=submit.rs" 1
