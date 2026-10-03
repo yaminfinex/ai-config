@@ -24,7 +24,7 @@ use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
     Frame, Host, Quit, TextBigger, TextReset, TextSmaller, capture, composer, dock, lens, markdown,
-    notes, notes_list, probe, space, theme,
+    notes, notes_list, paths, probe, space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -207,10 +207,11 @@ impl Shell {
                     actions: Vec::new(),
                 }),
                 Effect::Badge(n) => platform_mac::badge(n),
-                Effect::OpenFile { path, line } => {
-                    match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
-                        Some(url) => platform_mac::open(&url, cx),
-                        None => eprintln!("open: no VS Code URL for {path}"),
+                Effect::OpenFile { root, file, line } => {
+                    let host = &self.store.prefs.vscode_host;
+                    match markdown::vscode(host, &root, file.as_deref(), line) {
+                        Some((args, url)) => platform_mac::vscode(args, &url, cx),
+                        None => eprintln!("open: cannot open {root} in VS Code on {host}"),
                     }
                 }
             }
@@ -328,6 +329,7 @@ impl Render for Shell {
         composer::sync(&mut self.ui, &self.store, window, cx);
         notes::sync(&mut self.ui, &self.store, window, cx);
         capture::sync(&mut self.ui, window, cx);
+        paths::sync(&mut self.ui, &self.store, window, cx);
         let t = theme::type_scale(self.store.prefs.text_scale);
         let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()

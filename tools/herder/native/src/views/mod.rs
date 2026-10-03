@@ -6,7 +6,7 @@
 //! One file per surface, added by the unit that needs it: `lens` (U2, the home rows and cards), `space`
 //! (U2, the zoom shell and tabs), `panel` (DK1, one agent's views below), `transcript` (U3), `composer`
 //! (U4), `notes` (U5, the strip) and its keyboard list `notes_list` (F6), `capture` (F7, type-to-capture
-//! at a transcript selection); `probe`
+//! at a transcript selection), `paths` (G3, the choice of where a clicked path lives); `probe`
 //! answers the harness. `theme` holds the palette and the type scale. This file holds what they share:
 //! the key table and its help, the agent chrome (glyph, label, pill), and the window's `Frame` with the
 //! working-dot `Pulse`.
@@ -20,6 +20,7 @@ pub mod markdown;
 pub mod notes;
 pub mod notes_list;
 pub mod panel;
+pub mod paths;
 pub mod probe;
 pub mod space;
 pub mod tabs;
@@ -42,9 +43,10 @@ actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 /// Navigation letters bind here (ARCHITECTURE §4): a predicate sees the whole focus stack, so a
 /// focused Input, Terminal or notes list anywhere below turns them off, as does a live transcript
-/// selection (its capture chip holds focus, F7). App-wide chords bind on `Lens` alone.
-pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList && !Capture";
-pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList && !Capture";
+/// selection (its capture chip holds focus, F7) or a clicked path's choices (G3). App-wide chords bind
+/// on `Lens` alone.
+pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList && !Capture && !Paths";
+pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList && !Capture && !Paths";
 
 pub fn bind(cx: &mut App) {
     cx.bind_keys(bindings());
@@ -141,6 +143,14 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("escape", Capture::Cancel),
     ];
     keys.extend(popover.map(|(k, a)| KeyBinding::new(k, a, Some(capture::EDITOR))));
+    use paths::Paths;
+    let picker = [
+        ("up", Paths::Up),
+        ("down", Paths::Down),
+        ("enter", Paths::Open),
+        ("escape", Paths::Close),
+    ];
+    keys.extend(picker.map(|(k, a)| KeyBinding::new(k, a, Some(paths::PICKER))));
     use notes_list::List;
     let list = [
         ("up", List::Move(-1, false)),

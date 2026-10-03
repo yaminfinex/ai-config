@@ -244,7 +244,7 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
 }
 
 mod links {
-    use crate::views::markdown::{Mentions, link, path_like, route, vscode_url};
+    use crate::views::markdown::{Mentions, link, path_like, route, vscode, vscode_url};
 
     const WEB: &str = "http://h:4400/agents/riko";
 
@@ -372,6 +372,30 @@ mod links {
         );
         assert_eq!(vscode_url("bad host", "/x", None), None);
         assert_eq!(vscode_url("superset", "relative", None), None);
+    }
+
+    /// G3: the root opens as VS Code's folder and the file in it at its line, one argument each, spaces
+    /// kept; the URL is for when the tool is missing (a file at line 1 at least, so not as a folder).
+    #[test]
+    fn vscode_opens_the_root_then_goes_to_the_file() {
+        let (args, url) =
+            vscode("superset", "/home/u/my repo/", Some("a b/x.rs"), Some(7)).unwrap();
+        let want = ["--remote", "ssh-remote+superset", "/home/u/my repo", "-g"];
+        assert_eq!(args[..4], want);
+        assert_eq!(args[4], "/home/u/my repo/a b/x.rs:7");
+        assert_eq!(args.len(), 5);
+        assert_eq!(
+            url,
+            "vscode://vscode-remote/ssh-remote+superset/home/u/my%20repo/a%20b/x.rs:7"
+        );
+        let (args, url) = vscode("superset", "/r", Some("x.rs"), None).unwrap();
+        assert_eq!(args[3..], ["-g", "/r/x.rs"]);
+        assert!(url.ends_with("/r/x.rs:1"));
+        let (args, url) = vscode("superset", "/r", None, Some(3)).unwrap();
+        assert_eq!(args, ["--remote", "ssh-remote+superset", "/r"]);
+        assert_eq!(url, "vscode://vscode-remote/ssh-remote+superset/r");
+        assert_eq!(vscode("bad host", "/r", None, None), None);
+        assert_eq!(vscode("superset", "relative", None, None), None);
     }
 }
 
@@ -3934,5 +3958,256 @@ mod dock_events {
         }
         assert_eq!(dock(&shell, cx), "", "every tab closed");
         keys_live(&shell, cx, "the last tab closed");
+    }
+}
+
+/// G3: a clicked path's choices with real keys and a press in a headless window: they take focus when
+/// they land, `↑` `↓` move (clamped), `⏎` opens the one under the cursor, `esc` and a press elsewhere
+/// close them; each time focus is back on the panel.
+mod paths_events {
+    use crate::api::{Candidate, ResolveRoot, Resolved};
+    use crate::store::tests::transcript_pages::{drive, history};
+    use crate::store::tests::{board, fleet_frame, loaded};
+    use crate::store::transcript::{Got, Step, What};
+    use crate::store::{Effect, Event, Fetch, Store, spaces};
+    use crate::views::lens::Ui;
+    use crate::views::space::Zoom;
+    use crate::views::{Host, bind, dock, paths, theme, transcript};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
+        MouseDownEvent, MouseUpEvent, ParentElement as _, Render, Styled as _, TestAppContext,
+        VisualTestContext, Window, div, point, px, size,
+    };
+
+    struct Shell {
+        store: Store,
+        ui: Ui,
+        effects: Vec<Effect>,
+    }
+
+    impl Host for Shell {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+            if matches!(event, Event::Transcript(Step::Choose { .. })) {
+                self.effects
+                    .extend(transcript::reduce(&mut self.store, &self.ui, event));
+                cx.notify();
+            }
+        }
+
+        fn copy(&mut self, _: String, _: &mut Context<Self>) {}
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = dock::sync(&mut self.ui, &self.store, window, cx);
+            paths::sync(&mut self.ui, &self.store, window, cx);
+            let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
+            let panel = ui.panel().unwrap();
+            let at = panel.transcript.pressed();
+            let space = div().key_context("Space").size_full().child(
+                div()
+                    .track_focus(&panel.focus)
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(transcript::render(store, ui, "mupu", t, cx))
+                    .children(paths::render(store, ui, "mupu", at, t, cx)),
+            );
+            div().size_full().key_context("Lens").child(space)
+        }
+    }
+
+    fn candidate(root: &str) -> Candidate {
+        Candidate {
+            root: root.into(),
+            path: "src/x.rs".into(),
+            kind: "file".into(),
+            tier: "suffix".into(),
+            score: 0,
+        }
+    }
+
+    /// Click `src/x.rs:4` and answer with two strong matches in two worktrees.
+    fn offer(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        shell.update(cx, |s, cx| {
+            let click = Step::OpenPath {
+                agent: "mupu".into(),
+                mention: "src/x.rs:4".into(),
+            };
+            let effects = s.store.apply(Event::Transcript(click));
+            let Some(Effect::Fetch(Fetch::Transcript(read))) = effects.into_iter().next() else {
+                panic!("no resolve")
+            };
+            assert!(matches!(read.what, What::Resolve { .. }));
+            let roots = ["/w/a", "/w/b"].map(|root| ResolveRoot {
+                root: root.into(),
+                status: "complete".into(),
+            });
+            let got = Got::Resolved(Resolved {
+                candidates: vec![candidate("/w/a"), candidate("/w/b")],
+                roots: roots.into(),
+            });
+            assert!(
+                s.store
+                    .apply(Event::Transcript(Step::Read(read, Ok(got))))
+                    .is_empty()
+            );
+            cx.notify();
+        });
+        draw(cx);
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+    }
+
+    /// (choices up, the picker focused, the panel focused, its cursor)
+    fn state(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> (bool, bool, bool, usize) {
+        cx.update(|window, cx| {
+            let s = shell.read(cx);
+            let up = s.store.transcript.focused().unwrap().choices.is_some();
+            let p = s.ui.panel().unwrap();
+            let (picker, panel) = (p.paths.focus.is_focused(window), p.focus.is_focused(window));
+            (up, picker, panel, p.paths.cursor)
+        })
+    }
+
+    fn opened(root: &str) -> Effect {
+        Effect::OpenFile {
+            root: root.into(),
+            file: Some("src/x.rs".into()),
+            line: Some(4),
+        }
+    }
+
+    #[gpui_kit::test]
+    fn the_choices_take_keys_and_give_focus_back(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+            bind(cx);
+        });
+        let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let keep = made.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let shell = gpui_kit::AppContext::new(cx, |cx| {
+                let mut store = loaded();
+                store.apply(fleet_frame(board()));
+                let space = store.spaces[0].id.clone();
+                let view = spaces::Move::View {
+                    space: space.clone(),
+                    agent: Some("mupu".into()),
+                    beside: Vec::new(),
+                };
+                let effects = store.apply(Event::Lens(view));
+                drive(&mut store, effects, &history("mupu"), usize::MAX);
+                let mut ui = Ui::new(cx);
+                let agent = Some("mupu".into());
+                ui.zoom = Some(Zoom { space, agent });
+                let effects = Vec::new();
+                Shell { store, ui, effects }
+            });
+            *keep.borrow_mut() = Some(shell.clone());
+            gpui_kit::base::Root::new(shell, window, cx)
+        });
+        let shell = made.borrow_mut().take().unwrap();
+        cx.simulate_resize(size(px(1400.), px(900.)));
+        // Active, so focus leaving the choices reports their blur.
+        cx.update(|window, _| window.activate_window());
+        draw(cx);
+        let focus = shell.read_with(cx, |s, _| s.ui.panel().unwrap().focus.clone());
+        cx.update(|window, cx| window.focus(&focus, cx));
+        draw(cx);
+        offer(&shell, cx);
+        assert_eq!(state(&shell, cx), (true, true, false, 0), "landed: focused");
+        for (key, cursor) in [("up", 0), ("down", 1), ("down", 1), ("up", 0), ("down", 1)] {
+            cx.simulate_keystrokes(key);
+            draw(cx);
+            assert_eq!(state(&shell, cx), (true, true, false, cursor), "{key}");
+        }
+        cx.simulate_keystrokes("enter");
+        draw(cx);
+        assert_eq!(state(&shell, cx), (false, false, true, 1));
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![opened("/w/b")]);
+        // A fresh offer starts on the first; esc closes it, opening nothing.
+        offer(&shell, cx);
+        assert_eq!(state(&shell, cx), (true, true, false, 0));
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert_eq!(state(&shell, cx), (false, false, true, 0));
+        cx.simulate_keystrokes("enter");
+        draw(cx);
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![]);
+        // A press anywhere else closes it too.
+        offer(&shell, cx);
+        let (m, at) = (Modifiers::default(), point(px(1300.), px(850.)));
+        cx.simulate_event(MouseDownEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: m,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: m,
+            click_count: 1,
+        });
+        draw(cx);
+        assert_eq!(state(&shell, cx), (false, false, true, 0));
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![]);
+        // A real click on a row (hit-tested, not the harness's action) opens it, focus back on the panel.
+        offer(&shell, cx);
+        let row = cx.update(|window, _| {
+            window
+                .find(gpui_kit::ElementId::NamedInteger("path".into(), 0))
+                .bounds()
+        });
+        cx.simulate_click(row.center(), Modifiers::default());
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "a row clicked gives focus back"
+        );
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![opened("/w/a")]);
+        // Focus moving away closes them, with no press outside.
+        offer(&shell, cx);
+        cx.update(|window, cx| window.focus(&focus, cx));
+        draw(cx);
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "blur closes the picker"
+        );
+        // Choices gone while they hold focus (a reset) give focus back to the panel.
+        offer(&shell, cx);
+        shell.update(cx, |s, cx| {
+            s.store.transcript.open.get_mut("mupu").unwrap().choices = None;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "choices gone give focus back"
+        );
     }
 }

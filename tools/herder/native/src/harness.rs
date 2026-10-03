@@ -40,7 +40,8 @@
 //! from that row on; A3) · `wheel:<x>,<y>,<l|p>,<dx>,<dy>` (one wheel event at a window point, in a
 //! mouse's lines or a trackpad's pixels, through `Window::dispatch_event`; wheel-fix) · `point:<x>,<y>`
 //! and `drag:<x>,<y>,<x2>,<y2>` (a real left click, or press, move and let go, at window points, the same
-//! way; G1; `fast:` draws no frame between press and release). Units add `type:` as they need it.
+//! way; G1; `fast:` draws no frame between press and release) · `paths:<none|focused:count@cursor|idle:count@cursor>` and
+//! `click:path:i` (a clicked path's choices, and a click on candidate `i`; G3). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
 
@@ -261,7 +262,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                 }
             }
             "expect" | "box" | "has" | "says" | "notes" | "capture" | "list" | "said"
-            | "header" | "selected" | "rows" | "parts" | "tools" | "jump" | "dock" => {
+            | "header" | "selected" | "rows" | "parts" | "tools" | "jump" | "dock" | "paths" => {
                 let got = cx.update(|window, cx| probe.ask(op, window, cx));
                 let got = got.ok().flatten().unwrap_or_default();
                 let want = arg.replace('+', " ");
