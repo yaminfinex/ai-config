@@ -4,14 +4,14 @@ scenario sends may reach a real agent. Reads answer from testdata/; POST …/mes
 
     testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT] [--queued AGENT] [--notes]
                                 [--turn AGENT[,AGENT…] | --block AGENT[,AGENT…]]… [--turn-at SECONDS]
-                                [--share AGENT]
+                                [--share AGENT[,AGENT…]]
 
 `slow` answers ok after a second, `hold` keeps the POST open (the composer stays "sending"); `409` is a
 sender collision. `POST /api/state/<ns>` keeps the rows in memory, last write wins, and later reads of
 that namespace return them (U5); `--notes` starts the notes namespace with web's two notes on mupu
 (`notes-web.json`). Each `--turn` is one more fleet frame on the stream, `--turn-at` seconds after it
 opens and 0.3 s apart, in which those agents have finished another turn (U6); a `--block` frame, in
-the same order, shows them blocked. `--queued` gives the agent two queued messages in its detail. `--share` adds the agent to the first space's members too (an agent
+the same order, shows them blocked. `--queued` gives the agent two queued messages in its detail. `--share` adds the agents to the first space's members too (an agent
 in two spaces). `GET /api/resolve` answers from `resolve.json` by query (G3). Every request is logged on
 stderr.
 """
@@ -93,7 +93,7 @@ class Fake(BaseHTTPRequestHandler):
             got = json.loads(fixture(f"state-{parts[2]}.json"))
             if parts[2] == "spaces.members" and ARGS.share:
                 members = got["rows"][0]["value"]["members"]
-                members.append({"kind": "agent", "name": ARGS.share})
+                members.extend({"kind": "agent", "name": n} for n in ARGS.share.split(","))
             rows = {r["key"]: r for r in got["rows"]} | STATE.get(parts[2], {})
             self.reply(200, {"rows": list(rows.values()), "rev": got["rev"] + len(STATE.get(parts[2], {}))})
         elif url.path == "/api/resolve":
