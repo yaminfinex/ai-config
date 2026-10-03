@@ -3245,6 +3245,8 @@ mod dock_events {
         /// What the store was told is on screen, in order: the focused agent and those beside it.
         views: Vec<(Option<String>, Vec<String>)>,
         moves: Vec<Move>,
+        /// The transcript reads the store asked for, unanswered (`feed`).
+        reads: Vec<crate::store::transcript::Read>,
     }
 
     impl Host for Shell {
@@ -3263,7 +3265,11 @@ mod dock_events {
                 }
                 self.moves.push(m.clone());
             }
-            self.store.apply(event);
+            for effect in self.store.apply(event) {
+                if let crate::store::Effect::Fetch(crate::store::Fetch::Transcript(r)) = effect {
+                    self.reads.push(r);
+                }
+            }
             cx.notify();
         }
 
@@ -3320,6 +3326,7 @@ mod dock_events {
                     ui,
                     views,
                     moves,
+                    reads: Vec::new(),
                 }
             });
             *keep.borrow_mut() = Some(shell.clone());
@@ -3807,6 +3814,150 @@ mod dock_events {
         cx.dispatch_action(space::Zoomed::Agent(1));
         draw(cx);
         assert_eq!(told(&shell, cx).0.as_deref(), Some(SPACE[2]));
+    }
+
+    /// mupu's transcript read, its tail from the fixture.
+    fn feed(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        shell.update(cx, |s, cx| {
+            let at = s
+                .reads
+                .iter()
+                .position(|r| r.agent == "mupu")
+                .expect("a read of mupu");
+            let read = s.reads.remove(at);
+            let tail = include_str!("../../testdata/agents/mupu/tail.json");
+            let page: crate::api::Entries = serde_json::from_str(tail).unwrap();
+            let got = Ok(crate::store::transcript::Got::Page(Box::new(page)));
+            s.dispatch(
+                Event::Transcript(crate::store::transcript::Step::Read(read, got)),
+                cx,
+            );
+        });
+        draw(cx);
+    }
+
+    /// Focus on the transcript's text (its selection's own element), as a click there leaves it.
+    fn on_text(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        click(cx, 900., 500.);
+        cx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let p = ui.panels["mupu"].focus.clone();
+            let f = window.focused(cx).expect("focused");
+            assert!(
+                f != p && p.contains(&f, window),
+                "inside mupu's panel, not on it"
+            );
+        });
+    }
+
+    /// The zoom's panel holds focus (keys reach the zoom's bindings).
+    fn keys_live(shell: &Entity<Shell>, cx: &mut VisualTestContext, why: &str) {
+        cx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let live = window
+                .focused(cx)
+                .is_some_and(|f| ui.focus_target().contains(&f, window));
+            assert!(live, "{why}: focus left the zoom");
+        });
+    }
+
+    /// A maximize lays the dock out anew, and the element focus was on (the transcript's text) goes:
+    /// focus goes back to the zoom's panel, so the keys act without a click, from `alt-enter` and the
+    /// group's □, in and out.
+    #[gpui_kit::test]
+    fn the_keys_act_after_a_maximize_without_a_click(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        feed(&shell, cx);
+        let max = |cx: &mut VisualTestContext| dock(&shell, cx).starts_with("max ");
+        // In: the next key (alt-enter again) acts, and puts it back.
+        on_text(&shell, cx);
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        keys_live(&shell, cx, "maximized");
+        assert!(max(cx));
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert!(!max(cx), "the key after a maximize acts");
+        // Out: from the text of the maximized panel, the same.
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        on_text(&shell, cx);
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        keys_live(&shell, cx, "put back");
+        assert!(!max(cx));
+        cx.simulate_keystrokes("alt-left");
+        draw(cx);
+        cx.simulate_keystrokes("tab");
+        draw(cx);
+        assert_eq!(
+            told(&shell, cx).0.as_deref(),
+            Some("mupu"),
+            "a one-tab group steps to itself"
+        );
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert!(max(cx), "the key after putting back acts");
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        // The □ (mupu's group, the right one) is a click, not a key: the same.
+        on_text(&shell, cx);
+        click(cx, 1381., 42.);
+        keys_live(&shell, cx, "the □");
+        assert!(dock(&shell, cx).starts_with("max "), "{}", dock(&shell, cx));
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert!(
+            !dock(&shell, cx).starts_with("max "),
+            "{}",
+            dock(&shell, cx)
+        );
+    }
+
+    /// The same after the other ways the dock lays out anew: a drop, a close, `cmd-w` on the last tab,
+    /// another device's add and removal.
+    #[gpui_kit::test]
+    fn focus_stays_in_the_zoom_after_any_dock_change(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        feed(&shell, cx);
+        on_text(&shell, cx);
+        // mupu's tab dropped on the left group: it is pinned there, and keeps focus.
+        let left = gpui_kit::MouseButton::Left;
+        cx.simulate_mouse_down(point(px(760.), px(42.)), left, Modifiers::none());
+        cx.simulate_mouse_move(point(px(740.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_move(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_up(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        keys_live(&shell, cx, "a drop");
+        assert_eq!(
+            told(&shell, cx).0.as_deref(),
+            Some("mupu"),
+            "{}",
+            dock(&shell, cx)
+        );
+        on_text(&shell, cx);
+        remote(&shell, cx, without(SPACE[2]));
+        keys_live(&shell, cx, "a removal elsewhere");
+        remote(&shell, cx, |m| {
+            m.push(Member::Agent {
+                name: "riko".into(),
+            })
+        });
+        keys_live(&shell, cx, "an add elsewhere");
+        on_text(&shell, cx);
+        cx.simulate_keystrokes("cmd-w");
+        draw(cx);
+        keys_live(&shell, cx, "a close");
+        for _ in 0..5 {
+            cx.simulate_keystrokes("cmd-w");
+            draw(cx);
+        }
+        assert_eq!(dock(&shell, cx), "", "every tab closed");
+        keys_live(&shell, cx, "the last tab closed");
     }
 }
 
