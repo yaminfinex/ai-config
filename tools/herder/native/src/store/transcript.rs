@@ -9,8 +9,10 @@
 //! is tagged `(agent, generation)` and a stale answer is dropped; a `reset` or `rewindow` bumps the
 //! generation, clears the rows and reads the tail again.
 //!
-//! One transcript is live at a time, the zoomed agent's, and none on the lens. Entry wakes coalesce without a timer: one
-//! forward read in flight, and a wake meanwhile asks for one more when it lands.
+//! A transcript is live for each agent panel on screen (DK1: the zoom shows one), and none on the lens;
+//! a panel hidden behind another tab lets its rows go, and reads them again when shown. Only the focused
+//! panel's agent is seen (`attention`). Entry wakes coalesce without a timer: one forward read in flight,
+//! and a wake meanwhile asks for one more when it lands.
 
 use super::condense::{self, Seg};
 use super::{Effect, Fetch, Store, Wake};
@@ -162,21 +164,24 @@ pub enum Got {
 
 #[derive(Clone, Debug)]
 pub enum Step {
-    /// The zoom closed: drop the transcript and stop streaming its agents.
+    /// The zoom closed: drop the transcripts and stop streaming their agents.
     Hide,
-    /// The viewport neared the first rows: read the page before.
-    Older,
+    /// The agent's viewport neared its first rows: read the page before.
+    Older(String),
     Read(Read, Result<Got, String>),
-    /// A clicked path (`src/x.rs:12`): resolve it, then open it.
-    OpenPath(String),
+    /// A path clicked in the agent's transcript (`src/x.rs:12`): resolve it, then open it.
+    OpenPath {
+        agent: String,
+        mention: String,
+    },
     /// Open the agent's working directory.
-    OpenCwd,
-    Dismiss,
+    OpenCwd(String),
+    Dismiss(String),
     /// A failed forward or detail read's backoff ran out: read it again.
     Retry(Timer),
     /// The view started (or stopped) following the bottom of `agent`'s rows under `generation`: the
-    /// owner is watching the tail. Taken only while that transcript is still the open one, so an
-    /// observation that outlived a zoom switch or a reset is dropped.
+    /// owner is watching the tail. Taken only while that transcript is still open, so an observation
+    /// that outlived a zoom switch or a reset is dropped.
     Tail {
         agent: String,
         generation: u64,
@@ -224,41 +229,67 @@ struct Backoff {
     timer: Option<u64>,
 }
 
-/// The open transcript, the stream's `agents=` set, and the counter behind every generation.
+/// The open transcripts by agent, one per panel on screen; the focused panel's agent; the stream's
+/// `agents=` set; and the counter behind every generation, so a generation names one transcript.
 #[derive(Clone, Debug, Default)]
 pub struct Live {
-    pub open: Option<Transcript>,
+    pub open: BTreeMap<String, Transcript>,
+    pub focused: Option<String>,
     subscribed: Vec<String>,
     generations: u64,
 }
 
+impl Live {
+    /// The focused panel's transcript.
+    pub fn focused(&self) -> Option<&Transcript> {
+        self.open.get(self.focused.as_ref()?)
+    }
+
+    fn generation(&mut self, generation: u64) -> Option<&mut Transcript> {
+        self.open.values_mut().find(|t| t.generation == generation)
+    }
+}
+
 impl Store {
-    /// The zoom shows `agent` in `space` (`Move::View`): subscribe the stream to the space's agents (and
-    /// a previewed outsider), and open the agent's transcript unless it is the open one. A zoom with no
-    /// agent (an empty space) shows none: as zoomed out.
-    pub(super) fn show(&mut self, space: &str, agent: Option<&str>, out: &mut Vec<Effect>) {
+    /// The zoom shows `agent` in `space`, focused, and the panels `beside` it (`Move::View`): subscribe
+    /// the stream to the space's agents (and any outsider shown), open each shown agent's transcript
+    /// unless it is open, and let the others go. A zoom with no agent (an empty space) shows none: as
+    /// zoomed out.
+    pub(super) fn show(
+        &mut self,
+        space: &str,
+        agent: Option<&str>,
+        beside: &[String],
+        out: &mut Vec<Effect>,
+    ) {
         let Some(agent) = agent else {
             return self.transcript_step(Step::Hide, out);
         };
+        let shown: Vec<&str> = beside.iter().map(String::as_str).chain([agent]).collect();
         let space = self.spaces.iter().filter(|s| s.id == space);
         let mut agents: Vec<String> = space.flat_map(|s| s.agents().map(String::from)).collect();
-        if !agents.iter().any(|a| a == agent) {
-            agents.push(agent.to_string());
+        for a in &shown {
+            if !agents.iter().any(|m| m == a) {
+                agents.push(a.to_string());
+            }
         }
         agents.sort();
         self.subscribe(agents, out);
         let live = &mut self.transcript;
-        // Another agent, or one whose tail never arrived (and is not being read): open afresh.
-        let stale = |t: &Transcript| t.agent != agent || !t.loaded() && !t.reading;
-        if live.open.as_ref().is_none_or(stale) {
-            live.generations += 1;
-            let agent = agent.to_string();
-            let mut t = Transcript {
-                agent,
-                ..Transcript::default()
-            };
-            t.reset(live.generations, out);
-            live.open = Some(t);
+        live.focused = Some(agent.to_string());
+        live.open.retain(|a, _| shown.contains(&a.as_str()));
+        for agent in shown {
+            // One whose tail never arrived (and is not being read) opens afresh.
+            let stale = |t: &Transcript| !t.loaded() && !t.reading;
+            if live.open.get(agent).is_none_or(stale) {
+                live.generations += 1;
+                let mut t = Transcript {
+                    agent: agent.to_string(),
+                    ..Transcript::default()
+                };
+                t.reset(live.generations, out);
+                live.open.insert(agent.to_string(), t);
+            }
         }
     }
 
@@ -275,46 +306,63 @@ impl Store {
     }
 
     pub(super) fn transcript_step(&mut self, step: Step, out: &mut Vec<Effect>) {
-        if let Step::Hide = step {
-            self.transcript.open = None;
-            return self.subscribe(Vec::new(), out);
-        }
         let (live, agents) = (&mut self.transcript, &self.fleet.agents);
-        let Some(t) = live.open.as_mut() else { return };
+        let (open, generations) = (&mut live.open, &mut live.generations);
         match step {
-            Step::Hide => {}
-            Step::Older => t.older(out),
-            Step::Read(read, _) if read.agent != t.agent || read.generation != t.generation => {}
-            Step::Read(_, Ok(Got::Page(e))) if e.reset.is_some() => {
-                live.generations += 1;
-                t.reset(live.generations, out);
+            Step::Hide => {
+                (live.open, live.focused) = Default::default();
+                self.subscribe(Vec::new(), out);
             }
-            Step::Read(read, result) => t.answer(read.what, result, out),
-            Step::OpenPath(mention) => {
-                let (path, line) = split_line(&mention);
-                let scoped = agents.contains_key(&t.agent) && !t.retired();
-                t.read(What::Resolve(path, line, scoped), out);
+            Step::Older(agent) => open.get_mut(&agent).into_iter().for_each(|t| t.older(out)),
+            Step::Read(read, result) => {
+                let t = open.get_mut(&read.agent);
+                let Some(t) = t.filter(|t| t.generation == read.generation) else {
+                    return;
+                };
+                match result {
+                    Ok(Got::Page(e)) if e.reset.is_some() => {
+                        *generations += 1;
+                        t.reset(*generations, out);
+                    }
+                    result => t.answer(read.what, result, out),
+                }
             }
-            Step::OpenCwd => {
-                let cwd = t.detail.as_ref().and_then(|d| d.cwd.clone());
+            Step::OpenPath { agent, mention } => {
+                if let Some(t) = open.get(&agent) {
+                    let (path, line) = split_line(&mention);
+                    let scoped = agents.contains_key(&t.agent) && !t.retired();
+                    t.read(What::Resolve(path, line, scoped), out);
+                }
+            }
+            Step::OpenCwd(agent) => {
+                let detail = open.get(&agent).and_then(|t| t.detail.as_ref());
+                let cwd = detail.and_then(|d| d.cwd.clone());
                 out.extend(cwd.map(|path| Effect::OpenFile { path, line: None }));
             }
-            Step::Dismiss => t.notice = None,
-            Step::Retry(timer) if timer.generation == t.generation => t.retry(timer, out),
-            Step::Retry(_) => {}
+            Step::Dismiss(agent) => open
+                .get_mut(&agent)
+                .into_iter()
+                .for_each(|t| t.notice = None),
+            Step::Retry(timer) => {
+                if let Some(t) = live.generation(timer.generation) {
+                    t.retry(timer, out);
+                }
+            }
             Step::Tail {
                 agent,
                 generation,
                 tail,
-            } if agent == t.agent && generation == t.generation => t.tail = tail,
-            Step::Tail { .. } => {}
+            } => {
+                let t = open.get_mut(&agent).filter(|t| t.generation == generation);
+                t.into_iter().for_each(|t| t.tail = tail);
+            }
         }
     }
 
     /// An `entry:` wake for `agent`, or (`None`) a new `hello`: read forward, and the detail again.
     pub(super) fn transcript_wake(&mut self, agent: Option<&str>, out: &mut Vec<Effect>) {
-        let open = self.transcript.open.as_mut();
-        if let Some(t) = open.filter(|t| agent.is_none_or(|a| a == t.agent)) {
+        let open = self.transcript.open.values_mut();
+        for t in open.filter(|t| agent.is_none_or(|a| a == t.agent)) {
             if agent.is_none() {
                 t.notice = None;
                 (t.forward_retry, t.detail_retry) = Default::default();
@@ -324,18 +372,17 @@ impl Store {
         }
     }
 
-    /// A `message` frame: a message addressed to the open agent may now be queued for it.
+    /// A `message` frame: a message addressed to an open agent may now be queued for it.
     pub(super) fn transcript_message(&mut self, to: &[String], out: &mut Vec<Effect>) {
-        let open = self.transcript.open.as_mut();
-        if let Some(t) = open.filter(|t| to.contains(&t.agent)) {
-            t.refresh(out);
-        }
+        let open = self.transcript.open.values_mut();
+        open.filter(|t| to.contains(&t.agent))
+            .for_each(|t| t.refresh(out));
     }
 
     /// The agent's session or position reset: throw the rows away and read the tail again.
     pub(super) fn transcript_rewindow(&mut self, agent: &str, out: &mut Vec<Effect>) {
         let live = &mut self.transcript;
-        if let Some(t) = live.open.as_mut().filter(|t| t.agent == agent) {
+        if let Some(t) = live.open.get_mut(agent) {
             live.generations += 1;
             t.reset(live.generations, out);
         }

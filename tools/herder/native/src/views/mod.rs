@@ -4,8 +4,9 @@
 //! comes from `theme::type_scale`.
 //!
 //! One file per surface, added by the unit that needs it: `lens` (U2, the home rows and cards), `space`
-//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5, the strip) and its
-//! keyboard list `notes_list` (F6), `capture` (F7, type-to-capture at a transcript selection); `probe`
+//! (U2, the zoom shell and tabs), `panel` (DK1, one agent's views below), `transcript` (U3), `composer`
+//! (U4), `notes` (U5, the strip) and its keyboard list `notes_list` (F6), `capture` (F7, type-to-capture
+//! at a transcript selection); `probe`
 //! answers the harness. `theme` holds the palette and the type scale. This file holds what they share:
 //! the key table and its help, the agent chrome (glyph, label, pill), and the window's `Frame` with the
 //! working-dot `Pulse`.
@@ -17,6 +18,7 @@ pub mod lens;
 pub mod markdown;
 pub mod notes;
 pub mod notes_list;
+pub mod panel;
 pub mod probe;
 pub mod space;
 #[cfg(test)]
@@ -223,10 +225,10 @@ pub trait Host: Sized + 'static {
 }
 
 /// An action handler: `f` reads the store, moves the view state and returns the events to dispatch;
-/// then focus follows the zoom (the `Space` context is live only while its element has focus), except
-/// that an input in the zoom (the composer, the notes editor) keeps it while the zoom stays put (a
-/// clicked link) and either takes or leaves it when asked; a transition that started gets its end
-/// scheduled.
+/// then the zoom's panels follow it (`panel::sync`) and focus follows the zoomed agent's panel (its keys
+/// are live only while it has focus), except that an input in it (the composer, the notes editor) keeps
+/// focus while the zoom stays put (a clicked link) and either takes or leaves it when asked; a
+/// transition that started gets its end scheduled.
 pub fn on<A: Action, H: Host>(
     cx: &mut Context<H>,
     f: impl Fn(&Store, &mut lens::Ui, &A) -> Vec<Event> + 'static,
@@ -234,17 +236,18 @@ pub fn on<A: Action, H: Host>(
     cx.listener(move |host: &mut H, action: &A, window, cx| {
         let (store, ui) = host.parts();
         let before = ui.anim.as_ref().map(space::Anim::seq);
-        let said = ui.notes.said.as_ref().map(|s| s.0);
+        let said = notes::said_seq(ui);
         let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
         let events = f(store, ui, action);
+        panel::sync(ui, store, window, cx);
         let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
         let writable = ui.zoomed_agent().is_some_and(|a| store.can_send(a).is_ok());
-        let target = match (ui.focus.take(), held) {
-            (Some(Focus::Box), _) if writable => ui.composer.focus_handle(cx),
-            (Some(Focus::Editor), _) => ui.notes.focus_handle(cx),
-            (Some(Focus::List), _) => ui.notes.list.focus.clone(),
-            (Some(Focus::Capture), _) => ui.capture.focus_handle(cx),
-            (None, Some(held)) => held,
+        let target = match (ui.focus.take(), held, ui.panel()) {
+            (Some(Focus::Box), _, Some(p)) if writable => p.composer.focus_handle(cx),
+            (Some(Focus::Editor), _, Some(p)) => p.notes.focus_handle(cx),
+            (Some(Focus::List), _, Some(p)) => p.notes.list.focus.clone(),
+            (Some(Focus::Capture), _, Some(p)) => p.capture.focus_handle(cx),
+            (None, Some(held), _) => held,
             _ => ui.focus_target().clone(),
         };
         if !target.is_focused(window) {

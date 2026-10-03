@@ -81,11 +81,13 @@ pub fn derive(
 /// An owner move on the lens. Spaces are named by id.
 #[derive(Clone, Debug)]
 pub enum Move {
-    /// Zoomed into a space, looking at `agent`: the space's unread mark clears, the agent is seen, and
-    /// the zoom opens its transcript and streams the space (`transcript::show`).
+    /// Zoomed into a space, looking at `agent` (the focused panel) with the panels `beside` it on screen:
+    /// the space's unread mark clears, the agent is seen (not those beside it), and the zoom opens their
+    /// transcripts and streams the space (`transcript::show`).
     View {
         space: String,
         agent: Option<String>,
+        beside: Vec<String>,
     },
     /// `m`: every agent in the space is seen, and its unread mark clears.
     Read(String),
@@ -103,12 +105,16 @@ impl Store {
         let (fleet, prefs) = (&self.fleet, &mut self.prefs);
         let space = |id: &str| self.spaces.iter().find(|s| s.id == id);
         let changed = match m {
-            Move::View { space, agent } => {
+            Move::View {
+                space,
+                agent,
+                beside,
+            } => {
                 let seen = agent
                     .as_ref()
                     .is_some_and(|a| mark_seen(&mut prefs.seen, fleet, a));
                 let changed = prefs.unread.remove(&space) | seen;
-                self.show(&space, agent.as_deref(), out);
+                self.show(&space, agent.as_deref(), &beside, out);
                 changed
             }
             Move::Read(id) => {

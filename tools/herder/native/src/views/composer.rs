@@ -1,6 +1,6 @@
-//! The composer (U4): a growing box under the transcript that sends to the zoomed agent through
+//! The composer (U4): a growing box under an agent panel's transcript that sends to its agent through
 //! herder's message endpoint. The text is the agent's draft in the store: every edit is dispatched,
-//! and the box is set from the store whenever the two differ (another agent zoomed, a send landed).
+//! and the box is set from the store whenever the two differ (a send landed, a hand-off).
 //! It is disabled while a send is in flight and read-only, with the reason, when the store says the
 //! agent cannot be written to. A send that failed keeps its text and says why under the box.
 //!
@@ -41,25 +41,27 @@ const HINT: &str = "⌘⏎ send · ⌘⇧⏎ send and back to the lens · ⌥⏎
 
 pub struct View {
     pub(super) state: Entity<TextareaState>,
-    /// The agent whose draft the box holds.
-    agent: Option<String>,
 }
 
 impl View {
-    pub fn new<H: Host>(window: &mut Window, cx: &mut Context<H>) -> Self {
+    /// The box for `agent`'s draft.
+    pub fn new<H: Host>(agent: &str, window: &mut Window, cx: &mut Context<H>) -> Self {
         let state = cx.new(|cx| {
             let s = TextareaState::new(window, cx).auto_grow(ROWS.0, ROWS.1);
             s.placeholder("Message the agent…")
         });
-        cx.subscribe(&state, |host: &mut H, state, event: &InputEvent, cx| {
-            let agent = host.parts().1.composer.agent.clone();
-            if let (InputEvent::Change, Some(agent)) = (event, agent) {
-                let text = state.read(cx).value().to_string();
-                host.dispatch(Event::Compose(Step::Edit { agent, text }), cx);
-            }
-        })
+        let agent = agent.to_string();
+        cx.subscribe(
+            &state,
+            move |host: &mut H, state, event: &InputEvent, cx| {
+                if let InputEvent::Change = event {
+                    let (agent, text) = (agent.clone(), state.read(cx).value().to_string());
+                    host.dispatch(Event::Compose(Step::Edit { agent, text }), cx);
+                }
+            },
+        )
         .detach();
-        View { state, agent: None }
+        View { state }
     }
 
     pub fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -67,23 +69,20 @@ impl View {
     }
 }
 
-/// Point the box at the zoomed agent's draft, before a frame is drawn. A landed file-back hands focus to
-/// the lens wherever it was in the departing zoom, and a box left focused under another agent hands it
-/// to the zoom.
+/// Before a frame is drawn: the zoomed agent's box shows its draft. A landed file-back hands focus to
+/// the lens wherever it was in the departing zoom.
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
-    let agent = ui.zoomed_agent().map(String::from);
-    let stranded = ui.composer.agent != agent && ui.composer.focus_handle(cx).is_focused(window);
-    if ui.focus.take() == Some(Focus::Out) || stranded {
+    if ui.focus.take() == Some(Focus::Out) {
         window.focus(ui.focus_target(), cx);
     }
-    let view = &mut ui.composer;
-    let drafts = &store.prefs.drafts;
-    let draft = agent
-        .as_ref()
-        .and_then(|a| drafts.get(a))
-        .map_or("", String::as_str);
-    if view.agent != agent || view.state.read(cx).value() != draft {
-        view.agent = agent;
+    let Some(agent) = ui.zoomed_agent() else {
+        return;
+    };
+    let draft = store.prefs.drafts.get(agent).map_or("", String::as_str);
+    let Some(view) = ui.panel().map(|p| &p.composer) else {
+        return;
+    };
+    if view.state.read(cx).value() != draft {
         let draft = draft.to_string();
         view.state
             .update(cx, |s, cx| s.set_value(draft, window, cx));
@@ -144,7 +143,10 @@ pub fn render<H: Host>(
     let writable = store.can_send(agent).is_ok() && !store.busy(agent);
     // Web's `.send-box textarea` (measured, G1): system UI 13 on a 1.45 line, padding 7 9, a #3a3c45
     // rule rounded 5, on the ground; at least 36 tall, at most 160.
-    let input = Textarea::new(&ui.composer.state).disabled(!writable);
+    let Some(state) = ui.panels.get(agent).map(|p| &p.composer.state) else {
+        return div();
+    };
+    let input = Textarea::new(state).disabled(!writable);
     let input = input
         .font_family(SANS_T)
         .text_size(t.css(13.))
@@ -157,10 +159,7 @@ pub fn render<H: Host>(
         .rounded(t.css(5.))
         .border_color(rgb(pal::EDGE))
         .bg(rgb(pal::GROUND));
-    let (state, notes) = (
-        ui.composer.state.clone(),
-        store.notes_of(agent).next().is_some(),
-    );
+    let (state, notes) = (state.clone(), store.notes_of(agent).next().is_some());
     let enter = on(cx, |store, ui, _: &notes_list::Up| {
         notes_list::enter(store, ui)
     });

@@ -1,6 +1,6 @@
-//! The zoom shell (`Space` context): one space's agents as tabs over the zoomed agent's transcript
-//! (`transcript`), plus a preview tab for an outsider opened from a mention (local only, never a
-//! member). Zooming into an agent marks it seen and clears the space's unread mark. A notified agent in
+//! The zoom shell (`Space` context): one space's agents as tabs over the zoomed agent's panel
+//! (`panel`: its transcript, notes and composer), plus a preview tab for an outsider opened from a
+//! mention (local only, never a member). Zooming into an agent marks it seen and clears the space's unread mark. A notified agent in
 //! no space opens alone, as a preview in a zoom of no space (`Zoom::alone`); nothing joins a space.
 //!
 //! Transitions, as the spike: `enter` morphs the card's bounds to the window (280 ms) and `escape`
@@ -10,14 +10,9 @@
 use crate::store::spaces::{Move, Space};
 use crate::store::transcript;
 use crate::store::{Event, Store};
-use crate::views::capture::{self, Capture};
-use crate::views::composer::{self, Compose};
 use crate::views::lens::{self, Nav, State, Ui};
 use crate::views::markdown::{AGENT, PATH};
-use crate::views::notes::{self, Notes};
-use crate::views::notes_list::{self, Card};
 use crate::views::theme::{TypeScale, pal};
-use crate::views::transcript::{self as body, Fold, OpenLink, Scroll, ToggleRun};
 use crate::views::{Host, dim, glyph, on, pill};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -184,7 +179,12 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
                 ui.select(&to.space);
             }
             let Zoom { space, agent } = to;
-            return vec![Event::Lens(Move::View { space, agent })];
+            let beside = Vec::new();
+            return vec![Event::Lens(Move::View {
+                space,
+                agent,
+                beside,
+            })];
         }
         return zoom_to(ui, &to.space, to.agent, None);
     }
@@ -195,21 +195,34 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
     out
 }
 
+/// The zoom shows `agent`'s panel in `space`, alone (DK1).
 pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<Event> {
     ui.zoom = Some(Zoom {
         space: space.clone(),
         agent: agent.clone(),
     });
-    vec![Event::Lens(Move::View { space, agent })]
+    let beside = Vec::new();
+    vec![Event::Lens(Move::View {
+        space,
+        agent,
+        beside,
+    })]
 }
 
-/// A clicked link: a path resolves and opens in VS Code; a member becomes its tab and any other agent
-/// a preview tab in this zoom, never added to the space.
-fn open(ui: &mut State, url: &str) -> Vec<Event> {
-    if let Some(path) = url.strip_prefix(PATH) {
-        return vec![Event::Transcript(transcript::Step::OpenPath(path.into()))];
+/// A link clicked in the zoomed agent's panel: a path resolves and opens in VS Code; a member becomes
+/// its tab and any other agent a preview tab in this zoom, never added to the space.
+pub(super) fn open(ui: &mut State, url: &str) -> Vec<Event> {
+    let (Some(zoom), Some(shown)) = (ui.zoom.clone(), ui.zoomed_agent()) else {
+        return Vec::new();
+    };
+    if let Some(mention) = url.strip_prefix(PATH) {
+        let (agent, mention) = (shown.to_string(), mention.to_string());
+        return vec![Event::Transcript(transcript::Step::OpenPath {
+            agent,
+            mention,
+        })];
     }
-    let (Some(agent), Some(zoom)) = (url.strip_prefix(AGENT), ui.zoom.clone()) else {
+    let Some(agent) = url.strip_prefix(AGENT) else {
         return Vec::new();
     };
     // Linked names are board names; one that has left the board since (retired) opens read-only.
@@ -244,9 +257,11 @@ pub fn act(store: &Store, ui: &mut State, key: Zoomed) -> Vec<Event> {
     let (Some(space), Zoomed::Space(by) | Zoomed::Agent(by)) = (zoomed(store, &zoom), key) else {
         // `escape`, or the space has gone: morph back to its card, letting the transcript go.
         let card = ui.cards.borrow().get(&zoom.space).copied();
+        if let Some(p) = ui.panel() {
+            p.transcript.clear();
+        }
         ui.anim = Some(Anim::new(Kind::Out, card, ui.zoom.take()));
         ui.reveal.set(true);
-        ui.transcript.clear();
         return vec![Event::Transcript(transcript::Step::Hide)];
     };
     let wrap = |at: usize, len: usize| (at as isize + by).rem_euclid(len.max(1) as isize) as usize;
@@ -335,26 +350,17 @@ pub fn render<H: Host>(
             .text_size(t.small),
         );
     let strip = div().flex().gap(t.px(4.)).px(t.px(12.)).py(t.px(6.));
+    let panel = current.and_then(|agent| ui.panels.get(agent));
+    let empty = div().flex_1().min_h_0().flex().flex_col().p(t.css(24.));
+    let empty = current
+        .is_none()
+        .then(|| empty.child(dim("No agents in this space.")));
     div()
         .id("space")
         .key_context("Space")
         .track_focus(&ui.zoom_focus)
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
         .on_action(on(cx, |_, ui, t: &Tab| tab(ui, &t.0)))
-        .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
-        .on_action(on(cx, |_, ui, _: &ToggleRun| body::toggle_lowest(ui)))
-        .on_action(on(cx, |_, ui, f: &Fold| {
-            ui.transcript.fold(*f);
-            Vec::new()
-        }))
-        .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
-        .on_action(on(cx, |_, ui, c: &Compose| match c {
-            Compose::Focus => composer::act(ui, *c),
-            _ => Vec::new(),
-        }))
-        .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
-        .on_action(on(cx, |store, ui, c: &Capture| capture::act(store, ui, c)))
-        .on_action(on(cx, |store, ui, c: &Card| notes_list::act(store, ui, c)))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
             _ => Vec::new(),
@@ -365,9 +371,7 @@ pub fn render<H: Host>(
         .flex_col()
         .child(bar)
         .child(strip.children(tabs))
-        .child(body::render(store, ui, zoom, t, cx))
-        .children(current.and_then(|agent| notes::render(store, ui, agent, t, cx)))
-        .children(current.map(|agent| composer::render(store, ui, agent, t, cx)))
-        .children(current.and_then(|agent| capture::render(ui, agent, t, cx)))
+        .children(panel.map(|p| p.view()))
+        .children(empty)
         .into_any_element()
 }

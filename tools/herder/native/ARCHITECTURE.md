@@ -26,7 +26,7 @@ shell ──▶ views ──▶ store ──▶ api::types        (data flows up
 |---|---|---|
 | `api` | Typed wire models, blocking HTTP, the SSE connection and frame reader, `before=` paging and sends; called from background threads. | serde, ureq |
 | `store` | Pure, deterministic domain state: `Store::apply(Event) -> Vec<Effect>`; no GPUI, no I/O, no clocks. `store::sync` is the per-namespace `/api/state` pull cursor and outbox (§6), shared by spaces, members and notes. `store::attention` owns attention: seen marks, needs-you, the alerts and the dock badge (U2, U6). `store::cards` holds the lens cards' text (F4). | `api::types` |
-| `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. `views::notes` is the notes strip (header, editor, transfers) and `views::notes_list` its keyboard list (selection, keys, cards; F6); `views::capture` notes a transcript selection where it was made (F7). | `store`, gpui-kit |
+| `views` | GPUI views that render from `&Store`, own their widget entities, and dispatch `Event`s; sizes only from `views::theme`. `views::notes` is the notes strip (header, editor, transfers) and `views::notes_list` its keyboard list (selection, keys, cards; F6); `views::capture` notes a transcript selection where it was made (F7). `views::panel` is one agent's set of them (DK1). | `store`, gpui-kit |
 | `shell` | Owns the store, the threads, the one channel, the window and the keymap; runs effects (`shell/io`: the REST reads and the save-then-send, off the foreground). | everything |
 | `local` | `prefs.json`, `outbox.json` and `snapshot.json` under `~/Library/Application Support/herder-native/`. | `store` types |
 | `platform_mac` | The AppKit calls GPUI lacks: window ordering, dock badge, activation policy, the hotkey bridge. | objc2 |
@@ -76,7 +76,9 @@ past it, so the reviewer still reads the `use` lines of every changed module.
   transcript forward from its `next_offset`, re-pull the state namespaces from their in-memory cursors
   (pulls in flight coalesce), ask for the viewer again while it is `Unknown`, and expect a fresh `fleet`. A changed `hello.buildIdentity` shows "server updated" and never reloads by itself.
 - **Transcript wakes.** One stream, subscribed with `agents=` to the agents of the zoomed space (plus a
-  previewed outsider), and to none on the lens. An `entry:` frame only means "read forward from
+  previewed outsider), and to none on the lens. A transcript is open for each agent panel on screen
+  (`Move::View`'s focused agent and those `beside` it, DK1: the zoom shows one), each its own generation,
+  and a panel off screen lets its rows go. An `entry:` frame only means "read forward from
   `next_offset`". Wakes coalesce without a timer: one forward read in flight, and a wake meanwhile sets
   `again`, which reads once more when it lands. A `message` frame addressed to the open agent refreshes its
   detail (coalesced the same way), so a queued message shows. A failed tail, forward or detail read retries
@@ -109,7 +111,9 @@ Derived shapes are in `store`:
   one while the space is marked unread (`u`). The header's "N need you" and the dock badge are one number
   (owner rulings, 2026-10-01): each agent that needs you once, in one space, several or none, plus each
   marked space none of whose agents already counts. While the owner watches an agent's tail (frontmost,
-  zoomed on it, the transcript at the bottom) what lands is seen at once: it neither counts nor alerts.
+  its panel focused, the transcript at the bottom) what lands is seen at once: it neither counts nor
+  alerts. Only the focused panel's agent is seen, watched and spared alerts; a panel beside it is not
+  (owner ruling, 2026-10-03).
   Leaving the bottom (a scroll key, the wheel) reaches the store as it happens, before any fleet frame
   behind it (the wheel's from the list's scroll handler, deferred to the end of that event's effects: the
   list calls it holding its own borrow, so asking the list from there panicked, the owner's 10-02 crash); a route that publishes nothing (the scrollbar's drag) is caught as the shell reduces its next
@@ -222,7 +226,7 @@ same action the harness's `click:card:i`, `card2:i`, `tab:i` and `crumb` do (`ju
 a card lifts its border, which re-renders the shell on enter and leave only.
 
 **Notes list (F6).** `views::notes_list` is web's `notesListModel` and `NotesList`: `Picked` (selection,
-anchor, cursor; pure) is view state, per zoomed agent, with the list's focus, scroll, keys and cards;
+anchor, cursor; pure) is view state, per agent panel, with the list's focus, scroll, keys and cards;
 `views::notes` keeps the strip around it (header, add, the editor, the transfers). In the list
 no lens, zoom or composer key fires (the `!NotesList` predicates); the kit's Root `tab` still moves focus
 out, as a browser's does. A click on a card picks it (`cmd` toggles, `shift` a range from the anchor) and
@@ -258,6 +262,19 @@ or the popover any other way (the kit Root's `tab`) cancels it too (`on_blur`; G
 active window), so no zoom key runs while text is selected. Closing clears the selection, so the keys
 come back. `just check-notes` (`capture`, `dropped`, `sent`) and `views::tests`'
 `capture_events` drive it with real drags and keys.
+
+**Agent panels (DK1).** The zoom body is one `views::panel::Panel` per agent: its transcript view (the
+list, folds, taps and where it was read), notes strip, composer and capture, and a focus handle of its
+own. `lens::State::panels` keeps one for each of the zoomed space's agents opened since (and a previewed
+outsider while shown); the zoomed agent's is shown and focused, the others hidden: a hidden panel's rows
+go, with where it was read (`transcript::View::hide`, unless at the tail), and shown again it reads its
+tail afresh, pages back as far as that and puts it where it was (`restore`, then `hold`); what it was in
+the middle of (an editor, a capture, a confirmation) ends, as with one set of views. `panel::sync` runs
+after every action (`views::on`, before focus is placed) and before each frame, and moves focus left in a
+hidden panel to the zoom's. The panel's keys (scroll, `o`, folds, links, `/` `r`, notes, capture, list
+clicks) are handled on its element, the zoom's (`escape`, `[` `]`, `tab`, tab clicks, `n`) on the
+`Space` shell around it. Each panel draws through its own GPUI view, `AgentPanel`, cached and notified
+whenever the shell is (it observes it): the seam the dock (DK2) lays out side by side.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -436,7 +453,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after F7 (F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after DK1 (DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -444,24 +461,25 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 332 | `views/mod.rs` | 437 |
-| `api/client.rs` | 206 | `views/lens.rs` | 453 |
-| `api/sse.rs` | 194 | `views/space.rs` | 373 |
-| `store/mod.rs` | 452 | `views/transcript.rs` | 1307 |
-| `store/sync.rs` | 312 | `views/composer.rs` | 221 |
-| `store/fleet.rs` | 117 | `views/notes.rs` | 399 |
-| `store/spaces.rs` | 209 | `views/notes_list.rs` | 515 |
-| `store/attention.rs` | 281 | `views/probe.rs` | 261 |
-| `store/transcript.rs` | 605 | `views/markdown.rs` | 238 |
+| `api/types.rs` | 332 | `views/mod.rs` | 440 |
+| `api/client.rs` | 206 | `views/lens.rs` | 466 |
+| `api/sse.rs` | 194 | `views/space.rs` | 377 |
+| `store/mod.rs` | 452 | `views/transcript.rs` | 1367 |
+| `store/sync.rs` | 312 | `views/composer.rs` | 243 |
+| `store/fleet.rs` | 117 | `views/notes.rs` | 413 |
+| `store/spaces.rs` | 215 | `views/notes_list.rs` | 525 |
+| `store/attention.rs` | 281 | `views/probe.rs` | 267 |
+| `store/transcript.rs` | 652 | `views/markdown.rs` | 238 |
 | `store/condense.rs` | 439 | `views/theme.rs` | 261 |
-| `store/notes.rs` | 432 | `shell.rs` | 436 |
+| `store/notes.rs` | 432 | `shell.rs` | 437 |
 | `store/composer.rs` | 225 | `shell/io.rs` | 180 |
 | `local.rs` | 95 | `harness.rs` | 384 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 |  |  | `views/entries.rs` | 529 |
-|  |  | `views/capture.rs` | 418 |
+|  |  | `views/capture.rs` | 449 |
+|  |  | `views/panel.rs` | 168 |
 
-About 10,410 lines for Rung 1, tests excluded (F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 10,770 lines for Rung 1, tests excluded (DK1: +362; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

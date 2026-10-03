@@ -43,6 +43,12 @@ fn hello(build: &str) -> Event {
     }
 }
 
+/// The page before, for the focused panel's transcript.
+pub(crate) fn older(store: &Store) -> Event {
+    let agent = store.transcript.focused.clone().unwrap_or_default();
+    Event::Transcript(transcript::Step::Older(agent))
+}
+
 /// A store that has booted (stream generation 1) and pulled every namespace from the fixtures.
 pub(crate) fn loaded() -> Store {
     let mut store = Store::default();
@@ -247,6 +253,7 @@ fn needs_you_follows_seen_marks() {
     let view = spaces::Move::View {
         space: space.id.clone(),
         agent: Some("mupu".into()),
+        beside: Vec::new(),
     };
     let effects = marks(store.apply(Event::Lens(view)));
     assert_eq!(effects, [Effect::Persist(Persist::Prefs), Effect::Badge(0)]);
@@ -813,6 +820,7 @@ fn read_and_unread_mark_the_whole_space() {
         lens(spaces::Move::View {
             space: slack.id.clone(),
             agent,
+            beside: Vec::new(),
         })
     };
     assert_eq!(
@@ -849,6 +857,7 @@ fn viewing_an_absent_agent_leaves_prefs_alone() {
     let view = spaces::Move::View {
         space: slack.clone(),
         agent: Some("nobody".into()),
+        beside: Vec::new(),
     };
     assert!(marks(store.apply(lens(view))).is_empty());
     assert!(
@@ -882,6 +891,7 @@ fn a_block_needs_you_until_viewed_and_again_when_it_recurs() {
         lens(spaces::Move::View {
             space: slack.clone(),
             agent,
+            beside: Vec::new(),
         })
     };
 
@@ -924,6 +934,7 @@ fn a_block_before_any_turn_alerts_again_when_it_recurs() {
     let view = lens(spaces::Move::View {
         space: slack,
         agent: Some("mupu".into()),
+        beside: Vec::new(),
     });
     block(&mut b, "mupu", true);
     store.apply(frame(&store, b.clone()));
@@ -1055,11 +1066,12 @@ pub(crate) mod transcript_pages {
         store.apply(Event::Lens(spaces::Move::View {
             space,
             agent: Some(agent),
+            beside: Vec::new(),
         }))
     }
 
     pub(crate) fn items(store: &Store) -> &BTreeMap<(u64, u16), Item> {
-        &store.transcript.open.as_ref().unwrap().items
+        &store.transcript.focused().unwrap().items
     }
 
     /// The rows a single read of the whole history gives.
@@ -1095,13 +1107,13 @@ pub(crate) mod transcript_pages {
                 "{agent}: the tail first"
             );
             for _ in 0..100 {
-                let effects = store.apply(Event::Transcript(T::Older));
+                let effects = store.apply(older(&store));
                 if effects.is_empty() {
                     break;
                 }
                 pages.extend(drive(&mut store, effects, &all, PAGE as usize));
             }
-            let t = store.transcript.open.as_ref().unwrap();
+            let t = store.transcript.focused().unwrap();
             assert!(t.at_start(), "{agent}: paged to the start");
             let backs = pages
                 .iter()
@@ -1118,7 +1130,7 @@ pub(crate) mod transcript_pages {
                 "{agent}: every entry once"
             );
             assert!(
-                store.apply(Event::Transcript(T::Older)).is_empty(),
+                store.apply(older(&store)).is_empty(),
                 "nothing before the start"
             );
         }
@@ -1201,7 +1213,7 @@ pub(crate) mod transcript_pages {
     }
 
     fn notice(store: &Store) -> Option<&str> {
-        store.transcript.open.as_ref().unwrap().notice()
+        store.transcript.focused().unwrap().notice()
     }
 
     /// The one retry timer among `effects`, and its delay.
@@ -1270,7 +1282,7 @@ pub(crate) mod transcript_pages {
         let effects = store.apply(hello);
         assert_eq!(notice(&store), None);
         drive(&mut store, effects, &history("mupu"), PAGE as usize);
-        assert!(store.transcript.open.as_ref().unwrap().loaded());
+        assert!(store.transcript.focused().unwrap().loaded());
     }
 
     #[test]
@@ -1298,21 +1310,74 @@ pub(crate) mod transcript_pages {
         assert!(matches!(reopened[0].what, What::Page(Page::Tail { .. })));
     }
 
+    /// DK1: a transcript for each panel on screen, each paging on its own; a panel off screen lets its
+    /// rows go, and one shown again reads its tail afresh while the other keeps its own.
+    #[test]
+    fn panels_side_by_side_page_on_their_own() {
+        let (mupu, riko) = (history("mupu"), history("riko"));
+        let mut store = loaded();
+        let show = |agent: &str, beside: &[&str]| {
+            Event::Lens(spaces::Move::View {
+                space: "none".into(),
+                agent: Some(agent.into()),
+                beside: beside.iter().map(|b| b.to_string()).collect(),
+            })
+        };
+        let of = |agent: &'static str| move |e: &Effect| matches!(e, Effect::Fetch(Fetch::Transcript(r)) if r.agent == agent);
+        let (m, r): (Vec<Effect>, Vec<Effect>) = store
+            .apply(show("mupu", &["riko"]))
+            .into_iter()
+            .partition(of("mupu"));
+        drive(&mut store, m, &mupu, 40);
+        drive(&mut store, r, &riko, 40);
+        let at = |store: &Store, a: &str| {
+            let t = &store.transcript.open[a];
+            (t.generation, t.prev_offset, t.items.len())
+        };
+        let (m0, r0) = (at(&store, "mupu"), at(&store, "riko"));
+        assert_ne!(m0.0, r0.0, "each its own generation");
+        assert_eq!(store.transcript.focused().unwrap().agent, "mupu");
+
+        let back = store.apply(Event::Transcript(T::Older("riko".into())));
+        assert!(back.iter().all(of("riko")) && !back.is_empty(), "{back:?}");
+        drive(&mut store, back, &riko, 40);
+        let r1 = at(&store, "riko");
+        assert!(
+            r1.1 < r0.1 && r1.2 > r0.2,
+            "riko paged back: {r0:?} → {r1:?}"
+        );
+        assert_eq!(at(&store, "mupu"), m0, "mupu did not move");
+
+        // riko leaves the screen: its rows go; mupu, still shown, reads nothing again.
+        let effects = store.apply(show("mupu", &[]));
+        assert!(!store.transcript.open.contains_key("riko"));
+        assert!(!effects.iter().any(of("mupu")), "{effects:?}");
+        assert_eq!(at(&store, "mupu"), m0);
+        // Shown again, riko starts over from its tail, under a new generation.
+        let (m, r): (Vec<Effect>, Vec<Effect>) = store
+            .apply(show("riko", &["mupu"]))
+            .into_iter()
+            .partition(of("mupu"));
+        assert!(m.is_empty());
+        let pages = drive(&mut store, r, &riko, 40);
+        assert!(matches!(pages[..], [Page::Tail { .. }]), "{pages:?}");
+        let r2 = at(&store, "riko");
+        assert!(r2.0 > r1.0 && r2.1 == r0.1 && r2.2 == r0.2, "{r2:?}");
+        assert_eq!(store.transcript.focused().unwrap().agent, "riko");
+    }
+
     #[test]
     fn a_failed_page_back_waits_for_the_notice_instead_of_looping() {
         let all = history("mupu");
         let mut store = loaded();
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, PAGE as usize);
-        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        let back = reads(&store.apply(older(&store)));
         assert!(matches!(back[0].what, What::Page(Page::Before { .. })));
         assert!(fail(&mut store, &back[0]).is_empty(), "no retry");
-        assert!(
-            store.apply(Event::Transcript(T::Older)).is_empty(),
-            "no hot loop"
-        );
-        store.apply(Event::Transcript(T::Dismiss));
-        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        assert!(store.apply(older(&store)).is_empty(), "no hot loop");
+        store.apply(Event::Transcript(T::Dismiss("mupu".into())));
+        let back = reads(&store.apply(older(&store)));
         assert_eq!(back.len(), 1, "dismissing lets it page back again");
 
         // A forward page landing leaves the page back's notice; a hello clears it.
@@ -1320,14 +1385,14 @@ pub(crate) mod transcript_pages {
         let effects = store.apply(wake(&store, "mupu"));
         drive(&mut store, effects, &all, PAGE as usize);
         assert_eq!(notice(&store), Some("could not read: down"));
-        assert!(store.apply(Event::Transcript(T::Older)).is_empty());
+        assert!(store.apply(older(&store)).is_empty());
         let hello = Wire::Hello(Hello {
             build_identity: "b".into(),
         });
         let effects = store.apply(frame(&store, hello));
         drive(&mut store, effects, &all, PAGE as usize);
         assert_eq!(notice(&store), None);
-        assert_eq!(reads(&store.apply(Event::Transcript(T::Older))).len(), 1);
+        assert_eq!(reads(&store.apply(older(&store))).len(), 1);
     }
 
     #[test]
@@ -1345,7 +1410,7 @@ pub(crate) mod transcript_pages {
             .into_iter()
             .map(|r| Effect::Fetch(Fetch::Transcript(r)));
         drive(&mut store, effects.collect(), &all, PAGE as usize);
-        assert!(store.transcript.open.as_ref().unwrap().loaded());
+        assert!(store.transcript.focused().unwrap().loaded());
         assert!(retry(&mut store, tail_timer).is_empty(), "fired already");
 
         // The detail keeps failing: original + three retries at 1, 2 and 4 s, and nothing else.
@@ -1365,13 +1430,13 @@ pub(crate) mod transcript_pages {
         assert_eq!(attempts, 4);
         assert!(retry(&mut store, tail_timer).is_empty());
         assert!(retry(&mut store, detail_timer).is_empty());
-        assert!(store.transcript.open.as_ref().unwrap().blocked());
+        assert!(store.transcript.focused().unwrap().blocked());
 
         // A detail that recovers clears its own notice and lets paging back resume.
         let effects = store.apply(wake(&store, "mupu"));
         drive(&mut store, effects, &all, PAGE as usize);
         assert_eq!(notice(&store), None);
-        assert_eq!(reads(&store.apply(Event::Transcript(T::Older))).len(), 1);
+        assert_eq!(reads(&store.apply(older(&store))).len(), 1);
     }
 
     #[test]
@@ -1380,7 +1445,7 @@ pub(crate) mod transcript_pages {
         let mut store = loaded();
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, PAGE as usize);
-        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        let back = reads(&store.apply(older(&store)));
         let detail = reads(&store.apply(wake(&store, "mupu")));
         let detail = detail.iter().find(|r| r.what == What::Detail).unwrap();
         fail(&mut store, &back[0]);
@@ -1391,7 +1456,7 @@ pub(crate) mod transcript_pages {
             Some("could not read: down"),
             "the page back's"
         );
-        assert!(store.transcript.open.as_ref().unwrap().blocked());
+        assert!(store.transcript.focused().unwrap().blocked());
     }
 
     #[test]
@@ -1400,8 +1465,8 @@ pub(crate) mod transcript_pages {
         let mut store = loaded();
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, PAGE as usize);
-        let next = store.transcript.open.as_ref().unwrap().next_offset;
-        let back = reads(&store.apply(Event::Transcript(T::Older)));
+        let next = store.transcript.focused().unwrap().next_offset;
+        let back = reads(&store.apply(older(&store)));
         let forward = store.apply(wake(&store, "mupu"));
         assert!(matches!(
             reads(&forward)[0].what,
@@ -1423,7 +1488,7 @@ pub(crate) mod transcript_pages {
         let got = Got::Page(Box::new(serve(&all, page, PAGE as usize, "s1")));
         let effects = store.apply(Event::Transcript(T::Read(back[0].clone(), Ok(got))));
         assert!(reads(&effects).is_empty(), "{effects:?}");
-        assert_eq!(store.transcript.open.as_ref().unwrap().next_offset, next);
+        assert_eq!(store.transcript.focused().unwrap().next_offset, next);
         let pages = drive(&mut store, forward, &all, PAGE as usize);
         assert_eq!(pages.len(), 2, "the queued wake reads once more: {pages:?}");
     }
@@ -1472,7 +1537,7 @@ pub(crate) mod transcript_pages {
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &history("mupu"), PAGE as usize);
         let effects = store.apply(Event::Transcript(T::Hide));
-        assert!(store.transcript.open.is_none());
+        assert!(store.transcript.open.is_empty());
         let unsubscribed =
             |e: &Effect| matches!(e, Effect::Stream { agents, .. } if agents.is_empty());
         assert!(
@@ -1485,8 +1550,12 @@ pub(crate) mod transcript_pages {
         assert!(matches!(reopened[0].what, What::Page(Page::Tail { .. })));
         // Zooming into a space with no agent shows none: the transcript and its stream go too.
         let (space, agent) = ("empty".to_string(), None);
-        let effects = store.apply(Event::Lens(spaces::Move::View { space, agent }));
-        assert!(store.transcript.open.is_none());
+        let effects = store.apply(Event::Lens(spaces::Move::View {
+            space,
+            agent,
+            beside: Vec::new(),
+        }));
+        assert!(store.transcript.open.is_empty());
         assert!(effects.iter().any(unsubscribed), "{effects:?}");
     }
 
@@ -1496,7 +1565,7 @@ pub(crate) mod transcript_pages {
         let mut store = loaded();
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, PAGE as usize);
-        let old = store.transcript.open.as_ref().unwrap().generation;
+        let old = store.transcript.focused().unwrap().generation;
         let wake = store.apply(Event::Stream {
             generation: store.stream,
             event: StreamEvent::Frame(Wire::Entry("mupu".into())),
@@ -1513,7 +1582,7 @@ pub(crate) mod transcript_pages {
             read.clone(),
             Ok(Got::Page(Box::new(reset))),
         )));
-        let t = store.transcript.open.as_ref().unwrap();
+        let t = store.transcript.focused().unwrap();
         assert!(t.items.is_empty() && !t.loaded() && t.generation > old);
         assert!(effects.iter().any(|e| matches!(
             e,
@@ -1555,6 +1624,7 @@ pub(crate) mod transcript_pages {
             Event::Lens(spaces::Move::View {
                 space: space.id.clone(),
                 agent: Some(agent.into()),
+                beside: Vec::new(),
             })
         };
         let streams = |effects: &[Effect]| -> Vec<Vec<String>> {
@@ -1586,7 +1656,7 @@ pub(crate) mod transcript_pages {
             streams(&effects)[0].contains(&outsider),
             "a preview joins the stream"
         );
-        assert_eq!(store.transcript.open.as_ref().unwrap().agent, outsider);
+        assert_eq!(store.transcript.focused().unwrap().agent, outsider);
         assert_eq!(
             store.spaces,
             loaded_spaces(),
@@ -1604,7 +1674,10 @@ pub(crate) mod transcript_pages {
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &history("mupu"), PAGE as usize);
         let lookup = |store: &mut Store| {
-            let effects = store.apply(Event::Transcript(T::OpenPath("src/x.rs:12".into())));
+            let effects = store.apply(Event::Transcript(T::OpenPath {
+                agent: "mupu".into(),
+                mention: "src/x.rs:12".into(),
+            }));
             effects.into_iter().next()
         };
         // Off the board (the serve would reject `agent=`), then on it.
@@ -1650,7 +1723,7 @@ pub(crate) mod transcript_pages {
         assert!(answer(&mut store, one(), vec![root("degraded")]).is_empty());
         let fuzzy = vec![candidate("fuzzy")];
         assert!(answer(&mut store, fuzzy, vec![root("complete")]).is_empty());
-        let t = store.transcript.open.as_ref().unwrap();
+        let t = store.transcript.focused().unwrap();
         assert_eq!(t.notice(), Some("no single file matches src/x.rs"));
         assert!(!t.blocked(), "an unmatched path does not hold paging back");
 
@@ -1846,8 +1919,8 @@ pub(crate) mod transcript_pages {
         let mut store = loaded();
         let effects = open(&mut store, "conductor-line");
         drive(&mut store, effects, &all, PAGE as usize);
-        while !store.transcript.open.as_ref().unwrap().at_start() {
-            let effects = store.apply(Event::Transcript(T::Older));
+        while !store.transcript.focused().unwrap().at_start() {
+            let effects = store.apply(older(&store));
             drive(&mut store, effects, &all, PAGE as usize);
         }
         let capped: Vec<_> = items(&store)
@@ -1876,8 +1949,8 @@ pub(crate) mod transcript_pages {
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, PAGE as usize);
         let before = items(&store).clone();
-        while !store.transcript.open.as_ref().unwrap().at_start() {
-            let effects = store.apply(Event::Transcript(T::Older));
+        while !store.transcript.focused().unwrap().at_start() {
+            let effects = store.apply(older(&store));
             drive(&mut store, effects, &all, PAGE as usize);
         }
         let tools = |m: &BTreeMap<(u64, u16), Item>| {
@@ -1918,7 +1991,7 @@ pub(crate) mod transcript_pages {
             entries,
             ..Entries::default()
         };
-        let t = store.transcript.open.as_ref().unwrap();
+        let t = store.transcript.focused().unwrap();
         let (agent, generation) = (t.agent.clone(), t.generation);
         let session = "s1".to_string();
         for entry in [error, call] {
@@ -1958,7 +2031,7 @@ pub(crate) mod transcript_pages {
             }),
             "a result before its call"
         );
-        let t = store.transcript.open.as_ref().unwrap();
+        let t = store.transcript.focused().unwrap();
         assert_eq!(t.times.get(&(u64::MAX - 2)), Some(&1_790_726_836_868));
     }
 
@@ -2089,7 +2162,7 @@ pub(crate) mod transcript_pages {
                 drive(&mut store, effects, &all, limit);
                 let mut seen = vec![condense::rows(items(&store))];
                 for _ in 0..200 {
-                    let effects = store.apply(Event::Transcript(T::Older));
+                    let effects = store.apply(older(&store));
                     if effects.is_empty() {
                         break;
                     }
@@ -2193,6 +2266,7 @@ pub(crate) mod composer {
         let effects = store.apply(Event::Lens(spaces::Move::View {
             space,
             agent: Some(agent_name),
+            beside: Vec::new(),
         }));
         let detail = effects.into_iter().find_map(|e| match e {
             Effect::Fetch(Fetch::Transcript(r)) if r.what == What::Detail => Some(r),
@@ -2372,6 +2446,7 @@ pub(crate) mod composer {
         later.extend(store.apply(Event::Lens(spaces::Move::View {
             space,
             agent: Some("mupu".into()),
+            beside: Vec::new(),
         })));
         assert!(
             messages(&later).is_empty(),
@@ -2403,6 +2478,7 @@ pub(crate) mod composer {
         store.apply(Event::Lens(spaces::Move::View {
             space: id,
             agent: Some(agent),
+            beside: Vec::new(),
         }));
         bump(&mut b, "mupu", 1);
         // On the stream the open transcript reopened (`fleet_frame` is generation 1's).
@@ -2444,7 +2520,11 @@ pub(crate) mod composer {
         };
         frame(&mut store, "blocked");
         let agent = Some("mupu".to_string());
-        store.apply(Event::Lens(spaces::Move::View { space, agent }));
+        store.apply(Event::Lens(spaces::Move::View {
+            space,
+            agent,
+            beside: Vec::new(),
+        }));
         assert!(!store.agent_needs_you("mupu"), "this block is seen");
         edit(&mut store, "mupu", "unblock yourself");
         send(&mut store, "mupu", true);
@@ -3238,6 +3318,7 @@ mod alerts {
         let seen = Event::Lens(spaces::Move::View {
             space: String::new(),
             agent: Some(alone.into()),
+            beside: Vec::new(),
         });
         let effects = store.apply(seen);
         assert!(!store.agent_needs_you(alone), "seen");
@@ -3284,12 +3365,16 @@ mod alerts {
     fn view(store: &Store, agent: &str) -> Event {
         let space = space_of(store, agent).id.clone();
         let agent = Some(agent.to_string());
-        Event::Lens(spaces::Move::View { space, agent })
+        Event::Lens(spaces::Move::View {
+            space,
+            agent,
+            beside: Vec::new(),
+        })
     }
 
     /// The view's word on whether the open transcript's rows follow the bottom.
     fn tail(store: &Store, tail: bool) -> Event {
-        let t = store.transcript.open.as_ref().unwrap();
+        let t = store.transcript.focused().unwrap();
         let (agent, generation) = (t.agent.clone(), t.generation);
         Event::Transcript(transcript::Step::Tail {
             agent,
@@ -3504,6 +3589,45 @@ mod alerts {
         assert!(!effects.contains(&BURST));
     }
 
+    /// Owner ruling (2026-10-03): with panels side by side, only the focused one's agent is seen as its
+    /// tail lands and is spared alerts; the one beside it, its tail on screen too, needs you and alerts.
+    #[test]
+    fn only_the_focused_panel_is_seen() {
+        let (mut store, mut b) = live();
+        store.apply(Event::Front(true));
+        let space = space_of(&store, "mupu").id.clone();
+        let (agent, beside) = (Some("mupu".into()), vec!["orch-lega".to_string()]);
+        let view = spaces::Move::View {
+            space,
+            agent,
+            beside,
+        };
+        store.apply(Event::Lens(view));
+        for t in store.transcript.open.clone().into_values() {
+            let (agent, generation, tail) = (t.agent, t.generation, true);
+            store.apply(Event::Transcript(transcript::Step::Tail {
+                agent,
+                generation,
+                tail,
+            }));
+        }
+        bump(&mut b, "mupu", 1);
+        bump(&mut b, "orch-lega", 1);
+        let effects = store.apply(frame(&store, b));
+        assert!(
+            !store.agent_needs_you("mupu"),
+            "the focused panel's turn is seen"
+        );
+        assert!(
+            store.agent_needs_you("orch-lega"),
+            "the one beside it is not"
+        );
+        assert!(effects.contains(&BURST));
+        let got = notices(store.apply(Event::Wake(Wake::Burst)));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].tag, "agent:orch-lega");
+    }
+
     /// An observation of the tail belongs to one transcript's rows: one that lands after a zoom switch
     /// or a reset moved on is dropped, and what lands next still needs you.
     #[test]
@@ -3512,7 +3636,7 @@ mod alerts {
         store.apply(Event::Front(true));
         store.apply(view(&store, "mupu"));
         let stale = tail(&store, true);
-        let following = |store: &Store| store.transcript.open.as_ref().unwrap().tail;
+        let following = |store: &Store| store.transcript.focused().unwrap().tail;
         store.apply(view(&store, "orch-lega"));
         store.apply(stale.clone());
         assert!(!following(&store), "another agent's");
