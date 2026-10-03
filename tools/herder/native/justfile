@@ -308,15 +308,15 @@ check-dock port="4417":
 
 # Path clicks (G3), through `scripts/scenario.sh` (the fake serve answers `/api/resolve` from
 # testdata/resolve.json): zoomed on mupu (cwd /home/ubuntu/slack-eyes), a path in two worktrees offers both,
-# focused; down then enter opens the second, a click on a fresh offer's first opens it, esc closes one
-# opening nothing (the zoom stays); a real click on riko's `submit.rs` offers its two under the pointer; a path also in mupu's own root opens there at once, and a single match
+# focused; the zoom's keys (`p` `j` `o`) do nothing under it; down then enter opens the second, a click on a fresh offer's first opens it, esc closes one
+# opening nothing (the zoom stays); a real click on riko's `submit.rs` offers its two under the pointer; a path also in mupu's own root, ranked first by the serve, opens there at once, and a single match
 # opens at once, its root with a space kept as one argument. Each open is VS Code's CLI argv, logged.
 check-paths port="4419":
     #!/usr/bin/env bash
     . scripts/scenario.sh check-paths {{port}}
     zoom="wait:1500 summon:agent:mupu wait:1500 draw draw expect:mupu"
     two="link:herder-path:src/views/paths.rs:9 wait:500 draw draw"
-    picked="$two paths:focused:2@0 key:down draw paths:focused:2@1 shot:g3-paths key:enter draw paths:none"
+    picked="$two paths:focused:2@0 key:down draw paths:focused:2@1 tap:p tap:j tap:o draw paths:focused:2@1 shot:g3-paths key:enter draw paths:none"
     clicked="$two paths:focused:2@0 click:path:0 draw paths:none"
     closed="$two paths:focused:2@0 key:escape draw paths:none expect:mupu"
     single="link:herder-path:lib/own.rs wait:500 draw paths:none link:herder-path:notes.md:3 wait:500 draw paths:none"
@@ -333,8 +333,10 @@ check-paths port="4419":
     opened=$(grep -c "platform: would run code" "$home/paths.log" || true)
     [ "$opened" = 4 ] || { echo "check-paths: $opened opens, expected 4"; exit 1; }
     seen paths "GET /api/resolve?q=" 5
+    seen paths "state notes" 0
+    [ "$(grep -cE "tap [pjo]: handled false" "$home/paths.log")" = 3 ] || { echo "check-paths: a zoom key fired under the choices"; exit 1; }
     seen pointed "GET /api/resolve?q=submit.rs" 1
-    echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, esc closes; the agent's own root and a single match open at once; a real click offers under the pointer; each open is the code CLI's argv)"
+    echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, the zoom's keys do nothing under them, esc closes; the agent's own root and a single match open at once; a real click offers under the pointer; each open is the code CLI's argv)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.

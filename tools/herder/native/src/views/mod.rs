@@ -43,9 +43,10 @@ actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 /// Navigation letters bind here (ARCHITECTURE §4): a predicate sees the whole focus stack, so a
 /// focused Input, Terminal or notes list anywhere below turns them off, as does a live transcript
-/// selection (its capture chip holds focus, F7). App-wide chords bind on `Lens` alone.
-pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList && !Capture";
-pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList && !Capture";
+/// selection (its capture chip holds focus, F7) or a clicked path's choices (G3). App-wide chords bind
+/// on `Lens` alone.
+pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList && !Capture && !Paths";
+pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList && !Capture && !Paths";
 
 pub fn bind(cx: &mut App) {
     cx.bind_keys(bindings());

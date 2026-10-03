@@ -46,7 +46,7 @@ pub(super) fn run_fetch(client: &Client, fetch: Fetch) -> Event {
             let result = match &read.what {
                 What::Page(page) => client.entries(agent, page).map(|e| Got::Page(Box::new(e))),
                 What::Detail => client.agent(agent).map(|d| Got::Detail(Box::new(d))),
-                What::Resolve(query, _, scoped) => {
+                What::Resolve { query, scoped, .. } => {
                     let scope = scoped.then_some(agent);
                     client.resolve(query, scope).map(Got::Resolved)
                 }

@@ -120,9 +120,15 @@ pub struct Read {
 pub enum What {
     Page(Page),
     Detail,
-    /// A mentioned path, its `:line` split off, and whether to scope it to the agent (`agent=`): only
-    /// for a live agent, as the serve rejects names off the roster.
-    Resolve(String, Option<u32>, bool),
+    /// A mentioned path, its `:line` split off, whether to scope it to the agent (`agent=`: only for
+    /// a live agent, as the serve rejects names off the roster), and its number: only the latest
+    /// unanswered one is taken (`Transcript::resolving`).
+    Resolve {
+        query: String,
+        line: Option<u32>,
+        scoped: bool,
+        id: u64,
+    },
 }
 
 /// The request a read makes, for its retries and its notice.
@@ -141,7 +147,7 @@ impl What {
             What::Page(Page::Before { .. }) => Op::Back,
             What::Page(_) => Op::Forward,
             What::Detail => Op::Detail,
-            What::Resolve(..) => Op::Resolve,
+            What::Resolve { .. } => Op::Resolve,
         }
     }
 }
@@ -221,6 +227,10 @@ pub struct Transcript {
     notice: Option<(Op, String)>,
     /// A clicked path that matched more than one place, until one is picked (`Step::Choose`).
     pub choices: Option<Choices>,
+    /// Resolves asked so far, and the one whose answer is awaited: an older one's answer, or one
+    /// arriving after another, is dropped (web's `AbortController` guard).
+    resolves: u64,
+    resolving: Option<u64>,
     /// Each op's own retries, so a sibling's success leaves them alone.
     forward_retry: Backoff,
     detail_retry: Backoff,
@@ -351,8 +361,7 @@ impl Store {
                 if let Some(t) = open.get_mut(&agent) {
                     let (path, line) = split_line(&mention);
                     let scoped = agents.contains_key(&t.agent) && !t.retired();
-                    t.choices = None;
-                    t.read(What::Resolve(path, line, scoped), out);
+                    t.resolve(path, line, scoped, out);
                 }
             }
             Step::Choose { agent, pick } => {
@@ -362,9 +371,10 @@ impl Store {
             }
             // Absolute, so the serve answers with its git top level (`directOpen`), as a folder.
             Step::OpenCwd(agent) => {
-                let t = open.get(&agent);
-                if let Some((t, cwd)) = t.and_then(|t| Some((t, t.detail.as_ref()?.cwd.clone()?))) {
-                    t.read(What::Resolve(cwd, None, false), out);
+                if let Some(t) = open.get_mut(&agent)
+                    && let Some(cwd) = t.detail.as_ref().and_then(|d| d.cwd.clone())
+                {
+                    t.resolve(cwd, None, false, out);
                 }
             }
             Step::Dismiss(agent) => open
@@ -446,6 +456,20 @@ impl Transcript {
         detail.is_some_and(|d| d.bus_status == "retired")
     }
 
+    /// Asks where `query` lives, closing any choices; this one's answer is the only one taken.
+    fn resolve(&mut self, query: String, line: Option<u32>, scoped: bool, out: &mut Vec<Effect>) {
+        self.resolves += 1;
+        (self.choices, self.resolving) = (None, Some(self.resolves));
+        let id = self.resolves;
+        let what = What::Resolve {
+            query,
+            line,
+            scoped,
+            id,
+        };
+        self.read(what, out);
+    }
+
     fn read(&self, what: What, out: &mut Vec<Effect>) {
         let (agent, generation) = (self.agent.clone(), self.generation);
         let read = Read {
@@ -519,9 +543,11 @@ impl Transcript {
                     self.refresh(out);
                 }
             }
-            (What::Resolve(query, line, _), Ok(Got::Resolved(r))) => {
+            // Superseded by a later click, or answered already.
+            (What::Resolve { id, .. }, _) if self.resolving != Some(id) => {}
+            (What::Resolve { query, line, .. }, Ok(Got::Resolved(r))) => {
                 let cwd = self.detail.as_ref().and_then(|d| d.cwd.as_deref());
-                self.choices = None;
+                self.resolving = None;
                 match pick(&r, &query, cwd) {
                     Pick::Open(c) => out.push(opening(c, line)),
                     Pick::Choose(all) => {
@@ -554,7 +580,7 @@ impl Transcript {
                     Op::Forward => (self.reading, self.again) = (false, true),
                     Op::Back => self.back = false,
                     Op::Detail => (self.detail_reading, self.detail_again) = (false, true),
-                    Op::Resolve => {}
+                    Op::Resolve => self.resolving = None,
                 }
                 let (generation, token) = (self.generation, self.timers + 1);
                 let backoff = self.backoff(op);
@@ -681,9 +707,12 @@ enum Pick<'a> {
 const FUZZY_SCORE_PER_CHAR: i64 = 20;
 
 /// As web's popover (`isConfidentResolution`, `autoOpenCandidate`), plus one rule of ours: a weak fuzzy
-/// top result drops every candidate; a strong one (exact or suffix) under the agent's own root (the
-/// git top level holding its `cwd`) opens, the serve's first; so does the only strong one when every
-/// root answered completely. Anything else left is a choice; nothing left, a notice.
+/// top result drops every candidate; the serve's first strong one (exact or suffix) opens when it is
+/// under the agent's own root (the git top level holding its `cwd`); so does the only strong one when
+/// every root answered completely. Anything else left is a choice; nothing left, a notice. The serve
+/// ranks the agent's canonical root first within a tier, so the two agree unless the cwd runs through
+/// a symlink: then the lexical root here is not the serve's, and the choices are offered (a declared
+/// limit: the serve does not say which root is the agent's).
 fn pick<'a>(r: &'a Resolved, query: &str, cwd: Option<&str>) -> Pick<'a> {
     let Some(top) = r.candidates.first() else {
         return Pick::Nothing;
@@ -707,7 +736,7 @@ fn pick<'a>(r: &'a Resolved, query: &str, cwd: Option<&str>) -> Pick<'a> {
         let strong = |c: &&Candidate| c.tier == "exact" || c.tier == "suffix";
         r.candidates.iter().filter(strong)
     };
-    let mine = strong().find(|c| Some(c.root.as_str()) == home);
+    let mine = strong().next().filter(|c| Some(c.root.as_str()) == home);
     let complete = r.roots.iter().all(|root| root.status == "complete");
     let only = strong()
         .next()

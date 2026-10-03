@@ -149,6 +149,7 @@ pub fn render<H: Host>(
             .child(dim(format!("{} ·", label(&c.root))))
             .child(div().text_ellipsis().child(c.path.clone()))
             .on_click(open)
+            .test_support()
     };
     let shown = c.candidates.len();
     let more = (c.total > shown).then(|| {

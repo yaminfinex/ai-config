@@ -12,8 +12,8 @@
   },
   "lib/own.rs": {
     "candidates": [
-      {"root": "/home/ubuntu/wt/native-a", "path": "lib/own.rs", "kind": "file", "tier": "exact", "score": 0},
-      {"root": "/home/ubuntu/slack-eyes", "path": "lib/own.rs", "kind": "file", "tier": "exact", "score": 0}
+      {"root": "/home/ubuntu/slack-eyes", "path": "lib/own.rs", "kind": "file", "tier": "exact", "score": 0},
+      {"root": "/home/ubuntu/wt/native-a", "path": "lib/own.rs", "kind": "file", "tier": "exact", "score": 0}
     ],
     "roots": [
       {"root": "/home/ubuntu/wt/native-a", "status": "complete"},

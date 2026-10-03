@@ -166,11 +166,16 @@ Derived shapes are in `store`:
   - `choices` (G3): where a clicked path lives, when the store cannot tell. A path click (or the cwd's ↗)
     asks `/api/resolve`; the answer drops weak results (web's `isConfidentResolution`: a top fuzzy match
     below 20 per character is no match) and opens (`Effect::OpenFile{root, file, line}`, the candidate's
-    git root and its path; a folder opens its root alone) a strong one (exact or suffix) in the agent's own
-    root (the longest `roots[].root` holding its cwd), else the only strong one when every root was fully
-    searched; otherwise it keeps up to eight candidates as `Choices{query, line, candidates, total}`, and
-    `Step::Choose{pick}` opens one or closes them. Nothing matching says so, and that some roots were not
-    fully searched. Web opens only the single strong match: the agent's own root is native's rule (the brief).
+    git root and its path; a folder opens its root alone) the serve's first strong one (exact or suffix)
+    when it is in the agent's own root (the longest `roots[].root` holding its cwd), else the only strong
+    one when every root was fully searched; otherwise it keeps up to eight candidates as
+    `Choices{query, line, candidates, total}`, and `Step::Choose{pick}` opens one or closes them. Nothing
+    matching says so, and that some roots were not fully searched. Web opens only the single strong match:
+    the agent's own root is native's rule (the brief). The serve ranks the agent's canonical root first
+    within a tier; the cwd here is lexical, so through a symlink the two differ and the choices are
+    offered (a declared limit: the serve does not say which root is the agent's). Each resolve is
+    numbered (`What::Resolve{id}`) and only the transcript's latest unanswered one is taken: an older
+    click's answer, or one after the choices were answered or closed, is dropped (web's `AbortController`).
 - **`cards::Cards`** (F4) — each focus and watch card's visible agent's last assistant answer, cleaned as
   the transcript is (`condense::clean`) with `<status>` stripped too; background cards carry none. One tail
   read (`limit=12`) per agent per turn, keyed on `turn_end_id`; at most four in flight; a result for an
@@ -199,13 +204,13 @@ a transcript selection, F7), `Paths` (a clicked path's choices, G3), `Input` (an
 | Predicate | Used for |
 |---|---|
 | `Lens` | app-wide chords only: `cmd-q`, text scale `cmd-=` `cmd-shift-=` `cmd--` `cmd-0` |
-| `Lens && !Input && !Terminal && !NotesList && !Capture` | home navigation letters |
-| `Space && !Input && !Terminal && !NotesList && !Capture` | in-space navigation letters and scrolling |
+| `Lens && !Input && !Terminal && !NotesList && !Capture && !Paths` | home navigation letters |
+| `Space && !Input && !Terminal && !NotesList && !Capture && !Paths` | in-space navigation letters and scrolling |
 | `Composer > Input` | the composer's own chords (`cmd-enter`, `cmd-shift-enter`, `alt-enter`, `escape`); no other input (U5's notes) gets them |
 | `Notes > Input` | the notes editor's own (`enter` and `cmd-enter` save, `escape` cancels, U5); `shift-enter` stays a new line |
 | `NotesList && !Input` | the notes list's keys (F6); not in the editor open in one of its cards |
 | `Capture && !Input` / `Capture > Input` | the capture chip's keys / its popover's (F7): while a selection is live no lens or zoom key fires |
-| `Paths` | a clicked path's choices (G3): deeper than `Space`, so its four keys win while it holds focus |
+| `Paths` | a clicked path's choices (G3): its four keys; while it holds focus no lens or zoom key fires |
 | `Terminal` | keys the terminal consumes (Rung 2); `cmd-t` stays on `Space` |
 
 | Keys | Predicate | Action | Unit |
@@ -327,9 +332,10 @@ candidate is the store's (`Transcript::choices`, §3); when it keeps choices, `v
 (web's `.selection-file-popover`: up to eight `root · path` rows, the root's last segment) under the press
 that clicked the path (`transcript::View::pressed`), and takes focus once as they land (`paths::sync`,
 before each frame: the answer comes back off the foreground). `up` `down` move, `enter` or a click opens,
-`escape`, a press anywhere else or focus leaving closes; each hands focus back to the panel. Its other keys
-reach the zoom's bindings (`Paths` excludes nothing). The cwd's ↗ opens the cwd's git root the same way.
-`just check-paths` (`paths`, `pointed`) and `views::tests`' `paths_events` drive it.
+`escape`, a press anywhere else or focus leaving closes; each hands focus back to the panel. No other
+lens or zoom key fires under it (`!Paths`, as `!Capture`); the app-wide chords keep their meaning. The cwd's ↗ opens the cwd's git root the same way.
+`just check-paths` (`paths`, `pointed`), `views::tests`' `paths_events` (a real row click, blur, choices gone
+while focused) and `tests/keys.rs` drive it.
 
 Harness scenarios guard this: `just check-keys` (A0) dispatches `cmd-=` and checks the persisted scale; U4
 adds a scenario that focuses the composer and types `n`, `j`, `[`, `]`, then asserts the text arrived and
@@ -512,7 +518,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after G3 (G3 added `views/paths` for a clicked path's choices, and grew `store/transcript` by the pick rules and the choices, `views/markdown` by the CLI's argv, `platform_mac` by running it, and `probe` by `paths` and the picks; DK2 added `views/dock` for the dock in the zoom: its sync with the zoom, asks, previews and pins, layouts and their restore, and `views/tabs` for the tab strip drawn to web's measurements; and grew `store/spaces` by the members writes and the layouts, `views/space` lost the hand-drawn tab row; DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after G3 (G3 added `views/paths` for a clicked path's choices, and grew `store/transcript` by the pick rules, the choices and each resolve's number, `views/markdown` by the CLI's argv, `platform_mac` by running it, and `probe` by `paths` and the picks; DK2 added `views/dock` for the dock in the zoom: its sync with the zoom, asks, previews and pins, layouts and their restore, and `views/tabs` for the tab strip drawn to web's measurements; and grew `store/spaces` by the members writes and the layouts, `views/space` lost the hand-drawn tab row; DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -520,7 +526,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 
 | File | Budget | File | Budget |
 |---|---|---|---|
-| `api/types.rs` | 335 | `views/mod.rs` | 458 |
+| `api/types.rs` | 335 | `views/mod.rs` | 459 |
 | `api/client.rs` | 206 | `views/lens.rs` | 470 |
 | `api/sse.rs` | 194 | `views/space.rs` | 363 |
 | `store/mod.rs` | 474 | `views/transcript.rs` | 1380 |
@@ -528,7 +534,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 | `store/fleet.rs` | 117 | `views/notes.rs` | 414 |
 | `store/spaces.rs` | 314 | `views/notes_list.rs` | 525 |
 | `store/attention.rs` | 281 | `views/probe.rs` | 290 |
-| `store/transcript.rs` | 742 | `views/markdown.rs` | 262 |
+| `store/transcript.rs` | 771 | `views/markdown.rs` | 262 |
 | `store/condense.rs` | 439 | `views/theme.rs` | 261 |
 | `store/notes.rs` | 432 | `shell.rs` | 452 |
 | `store/composer.rs` | 225 | `shell/io.rs` | 180 |
@@ -539,9 +545,9 @@ are restated rather than split: what did not belong in them has moved out (`view
 |  |  | `views/panel.rs` | 171 |
 |  |  | `views/dock.rs` | 902 |
 |  |  | `views/tabs.rs` | 361 |
-|  |  | `views/paths.rs` | 197 |
+|  |  | `views/paths.rs` | 198 |
 
-About 13,030 lines for Rung 1, tests excluded (G3: +384; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 13,060 lines for Rung 1, tests excluded (G3: +415; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

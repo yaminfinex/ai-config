@@ -3997,7 +3997,8 @@ mod paths_events {
 
         fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
             if matches!(event, Event::Transcript(Step::Choose { .. })) {
-                self.effects.extend(self.store.apply(event));
+                self.effects
+                    .extend(transcript::reduce(&mut self.store, &self.ui, event));
                 cx.notify();
             }
         }
@@ -4046,7 +4047,7 @@ mod paths_events {
             let Some(Effect::Fetch(Fetch::Transcript(read))) = effects.into_iter().next() else {
                 panic!("no resolve")
             };
-            assert!(matches!(read.what, What::Resolve(..)));
+            assert!(matches!(read.what, What::Resolve { .. }));
             let roots = ["/w/a", "/w/b"].map(|root| ResolveRoot {
                 root: root.into(),
                 status: "complete".into(),
@@ -4122,6 +4123,8 @@ mod paths_events {
         });
         let shell = made.borrow_mut().take().unwrap();
         cx.simulate_resize(size(px(1400.), px(900.)));
+        // Active, so focus leaving the choices reports their blur.
+        cx.update(|window, _| window.activate_window());
         draw(cx);
         let focus = shell.read_with(cx, |s, _| s.ui.panel().unwrap().focus.clone());
         cx.update(|window, cx| window.focus(&focus, cx));
@@ -4168,5 +4171,43 @@ mod paths_events {
         assert_eq!(state(&shell, cx), (false, false, true, 0));
         let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
         assert_eq!(effects, vec![]);
+        // A real click on a row (hit-tested, not the harness's action) opens it, focus back on the panel.
+        offer(&shell, cx);
+        let row = cx.update(|window, _| {
+            window
+                .find(gpui_kit::ElementId::NamedInteger("path".into(), 0))
+                .bounds()
+        });
+        cx.simulate_click(row.center(), Modifiers::default());
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "a row clicked gives focus back"
+        );
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![opened("/w/a")]);
+        // Focus moving away closes them, with no press outside.
+        offer(&shell, cx);
+        cx.update(|window, cx| window.focus(&focus, cx));
+        draw(cx);
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "blur closes the picker"
+        );
+        // Choices gone while they hold focus (a reset) give focus back to the panel.
+        offer(&shell, cx);
+        shell.update(cx, |s, cx| {
+            s.store.transcript.open.get_mut("mupu").unwrap().choices = None;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "choices gone give focus back"
+        );
     }
 }
