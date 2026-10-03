@@ -304,6 +304,32 @@ check-dock port="4417":
     seen dock "message to" 0
     echo "check-dock: ok (alt-click opens beside, a preview replaces the group's and a double-click pins it, a real drag moves a tab across, tab keys step the focused group, alt-enter maximizes, cmd-w closes and unpins, a click on × closes a preview, a relaunch restores the dock)"
 
+# Path clicks (G3), through `scripts/scenario.sh` (the fake serve answers `/api/resolve` from
+# testdata/resolve.json): zoomed on mupu (cwd /home/ubuntu/slack-eyes), a path in two worktrees offers both,
+# focused; down then enter opens the second, a click on a fresh offer's first opens it, esc closes one
+# opening nothing (the zoom stays); a path also in mupu's own root opens there at once, and a single match
+# opens at once, its root with a space kept as one argument. Each open is VS Code's CLI argv, logged.
+check-paths port="4419":
+    #!/usr/bin/env bash
+    . scripts/scenario.sh check-paths {{port}}
+    zoom="wait:1500 summon:agent:mupu wait:1500 draw draw expect:mupu"
+    two="link:herder-path:src/views/paths.rs:9 wait:500 draw draw"
+    picked="$two paths:focused:2@0 key:down draw paths:focused:2@1 shot:g3-paths key:enter draw paths:none"
+    clicked="$two paths:focused:2@0 click:path:0 draw paths:none"
+    closed="$two paths:focused:2@0 key:escape draw paths:none expect:mupu"
+    single="link:herder-path:lib/own.rs wait:500 draw paths:none link:herder-path:notes.md:3 wait:500 draw paths:none"
+    scenario paths "" "$zoom $picked $clicked $closed $single quit"
+    code() { grep -cF "platform: would run code [\"--remote\", \"ssh-remote+superset\", $1]" "$home/paths.log" || true; }
+    wt="/tools/herder/native/src/views/paths.rs:9"
+    [ "$(code "\"/home/ubuntu/wt/native-b\", \"-g\", \"/home/ubuntu/wt/native-b$wt\"")" = 1 ] || { echo "check-paths: enter did not open the second"; exit 1; }
+    [ "$(code "\"/home/ubuntu/wt/native-a\", \"-g\", \"/home/ubuntu/wt/native-a$wt\"")" = 1 ] || { echo "check-paths: the click did not open the first"; exit 1; }
+    [ "$(code "\"/home/ubuntu/slack-eyes\", \"-g\", \"/home/ubuntu/slack-eyes/lib/own.rs\"")" = 1 ] || { echo "check-paths: the agent's own root did not open"; exit 1; }
+    [ "$(code "\"/home/ubuntu/my repo\", \"-g\", \"/home/ubuntu/my repo/docs/notes.md:3\"")" = 1 ] || { echo "check-paths: the single match did not open"; exit 1; }
+    opened=$(grep -c "platform: would run code" "$home/paths.log" || true)
+    [ "$opened" = 4 ] || { echo "check-paths: $opened opens, expected 4"; exit 1; }
+    seen paths "GET /api/resolve?q=" 5
+    echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, esc closes; the agent's own root and a single match open at once; each open is the code CLI's argv)"
+
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.
 bundle:

@@ -225,9 +225,11 @@ pub enum Effect {
     Notify(attention::Notice),
     /// Show this needs-you count on the dock (0 clears it).
     Badge(usize),
-    /// Open a file or folder on the agents' host in VS Code (the file panel's seam, Rung 2).
+    /// Open `root` (a git top level on the agents' host) in VS Code as the project, and `file` in it
+    /// (relative, at `line`) when given (G3; the file panel's seam, Rung 2).
     OpenFile {
-        path: String,
+        root: String,
+        file: Option<String>,
         line: Option<u32>,
     },
 }

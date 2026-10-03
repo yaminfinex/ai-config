@@ -12,7 +12,8 @@ that namespace return them (U5); `--notes` starts the notes namespace with web's
 (`notes-web.json`). Each `--turn` is one more fleet frame on the stream, `--turn-at` seconds after it
 opens and 0.3 s apart, in which those agents have finished another turn (U6); a `--block` frame, in
 the same order, shows them blocked. `--queued` gives the agent two queued messages in its detail. `--share` adds the agent to the first space's members too (an agent
-in two spaces). Every request is logged on stderr.
+in two spaces). `GET /api/resolve` answers from `resolve.json` by query (G3). Every request is logged on
+stderr.
 """
 
 import argparse
@@ -95,6 +96,10 @@ class Fake(BaseHTTPRequestHandler):
                 members.append({"kind": "agent", "name": ARGS.share})
             rows = {r["key"]: r for r in got["rows"]} | STATE.get(parts[2], {})
             self.reply(200, {"rows": list(rows.values()), "rev": got["rev"] + len(STATE.get(parts[2], {}))})
+        elif url.path == "/api/resolve":
+            # G3: canned answers by query (`resolve.json`), else nothing found.
+            canned = json.loads(fixture("resolve.json")).get(q.get("q"))
+            self.reply(200, canned or {"candidates": [], "roots": []})
         elif parts[:2] == ["api", "agents"] and len(parts) == 3:
             path = DATA / "agents" / parts[2] / "detail.json"
             detail = json.loads(path.read_text()) if path.exists() else {"name": parts[2]}

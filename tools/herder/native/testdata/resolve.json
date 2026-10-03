@@ -1,0 +1,32 @@
+{
+  "src/views/paths.rs": {
+    "candidates": [
+      {"root": "/home/ubuntu/wt/native-a", "path": "tools/herder/native/src/views/paths.rs", "kind": "file", "tier": "suffix", "score": 0},
+      {"root": "/home/ubuntu/wt/native-b", "path": "tools/herder/native/src/views/paths.rs", "kind": "file", "tier": "suffix", "score": 0}
+    ],
+    "roots": [
+      {"root": "/home/ubuntu/wt/native-a", "status": "complete"},
+      {"root": "/home/ubuntu/wt/native-b", "status": "complete"},
+      {"root": "/home/ubuntu/slack-eyes", "status": "complete"}
+    ]
+  },
+  "lib/own.rs": {
+    "candidates": [
+      {"root": "/home/ubuntu/wt/native-a", "path": "lib/own.rs", "kind": "file", "tier": "exact", "score": 0},
+      {"root": "/home/ubuntu/slack-eyes", "path": "lib/own.rs", "kind": "file", "tier": "exact", "score": 0}
+    ],
+    "roots": [
+      {"root": "/home/ubuntu/wt/native-a", "status": "complete"},
+      {"root": "/home/ubuntu/slack-eyes", "status": "complete"}
+    ]
+  },
+  "notes.md": {
+    "candidates": [
+      {"root": "/home/ubuntu/my repo", "path": "docs/notes.md", "kind": "file", "tier": "suffix", "score": 0}
+    ],
+    "roots": [
+      {"root": "/home/ubuntu/my repo", "status": "complete"},
+      {"root": "/home/ubuntu/slack-eyes", "status": "complete"}
+    ]
+  }
+}

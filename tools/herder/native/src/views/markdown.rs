@@ -223,6 +223,30 @@ pub fn vscode_url(host: &str, path: &str, line: Option<u32>) -> Option<String> {
     ))
 }
 
+/// How VS Code opens `file` (relative) in the project `root` on `host`, at `line` (G3): the arguments
+/// of its command line tool, `--remote ssh-remote+<host> <root> -g <root>/<file>[:<line>]` (the root as
+/// the window's folder, then the file), and the Remote-SSH URL for when the tool is missing (the file
+/// alone, at line 1 at least so it does not open as a folder). Without a file, the root alone.
+pub fn vscode(
+    host: &str,
+    root: &str,
+    file: Option<&str>,
+    line: Option<u32>,
+) -> Option<(Vec<String>, String)> {
+    let root = root.trim_end_matches('/');
+    let target = file.map(|f| format!("{root}/{f}"));
+    let url = match &target {
+        Some(target) => vscode_url(host, target, line.or(Some(1)))?,
+        None => vscode_url(host, root, None)?,
+    };
+    let mut args = vec!["--remote".into(), format!("ssh-remote+{host}"), root.into()];
+    if let Some(target) = target {
+        let at = line.map(|l| format!(":{l}")).unwrap_or_default();
+        args.extend(["-g".into(), format!("{target}{at}")]);
+    }
+    Some((args, url))
+}
+
 /// Percent-encoding of one path segment: unreserved characters kept, every other UTF-8 byte `%XX`.
 fn encode(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
