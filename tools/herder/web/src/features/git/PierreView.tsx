@@ -3,7 +3,7 @@ import { registerCustomTheme, type ThemeRegistration } from '@pierre/diffs'
 import { File, PatchDiff, type SelectedLineRange } from '@pierre/diffs/react'
 import themes from './pierre-themes.json'
 import { fileLanguage } from './gitViewModel'
-import { isLineCentered, planLineScroll, type LineScrollState } from './pierreScroll'
+import { isLineCentered, planLineScroll, USER_SCROLL_EVENTS, userScrolled, type LineScrollState } from './pierreScroll'
 import { useThemeType } from '../../shared/themeSignal'
 
 const themePair = { light: themes.light.name, dark: themes.dark.name }
@@ -15,9 +15,21 @@ export function PierreFile({ path, content, selectedLines }: { path: string, con
   const themeType = useThemeType()
   const scrollState = useRef<LineScrollState | undefined>(undefined)
   const scrollFrame = useRef<number | undefined>(undefined)
-  useEffect(() => () => { if (scrollFrame.current !== undefined) cancelAnimationFrame(scrollFrame.current) }, [])
+  const userScrollTarget = useRef<{ target: HTMLElement, dispose: () => void } | undefined>(undefined)
+  useEffect(() => () => {
+    if (scrollFrame.current !== undefined) cancelAnimationFrame(scrollFrame.current)
+    userScrollTarget.current?.dispose()
+  }, [])
+  const watchUserScroll = (target: HTMLElement) => {
+    if (userScrollTarget.current?.target === target) return
+    userScrollTarget.current?.dispose()
+    const settle = () => { scrollState.current = userScrolled(scrollState.current) }
+    for (const type of USER_SCROLL_EVENTS) target.addEventListener(type, settle, { passive: true })
+    userScrollTarget.current = { target, dispose: () => { for (const type of USER_SCROLL_EVENTS) target.removeEventListener(type, settle) } }
+  }
   const scrollSelectedLine = (node: HTMLElement) => {
     if (!selectedLines) return
+    watchUserScroll(node.closest<HTMLElement>('.file-content') ?? node)
     if (scrollFrame.current !== undefined) cancelAnimationFrame(scrollFrame.current)
     scrollFrame.current = requestAnimationFrame(() => {
       scrollFrame.current = undefined

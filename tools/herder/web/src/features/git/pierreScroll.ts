@@ -13,12 +13,19 @@ export type LineSelection = { path: string, content: string, line: number }
 export type LineScrollState = LineSelection & { attempts: number, done: boolean }
 export type LineObservation = 'missing' | 'centered' | 'off-centre'
 
-// Scroll a selection into view once. Only "not rendered yet" retries (up to the cap);
-// once the line has been centered or scrolled to, later renders leave the user's scroll alone.
+// Settle a selection on its line: re-centre after each render (Shiki highlighting moves deep
+// lines after the first scroll) until it is centered, the user scrolls, or the attempts run out.
 export function planLineScroll(previous: LineScrollState | undefined, selection: LineSelection, observation: LineObservation) {
   const same = previous?.path === selection.path && previous.content === selection.content && previous.line === selection.line
   const state = same ? previous : { ...selection, attempts: 0, done: false }
   if (state.done || state.attempts >= MAX_LINE_SCROLL_ATTEMPTS) return { scroll: false, next: state }
-  if (observation === 'missing') return { scroll: false, next: { ...state, attempts: state.attempts + 1 } }
-  return { scroll: observation === 'off-centre', next: { ...state, done: true } }
+  if (observation === 'centered') return { scroll: false, next: { ...state, done: true } }
+  return { scroll: observation === 'off-centre', next: { ...state, attempts: state.attempts + 1 } }
+}
+
+export const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
+
+// The user took over scrolling, so the selection they are on is settled.
+export function userScrolled(state: LineScrollState | undefined) {
+  return state && { ...state, done: true }
 }
