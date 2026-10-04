@@ -1,6 +1,8 @@
 //! The dock's tab strip (DK2), drawn to web's measurements: the kit's own (`TabGroupSkin`) is private,
 //! always draws a menu and has no top line. The rest of the dock's look is the kit's (`Skin`), and what
-//! the tabs do is the dock's (`dock`).
+//! the tabs do is the dock's (`dock`). It behaves as Zed's (S2): tabs keep their width and the strip
+//! scrolls, the shown one into view; those out of view are under +N; a tab's × is there on hover; the
+//! maximized group's □ is selected.
 
 use crate::store::Store;
 use crate::views::dock::{Close, Pin, agent_of, members};
@@ -8,9 +10,13 @@ use crate::views::space::{Anim, Tab};
 use crate::views::theme::{MONO_T, TypeScale, pal, type_scale};
 use crate::views::{Host, pill};
 use gpui_kit::base::ResizeHandleContext;
+use gpui_kit::component::Sizable as _;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dock::*;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -54,6 +60,10 @@ impl<H: Host> DockAreaRenderer for Skin<H> {
     fn tab_group_renderer(&self) -> Rc<dyn TabGroupRenderer> {
         Rc::new(Strip {
             host: self.host.clone(),
+            scroll: ScrollHandle::new(),
+            shown: Cell::new(None),
+            hovered: Rc::default(),
+            reveal: Rc::default(),
         })
     }
 }
@@ -61,17 +71,37 @@ impl<H: Host> DockAreaRenderer for Skin<H> {
 /// A group's tab strip, web's (`.dv-tabs-and-actions-container`, measured): 32 tall on the panel colour
 /// under a 1px rule; each tab mono 12, divided by a rule, the shown one on the ground under a 2px blue
 /// line, the focused group's in ink and the rest dim; a preview italic after a hollow dot; the status
-/// dot, the tool, needs-you, and ×; the group's □ (maximize) at the right.
+/// dot, the tool, needs-you, and × on hover; +N for those out of view and the group's □ (maximize) at
+/// the right, where the tabs do not scroll them away. The dock keeps one for each group.
 struct Strip<H> {
     host: WeakEntity<H>,
+    /// The tabs' sideways scroll.
+    scroll: ScrollHandle,
+    /// The shown tab at the last render: a new one is scrolled into view.
+    shown: Cell<Option<PanelId>>,
+    /// The tab under the pointer, the one with a ×.
+    hovered: Rc<Cell<Option<PanelId>>>,
+    /// A tab to scroll into view (the shown one when it changes, or one picked under +N) and the tries
+    /// left: each render on a laid out strip scrolls to it, and it is done only once a layout has the
+    /// tab, as it is now, wholly in view and the same tabs out of view as +N was drawn for (a new tab's
+    /// place, +N coming or going, move the view).
+    reveal: Rc<Cell<Option<(PanelId, u8)>>>,
 }
+
+/// Layouts a reveal may take before it gives up (a tab wider than the strip is never wholly in view).
+const TRIES: u8 = 6;
 
 impl<H: Host> TabGroupRenderer for Strip<H> {
     fn frame(&self, _: &TabGroupContext, _: &mut Window, _: &mut App) -> Stateful<Div> {
         div().id("tab-group").bg(rgb(pal::GROUND))
     }
 
-    fn render_tab_bar(&self, group: &TabGroupContext, _: &mut Window, cx: &mut App) -> AnyElement {
+    fn render_tab_bar(
+        &self,
+        group: &TabGroupContext,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
         let Some(host) = self.host.upgrade() else {
             return div().into_any_element();
         };
@@ -88,17 +118,46 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
         let here = ids
             .iter()
             .any(|id| agent_of(ui, *id) == focused && focused.is_some());
-        let tabs: Vec<AnyElement> = ids
+        // Each drawn tab: its place in the group, its panel and its agent.
+        let drawn: Vec<(usize, PanelId, String)> = ids
             .iter()
             .enumerate()
-            .filter_map(|(ix, id)| {
-                let agent = agent_of(ui, *id)?.to_string();
+            .filter_map(|(ix, id)| Some((ix, *id, agent_of(ui, *id)?.to_string())))
+            .collect();
+        if self.shown.replace(shown) != shown
+            && let Some(id) = shown
+        {
+            self.reveal.set(Some((id, TRIES)));
+        }
+        let out = hidden(&self.scroll, drawn.len());
+        let mut target = None;
+        if let Some((id, tries)) = self.reveal.get()
+            && laid(&self.scroll)
+        {
+            target = drawn.iter().position(|d| d.1 == id).filter(|_| tries > 0);
+            match target {
+                Some(at) => {
+                    self.scroll.scroll_to_item(at);
+                    self.reveal.set(Some((id, tries - 1)));
+                }
+                None => self.reveal.set(None),
+            }
+        }
+        let view = window.current_view();
+        let tabs: Vec<AnyElement> = drawn
+            .iter()
+            .map(|(ix, id, agent)| {
                 let state = TabState {
                     shown: Some(*id) == shown,
                     lit: here && Some(*id) == shown,
-                    preview: !members.contains(&agent),
+                    preview: !members.contains(agent),
                 };
-                Some(tab(store, &agent, ix, state, group, t, cx))
+                let hover = Hover {
+                    id: *id,
+                    on: self.hovered.clone(),
+                    view,
+                };
+                tab(store, agent, *ix, state, hover, group, t, cx)
             })
             .collect();
         let (droppable, node, count) = (group.is_droppable(), group.node(), ids.len());
@@ -115,6 +174,70 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
                         g.drop_panel(d.clone(), ix, true, window, cx);
                     })
             });
+        let scroller = div()
+            .id("tab-scroll")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .overflow_x_scroll()
+            .track_scroll(&self.scroll)
+            .children(tabs)
+            .child(rest);
+        // Laid out (and scrolled), a reveal is done when its tab is in view and +N was drawn for this
+        // layout. Otherwise, or when the tabs out of view are not those +N was drawn for (a resize, a
+        // scroll into view), draw again.
+        let check = {
+            let (scroll, was, n) = (self.scroll.clone(), out.clone(), drawn.len());
+            let reveal = self.reveal.clone();
+            let prepaint = move |_, _: &mut Window, cx: &mut App| {
+                let now = hidden(&scroll, n);
+                let seen = |at: usize| scroll.bounds_for_item(at).is_some() && !now.contains(&at);
+                if laid(&scroll) && now == was && target.is_some_and(seen) {
+                    reveal.set(None);
+                }
+                let pending = reveal.get().is_some() && laid(&scroll);
+                if pending || now != was {
+                    cx.defer(move |cx| cx.notify(view));
+                }
+            };
+            canvas(prepaint, |_, _, _, _| {}).absolute().size_0()
+        };
+        let names: Vec<(SharedString, PanelId)> = out
+            .iter()
+            .filter_map(|&at| drawn.get(at))
+            .map(|d| (SharedString::from(d.2.clone()), d.1))
+            .collect();
+        let reveal = self.reveal.clone();
+        let more = (!names.is_empty()).then(|| {
+            let label = format!("+{}", names.len());
+            let menu = move |mut menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
+                for (name, id) in &names {
+                    // Shown already (scrolled away, or narrowed out), the pick still reveals it.
+                    let (pick, id, reveal) = (Tab(name.clone()), *id, reveal.clone());
+                    let picked = move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                        reveal.set(Some((id, TRIES)));
+                        cx.notify(view);
+                        window.dispatch_action(pick.boxed_clone(), cx);
+                    };
+                    menu = menu.item(PopupMenuItem::new(name.clone()).on_click(picked));
+                }
+                menu.scrollable(true)
+            };
+            let button = Button::new("tab-more").xsmall().ghost().label(label);
+            let button = button
+                .text_color(rgb(pal::SLATE))
+                .dropdown_menu(menu)
+                .anchor(Anchor::TopRight);
+            let el = div()
+                .flex_none()
+                .h_full()
+                .px(t.css(4.))
+                .flex()
+                .items_center();
+            el.border_l_1().border_color(rgb(pal::RULE)).child(button)
+        });
+        let zoomed = group.is_zoomed();
         let max = div()
             .id("tab-max")
             .flex_none()
@@ -123,6 +246,7 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .flex()
             .items_center()
             .cursor_pointer()
+            .when(zoomed, |el| el.bg(rgb(pal::SELECT)))
             .hover(|s| s.bg(rgb(pal::WASH)))
             .on_click({
                 let g = group.clone();
@@ -133,12 +257,13 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
                     .size(t.css(11.))
                     .border_1()
                     .rounded(t.css(1.5))
-                    .border_color(rgb(pal::SLATE)),
+                    .border_color(rgb(if zoomed { pal::INK } else { pal::SLATE })),
             );
         div()
             .id("tab-strip")
             .flex_none()
             .overflow_hidden()
+            .relative()
             .flex()
             .h(t.css(32.))
             .bg(rgb(pal::PANEL))
@@ -146,9 +271,10 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .border_color(rgb(pal::RULE))
             .font_family(MONO_T)
             .text_size(t.css(12.))
-            .children(tabs)
-            .child(rest)
-            .child(max)
+            .child(scroller.test_support())
+            .child(check)
+            .children(more)
+            .child(max.test_support())
             .into_any_element()
     }
 
@@ -188,6 +314,45 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
     }
 }
 
+/// The strip has been laid out: it has a view to scroll in.
+fn laid(scroll: &ScrollHandle) -> bool {
+    scroll.bounds().size.width > px(0.)
+}
+
+/// The tabs out of view, by place in the strip: not wholly inside it where the last layout put them.
+fn hidden(scroll: &ScrollHandle, n: usize) -> Vec<usize> {
+    let (view, dx) = (scroll.bounds(), scroll.offset().x);
+    let items = (0..n).map(|ix| scroll.bounds_for_item(ix).map(|b| (b.left(), b.right())));
+    out_of_view((view.left(), view.right()), dx, items)
+}
+
+/// The items, each `(left, right)` unscrolled or unknown, not wholly inside `view` scrolled by `dx`; an
+/// unlaid view has none out.
+pub(super) fn out_of_view(
+    (left, right): (Pixels, Pixels),
+    dx: Pixels,
+    items: impl Iterator<Item = Option<(Pixels, Pixels)>>,
+) -> Vec<usize> {
+    if right <= left {
+        return Vec::new();
+    }
+    let slack = px(0.5);
+    items
+        .enumerate()
+        .filter_map(|(ix, b)| {
+            let (l, r) = b?;
+            (l + dx < left - slack || r + dx > right + slack).then_some(ix)
+        })
+        .collect()
+}
+
+/// Whether the pointer is on a tab, kept by its strip, the view to draw again when it moves.
+struct Hover {
+    id: PanelId,
+    on: Rc<Cell<Option<PanelId>>>,
+    view: EntityId,
+}
+
 #[derive(Clone, Copy)]
 struct TabState {
     shown: bool,
@@ -196,13 +361,16 @@ struct TabState {
     preview: bool,
 }
 
-/// One tab (web's `.herder-dock-tab`): a click shows it, a double-click pins it, a middle-click or its
-/// × closes it; it drags to another place in the dock.
+/// One tab (web's `.herder-dock-tab`), its own width up to 220: a click shows it, a double-click pins
+/// it, a middle-click or its × (there under the pointer) closes it; it drags to another place in the
+/// dock.
+#[allow(clippy::too_many_arguments)]
 fn tab(
     store: &Store,
     agent: &str,
     ix: usize,
     s: TabState,
+    hover: Hover,
     group: &TabGroupContext,
     t: TypeScale,
     cx: &App,
@@ -244,14 +412,13 @@ fn tab(
         el.child(div().text_size(t.css(10.)).child(tool.to_string()))
     });
     let meta = meta.when(store.agent_needs_you(agent), |el| el.child(pill(1, t)));
-    let close = {
+    // Away from the pointer its place stays, so the tab keeps its width.
+    let slot = div().flex_none().h_full().w(t.css(25.)).ml_auto();
+    let close = if hover.on.get() != Some(hover.id) {
+        slot.into_any_element()
+    } else {
         let name = name.clone();
-        div()
-            .id(SharedString::from(format!("tab-close-{agent}")))
-            .flex_none()
-            .h_full()
-            .w(t.css(25.))
-            .ml_auto()
+        slot.id(SharedString::from(format!("tab-close-{agent}")))
             .flex()
             .items_center()
             .justify_center()
@@ -266,6 +433,8 @@ fn tab(
                 window.dispatch_action(Box::new(Close(Some(name.clone()))), cx);
             })
             .child("×")
+            .test_support()
+            .into_any_element()
     };
     let (pick, pinned, gone) = (
         Tab(name.clone()),
@@ -274,10 +443,11 @@ fn tab(
     );
     let drag = group.drag_panel(ix, cx).filter(|_| group.is_draggable());
     let g = group.clone();
+    let Hover { id, on, view } = hover;
     div()
         .id(SharedString::from(format!("tab-{agent}")))
         .relative()
-        .min_w(t.css(48.))
+        .flex_none()
         .max_w(t.css(220.))
         .h_full()
         .flex()
@@ -289,6 +459,14 @@ fn tab(
         .bg(rgb(if s.shown { pal::GROUND } else { pal::PANEL }))
         .text_color(rgb(if s.lit { pal::INK } else { pal::SLATE }))
         .cursor_pointer()
+        .on_hover(move |&over, _, cx| {
+            if over {
+                on.set(Some(id));
+            } else if on.get() == Some(id) {
+                on.set(None);
+            }
+            cx.notify(view);
+        })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(move |e, window, cx| match e.click_count() {
             2 => window.dispatch_action(pinned.boxed_clone(), cx),
@@ -328,6 +506,7 @@ fn tab(
         .child(label)
         .child(meta)
         .child(close)
+        .test_support()
         .into_any_element()
 }
 
