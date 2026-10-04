@@ -9,12 +9,13 @@ use crate::views::capture::Capture;
 use crate::views::lens::{self, Pick, State, Ui};
 use crate::views::notes::Notes;
 use crate::views::notes_list::Card;
+use crate::views::paths::Paths;
 use crate::views::space::{Summon, Tab, Zoomed, zoomed};
 use crate::views::transcript::{self, Fold, OpenLink, Scroll, long};
 use crate::views::{composer, dock};
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `capture`, `list`, `said`, `header`, `rows`, `parts`, `jump` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `capture`, `list`, `said`, `header`, `rows`, `parts`, `paths`, `jump` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
     let (agent, panel) = (ui.zoomed_agent(), ui.panel());
@@ -100,6 +101,16 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             let (open, output) = tools.unwrap_or_default();
             format!("{open} open, {output} with output")
         }
+        // A clicked path's choices (G3): `none`, or `<focus>:<count>@<cursor>`.
+        "paths" => match agent.and_then(|a| store.transcript.open.get(a)?.choices.as_ref()) {
+            None => "none".into(),
+            Some(c) => {
+                let v = panel.map(|p| &p.paths);
+                let focus = focused(v.map(|v| v.focus.clone()));
+                let cursor = v.map_or(0, |v| v.cursor);
+                format!("{focus}:{}@{cursor}", c.candidates.len())
+            }
+        },
         // Whether jump-to-bottom shows.
         "jump" => match transcript.is_some_and(|v| v.jumps()) {
             true => "shown".into(),
@@ -117,7 +128,7 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 /// `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` on the notes strip (`i` the zoomed
 /// agent's note, newest-updated first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
 /// order), `click:tab:i` / `click:close:i` / `click:pin:i` (a click on the dock's tab `i`, group by group from
-/// the left; its ×; a double-click on it), `click:max` (the focused group's □), `click:crumb` (`lens ›`), `click:jump`
+/// the left; its ×; a double-click on it), `click:max` (the focused group's □), `click:path:i` (a clicked path's candidate), `click:crumb` (`lens ›`), `click:jump`
 /// (jump-to-bottom, while it shows), `click:status` / `click:internal` (the last standalone answer's
 /// status chip that opens, or internal note) and `click:member` / `click:failed` (the first tool, or failed tool, in an open run); `None` where
 /// there is no such thing to click.
@@ -153,6 +164,12 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str, cx: &App) -> Option<B
             });
         }
         ("max", Some(_)) => return Some(Box::new(dock::Maximize)),
+        // A clicked path's candidate `i` (G3).
+        ("path", Some(_)) => {
+            let choices = store.transcript.focused()?.choices.as_ref()?;
+            let i = nth(i).filter(|&i| i < choices.candidates.len())?;
+            return Some(Box::new(Paths::Choose(i)));
+        }
         ("crumb", Some(_)) => return Some(Box::new(Zoomed::Out)),
         ("jump", Some(_)) if ui.panel().is_some_and(|p| p.transcript.jumps()) => {
             return Some(Box::new(Scroll::Bottom));
@@ -182,8 +199,8 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str, cx: &App) -> Option<B
             return Some(Box::new(Fold(key, 0)));
         }
         (
-            "card" | "card2" | "tab" | "close" | "pin" | "max" | "crumb" | "jump" | "status"
-            | "internal" | "member" | "failed",
+            "card" | "card2" | "tab" | "close" | "pin" | "max" | "path" | "crumb" | "jump"
+            | "status" | "internal" | "member" | "failed",
             _,
         ) => {
             return None;

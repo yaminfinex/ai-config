@@ -1033,7 +1033,9 @@ fn seen_marks_read_the_old_bare_turn_form() {
 pub(crate) mod transcript_pages {
     use super::*;
     use crate::api::client::Page;
-    use crate::api::{Candidate, Entries, EntriesWindow, Entry, Reset, ResolveRoot, Resolved};
+    use crate::api::{
+        AgentDetail, Candidate, Entries, EntriesWindow, Entry, Reset, ResolveRoot, Resolved,
+    };
     use crate::store::condense::{self, Seg, condense};
     use crate::store::transcript::{Got, Item, Op, PAGE, Read, Step as T, Timer, Tone, What};
     use std::collections::VecDeque;
@@ -1121,7 +1123,7 @@ pub(crate) mod transcript_pages {
                     Got::Page(Box::new(serve(all, page, limit, "s1")))
                 }
                 What::Detail => Got::Detail(Box::default()),
-                What::Resolve(..) => continue,
+                What::Resolve { .. } => continue,
             };
             queue.extend(store.apply(Event::Transcript(T::Read(read, Ok(got)))));
         }
@@ -1736,90 +1738,266 @@ pub(crate) mod transcript_pages {
     }
 
     #[test]
-    fn a_path_opens_only_on_one_strong_candidate_from_complete_roots() {
+    fn a_path_opens_its_one_strong_match_or_the_agents_own_else_offers_the_choices() {
         let mut store = loaded();
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &history("mupu"), PAGE as usize);
-        let lookup = |store: &mut Store| {
+        let click = |store: &mut Store, mention: &str| {
             let effects = store.apply(Event::Transcript(T::OpenPath {
                 agent: "mupu".into(),
-                mention: "src/x.rs:12".into(),
+                mention: mention.into(),
             }));
-            effects.into_iter().next()
+            let Some(Effect::Fetch(Fetch::Transcript(read))) = effects.into_iter().next() else {
+                panic!("no resolve for {mention}")
+            };
+            read
         };
-        // Off the board (the serve would reject `agent=`), then on it.
-        let Some(Effect::Fetch(Fetch::Transcript(read))) = lookup(&mut store) else {
-            panic!()
+        let resolve = |query: &str, line, scoped, id| What::Resolve {
+            query: query.into(),
+            line,
+            scoped,
+            id,
         };
-        assert_eq!(read.what, What::Resolve("src/x.rs".into(), Some(12), false));
+        // Off the board (the serve would reject `agent=`), then on it; each click numbered.
+        let read = click(&mut store, "src/x.rs:12");
+        assert_eq!(read.what, resolve("src/x.rs", Some(12), false, 1));
         let (generation, frame) = (store.stream, StreamEvent::Frame(Wire::Fleet(board())));
         store.apply(Event::Stream {
             generation,
             event: frame,
         });
-        let effects = lookup(&mut store);
-        let Some(Effect::Fetch(Fetch::Transcript(read))) = effects else {
-            panic!()
+        let read = click(&mut store, "src/x.rs:12");
+        assert_eq!(read.what, resolve("src/x.rs", Some(12), true, 2));
+        // mupu works in a linked worktree of `repo`, a root of its own.
+        let detail = AgentDetail {
+            cwd: Some("/home/u/wt/g3/tools".into()),
+            ..AgentDetail::default()
         };
-        assert_eq!(read.what, What::Resolve("src/x.rs".into(), Some(12), true));
-        let candidate = |tier: &str| Candidate {
-            root: "/home/u/repo/".into(),
+        let got = Got::Detail(Box::new(detail));
+        let what = What::Detail;
+        let detail = Read {
+            what,
+            ..read.clone()
+        };
+        store.apply(Event::Transcript(T::Read(detail, Ok(got))));
+        let candidate = |root: &str, tier: &str| Candidate {
+            root: root.into(),
             path: "src/x.rs".into(),
-            kind: if tier == "prefix" { "dir" } else { "file" }.into(),
+            kind: "file".into(),
             tier: tier.into(),
+            score: 0,
         };
-        let root = |status: &str| ResolveRoot {
+        let root = |root: &str, status: &str| ResolveRoot {
+            root: root.into(),
             status: status.into(),
         };
+        let (repo, wt, other) = ("/home/u/repo", "/home/u/wt/g3", "/home/u/wt/g3x");
+        let complete = || vec![root(repo, "complete"), root(wt, "complete")];
+        // A fresh click on the mention, answered.
         let answer = |store: &mut Store, candidates, roots| {
+            let read = click(store, "src/x.rs:12");
             let got = Got::Resolved(Resolved { candidates, roots });
-            store.apply(Event::Transcript(T::Read(read.clone(), Ok(got))))
+            store.apply(Event::Transcript(T::Read(read, Ok(got))))
         };
-        let opened = Effect::OpenFile {
-            path: "/home/u/repo/src/x.rs".into(),
+        let opened = |root: &str| Effect::OpenFile {
+            root: root.into(),
+            file: Some("src/x.rs".into()),
             line: Some(12),
         };
+        let choices = |store: &Store| store.transcript.focused().unwrap().choices.clone();
+        // One strong match from complete roots opens in its root.
+        let one = vec![candidate(repo, "exact")];
+        assert_eq!(answer(&mut store, one, complete()), vec![opened(repo)]);
+        assert_eq!(choices(&store), None);
+        // Several, the serve's first strong one under the agent's own root (the longest holding its
+        // cwd; `g3x` is not it): that one opens, even with a root searched only in part.
+        let three = || {
+            vec![
+                candidate(wt, "suffix"),
+                candidate(repo, "suffix"),
+                candidate(other, "suffix"),
+            ]
+        };
+        let roots = vec![
+            root(repo, "degraded"),
+            root(wt, "complete"),
+            root(other, "complete"),
+        ];
+        assert_eq!(answer(&mut store, three(), roots), vec![opened(wt)]);
+        // The agent's root holds one, but the serve ranked another first (its canonical agent root is
+        // not the lexical one here, or an exact match outranks it): the choices.
+        let ranked = vec![candidate(repo, "exact"), candidate(wt, "suffix")];
+        assert!(answer(&mut store, ranked.clone(), complete()).is_empty());
+        assert_eq!(choices(&store).unwrap().candidates, ranked);
+        // Several, none the agent's: the choices, in the serve's order; nothing opens.
+        let two = three()[1..].to_vec();
+        assert!(answer(&mut store, two.clone(), complete()).is_empty());
+        let offered = choices(&store).unwrap();
+        assert_eq!((offered.candidates, offered.total), (two, 2));
         assert_eq!(
-            answer(&mut store, vec![candidate("exact")], vec![root("complete")]),
-            vec![opened.clone()]
+            (offered.query.as_str(), offered.line),
+            ("src/x.rs", Some(12))
         );
-        // Ambiguous, incomplete or merely fuzzy: no guess, a notice.
-        let two = vec![candidate("suffix"), candidate("suffix")];
-        assert!(answer(&mut store, two, vec![root("complete")]).is_empty());
-        let one = || vec![candidate("exact")];
-        assert!(answer(&mut store, one(), vec![root("degraded")]).is_empty());
-        let fuzzy = vec![candidate("fuzzy")];
-        assert!(answer(&mut store, fuzzy, vec![root("complete")]).is_empty());
+        // One strong match while a root was searched only in part: offered, not opened (another root
+        // may hold it too).
+        let one = vec![candidate(repo, "suffix")];
+        let partly = vec![root(repo, "complete"), root(other, "degraded")];
+        assert!(answer(&mut store, one.clone(), partly.clone()).is_empty());
+        assert_eq!(choices(&store).unwrap().candidates, one);
+        // Only a weak fuzzy match: nothing offered, a notice (saying a root was searched in part).
+        let mut weak = candidate(repo, "fuzzy");
+        weak.score = 20 * 8 - 1;
+        assert!(answer(&mut store, vec![weak.clone()], partly).is_empty());
         let t = store.transcript.focused().unwrap();
-        assert_eq!(t.notice(), Some("no single file matches src/x.rs"));
+        assert_eq!(t.choices, None, "a new click closes the choices");
+        let said = "no file matches src/x.rs (some roots not fully searched)";
+        assert_eq!(t.notice(), Some(said));
         assert!(!t.blocked(), "an unmatched path does not hold paging back");
-
-        // VS Code opens a remote path without `:<line>` as a folder: a file gets line 1, a folder none.
-        let read = Read {
-            what: What::Resolve("src/x.rs".into(), None, true),
-            ..read
+        // A confident fuzzy one (20 per character of the query) is offered, as web's popover.
+        weak.score += 1;
+        assert!(answer(&mut store, vec![weak.clone()], complete()).is_empty());
+        assert_eq!(choices(&store).unwrap().candidates, vec![weak]);
+        // Past eight, the first eight are offered and the count kept.
+        let many: Vec<_> = (0..11)
+            .map(|i| candidate(&format!("/r{i}"), "suffix"))
+            .collect();
+        assert!(answer(&mut store, many.clone(), complete()).is_empty());
+        let offered = choices(&store).unwrap();
+        assert_eq!((&offered.candidates[..], offered.total), (&many[..8], 11));
+        // A pick opens it at the mention's line, and the choices close; none closes them alone.
+        let choose = |store: &mut Store, pick| {
+            let agent = "mupu".into();
+            store.apply(Event::Transcript(T::Choose { agent, pick }))
         };
-        let answer = |store: &mut Store, candidates| {
-            let got = Got::Resolved(Resolved {
-                candidates,
-                roots: vec![root("complete")],
-            });
-            store.apply(Event::Transcript(T::Read(read.clone(), Ok(got))))
-        };
-        let file = |line| Effect::OpenFile {
-            path: "/home/u/repo/src/x.rs".into(),
-            line,
-        };
-        assert_eq!(answer(&mut store, one()), vec![file(Some(1))]);
         assert_eq!(
-            answer(&mut store, vec![candidate("suffix")]),
-            vec![file(Some(1))]
+            choose(&mut store, Some(9)),
+            vec![],
+            "past the offered: nothing"
         );
-        let dir = vec![Candidate {
-            tier: "exact".into(),
-            ..candidate("prefix")
-        }];
-        assert_eq!(answer(&mut store, dir), vec![file(None)]);
+        assert!(answer(&mut store, many.clone(), complete()).is_empty());
+        assert_eq!(choose(&mut store, Some(2)), vec![opened("/r2")]);
+        assert_eq!(choices(&store), None);
+        assert!(answer(&mut store, many, complete()).is_empty());
+        assert_eq!(choose(&mut store, None), vec![]);
+        assert_eq!(choices(&store), None);
+        // A folder opens its root alone; a file without a line, without one.
+        let answer = |store: &mut Store, mention: &str, candidate| {
+            let read = click(store, mention);
+            let got = Got::Resolved(Resolved {
+                candidates: vec![candidate],
+                roots: complete(),
+            });
+            store.apply(Event::Transcript(T::Read(read, Ok(got))))
+        };
+        let dir = Candidate {
+            kind: "dir".into(),
+            ..candidate(repo, "exact")
+        };
+        let folder = Effect::OpenFile {
+            root: repo.into(),
+            file: None,
+            line: None,
+        };
+        assert_eq!(answer(&mut store, "src", dir), vec![folder]);
+        let file = Effect::OpenFile {
+            root: repo.into(),
+            file: Some("src/x.rs".into()),
+            line: None,
+        };
+        let exact = candidate(repo, "exact");
+        assert_eq!(answer(&mut store, "src/x.rs", exact), vec![file]);
+        // The working directory resolves as an absolute path, unscoped: the serve answers with its git
+        // top level.
+        let effects = store.apply(Event::Transcript(T::OpenCwd("mupu".into())));
+        let Some(Effect::Fetch(Fetch::Transcript(read))) = effects.into_iter().next() else {
+            panic!()
+        };
+        let cwd = "/home/u/wt/g3/tools";
+        assert!(
+            matches!(read.what, What::Resolve { query, line: None, scoped: false, .. } if query == cwd)
+        );
+    }
+
+    /// Two roots holding the path, both searched; the serve's order is theirs.
+    fn two_roots(roots: [&str; 2], path: &str) -> Resolved {
+        let candidate = |root: &str| Candidate {
+            root: root.into(),
+            path: path.into(),
+            kind: "file".into(),
+            tier: "suffix".into(),
+            score: 0,
+        };
+        let root = |root: &str| ResolveRoot {
+            root: root.into(),
+            status: "complete".into(),
+        };
+        Resolved {
+            candidates: roots.map(candidate).into(),
+            roots: roots.map(root).into(),
+        }
+    }
+
+    /// mupu's transcript open, its detail's cwd given.
+    fn opened_in(cwd: Option<&str>) -> Store {
+        let mut store = loaded();
+        let effects = open(&mut store, "mupu");
+        drive(&mut store, effects, &history("mupu"), PAGE as usize);
+        let t = store.transcript.open.get_mut("mupu").unwrap();
+        t.detail = Some(AgentDetail {
+            cwd: cwd.map(str::to_string),
+            ..AgentDetail::default()
+        });
+        store
+    }
+
+    fn clicked(store: &mut Store, mention: &str) -> Read {
+        let agent = "mupu".into();
+        let mention = mention.into();
+        let effects = store.apply(Event::Transcript(T::OpenPath { agent, mention }));
+        match effects.into_iter().next() {
+            Some(Effect::Fetch(Fetch::Transcript(read))) => read,
+            other => panic!("no resolve: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_late_answer_does_not_replace_or_reopen_the_choices() {
+        let mut store = opened_in(None);
+        let answer = |store: &mut Store, read: Read, path| {
+            let got = Got::Resolved(two_roots(["/w/b", "/w/a"], path));
+            store.apply(Event::Transcript(T::Read(read, Ok(got))))
+        };
+        let query = |store: &Store| {
+            let t = &store.transcript.open["mupu"];
+            t.choices.as_ref().map(|c| c.query.clone())
+        };
+        // old.rs then new.rs clicked; new.rs answers first, then old.rs: new.rs's choices stay.
+        let (old, new) = (clicked(&mut store, "old.rs"), clicked(&mut store, "new.rs"));
+        assert!(answer(&mut store, new, "new.rs").is_empty());
+        assert!(answer(&mut store, old.clone(), "old.rs").is_empty());
+        assert_eq!(query(&store).as_deref(), Some("new.rs"));
+        // Dismissed, a late answer does not bring choices back; nor does a failure say anything.
+        let agent = "mupu".to_string();
+        let pick = None;
+        store.apply(Event::Transcript(T::Choose { agent, pick }));
+        assert!(answer(&mut store, old.clone(), "old.rs").is_empty());
+        assert_eq!(query(&store), None);
+        store.apply(Event::Transcript(T::Read(old, Err("timed out".into()))));
+        assert_eq!(store.transcript.open["mupu"].notice(), None);
+    }
+
+    #[test]
+    fn a_symlinked_cwd_does_not_open_its_lexical_parent() {
+        // The remote /w/a/link is a symlink to /w/b: the serve's roots are canonical, so the agent's root
+        // is /w/b and the serve ranks it first, while the detail's cwd stays lexical, under /w/a.
+        let mut store = opened_in(Some("/w/a/link"));
+        let read = clicked(&mut store, "src/x.rs");
+        let got = Got::Resolved(two_roots(["/w/b", "/w/a"], "src/x.rs"));
+        let effects = store.apply(Event::Transcript(T::Read(read, Ok(got))));
+        assert_eq!(effects, vec![], "nothing opens: the choices");
+        let choices = store.transcript.open["mupu"].choices.as_ref().unwrap();
+        let roots: Vec<_> = choices.candidates.iter().map(|c| c.root.as_str()).collect();
+        assert_eq!(roots, ["/w/b", "/w/a"]);
     }
 
     fn all_items() -> Vec<(Kind, Item)> {

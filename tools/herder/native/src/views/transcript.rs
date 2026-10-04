@@ -410,6 +410,12 @@ impl View {
         (rows.len(), runs.len(), open)
     }
 
+    /// Where the last left press in the transcript went down (window point): a clicked path's choices
+    /// go under it (`paths`).
+    pub(super) fn pressed(&self) -> Point<Pixels> {
+        self.taps.from.get()
+    }
+
     /// Whether jump-to-bottom shows: while the list does not follow the tail.
     pub(super) fn jumps(&self) -> bool {
         !self.list.is_following_tail()

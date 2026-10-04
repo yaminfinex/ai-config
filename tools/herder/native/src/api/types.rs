@@ -314,7 +314,8 @@ pub struct Resolved {
     pub roots: Vec<ResolveRoot>,
 }
 
-/// `root` is absolute; `kind` is `file` or `dir`; `tier` is `exact`, `prefix`, `suffix` or `fuzzy`.
+/// `root` is absolute (a git top level; a linked worktree is its own); `kind` is `file` or `dir`;
+/// `tier` is `exact`, `prefix`, `suffix` or `fuzzy`, and `score` the fuzzy match's.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct Candidate {
@@ -322,11 +323,13 @@ pub struct Candidate {
     pub path: String,
     pub kind: String,
     pub tier: String,
+    pub score: i64,
 }
 
 /// `status` is `complete`, `degraded` or `failed`.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct ResolveRoot {
+    pub root: String,
     pub status: String,
 }

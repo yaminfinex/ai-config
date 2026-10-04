@@ -121,9 +121,15 @@ pub struct Read {
 pub enum What {
     Page(Page),
     Detail,
-    /// A mentioned path, its `:line` split off, and whether to scope it to the agent (`agent=`): only
-    /// for a live agent, as the serve rejects names off the roster.
-    Resolve(String, Option<u32>, bool),
+    /// A mentioned path, its `:line` split off, whether to scope it to the agent (`agent=`: only for
+    /// a live agent, as the serve rejects names off the roster), and its number: only the latest
+    /// unanswered one is taken (`Transcript::resolving`).
+    Resolve {
+        query: String,
+        line: Option<u32>,
+        scoped: bool,
+        id: u64,
+    },
 }
 
 /// The request a read makes, for its retries and its notice.
@@ -142,7 +148,7 @@ impl What {
             What::Page(Page::Before { .. }) => Op::Back,
             What::Page(_) => Op::Forward,
             What::Detail => Op::Detail,
-            What::Resolve(..) => Op::Resolve,
+            What::Resolve { .. } => Op::Resolve,
         }
     }
 }
@@ -170,12 +176,18 @@ pub enum Step {
     /// The agent's viewport neared its first rows: read the page before.
     Older(String),
     Read(Read, Result<Got, String>),
-    /// A path clicked in the agent's transcript (`src/x.rs:12`): resolve it, then open it.
+    /// A path clicked in the agent's transcript (`src/x.rs:12`): resolve it, then open it or offer
+    /// the choices.
     OpenPath {
         agent: String,
         mention: String,
     },
-    /// Open the agent's working directory.
+    /// One of the agent's `choices` picked (`Some(index)`), or none: they close.
+    Choose {
+        agent: String,
+        pick: Option<usize>,
+    },
+    /// Open the git top level of the agent's working directory (resolved as a path).
     OpenCwd(String),
     Dismiss(String),
     /// A failed forward or detail read's backoff ran out: read it again.
@@ -216,6 +228,12 @@ pub struct Transcript {
     /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
     /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
     notice: Option<(Op, String)>,
+    /// A clicked path that matched more than one place, until one is picked (`Step::Choose`).
+    pub choices: Option<Choices>,
+    /// Resolves asked so far, and the one whose answer is awaited: an older one's answer, or one
+    /// arriving after another, is dropped (web's `AbortController` guard).
+    resolves: u64,
+    resolving: Option<u64>,
     /// Each op's own retries, so a sibling's success leaves them alone.
     forward_retry: Backoff,
     detail_retry: Backoff,
@@ -231,6 +249,18 @@ struct Backoff {
     failures: u32,
     timer: Option<u64>,
 }
+
+/// What a clicked path could mean, as web's file popover: the first `CHOICES` candidates (the serve's
+/// ranking), how many matched, and the mention's line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choices {
+    pub query: String,
+    pub line: Option<u32>,
+    pub candidates: Vec<Candidate>,
+    pub total: usize,
+}
+
+pub const CHOICES: usize = 8;
 
 /// The open transcripts by agent, one per panel on screen; the focused panel's agent; the stream's
 /// `agents=` set; and the counter behind every generation, so a generation names one transcript.
@@ -331,16 +361,24 @@ impl Store {
                 }
             }
             Step::OpenPath { agent, mention } => {
-                if let Some(t) = open.get(&agent) {
+                if let Some(t) = open.get_mut(&agent) {
                     let (path, line) = split_line(&mention);
                     let scoped = agents.contains_key(&t.agent) && !t.retired();
-                    t.read(What::Resolve(path, line, scoped), out);
+                    t.resolve(path, line, scoped, out);
                 }
             }
+            Step::Choose { agent, pick } => {
+                let choices = open.get_mut(&agent).and_then(|t| t.choices.take());
+                let chosen = choices.and_then(|c| Some(opening(c.candidates.get(pick?)?, c.line)));
+                out.extend(chosen);
+            }
+            // Absolute, so the serve answers with its git top level (`directOpen`), as a folder.
             Step::OpenCwd(agent) => {
-                let detail = open.get(&agent).and_then(|t| t.detail.as_ref());
-                let cwd = detail.and_then(|d| d.cwd.clone());
-                out.extend(cwd.map(|path| Effect::OpenFile { path, line: None }));
+                if let Some(t) = open.get_mut(&agent)
+                    && let Some(cwd) = t.detail.as_ref().and_then(|d| d.cwd.clone())
+                {
+                    t.resolve(cwd, None, false, out);
+                }
             }
             Step::Dismiss(agent) => open
                 .get_mut(&agent)
@@ -464,6 +502,20 @@ impl Transcript {
         detail.is_some_and(|d| d.bus_status == "retired")
     }
 
+    /// Asks where `query` lives, closing any choices; this one's answer is the only one taken.
+    fn resolve(&mut self, query: String, line: Option<u32>, scoped: bool, out: &mut Vec<Effect>) {
+        self.resolves += 1;
+        (self.choices, self.resolving) = (None, Some(self.resolves));
+        let id = self.resolves;
+        let what = What::Resolve {
+            query,
+            line,
+            scoped,
+            id,
+        };
+        self.read(what, out);
+    }
+
     fn read(&self, what: What, out: &mut Vec<Effect>) {
         let (agent, generation) = (self.agent.clone(), self.generation);
         let read = Read {
@@ -537,17 +589,35 @@ impl Transcript {
                     self.refresh(out);
                 }
             }
-            (What::Resolve(query, line, _), Ok(Got::Resolved(r))) => match pick(&r) {
-                // VS Code opens a remote path as a folder unless it ends in `:<line>`.
-                Some((path, file)) => {
-                    let line = if file { line.or(Some(1)) } else { None };
-                    out.push(Effect::OpenFile { path, line });
+            // Superseded by a later click, or answered already.
+            (What::Resolve { id, .. }, _) if self.resolving != Some(id) => {}
+            (What::Resolve { query, line, .. }, Ok(Got::Resolved(r))) => {
+                let cwd = self.detail.as_ref().and_then(|d| d.cwd.as_deref());
+                self.resolving = None;
+                match pick(&r, &query, cwd) {
+                    Pick::Open(c) => out.push(opening(c, line)),
+                    Pick::Choose(all) => {
+                        let (total, candidates) = (all.len(), all.into_iter().take(CHOICES));
+                        let candidates = candidates.cloned().collect();
+                        self.choices = Some(Choices {
+                            query,
+                            line,
+                            candidates,
+                            total,
+                        });
+                    }
+                    Pick::Nothing => {
+                        let partly = r.roots.iter().any(|root| root.status != "complete");
+                        let partly = if partly {
+                            " (some roots not fully searched)"
+                        } else {
+                            ""
+                        };
+                        let text = format!("no file matches {query}{partly}");
+                        self.notice = Some((Op::Resolve, text));
+                    }
                 }
-                None => {
-                    let text = format!("no single file matches {query}");
-                    self.notice = Some((Op::Resolve, text));
-                }
-            },
+            }
             (what, result) => {
                 // A failed forward or detail read is owed again (with any wake queued behind it)
                 // after its op's backoff; a failed page back waits until the notice clears.
@@ -556,7 +626,7 @@ impl Transcript {
                     Op::Forward => (self.reading, self.again) = (false, true),
                     Op::Back => self.back = false,
                     Op::Detail => (self.detail_reading, self.detail_again) = (false, true),
-                    Op::Resolve => {}
+                    Op::Resolve => self.resolving = None,
                 }
                 let (generation, token) = (self.generation, self.timers + 1);
                 let backoff = self.backoff(op);
@@ -675,17 +745,67 @@ impl Transcript {
     }
 }
 
-/// What to open, and whether it is a file, as web's auto-open: every root answered completely and there
-/// is exactly one exact or suffix candidate. Anything else is a notice (Rung 1 has no chooser).
-fn pick(r: &Resolved) -> Option<(String, bool)> {
+/// What a resolved path does.
+#[derive(Debug, PartialEq)]
+enum Pick<'a> {
+    Open(&'a Candidate),
+    Choose(Vec<&'a Candidate>),
+    Nothing,
+}
+
+/// Web's bar for a fuzzy top result: this score per character of the query (`isConfidentResolution`).
+const FUZZY_SCORE_PER_CHAR: i64 = 20;
+
+/// As web's popover (`isConfidentResolution`, `autoOpenCandidate`), plus one rule of ours: a weak fuzzy
+/// top result drops every candidate; the serve's first strong one (exact or suffix) opens when it is
+/// under the agent's own root (the git top level holding its `cwd`); so does the only strong one when
+/// every root answered completely. Anything else left is a choice; nothing left, a notice. The serve
+/// ranks the agent's canonical root first within a tier, so the two agree unless the cwd runs through
+/// a symlink: then the lexical root here is not the serve's. Where the serve's agent root holds a match
+/// it ranks first and the choices are offered; where only the lexical parent, also a live root, holds
+/// one, that repo opens (an accepted limit: the serve does not say which root is the agent's).
+fn pick<'a>(r: &'a Resolved, query: &str, cwd: Option<&str>) -> Pick<'a> {
+    let Some(top) = r.candidates.first() else {
+        return Pick::Nothing;
+    };
+    let bar = FUZZY_SCORE_PER_CHAR * query.chars().count() as i64;
+    if top.tier == "fuzzy" && top.score < bar {
+        return Pick::Nothing;
+    }
+    let within = |root: &str| {
+        let (root, cwd) = (root.trim_end_matches('/'), cwd.unwrap_or_default());
+        cwd == root
+            || cwd
+                .strip_prefix(root)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    let roots = r.roots.iter().map(|o| o.root.as_str());
+    let home = roots
+        .filter(|root| within(root))
+        .max_by_key(|root| root.len());
+    let strong = || {
+        let strong = |c: &&Candidate| c.tier == "exact" || c.tier == "suffix";
+        r.candidates.iter().filter(strong)
+    };
+    let mine = strong().next().filter(|c| Some(c.root.as_str()) == home);
     let complete = r.roots.iter().all(|root| root.status == "complete");
-    let strong = |c: &&Candidate| c.tier == "exact" || c.tier == "suffix";
-    let mut strong = r.candidates.iter().filter(strong);
-    let c = strong
+    let only = strong()
         .next()
-        .filter(|_| strong.next().is_none() && complete)?;
-    let path = format!("{}/{}", c.root.trim_end_matches('/'), c.path);
-    Some((path, c.kind == "file"))
+        .filter(|_| complete && strong().nth(1).is_none());
+    match mine.or(only) {
+        Some(c) => Pick::Open(c),
+        None => Pick::Choose(r.candidates.iter().collect()),
+    }
+}
+
+/// A file opens in its root as the project, at the mention's line; a folder opens its root alone.
+fn opening(c: &Candidate, line: Option<u32>) -> Effect {
+    let file = (c.kind == "file").then(|| c.path.clone());
+    Effect::OpenFile {
+        root: c.root.clone(),
+        line: line.filter(|_| file.is_some()),
+        file,
+    }
 }
 
 /// `src/x.rs:12` or `src/x.rs:12:4` → the path and its line.

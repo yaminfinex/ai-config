@@ -381,3 +381,52 @@ fn a_live_selection_captures_every_zoom_key() {
             .is_some_and(|a| a.partial_eq(&views::transcript::Scroll::Lines(1)))
     );
 }
+
+/// G3: while a clicked path's choices hold focus (`Paths`), `up` `down` move, `enter` opens and `escape`
+/// closes; no other lens or zoom key fires under them (`p` would hand the notes off), modifier chords
+/// and the dock's included. The app-wide chords (`cmd-q`, the text scale) keep their meaning.
+#[test]
+fn a_paths_choice_takes_its_keys_and_nothing_else_fires() {
+    use views::paths::Paths;
+    let keymap = Keymap::new(views::bindings());
+    let first = |key: &str, stack: &[&str]| {
+        let stack: Vec<KeyContext> = stack
+            .iter()
+            .map(|c| KeyContext::parse(c).unwrap())
+            .collect();
+        let (hits, _) = keymap.bindings_for_input(&[Keystroke::parse(key).unwrap()], &stack);
+        hits.first().map(|b| b.action().boxed_clone())
+    };
+    let picker = ["Lens", "Space", "Paths"];
+    let own = |key: &str| match key {
+        "up" => Some(Paths::Up),
+        "down" => Some(Paths::Down),
+        "enter" => Some(Paths::Open),
+        "escape" => Some(Paths::Close),
+        _ => None,
+    };
+    let app = ["cmd-q", "cmd-=", "cmd-shift-=", "cmd--", "cmd-0"];
+    let mut zoom_keys = 0;
+    for binding in views::bindings() {
+        let [k] = binding.keystrokes() else { continue };
+        let key = k.unparse();
+        zoom_keys += usize::from(first(&key, &["Lens", "Space"]).is_some());
+        let got = first(&key, &picker);
+        match own(&key) {
+            Some(want) => assert!(
+                got.is_some_and(|a| a.partial_eq(&want)),
+                "`{key}` in the choices"
+            ),
+            None if app.contains(&key.as_str()) => {
+                assert!(got.is_some(), "`{key}` lost its meaning")
+            }
+            None => assert!(got.is_none(), "`{key}` fires under the choices"),
+        }
+    }
+    assert!(zoom_keys > 30, "the zoom's keys were checked");
+    assert!(first("p", &picker).is_none(), "`p` hands the notes off");
+    assert!(
+        first("p", &["Lens", "Space"]).is_some(),
+        "`p` is the zoom's"
+    );
+}

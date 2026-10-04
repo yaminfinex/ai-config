@@ -11,6 +11,7 @@ use crate::views::capture::{self, Capture};
 use crate::views::composer::{self, Compose};
 use crate::views::notes::{self, Notes};
 use crate::views::notes_list::{self, Card};
+use crate::views::paths;
 use crate::views::theme::type_scale;
 use crate::views::transcript::{self, Fold, OpenLink, Scroll, ToggleRun};
 use crate::views::{Host, on, space};
@@ -26,6 +27,7 @@ pub struct Panel {
     pub(super) composer: composer::View,
     pub(super) notes: notes::View,
     pub(super) capture: capture::View,
+    pub(super) paths: paths::View,
     /// Its view in the dock (`AgentPanel`), and the dock's name for it.
     pub(super) view: Arc<dyn BasePanelView>,
     pub(super) id: PanelId,
@@ -53,6 +55,7 @@ impl Panel {
             composer: composer::View::new(agent, window, cx),
             notes: notes::View::new(agent, window, cx),
             capture: capture::View::new(agent, window, cx),
+            paths: paths::View::new(agent, window, cx),
             view: Arc::new(view),
             id,
             shown: true,
@@ -156,5 +159,13 @@ fn render<H: Host>(h: &mut H, agent: &str, cx: &mut Context<H>) -> AnyElement {
         .children(notes::render(store, ui, agent, t, cx))
         .child(composer::render(store, ui, agent, t, cx))
         .children(capture::render(ui, agent, t, cx))
+        .children(paths::render(
+            store,
+            ui,
+            agent,
+            panel.transcript.pressed(),
+            t,
+            cx,
+        ))
         .into_any_element()
 }
