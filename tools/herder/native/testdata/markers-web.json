@@ -1,0 +1,895 @@
+{
+  "bus": {
+    "chief-mihe": "blocked",
+    "e2e-cli-lipo": "inactive"
+  },
+  "turnStart": {
+    "whole": {
+      "session": "s1",
+      "offset": 8252456,
+      "ts": "2026-09-30T01:09:03.617Z"
+    },
+    "last100": {
+      "session": "s1",
+      "offset": 8543422,
+      "ts": "2026-09-30T08:33:15.955Z"
+    }
+  },
+  "rows": [
+    {
+      "key": "mupu",
+      "value": {
+        "turn": 355197,
+        "pos": null,
+        "at": 0,
+        "unread": false,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-mupu",
+      "deleted": false
+    },
+    {
+      "key": "support-mifa",
+      "value": {
+        "turn": 355201,
+        "pos": null,
+        "at": 0,
+        "unread": false,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-support-mifa",
+      "deleted": false
+    },
+    {
+      "key": "risk-framework-gezu",
+      "value": {
+        "turn": 361419,
+        "pos": null,
+        "at": 0,
+        "unread": true,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-risk-framework-gezu",
+      "deleted": false
+    },
+    {
+      "key": "api-gateway-luko",
+      "value": {
+        "turn": 361468,
+        "pos": null,
+        "at": 0,
+        "unread": false,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-api-gateway-luko",
+      "deleted": false
+    },
+    {
+      "key": "chief-mihe",
+      "value": {
+        "turn": 361411,
+        "pos": null,
+        "at": 0,
+        "unread": false,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-chief-mihe",
+      "deleted": false
+    },
+    {
+      "key": "e2e-cli-lipo",
+      "value": {
+        "turn": 361454,
+        "pos": null,
+        "at": 0,
+        "unread": false,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-e2e-cli-lipo",
+      "deleted": false
+    },
+    {
+      "key": "grill-confirm-lubo",
+      "value": {
+        "turn": 0,
+        "pos": null,
+        "at": 0,
+        "unread": false,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-grill-confirm-lubo",
+      "deleted": false
+    },
+    {
+      "key": "walk-nuna",
+      "value": {
+        "turn": 360154,
+        "pos": {
+          "session": "s1",
+          "offset": 10,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 9,
+        "unread": false,
+        "updated": 5
+      },
+      "updated": 5,
+      "writeID": "w-walk-nuna",
+      "deleted": false
+    }
+  ],
+  "agents": [
+    "mupu",
+    "support-mifa",
+    "risk-framework-gezu",
+    "api-gateway-luko",
+    "chief-mihe",
+    "e2e-cli-lipo",
+    "grill-confirm-lubo",
+    "conductor-line",
+    "walk-nuna",
+    "nobody"
+  ],
+  "attention": {
+    "unread": [
+      "mupu",
+      "risk-framework-gezu",
+      "api-gateway-luko",
+      "walk-nuna"
+    ],
+    "blocked": [
+      "chief-mihe"
+    ]
+  },
+  "merges": [
+    {
+      "name": "a newer stale read keeps the turn and position",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": {
+            "session": "s1",
+            "offset": 100,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 60,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 60,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "repair": true
+    },
+    {
+      "name": "an older row behind changes nothing",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": {
+            "session": "s1",
+            "offset": 100,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 40,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "x",
+        "deleted": false
+      },
+      "repair": false
+    },
+    {
+      "name": "a newer mark unread stands as written",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": {
+            "session": "s1",
+            "offset": 100,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 40,
+          "unread": true,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": {
+            "session": "s1",
+            "offset": 100,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 40,
+          "unread": true,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "repair": false
+    },
+    {
+      "name": "an older mark unread loses",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": {
+            "session": "s1",
+            "offset": 100,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 40,
+          "unread": true,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "x",
+        "deleted": false
+      },
+      "repair": false
+    },
+    {
+      "name": "across sessions the later read is ahead",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s2",
+            "offset": 5,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 90,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 900,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 60,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s2",
+            "offset": 5,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 90,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "repair": true
+    },
+    {
+      "name": "a newer row ahead wins as is",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": {
+            "session": "s1",
+            "offset": 100,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 40,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 7,
+          "pos": {
+            "session": "s1",
+            "offset": 300,
+            "ts": "2026-10-04T00:00:00.000Z"
+          },
+          "at": 50,
+          "unread": false,
+          "updated": 20
+        },
+        "updated": 20,
+        "writeID": "y",
+        "deleted": false
+      },
+      "repair": false
+    },
+    {
+      "name": "the same version is idempotent",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "repair": false
+    },
+    {
+      "name": "the writeID breaks a tie",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 9,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 9,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "y",
+        "deleted": false
+      },
+      "repair": true
+    },
+    {
+      "name": "a tombstone wins when newer",
+      "current": {
+        "key": "a",
+        "value": {
+          "turn": 5,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 10
+        },
+        "updated": 10,
+        "writeID": "x",
+        "deleted": false
+      },
+      "incoming": {
+        "key": "a",
+        "value": null,
+        "updated": 20,
+        "writeID": "y",
+        "deleted": true
+      },
+      "merged": {
+        "key": "a",
+        "value": null,
+        "updated": 20,
+        "writeID": "y",
+        "deleted": true
+      },
+      "repair": false
+    },
+    {
+      "name": "a newer row beats a tombstone",
+      "current": {
+        "key": "a",
+        "value": null,
+        "updated": 20,
+        "writeID": "x",
+        "deleted": true
+      },
+      "incoming": {
+        "key": "a",
+        "value": {
+          "turn": 1,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 30
+        },
+        "updated": 30,
+        "writeID": "y",
+        "deleted": false
+      },
+      "merged": {
+        "key": "a",
+        "value": {
+          "turn": 1,
+          "pos": null,
+          "at": 0,
+          "unread": false,
+          "updated": 30
+        },
+        "updated": 30,
+        "writeID": "y",
+        "deleted": false
+      },
+      "repair": false
+    }
+  ],
+  "reads": [
+    {
+      "name": "no marker reads the turn and position",
+      "marker": null,
+      "turn": 7,
+      "latest": {
+        "session": "s1",
+        "offset": 100,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 1000,
+      "read": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 1000,
+        "unread": false
+      }
+    },
+    {
+      "name": "nothing new is nothing",
+      "marker": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": false
+      },
+      "turn": 7,
+      "latest": {
+        "session": "s1",
+        "offset": 100,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 1000,
+      "read": null
+    },
+    {
+      "name": "a creep inside a read turn waits 5s",
+      "marker": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": false
+      },
+      "turn": 7,
+      "latest": {
+        "session": "s1",
+        "offset": 200,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 5000,
+      "read": null
+    },
+    {
+      "name": "and writes after it",
+      "marker": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": false
+      },
+      "turn": 7,
+      "latest": {
+        "session": "s1",
+        "offset": 200,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 5900,
+      "read": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 200,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 5900,
+        "unread": false
+      }
+    },
+    {
+      "name": "a turn end writes at once",
+      "marker": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": false
+      },
+      "turn": 8,
+      "latest": {
+        "session": "s1",
+        "offset": 200,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 1000,
+      "read": {
+        "turn": 8,
+        "pos": {
+          "session": "s1",
+          "offset": 200,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 1000,
+        "unread": false
+      }
+    },
+    {
+      "name": "a new session writes at once",
+      "marker": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": false
+      },
+      "turn": 7,
+      "latest": {
+        "session": "s2",
+        "offset": 3,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 1000,
+      "read": {
+        "turn": 7,
+        "pos": {
+          "session": "s2",
+          "offset": 3,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 1000,
+        "unread": false
+      }
+    },
+    {
+      "name": "a mark unread clears at once",
+      "marker": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": true
+      },
+      "turn": 7,
+      "latest": {
+        "session": "s1",
+        "offset": 100,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 1000,
+      "read": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 1000,
+        "unread": false
+      }
+    },
+    {
+      "name": "no latest keeps the position",
+      "marker": {
+        "turn": 7,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": false
+      },
+      "turn": 8,
+      "latest": null,
+      "now": 1000,
+      "read": {
+        "turn": 8,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 1000,
+        "unread": false
+      }
+    },
+    {
+      "name": "the turn never goes back",
+      "marker": {
+        "turn": 9,
+        "pos": {
+          "session": "s1",
+          "offset": 100,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 900,
+        "unread": false
+      },
+      "turn": 8,
+      "latest": {
+        "session": "s1",
+        "offset": 50,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 1000,
+      "read": null
+    },
+    {
+      "name": "no turn signal keeps the turn",
+      "marker": {
+        "turn": 4,
+        "pos": null,
+        "at": 0,
+        "unread": false
+      },
+      "turn": null,
+      "latest": {
+        "session": "s1",
+        "offset": 1,
+        "ts": "2026-10-04T00:00:00.000Z"
+      },
+      "now": 1000,
+      "read": {
+        "turn": 4,
+        "pos": {
+          "session": "s1",
+          "offset": 1,
+          "ts": "2026-10-04T00:00:00.000Z"
+        },
+        "at": 1000,
+        "unread": false
+      }
+    }
+  ]
+}

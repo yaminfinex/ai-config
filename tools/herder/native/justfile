@@ -45,7 +45,8 @@ check-keys port="4418": build
     . scripts/scenario.sh check-keys {{port}}
     dock="dock:mupu*+support-mifa+|+[conductor-line*~]"
     scenario chords "" "wait:1500 key:enter wait:400 draw key:] wait:600 draw beside:herder-agent:conductor-line wait:800 draw $dock key:/ draw key:x tap:cmd-w tap:cmd-1 tap:cmd-9 tap:alt-left tap:alt-right draw box:focused:x $dock quit"
-    seen chords "POST" 0
+    # Nothing written but the read markers' seeds (RM).
+    seen chords "POST /api/agents\|POST /api/state/spaces\|POST /api/state/notes" 0
     echo "check-keys: ok (text_scale 1.1 persisted; cmd-w, cmd-1…9 and alt-left/right do nothing to the dock from the composer)"
 
 # Composer scenarios (U4), each through `scripts/scenario.sh` (fake serve, own HOME, must reach `quit`) and
@@ -208,7 +209,8 @@ check-alerts port="4413":
     }
     run shared 0 "wait:4500 draw header:·+1+need+you quit" "--share mupu --turn mupu"
     badged shared 1
-    run tail 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu draw wait:3000 draw wait:1500 draw header:·+0+need+you quit" "--turn mupu --block mupu"
+    # The turn lands after the dwell's second (RM): the tail is read by then.
+    run tail 1 "wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu draw wait:3000 draw wait:1500 draw header:·+0+need+you quit" "--turn-at 5 --turn mupu --block mupu"
     grep -q "block: mupu" "$home/tail.fake" && [ -z "$notified" ] || { echo "check-alerts: tail: notified or no block"; exit 1; }
     ! grep -q "platform: badge [1-9]" "$home/tail.log" || { echo "check-alerts: tail: badged"; exit 1; }
     # Scrolled off the bottom by a key, what lands counts again. (A turn landing before the next frame
@@ -337,6 +339,35 @@ check-paths port="4419":
     [ "$(grep -cE "tap [pjo]: handled false" "$home/paths.log")" = 3 ] || { echo "check-paths: a zoom key fired under the choices"; exit 1; }
     seen pointed "GET /api/resolve?q=submit.rs" 1
     echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, the zoom's keys do nothing under them, esc closes; the agent's own root and a single match open at once; a real click offers under the pointer; each open is the code CLI's argv)"
+
+# Read markers (RM), through `scripts/scenario.sh`: the fake serve's `read.markers` answers 404 until
+# written. Nothing is posted to it before that first pull, then the board's agents are seeded weakly
+# (version 1). In the back, mupu's turn badges and web reading it (`--read`: a row, then a
+# `state-changed` nudge) clears the badge before its notification is due. Zoomed on mupu, frontmost at
+# its tail, the dwell posts one readThrough (a time and a position), and alt-u posts it unread.
+check-read port="4420":
+    #!/usr/bin/env bash
+    . scripts/scenario.sh check-read {{port}}
+    posts() { # NAME PATTERN: the read.markers POSTs with a row matching PATTERN
+        grep "state read.markers" "$home/$1.fake" | grep -cE "$2" || true
+    }
+    HERDER_NATIVE_FRONT=0 scenario remote "--turn mupu --read mupu" "wait:5000 draw header:·+0+need+you quit"
+    get=$(grep -n "GET /api/state/read.markers" "$home/remote.fake" | head -1 | cut -d: -f1)
+    post=$(grep -n "state read.markers" "$home/remote.fake" | head -1 | cut -d: -f1)
+    [ -n "$get" ] && [ -n "$post" ] && [ "$get" -lt "$post" ] || { echo "check-read: remote: a POST before the first pull"; exit 1; }
+    [ "$(posts remote '"updated":1,"writeID"')" = 1 ] || { echo "check-read: remote: no weak seed"; exit 1; }
+    seen remote "read: mupu" 1
+    grep -q "platform: badge 1" "$home/remote.log" || { echo "check-read: remote: mupu's turn never badged"; exit 1; }
+    [ "$(grep "platform: badge" "$home/remote.log" | tail -1)" = "platform: badge 0" ] || { echo "check-read: remote: web's read left the badge"; exit 1; }
+    ! grep -q "would notify" "$home/remote.log" || { echo "check-read: remote: notified though read on web"; exit 1; }
+    zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu"
+    HERDER_NATIVE_FRONT=1 scenario dwell "" "$zoom wait:1500 draw header:·+0+need+you key:alt-u wait:400 draw header:·+1+need+you quit"
+    row='"key":"mupu","value":\{"turn":[0-9]+,"pos":'
+    read="$row"'\{[^}]*\},"at":[1-9][0-9]*,"unread":false'
+    [ "$(posts dwell "$read")" = 1 ] || { echo "check-read: dwell: not one readThrough with a position for mupu"; exit 1; }
+    [ "$(posts dwell "$row"'(null|\{[^}]*\}),"at":[0-9]+,"unread":true')" = 1 ] || { echo "check-read: dwell: alt-u posted no unread"; exit 1; }
+    seen dwell "message to" 0
+    echo "check-read: ok (no POST before the first pull, then weak seeds; web's read clears mupu's badge before its notification; the dwell posts one readThrough with its position; alt-u posts unread)"
 
 # Build target/herder native.app (ad-hoc signed; notifications need a bundle id). Never launched here:
 # the owner opens it, or runs `just install`.

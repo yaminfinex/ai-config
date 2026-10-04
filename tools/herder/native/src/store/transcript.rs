@@ -15,6 +15,7 @@
 //! and a wake meanwhile asks for one more when it lands.
 
 use super::condense::{self, Seg};
+use super::markers::Pos;
 use super::{Effect, Fetch, Store, Wake};
 use crate::api::client::Page;
 use crate::api::{AgentDetail, Candidate, Entries, Entry, Kind, Resolved};
@@ -220,8 +221,10 @@ pub struct Transcript {
     detail_reading: bool,
     detail_again: bool,
     pub detail: Option<AgentDetail>,
-    /// The view follows the bottom (`Step::Tail`): what lands is seen as it arrives (`attention`).
+    /// The view follows the bottom (`Step::Tail`): what lands is read as it arrives (`markers`).
     pub tail: bool,
+    /// Every entry read in, by offset: its kind and timestamp, for read positions (`end`, `turn_start`).
+    read_in: BTreeMap<u64, (Kind, String)>,
     /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
     /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
     notice: Option<(Op, String)>,
@@ -438,6 +441,49 @@ impl Transcript {
         self.session.is_some()
     }
 
+    /// Where reading reaches: the newest entry read in (web's `latestPosition`).
+    pub fn end(&self) -> Option<Pos> {
+        let (offset, (_, ts)) = self.read_in.last_key_value()?;
+        self.pos(*offset, ts)
+    }
+
+    /// Where reading resumes after a mark unread, over every entry read in (web's `lastTurnStart` and
+    /// `positionBefore`): just before the latest turn's opener (what the owner or another agent sent; a
+    /// delivery stub and the delivery after it open the turn together), else before the newest entry;
+    /// one byte short of an entry with none read in above it. `None` with nothing read in.
+    pub fn turn_start(&self) -> Option<Pos> {
+        use Kind::*;
+        let opens = |k: &Kind| {
+            matches!(
+                k,
+                HumanPrompt | HcomDeliveryStub | HcomDelivery | TaskNotification
+            )
+        };
+        let above = |offset: u64| self.read_in.range(..offset).next_back();
+        let last = *self.read_in.last_key_value()?.0;
+        let mut start = (self.read_in.iter().rev())
+            .find(|(_, (k, _))| opens(k))
+            .map_or(last, |(o, _)| *o);
+        let stub = above(start).filter(|(_, (k, _))| *k == HcomDeliveryStub);
+        if let Some((o, _)) = stub.filter(|_| self.read_in[&start].0 == HcomDelivery) {
+            start = *o;
+        }
+        match above(start) {
+            Some((o, (_, ts))) => self.pos(*o, ts),
+            None => self.pos(start.saturating_sub(1), ""),
+        }
+    }
+
+    fn pos(&self, offset: u64, ts: &str) -> Option<Pos> {
+        let session = self.session.clone()?;
+        let ts = ts.to_string();
+        Some(Pos {
+            session,
+            offset,
+            ts,
+        })
+    }
+
     pub fn paging(&self) -> bool {
         self.back
     }
@@ -646,7 +692,11 @@ impl Transcript {
         }
         let back = matches!(page, Page::Before { .. });
         self.succeeded(if back { Op::Back } else { Op::Forward });
-        e.entries.into_iter().for_each(|entry| self.ingest(entry));
+        for entry in e.entries {
+            let read = (entry.kind, entry.timestamp.clone());
+            self.read_in.insert(entry.byte_offset, read);
+            self.ingest(entry);
+        }
         // A window of only hidden entries shows nothing: keep reading back until rows or the start.
         if self.items.is_empty() && !matches!(page, Page::From { .. }) {
             self.older(out);

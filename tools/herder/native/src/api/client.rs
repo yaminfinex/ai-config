@@ -15,6 +15,18 @@ pub fn base_url() -> String {
     std::env::var("HERDER_URL").unwrap_or_else(|_| DEFAULT_URL.into())
 }
 
+/// Whether a client on `base` would reach this Mac's loopback over plain http (`127.0.0.1`, `::1`,
+/// `localhost`, any port): the only server a scripted run may write to, the fake serve. Decided on the
+/// URL as the HTTP client itself parses it (no I/O), so no spelling can name one host here and reach
+/// another; anything it cannot parse is not loopback.
+pub fn loopback(base: &str) -> bool {
+    let Ok(url) = ureq::post(&format!("{base}/api/state")).request_url() else {
+        return false;
+    };
+    let host = url.host().to_ascii_lowercase();
+    url.scheme() == "http" && matches!(host.as_str(), "127.0.0.1" | "[::1]" | "::1" | "localhost")
+}
+
 /// Transport failure, or a refusal the server explained.
 #[derive(Debug)]
 pub enum Error {
@@ -84,6 +96,8 @@ pub enum Page {
 pub struct Client {
     base: String,
     http: ureq::Agent,
+    /// Posts nothing: each write is said and fails as a transport error (`read_only`).
+    read_only: bool,
 }
 
 impl Client {
@@ -95,6 +109,16 @@ impl Client {
         Client {
             base: base.into(),
             http,
+            read_only: false,
+        }
+    }
+
+    /// A client that writes nothing, for a scripted run against the live serve (no `HERDER_URL`): what
+    /// the store writes on its own (read markers' seeds and dwell) must never reach it.
+    pub fn read_only(self) -> Self {
+        Client {
+            read_only: true,
+            ..self
         }
     }
 
@@ -108,6 +132,10 @@ impl Client {
 
     /// Any 2xx is success; nothing reads the reply.
     fn post(&self, path: &str, body: impl Serialize) -> Result<(), Error> {
+        if self.read_only {
+            eprintln!("harness: would post {path}");
+            return Err(Error::Transport("read-only run: nothing is posted".into()));
+        }
         self.http
             .post(&format!("{}{path}", self.base))
             .send_json(body)?;

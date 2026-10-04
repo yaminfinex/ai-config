@@ -3,7 +3,7 @@
 
 use crate::api::Entries;
 use crate::store::spaces::{Move, Row, Space, Stop};
-use crate::store::tests::{board, bump, fleet_frame, frame, loaded, space_of};
+use crate::store::tests::{board, bump, dwell, fleet_frame, frame, loaded, space_of};
 use crate::store::transcript::{Got, Step, What};
 use crate::store::{Effect, Event, Fetch, Store};
 use crate::views::dock::Ask;
@@ -64,6 +64,9 @@ fn zooming_in_views_the_agent_needing_you_and_tab_asks_the_dock() {
     assert!(space::act(&store, &mut ui, Zoomed::Agent(1)).is_empty());
     assert_eq!(ui.asks, [Ask::Step(1)]);
     assert_eq!(zoomed(&ui), Some((herder.id.as_str(), Some("orch-lega"))));
+    // `alt-u` toggles the zoomed agent read or unread (RM).
+    let toggled = space::act(&store, &mut ui, Zoomed::Read);
+    assert!(matches!(&toggled[..], [Event::Lens(Move::Toggle(a))] if a == "orch-lega"));
 
     let hide = |events: Vec<Event>| matches!(events.as_slice(), [Event::Transcript(_)]);
     assert!(
@@ -231,6 +234,7 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
     let view = transcript::View::default();
     view.sync(store.transcript.focused().unwrap(), &store);
     store.apply(view.tail(true));
+    dwell(&mut store);
     bump(&mut b, "mupu", 1);
     store.apply(frame(&store, b.clone()));
     assert!(!store.agent_needs_you("mupu"), "watched as it lands");
@@ -463,6 +467,8 @@ mod summon {
             assert!(space::act(&store, &mut ui, key).is_empty());
             assert_eq!(zoomed(&ui), Some(("", Some(alone))));
         }
+        let toggled = space::act(&store, &mut ui, Zoomed::Read);
+        assert!(matches!(&toggled[..], [Event::Lens(Move::Toggle(a))] if a == alone));
         space::act(&store, &mut ui, Zoomed::Out);
         assert_eq!(zoomed(&ui), None);
         assert!(store.spaces.iter().all(|s| s.agents().all(|a| a != alone)));
@@ -1886,6 +1892,7 @@ mod layout {
             b.store.apply(live);
             b.store.apply(Event::Front(true));
             b.store.apply(b.ui.panel().unwrap().transcript.tail(true));
+            crate::store::tests::dwell(&mut b.store);
             bump(&mut board, "mupu", 1);
             let landed = frame(&b.store, board.clone());
             transcript::reduce(&mut b.store, &b.ui, landed);

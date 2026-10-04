@@ -3,15 +3,17 @@
 scenario sends may reach a real agent. Reads answer from testdata/; POST …/message never delivers.
 
     testdata/fake_serve.py PORT [--message ok|slow|409|502|hold] [--retired AGENT] [--queued AGENT] [--notes]
-                                [--turn AGENT[,AGENT…] | --block AGENT[,AGENT…]]… [--turn-at SECONDS]
-                                [--share AGENT]
+                                [--turn AGENT[,AGENT…] | --block AGENT[,AGENT…] | --read AGENT[,AGENT…]]…
+                                [--turn-at SECONDS] [--share AGENT]
 
 `slow` answers ok after a second, `hold` keeps the POST open (the composer stays "sending"); `409` is a
 sender collision. `POST /api/state/<ns>` keeps the rows in memory, last write wins, and later reads of
 that namespace return them (U5); `--notes` starts the notes namespace with web's two notes on mupu
 (`notes-web.json`). Each `--turn` is one more fleet frame on the stream, `--turn-at` seconds after it
 opens and 0.3 s apart, in which those agents have finished another turn (U6); a `--block` frame, in
-the same order, shows them blocked. `--queued` gives the agent two queued messages in its detail. `--share` adds the agent to the first space's members too (an agent
+the same order, shows them blocked; a `--read` frame is web reading them (RM): a `read.markers` row at
+their current turn, then a `state-changed` nudge. A namespace with no fixture (`read.markers`) answers
+404 until something is posted to it. `--queued` gives the agent two queued messages in its detail. `--share` adds the agent to the first space's members too (an agent
 in two spaces). `GET /api/resolve` answers from `resolve.json` by query (G3). Every request is logged on
 stderr.
 """
@@ -25,7 +27,8 @@ from urllib.parse import parse_qs, urlparse
 
 DATA = pathlib.Path(__file__).resolve().parent
 ARGS = None
-STATE = {}  # namespace -> {key: row}, what was posted (and --notes)
+STATE = {}  # namespace -> {key: row}, what was posted (and --notes, --read)
+NUDGES = 0  # --read frames sent: the revision a namespace with no fixture stands at, past its rows
 
 
 def ago(seconds):
@@ -71,6 +74,11 @@ class Fake(BaseHTTPRequestHandler):
             board = json.loads(fixture("fleet.json"))
             for i, (kind, agents) in enumerate(ARGS.frames):
                 time.sleep(ARGS.turn_at if i == 0 else 0.3)
+                if kind == "read":
+                    self.log_message("%s: %s", kind, agents)
+                    self.wfile.write(read(board, agents.split(",")).encode())
+                    self.wfile.flush()
+                    continue
                 for pane in panes(board):
                     if pane.get("agent") not in agents.split(","):
                         continue
@@ -89,6 +97,11 @@ class Fake(BaseHTTPRequestHandler):
             self.reply(200, fixture("fleet.json"))
         elif url.path == "/api/viewer":
             self.reply(200, fixture("viewer.json"))
+        elif parts[:2] == ["api", "state"] and not (DATA / f"state-{parts[2]}.json").exists():
+            held = STATE.get(parts[2])
+            if held is None:
+                return self.reply(404, {"error": "unknown state namespace", "detail": parts[2]})
+            self.reply(200, {"rows": list(held.values()), "rev": len(held) + NUDGES})
         elif parts[:2] == ["api", "state"]:
             got = json.loads(fixture(f"state-{parts[2]}.json"))
             if parts[2] == "spaces.members" and ARGS.share:
@@ -148,6 +161,19 @@ def panes(board):
             yield from tab["panes"]
 
 
+def read(board, agents):
+    """Web reads `agents` now: their markers at the board's turns, newer than anything posted; the nudge."""
+    global NUDGES
+    now = int(time.time() * 1000)
+    rows = [{"key": p["agent"], "value": {"turn": p["turn_end_id"], "pos": None, "at": now, "unread": False,
+                                          "updated": now}, "updated": now, "writeID": f"web-fake-{p['agent']}",
+             "deleted": False} for p in panes(board) if p.get("agent") in agents]
+    merge("read.markers", rows)
+    NUDGES += 1
+    rev = len(STATE["read.markers"]) + NUDGES
+    return f'event: state-changed\ndata: {json.dumps({"namespace": "read.markers", "rev": rev})}\n\n'
+
+
 def merge(ns, rows):
     held = STATE.setdefault(ns, {})
     for r in rows:
@@ -166,6 +192,7 @@ if __name__ == "__main__":
     frame = lambda kind: lambda agents: (kind, agents)
     p.add_argument("--turn", action="append", dest="frames", type=frame("turn"), default=[])
     p.add_argument("--block", action="append", dest="frames", type=frame("block"), default=[])
+    p.add_argument("--read", action="append", dest="frames", type=frame("read"), default=[])
     p.add_argument("--share")
     p.add_argument("--turn-at", type=float, default=3.0)
     ARGS = p.parse_args()

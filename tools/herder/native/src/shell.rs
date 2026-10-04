@@ -17,7 +17,7 @@
 //! (`io::save_then_land`), a queued note by that same outbox save, before its posts. The REST reads
 //! and those saves run in `io`.
 
-use crate::api::client::{Client, base_url};
+use crate::api::client::{self, Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
@@ -111,7 +111,7 @@ impl Shell {
         Shell {
             store,
             ui,
-            client: Client::new(base_url()),
+            client: client(),
             disk: Arc::new(disk),
             tx,
             stream: None,
@@ -149,6 +149,8 @@ impl Host for Shell {
             }
         );
         let scale = self.store.prefs.text_scale;
+        // What the store writes on its own (read markers) is stamped with the event's time.
+        self.store.clock = crate::views::notes::stamp();
         let effects = transcript_view::reduce(&mut self.store, &self.ui, event);
         if self.store.prefs.text_scale != scale {
             theme::apply(self.store.prefs.text_scale, cx);
@@ -449,4 +451,17 @@ fn summon(tag: &str, cx: &mut App) {
         window.activate_window();
         window.dispatch_action(Box::new(space::Summon(tag.to_string().into())), cx);
     });
+}
+
+/// The server's client; in a scripted run read-only unless the server is on loopback (the fake serve):
+/// automation never writes to the live serve (`coldstart` reads it), whatever `HERDER_URL` says.
+fn client() -> Client {
+    let (base, scripted) = (base_url(), platform_mac::quiet());
+    let read_only = scripted && !client::loopback(&base);
+    let client = Client::new(base);
+    if read_only {
+        client.read_only()
+    } else {
+        client
+    }
 }
