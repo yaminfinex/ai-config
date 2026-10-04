@@ -223,28 +223,39 @@ pub fn vscode_url(host: &str, path: &str, line: Option<u32>) -> Option<String> {
     ))
 }
 
-/// How VS Code opens `file` (relative) in the project `root` on `host`, at `line` (G3): the arguments
-/// of its command line tool, `--remote ssh-remote+<host> <root> -g <root>/<file>[:<line>]` (the root as
-/// the window's folder, then the file), and the Remote-SSH URL for when the tool is missing (the file
-/// alone, at line 1 at least so it does not open as a folder). Without a file, the root alone.
+/// How VS Code opens `file` (relative) in the project `root` on `host`, at `line` (G3b): its command
+/// line tool run twice, in order, as the owner found works (one call with both opens the file but not
+/// the folder): `--folder-uri vscode-remote://ssh-remote+<host><root>` opens the root as a window's
+/// folder, then `-r --remote ssh-remote+<host> -g <root>/<file>[:<line>]` goes to the file in that
+/// window; without a file, the first alone. And the Remote-SSH URL for when the tool is missing (the
+/// file alone, at line 1 at least so it does not open as a folder).
 pub fn vscode(
     host: &str,
     root: &str,
     file: Option<&str>,
     line: Option<u32>,
-) -> Option<(Vec<String>, String)> {
+) -> Option<(Vec<Vec<String>>, String)> {
     let root = root.trim_end_matches('/');
     let target = file.map(|f| format!("{root}/{f}"));
     let url = match &target {
         Some(target) => vscode_url(host, target, line.or(Some(1)))?,
         None => vscode_url(host, root, None)?,
     };
-    let mut args = vec!["--remote".into(), format!("ssh-remote+{host}"), root.into()];
+    let folder: Vec<String> = root.split('/').map(encode).collect();
+    let folder = format!("vscode-remote://ssh-remote+{host}{}", folder.join("/"));
+    let mut calls = vec![vec!["--folder-uri".into(), folder]];
     if let Some(target) = target {
         let at = line.map(|l| format!(":{l}")).unwrap_or_default();
-        args.extend(["-g".into(), format!("{target}{at}")]);
+        let (remote, go) = (format!("ssh-remote+{host}"), format!("{target}{at}"));
+        calls.push(vec![
+            "-r".into(),
+            "--remote".into(),
+            remote,
+            "-g".into(),
+            go,
+        ]);
     }
-    Some((args, url))
+    Some((calls, url))
 }
 
 /// Percent-encoding of one path segment: unreserved characters kept, every other UTF-8 byte `%XX`.

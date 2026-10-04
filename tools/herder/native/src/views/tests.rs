@@ -378,25 +378,41 @@ mod links {
         assert_eq!(vscode_url("superset", "relative", None), None);
     }
 
-    /// G3: the root opens as VS Code's folder and the file in it at its line, one argument each, spaces
-    /// kept; the URL is for when the tool is missing (a file at line 1 at least, so not as a folder).
+    /// G3b: two calls, the root opened as VS Code's folder (a URI, each segment encoded) and then the
+    /// file in that window at its line, one argument each, spaces kept; a folder alone is the first
+    /// call. The URL is for when the tool is missing (a file at line 1 at least, so not as a folder).
     #[test]
-    fn vscode_opens_the_root_then_goes_to_the_file() {
-        let (args, url) =
+    fn vscode_opens_the_folder_then_goes_to_the_file() {
+        let (calls, url) =
             vscode("superset", "/home/u/my repo/", Some("a b/x.rs"), Some(7)).unwrap();
-        let want = ["--remote", "ssh-remote+superset", "/home/u/my repo", "-g"];
-        assert_eq!(args[..4], want);
-        assert_eq!(args[4], "/home/u/my repo/a b/x.rs:7");
-        assert_eq!(args.len(), 5);
+        assert_eq!(
+            calls,
+            [
+                vec![
+                    "--folder-uri",
+                    "vscode-remote://ssh-remote+superset/home/u/my%20repo"
+                ],
+                vec![
+                    "-r",
+                    "--remote",
+                    "ssh-remote+superset",
+                    "-g",
+                    "/home/u/my repo/a b/x.rs:7"
+                ],
+            ]
+        );
         assert_eq!(
             url,
             "vscode://vscode-remote/ssh-remote+superset/home/u/my%20repo/a%20b/x.rs:7"
         );
-        let (args, url) = vscode("superset", "/r", Some("x.rs"), None).unwrap();
-        assert_eq!(args[3..], ["-g", "/r/x.rs"]);
+        let (calls, url) = vscode("superset", "/r", Some("x.rs"), None).unwrap();
+        assert_eq!(calls[1][3..], ["-g", "/r/x.rs"]);
         assert!(url.ends_with("/r/x.rs:1"));
-        let (args, url) = vscode("superset", "/r", None, Some(3)).unwrap();
-        assert_eq!(args, ["--remote", "ssh-remote+superset", "/r"]);
+        let (calls, url) = vscode("superset", "/r", None, Some(3)).unwrap();
+        assert_eq!(
+            calls,
+            [["--folder-uri", "vscode-remote://ssh-remote+superset/r"]]
+        );
         assert_eq!(url, "vscode://vscode-remote/ssh-remote+superset/r");
         assert_eq!(vscode("bad host", "/r", None, None), None);
         assert_eq!(vscode("superset", "relative", None, None), None);

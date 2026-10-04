@@ -326,19 +326,25 @@ check-paths port="4419":
     # By a real pointer: riko's `submit.rs` (check-mouse's links, 1400×900) offers two, under the click.
     riko="wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw"
     HERDER_NATIVE_WINDOW=1400x900 scenario pointed "" "$riko wait:1000 draw draw point:100,142 wait:500 draw draw paths:focused:2@0 shot:g3-paths-pointed key:escape draw paths:none quit"
-    code() { grep -cF "platform: would run code [\"--remote\", \"ssh-remote+superset\", $1]" "$home/paths.log" || true; }
+    # Each open is two calls of the code CLI (G3b): the root as a window's folder, then the file in it.
+    code() { grep -cF "platform: would run code $1" "$home/paths.log" || true; }
+    opens() {
+        [ "$(code "[\"--folder-uri\", \"vscode-remote://ssh-remote+superset$1\"]")" = 1 ] &&
+        [ "$(code "[\"-r\", \"--remote\", \"ssh-remote+superset\", \"-g\", \"$2\"]")" = 1 ] &&
+        grep -A1 -F "vscode-remote://ssh-remote+superset$1\"]" "$home/paths.log" | grep -qF "\"-g\", \"$2\"]"
+    }
     wt="/tools/herder/native/src/views/paths.rs:9"
-    [ "$(code "\"/home/ubuntu/wt/native-b\", \"-g\", \"/home/ubuntu/wt/native-b$wt\"")" = 1 ] || { echo "check-paths: enter did not open the second"; exit 1; }
-    [ "$(code "\"/home/ubuntu/wt/native-a\", \"-g\", \"/home/ubuntu/wt/native-a$wt\"")" = 1 ] || { echo "check-paths: the click did not open the first"; exit 1; }
-    [ "$(code "\"/home/ubuntu/slack-eyes\", \"-g\", \"/home/ubuntu/slack-eyes/lib/own.rs\"")" = 1 ] || { echo "check-paths: the agent's own root did not open"; exit 1; }
-    [ "$(code "\"/home/ubuntu/my repo\", \"-g\", \"/home/ubuntu/my repo/docs/notes.md:3\"")" = 1 ] || { echo "check-paths: the single match did not open"; exit 1; }
+    opens /home/ubuntu/wt/native-b "/home/ubuntu/wt/native-b$wt" || { echo "check-paths: enter did not open the second"; exit 1; }
+    opens /home/ubuntu/wt/native-a "/home/ubuntu/wt/native-a$wt" || { echo "check-paths: the click did not open the first"; exit 1; }
+    opens /home/ubuntu/slack-eyes /home/ubuntu/slack-eyes/lib/own.rs || { echo "check-paths: the agent's own root did not open"; exit 1; }
+    opens "/home/ubuntu/my%20repo" "/home/ubuntu/my repo/docs/notes.md:3" || { echo "check-paths: the single match did not open"; exit 1; }
     opened=$(grep -c "platform: would run code" "$home/paths.log" || true)
-    [ "$opened" = 4 ] || { echo "check-paths: $opened opens, expected 4"; exit 1; }
+    [ "$opened" = 8 ] || { echo "check-paths: $opened code calls, expected 8 (two per open)"; exit 1; }
     seen paths "GET /api/resolve?q=" 5
     seen paths "state notes" 0
     [ "$(grep -cE "tap [pjo]: handled false" "$home/paths.log")" = 3 ] || { echo "check-paths: a zoom key fired under the choices"; exit 1; }
     seen pointed "GET /api/resolve?q=submit.rs" 1
-    echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, the zoom's keys do nothing under them, esc closes; the agent's own root and a single match open at once; a real click offers under the pointer; each open is the code CLI's argv)"
+    echo "check-paths: ok (an ambiguous path offers its matches focused, down/enter and a click open one, the zoom's keys do nothing under them, esc closes; the agent's own root and a single match open at once; a real click offers under the pointer; each open is two code CLI calls, the folder then the file)"
 
 # Read markers (RM), through `scripts/scenario.sh`: the fake serve's `read.markers` answers 404 until
 # written. Nothing is posted to it before that first pull, then the board's agents are seeded weakly

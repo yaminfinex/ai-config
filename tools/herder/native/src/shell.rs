@@ -212,7 +212,7 @@ impl Shell {
                 Effect::OpenFile { root, file, line } => {
                     let host = &self.store.prefs.vscode_host;
                     match markdown::vscode(host, &root, file.as_deref(), line) {
-                        Some((args, url)) => platform_mac::vscode(args, &url, cx),
+                        Some((calls, url)) => platform_mac::vscode(calls, &url, cx),
                         None => eprintln!("open: cannot open {root} in VS Code on {host}"),
                     }
                 }

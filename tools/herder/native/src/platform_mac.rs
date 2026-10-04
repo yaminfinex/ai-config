@@ -38,28 +38,40 @@ pub fn open(url: &str, cx: &gpui_kit::App) {
 /// VS Code's command line tool, in its app bundle.
 const CODE: &str = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
 
-/// Run VS Code's command line tool with `args`, off the main thread; open `url` instead when the tool
-/// is not installed.
-pub fn vscode(args: Vec<String>, url: &str, cx: &gpui_kit::App) {
+/// Between VS Code's command line calls: the window the first opens is up before the next reuses it.
+const CODE_SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Run VS Code's command line tool once for each of `calls`, in order and `CODE_SETTLE` apart, off the
+/// main thread; open `url` instead when the tool is not installed. A call that fails is logged and the
+/// next still runs.
+pub fn vscode(calls: Vec<Vec<String>>, url: &str, cx: &gpui_kit::App) {
     if quiet() {
-        return log(format!("would run code {args:?}"));
+        return calls
+            .iter()
+            .for_each(|args| log(format!("would run code {args:?}")));
     }
     if !std::path::Path::new(CODE).exists() {
         return open(url, cx);
     }
+    let executor = cx.background_executor().clone();
     let run = async move {
-        let null = std::process::Stdio::null;
-        let mut run = std::process::Command::new(CODE);
-        match run
-            .args(&args)
-            .stdin(null())
-            .stdout(null())
-            .stderr(null())
-            .status()
-        {
-            Ok(s) if s.success() => {}
-            Ok(s) => eprintln!("code: {s} for {args:?}"),
-            Err(e) => eprintln!("code: {e}"),
+        for (i, args) in calls.iter().enumerate() {
+            if i > 0 {
+                executor.timer(CODE_SETTLE).await;
+            }
+            let null = std::process::Stdio::null;
+            let mut run = std::process::Command::new(CODE);
+            match run
+                .args(args)
+                .stdin(null())
+                .stdout(null())
+                .stderr(null())
+                .status()
+            {
+                Ok(s) if s.success() => {}
+                Ok(s) => eprintln!("code: {s} for {args:?}"),
+                Err(e) => eprintln!("code: {e}"),
+            }
         }
     };
     cx.background_executor().spawn(run).detach();
