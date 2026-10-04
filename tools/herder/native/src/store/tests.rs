@@ -4489,6 +4489,20 @@ mod read_markers {
         };
         let (merged, _) = markers::merge(Some(&seed), other).unwrap();
         assert_eq!(markers::parse(&merged).unwrap().turn, 30, "two seeds merge");
+        // RM re-review (lure): the weak side is set aside before versions compare, as web's: a real row
+        // at version 0, and a real tombstone, beat a seed either way round.
+        let zero = row(&markers::baseline(10), 0);
+        let tombstone = StateRow {
+            value: Value::Null,
+            deleted: true,
+            ..row(&markers::baseline(0), 5)
+        };
+        for real in [zero, tombstone] {
+            for (current, incoming) in [(&seed, &real), (&real, &seed)] {
+                let merged = markers::merge(Some(current), incoming.clone()).unwrap();
+                assert_eq!(merged, (real.clone(), false));
+            }
+        }
         // In the store: mupu's seed, then web's real row a turn behind: it stands, unread, and nothing posts.
         let (mut store, _) = live(5_000);
         let mine = turn(&store, "mupu");

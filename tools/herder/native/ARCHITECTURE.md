@@ -108,7 +108,8 @@ Derived shapes are in `store`:
   turn, monotonic; the board carries no activity timestamp). Rows merge newest-wins, but turn, position
   and time never go back, except that a newer mark unread stands; a pulled row merged ahead of its winner
   is republished (`Sync::repairs`), and the outbox sends a row as it merged. A weak row (version 1)
-  against a real one takes no part: the real one wins as written, no repair (the owner's rule, web's
+  against a real one takes no part, set aside before versions compare: the real one (a tombstone too)
+  wins as written, no repair (the owner's rule, web's
   too); weak rows only fill an empty slot. **Unread** = a mark unread, or the agent is `listening` or `active` on
   the bus and its `turn_end_id` is above its marker's (web's gate: an agent already working on its next
   turn still counts for the one it ended; before RM native excluded `Working`). No marker is no baseline,
@@ -442,7 +443,8 @@ memory for the session and a `state-changed` frame above it pulls again. Rows re
 The store writes rows on its own (read markers' seeds and dwell) with the time and `writeID` the shell
 stamps on each event (`Store::clock`); a scripted run against anything but loopback (one reading the live serve,
 `coldstart`) gets a read-only client that posts nothing (`harness: would post …`): a scripted run
-writes only to a loopback `HERDER_URL` (`client::loopback`: the fake serve), whatever else it names.
+writes only to a loopback `HERDER_URL` over plain http (`client::loopback`, decided on ureq's own parse of
+the URL: the fake serve), whatever else it names.
 
 The outbox is durable and its cleanup is **version-aware**, copied from web's `stateSync.ts`, because the
 server's `accepted` list omits idempotent and losing rows and so cannot be used as the acknowledgement:
@@ -526,7 +528,7 @@ are restated rather than split: what did not belong in them has moved out (`view
 | File | Budget | File | Budget |
 |---|---|---|---|
 | `api/types.rs` | 332 | `views/mod.rs` | 451 |
-| `api/client.rs` | 238 | `views/lens.rs` | 470 |
+| `api/client.rs` | 234 | `views/lens.rs` | 470 |
 | `api/sse.rs` | 194 | `views/space.rs` | 369 |
 | `store/mod.rs` | 496 | `views/transcript.rs` | 1374 |
 | `store/sync.rs` | 345 | `views/composer.rs` | 246 |
@@ -544,9 +546,9 @@ are restated rather than split: what did not belong in them has moved out (`view
 |  |  | `views/panel.rs` | 160 |
 |  |  | `views/dock.rs` | 902 |
 |  |  | `views/tabs.rs` | 361 |
-|  |  | `store/markers.rs` | 432 |
+|  |  | `store/markers.rs` | 440 |
 
-About 12,763 lines for Rung 1, tests excluded (RM: +580; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 12,767 lines for Rung 1, tests excluded (RM: +584; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

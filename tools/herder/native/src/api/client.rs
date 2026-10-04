@@ -15,20 +15,16 @@ pub fn base_url() -> String {
     std::env::var("HERDER_URL").unwrap_or_else(|_| DEFAULT_URL.into())
 }
 
-/// Whether `url`'s host is this Mac's loopback (`127.0.0.1`, `::1`, `localhost`, any port): the only
-/// server a scripted run may write to, the fake serve (anything else could be the live serve).
-pub fn loopback(url: &str) -> bool {
-    let rest = url.split_once("://").map_or(url, |(_, r)| r);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let host = match host.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or(""),
-        None => host.rsplit_once(':').map_or(host, |(h, _)| h),
+/// Whether a client on `base` would reach this Mac's loopback over plain http (`127.0.0.1`, `::1`,
+/// `localhost`, any port): the only server a scripted run may write to, the fake serve. Decided on the
+/// URL as the HTTP client itself parses it (no I/O), so no spelling can name one host here and reach
+/// another; anything it cannot parse is not loopback.
+pub fn loopback(base: &str) -> bool {
+    let Ok(url) = ureq::post(&format!("{base}/api/state")).request_url() else {
+        return false;
     };
-    matches!(
-        host.to_ascii_lowercase().as_str(),
-        "127.0.0.1" | "::1" | "localhost"
-    )
+    let host = url.host().to_ascii_lowercase();
+    url.scheme() == "http" && matches!(host.as_str(), "127.0.0.1" | "[::1]" | "::1" | "localhost")
 }
 
 /// Transport failure, or a refusal the server explained.

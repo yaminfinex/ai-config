@@ -114,17 +114,25 @@ pub fn merge(current: Option<&StateRow>, incoming: StateRow) -> Option<(StateRow
     let Some(current) = current else {
         return Some((incoming, false));
     };
+    // Exactly one side weak: the other wins as written, before any version comparison (web's).
+    let current_weak = current.updated == WEAK;
+    if current_weak != (incoming.updated == WEAK) {
+        return Some((
+            if current_weak {
+                incoming
+            } else {
+                current.clone()
+            },
+            false,
+        ));
+    }
     let (winner, loser) = match incoming.version_cmp(current) {
         Ordering::Greater => (incoming, current.clone()),
         _ => (current.clone(), incoming),
     };
-    let weak = (winner.updated == WEAK) != (loser.updated == WEAK);
     let (Some(w), Some(l)) = (parse(&winner), parse(&loser)) else {
         return Some((winner, false));
     };
-    if weak {
-        return Some((winner, false));
-    }
     if w.unread {
         return Some((winner, false));
     }

@@ -860,6 +860,9 @@ fn a_scripted_run_writes_only_to_loopback() {
         "http://localhost.evil:4400",
         "http://100.64.0.1:4400",
         "http://user@remote:1/127.0.0.1",
+        r"http://outside.invalid\@localhost/..",
+        "https://localhost:4400",
+        "localhost:4400",
         "",
     ] {
         assert!(!client::loopback(url), "{url}");
@@ -875,6 +878,10 @@ fn a_scripted_run_writes_only_to_loopback() {
         deleted: false,
     };
     assert!(client.post_state("read.markers", &[row]).is_err());
+    // RM re-review (lure): the guard reads the host ureq itself would connect to.
+    let tricky = r"http://outside.invalid\@localhost/..";
+    let url = ureq::post(&format!("{tricky}/api/state/read.markers")).request_url();
+    assert_eq!(url.unwrap().host(), "outside.invalid");
     assert!(client.send_message("agent", "must never send").is_err());
     let accepted = listener.accept();
     assert!(matches!(accepted, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
