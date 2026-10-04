@@ -3,8 +3,8 @@
 //! `show_system_notification`, which the shell calls only when `quiet()` is false.
 //!
 //! Test mode is decided here, once: a run with `HERDER_NATIVE_SCRIPT` set at all (the harness and
-//! every `just check-*`; a blank one is refused before the app opens) is `quiet`. It posts no notification, sets no badge, opens no URL and never takes the owner's
-//! chord; each is a logged no-op (`platform: would notify …`, `platform: badge 3`, `platform: would open …`) the scenarios read.
+//! every `just check-*`; a blank one is refused before the app opens) is `quiet`. It posts no notification, sets no badge, opens no URL, runs no VS Code and never takes the owner's
+//! chord; each is a logged no-op (`platform: would notify …`, `platform: badge 3`, `platform: would open …`, `platform: would run code [argv]`) the scenarios read.
 
 use global_hotkey::hotkey::HotKey;
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
@@ -33,6 +33,48 @@ pub fn open(url: &str, cx: &gpui_kit::App) {
         true => log(format!("would open {url}")),
         false => cx.open_url(url),
     }
+}
+
+/// VS Code's command line tool, in its app bundle.
+const CODE: &str = "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code";
+
+/// Between VS Code's command line calls: the window the first opens is up before the next reuses it.
+const CODE_SETTLE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Run VS Code's command line tool once for each of `calls`, in order and `CODE_SETTLE` apart, off the
+/// main thread; open `url` instead when the tool is not installed. A call that fails is logged and the
+/// next still runs.
+pub fn vscode(calls: Vec<Vec<String>>, url: &str, cx: &gpui_kit::App) {
+    if quiet() {
+        return calls
+            .iter()
+            .for_each(|args| log(format!("would run code {args:?}")));
+    }
+    if !std::path::Path::new(CODE).exists() {
+        return open(url, cx);
+    }
+    let executor = cx.background_executor().clone();
+    let run = async move {
+        for (i, args) in calls.iter().enumerate() {
+            if i > 0 {
+                executor.timer(CODE_SETTLE).await;
+            }
+            let null = std::process::Stdio::null;
+            let mut run = std::process::Command::new(CODE);
+            match run
+                .args(args)
+                .stdin(null())
+                .stdout(null())
+                .stderr(null())
+                .status()
+            {
+                Ok(s) if s.success() => {}
+                Ok(s) => eprintln!("code: {s} for {args:?}"),
+                Err(e) => eprintln!("code: {e}"),
+            }
+        }
+    };
+    cx.background_executor().spawn(run).detach();
 }
 
 /// The needs-you count on the dock icon; 0 clears it.

@@ -1,20 +1,22 @@
 //! Attention (U2, U6): what needs the owner, and what has told them so.
 //!
 //! Two marks per agent, kept apart on purpose though they look alike:
-//! - `Seen` (in `Prefs`, persisted) is the owner's view: the latest turn they saw and whether they saw
-//!   the current block. Needs-you, the cards' counts, the header and the dock badge read it.
+//! - The owner's view: the read marker shared with web (`markers`; unread) and, local beside it, whether
+//!   they viewed the current block (`Prefs::blocks`). Needs-you, the cards' counts, the header and the
+//!   dock badge read them.
 //! - `Mark` (in `Alerts`, this session only) is the causes already alerted: a turn or a block notifies
-//!   once. Alerting never marks seen, so an agent notified and not yet looked at still needs you.
+//!   once. Alerting never marks read, so an agent notified and not yet looked at still needs you.
 
 use super::composer::Sending;
 use super::fleet::{Agent, Fleet, Status};
+use super::markers::{self, Marker};
 use super::spaces::Space;
 use super::{Effect, Persist, Store, Wake};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// The owner's mark on one agent: the latest turn end seen, and whether its current block has been
-/// viewed. Before U2 the mark was the bare turn number; both forms read.
+/// An agent as the owner saw it: its latest turn end, and whether it was blocked. A file-back's
+/// snapshot, and the pre-RM `Prefs::seen` mark (before U2 the bare turn number; both forms read).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(from = "SeenWire")]
 pub struct Seen {
@@ -40,47 +42,38 @@ impl From<SeenWire> for Seen {
 }
 
 impl Store {
-    /// How many agents in this space need you; at least one while the owner has marked it unread.
+    /// How many agents in this space need you.
     pub fn needs_you(&self, space: &Space) -> usize {
-        let agents = space.agents().filter(|a| self.agent_needs_you(a)).count();
-        agents.max(usize::from(self.prefs.unread.contains(&space.id)))
+        space.agents().filter(|a| self.agent_needs_you(a)).count()
     }
 
-    /// The header's "N need you" and the dock badge (owner rulings, 2026-10-01): each agent that needs
-    /// you once, whether it sits in one space, several or none; and each space marked unread (`u`) as
-    /// one, unless one of its agents already counts.
+    /// The header's "N need you" and the dock badge (owner ruling, 2026-10-01): each agent that needs
+    /// you once, whether it sits in one space, several or none.
     pub fn needs_you_total(&self) -> usize {
-        let agents = self.fleet.agents.keys().filter(|a| self.agent_needs_you(a));
-        let marked = self.spaces.iter().filter(|s| {
-            self.prefs.unread.contains(&s.id) && !s.agents().any(|a| self.agent_needs_you(a))
-        });
-        agents.count() + marked.count()
+        let agents = self.fleet.agents.keys();
+        agents.filter(|a| self.agent_needs_you(a)).count()
     }
 
-    /// Whether this agent needs you: `fleet::Agent::needs_you` against its seen mark.
+    /// Whether this agent needs you: unread by its read marker (`markers::unread`), or Blocked with this
+    /// block not yet viewed (owner ruling, U2).
     pub fn agent_needs_you(&self, name: &str) -> bool {
         let agent = self.fleet.agents.get(name);
-        agent.is_some_and(|a| needs(&self.prefs.seen, a))
+        agent.is_some_and(|a| needs(a, &self.markers, &self.prefs.blocks))
     }
 
-    /// After a new board: an agent seen for the first time gets its current turn as the baseline (an
-    /// unknown baseline is not a new turn); a block mark lapses once its agent is no longer Blocked, so
-    /// blocking again needs you again (a seen mark's while its agent is on the board, a pending
-    /// file-back's also once it is gone); marks for agents neither on the board nor in a space drop.
-    /// True when the seen marks changed.
+    /// After a new board: a block mark lapses once its agent is no longer Blocked, so blocking again
+    /// needs you again (a mark's while its agent is on the board, a pending file-back's also once it is
+    /// gone); marks for agents neither on the board nor in a space drop. True when the marks changed.
     pub(super) fn reseen(&mut self) -> bool {
-        let (fleet, seen) = (&self.fleet, &mut self.prefs.seen);
-        let before = seen.clone();
-        for a in fleet.agents.values() {
-            if let Some(turn_end) = a.turn_end {
-                let fresh = SeenWire::Turn(turn_end).into();
-                seen.entry(a.name.clone()).or_insert(fresh);
-            }
-        }
+        let (fleet, blocks) = (&self.fleet, &mut self.prefs.blocks);
+        let before = blocks.len();
         let blocked = |name: &str| Some(fleet.agents.get(name)?.status() == Status::Blocked);
-        for (name, mark) in seen.iter_mut() {
-            mark.blocked &= blocked(name).unwrap_or(true);
-        }
+        let spaces = &self.spaces;
+        let member = |name: &str| spaces.iter().any(|s| s.agents().any(|a| a == name));
+        blocks.retain(|name| {
+            let on = fleet.agents.contains_key(name) || member(name);
+            blocked(name).unwrap_or(true) && on
+        });
         for (agent, sending) in &mut self.sends {
             if let Sending::InFlight {
                 file_back: Some(then),
@@ -90,54 +83,42 @@ impl Store {
                 then.blocked &= blocked(agent).unwrap_or(false);
             }
         }
-        let spaces = &self.spaces;
-        let member = |name: &str| spaces.iter().any(|s| s.agents().any(|a| a == name));
-        seen.retain(|name, _| fleet.agents.contains_key(name) || member(name));
-        *seen != before
+        blocks.len() != before
     }
 }
 
-/// `fleet::Agent::needs_you` against `a`'s seen mark.
-fn needs(seen: &BTreeMap<String, Seen>, a: &Agent) -> bool {
-    let seen = seen.get(&a.name);
-    a.needs_you(seen.map(|s| s.turn_end), seen.is_some_and(|s| s.blocked))
+/// Needs-you against the read markers and the viewed blocks.
+fn needs(a: &Agent, read: &BTreeMap<String, Marker>, blocks: &BTreeSet<String>) -> bool {
+    let block = a.status() == Status::Blocked && !blocks.contains(&a.name);
+    block || markers::unread(Some(a), read.get(&a.name))
 }
 
-/// The owner has looked at `name`: its latest turn and its current block are seen. An agent off the
-/// board, or with no turn and no block, gets no mark. True when the mark changed.
-pub(super) fn mark_seen(seen: &mut BTreeMap<String, Seen>, fleet: &Fleet, name: &str) -> bool {
-    looking(fleet, name).is_some_and(|now| acknowledge(seen, fleet, name, now))
+/// The owner has looked at `name`: its current block is viewed. True when the mark changed.
+pub(super) fn view_block(blocks: &mut BTreeSet<String>, fleet: &Fleet, name: &str) -> bool {
+    let blocked = looking(fleet, name).is_some_and(|now| now.blocked);
+    blocked && blocks.insert(name.to_string())
 }
 
-/// What looking at `name` now would mark seen; `None` off the board.
+/// What looking at `name` now would see; `None` off the board.
 pub(super) fn looking(fleet: &Fleet, name: &str) -> Option<Seen> {
     let a = fleet.agents.get(name)?;
     let (turn_end, blocked) = (a.turn_end.unwrap_or(0), a.status() == Status::Blocked);
     Some(Seen { turn_end, blocked })
 }
 
-/// The owner saw `name` as `then` (a send that files it back lands later): turns up to then are seen,
-/// and its block only while it still stands as it was. True when the mark changed.
+/// The owner saw `name` as `then` (a send that files it back lands later): its block is viewed only
+/// while it still stands as it was. True when the mark changed.
 pub(super) fn acknowledge(
-    seen: &mut BTreeMap<String, Seen>,
+    blocks: &mut BTreeSet<String>,
     fleet: &Fleet,
     name: &str,
     then: Seen,
 ) -> bool {
-    let Some(now) = looking(fleet, name) else {
-        return false;
-    };
-    let before = seen.get(name).copied().unwrap_or_default();
-    let mut mark = before;
-    mark.turn_end = mark.turn_end.max(then.turn_end);
-    if now == then {
-        mark.blocked = then.blocked;
+    match looking(fleet, name) {
+        Some(now) if now == then && then.blocked => blocks.insert(name.to_string()),
+        Some(now) if now == then => blocks.remove(name),
+        _ => false,
     }
-    let changed = mark != before;
-    if changed {
-        seen.insert(name.to_string(), mark);
-    }
-    changed
 }
 
 /// What one notification says (U6). The tag routes its click: `agent:<name>` zooms into that agent
@@ -188,11 +169,12 @@ impl Store {
     /// all the same. Until the first live board everything is baseline, and nothing alerts.
     pub(super) fn transitions(&mut self, out: &mut Vec<Effect>) {
         let looking = self.looking_at().map(String::from);
-        let (alerts, seen, fleet) = (&mut self.alerts, &self.prefs.seen, &self.fleet.agents);
+        let (alerts, fleet) = (&mut self.alerts, &self.fleet.agents);
+        let (read, blocks) = (&self.markers, &self.prefs.blocks);
         let (was_quiet, armed) = (alerts.burst.is_empty(), alerts.armed);
         for (name, a) in fleet {
             let (turn, blocked) = (a.turn_end, a.status() == Status::Blocked);
-            let eligible = needs(seen, a);
+            let eligible = needs(a, read, blocks);
             let fresh = Mark {
                 eligible: false,
                 turn,
@@ -219,21 +201,21 @@ impl Store {
         }
     }
 
-    /// Owner ruling (2026-10-01): while the owner watches an agent's tail (frontmost, zoomed on it, its
-    /// transcript following the bottom), what lands is seen as it arrives: a new turn or block neither
-    /// counts nor alerts.
+    /// Owner ruling (2026-10-01): while the owner watches an agent's tail (frontmost, its panel focused,
+    /// its transcript following the bottom), a block that lands is viewed as it arrives; turns are read
+    /// by the dwell (`markers`). A panel beside it is not watched (owner, 2026-10-03).
     pub(super) fn watch(&mut self, out: &mut Vec<Effect>) {
-        let front = self.alerts.front;
-        let open = self.transcript.open.as_ref().filter(|t| t.tail && front);
-        if open.is_some_and(|t| mark_seen(&mut self.prefs.seen, &self.fleet, &t.agent)) {
+        let watched = self.watched().map(String::from);
+        let blocks = &mut self.prefs.blocks;
+        if watched.is_some_and(|a| view_block(blocks, &self.fleet, &a)) {
             out.push(Effect::Persist(Persist::Prefs));
         }
     }
 
-    /// The agent the owner is looking at: zoomed in on it (its transcript is open) with the app
+    /// The agent the owner is looking at: its panel focused (its transcript is open) with the app
     /// frontmost. It is never alerted.
     pub(super) fn looking_at(&self) -> Option<&str> {
-        let open = self.transcript.open.as_ref()?;
+        let open = self.transcript.focused()?;
         self.alerts.front.then_some(open.agent.as_str())
     }
 

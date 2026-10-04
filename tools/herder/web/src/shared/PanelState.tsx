@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react'
-export { failureBanner } from './panelState.ts'
+export { failureBanner } from './panelStateModel.ts'
 
 export function useActivationRefetch(active: boolean, refetch: () => void) {
   const wasActive = useRef(active)

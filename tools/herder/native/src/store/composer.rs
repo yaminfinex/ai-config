@@ -4,6 +4,7 @@
 //! key and a message must never land twice.
 
 use super::attention::{self, Seen};
+use super::markers::Mark;
 use super::{Attribution, Effect, Persist, Store};
 use crate::api::Refusal;
 
@@ -14,6 +15,10 @@ pub enum Step {
     /// `cmd-enter`: send `agent`'s draft. `file_back` (`cmd-shift-enter`): once it lands, mark the agent
     /// seen as it stood when sent and leave the zoom for the lens.
     Send { agent: String, file_back: bool },
+    /// `cmd-enter` in the capture popover (F7): send `text` (a note, as web's `noteTransferText`) on its
+    /// own, the draft untouched (web's quick send). It is saved (`Prefs::quick`) before it goes, as a
+    /// draft is; if it fails, or the app stops before the answer, the text is added to the draft.
+    Quick { agent: String, text: String },
     /// The server's answer, or why it was never asked.
     Sent {
         agent: String,
@@ -48,6 +53,8 @@ pub enum Sending {
     InFlight {
         text: String,
         file_back: Option<Seen>,
+        /// A quick send (`Step::Quick`): its text is not the draft.
+        quick: bool,
     },
     Failed(Failure),
 }
@@ -73,8 +80,8 @@ impl Store {
         if !self.fleet.agents.contains_key(agent) {
             return Err(ReadOnly::OffBoard);
         }
-        let open = self.transcript.open.as_ref();
-        match open.filter(|t| t.agent == agent && t.detail.is_some()) {
+        let open = self.transcript.open.get(agent);
+        match open.filter(|t| t.detail.is_some()) {
             None => Err(ReadOnly::Pending),
             Some(t) if t.retired() => Err(ReadOnly::Retired),
             Some(_) => Ok(()),
@@ -129,27 +136,59 @@ impl Store {
                 let flight = Sending::InFlight {
                     text: text.clone(),
                     file_back,
+                    quick: false,
                 };
                 self.sends.insert(agent.clone(), flight);
                 out.push(Effect::Message { agent, text });
             }
+            Step::Quick { agent, text } => {
+                if self.can_send(&agent).is_err() || self.busy(&agent) || text.trim().is_empty() {
+                    return;
+                }
+                let flight = Sending::InFlight {
+                    text: text.clone(),
+                    file_back: None,
+                    quick: true,
+                };
+                self.sends.insert(agent.clone(), flight);
+                // In the prefs `Effect::Message` saves before it posts (a failed save posts nothing).
+                self.prefs.quick.insert(agent.clone(), text.clone());
+                out.push(Effect::Message { agent, text });
+            }
             Step::Sent { agent, result } => {
-                let Some(Sending::InFlight { text, file_back }) = self.sends.remove(&agent) else {
+                let Some(Sending::InFlight {
+                    text,
+                    file_back,
+                    quick,
+                }) = self.sends.remove(&agent)
+                else {
                     return;
                 };
+                // A quick send is answered: no longer pending. One that did not land is kept in the
+                // draft, as web appends it to the prompt.
+                if quick {
+                    self.prefs.quick.remove(&agent);
+                    if result.is_err() {
+                        keep(&mut self.prefs.drafts, &agent, &text);
+                    }
+                    out.push(Effect::Persist(Persist::Prefs));
+                }
+                let drafts = &mut self.prefs.drafts;
                 match result {
                     Ok(()) => {
-                        if drafts.get(&agent) == Some(&text) {
+                        if !quick && drafts.get(&agent) == Some(&text) {
                             drafts.remove(&agent);
                             out.push(Effect::Persist(Persist::Prefs));
                         }
                         // Filed back: only a send that landed lets the owner leave the agent, and only
                         // what they saw when sending is seen: a turn since still needs them.
                         if let Some(then) = file_back {
-                            let seen = &mut self.prefs.seen;
-                            if attention::acknowledge(seen, &self.fleet, &agent, then) {
+                            let blocks = &mut self.prefs.blocks;
+                            if attention::acknowledge(blocks, &self.fleet, &agent, then) {
                                 out.push(Effect::Persist(Persist::Prefs));
                             }
+                            let read = Mark::Read(vec![agent.clone()], Some(then.turn_end));
+                            self.mark(read, out);
                             out.push(Effect::FiledBack { agent });
                         }
                     }
@@ -163,4 +202,27 @@ impl Store {
             }
         }
     }
+}
+
+impl Store {
+    /// At boot, quick sends the app stopped before hearing back about: each into its agent's draft,
+    /// not sent again (it may have landed).
+    pub(super) fn recover(&mut self, out: &mut Vec<Effect>) {
+        let pending = std::mem::take(&mut self.prefs.quick);
+        for (agent, text) in &pending {
+            keep(&mut self.prefs.drafts, agent, text);
+        }
+        if !pending.is_empty() {
+            out.push(Effect::Persist(Persist::Prefs));
+        }
+    }
+}
+
+/// `text` after `agent`'s draft, a blank line between.
+fn keep(drafts: &mut std::collections::BTreeMap<String, String>, agent: &str, text: &str) {
+    let draft = drafts.entry(agent.to_string()).or_default();
+    *draft = match draft.is_empty() {
+        true => text.to_string(),
+        false => format!("{draft}\n\n{text}"),
+    };
 }

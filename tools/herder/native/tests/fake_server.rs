@@ -1,7 +1,7 @@
 //! The write path and the reconnect, against an in-process fake herder serve on loopback. Nothing here
 //! talks to the real serve: web shares its state, and a bad write would show up in the owner's browser.
 
-use herder_native::api::client::{Client, Page};
+use herder_native::api::client::{self, Client, Page};
 use herder_native::api::sse::Reader;
 use herder_native::api::{StateRow, Wire};
 use herder_native::local::{self, Disk};
@@ -307,7 +307,7 @@ fn a_dropped_stream_reconnects_and_repulls() {
     let repulls: Vec<&String> = log.iter().filter(|l| l.contains("since=6")).collect();
     assert_eq!(
         repulls.len(),
-        6,
+        8,
         "each hello (the first too) re-pulls every namespace from its cursor: {log:?}"
     );
     assert_eq!(store.spaces.len(), 1);
@@ -511,6 +511,79 @@ fn a_message_saves_the_draft_then_posts_once_and_maps_refusals() {
         prefs,
         local::next_seq(),
         ("ok".into(), "hi".into()),
+    );
+    let Event::Compose(C::Sent {
+        result: Err(Failure::NotSaved(_)),
+        ..
+    }) = event
+    else {
+        panic!("{event:?}")
+    };
+    assert!(log.lock().unwrap().is_empty(), "nothing reached the server");
+    std::fs::remove_file(blocked).unwrap();
+}
+
+/// F7: a quick send from the capture popover is in the prefs on disk before its POST (the fake reads
+/// the file as it arrives). The app stopping there, before the answer (the fake hangs up), the next boot
+/// finds it and adds it to the agent's draft, after what was there, without sending it again. A failed
+/// save posts nothing.
+#[test]
+fn a_quick_send_is_saved_before_it_posts_and_a_restart_keeps_it_unsent() {
+    use herder_native::store::Prefs;
+    use herder_native::store::composer::{Failure, Step as C};
+    let text = "from mupu's transcript:\n> the reducer\n\nok".to_string();
+    let mut prefs = Prefs::default();
+    prefs.drafts.insert("mupu".into(), "mine".into());
+    prefs.quick.insert("mupu".into(), text.clone());
+    let bytes = local::encode(&prefs);
+    let (disk, dir) = scratch("quick");
+    let saved = dir.join(local::PREFS);
+    let want = bytes.clone();
+    let (base, log) = serve(move |_, _| {
+        let on_disk = std::fs::read(&saved).ok() == Some(want.clone());
+        Reply::Json(if on_disk { 599 } else { 500 }, "{}".into())
+    });
+    let message = ("mupu".into(), text.clone());
+    let event = save_then_message(
+        &disk,
+        &Client::new(base),
+        &bytes,
+        local::next_seq(),
+        message,
+    );
+    let Event::Compose(C::Sent {
+        result: Err(Failure::Rejected(599, _)),
+        ..
+    }) = event
+    else {
+        panic!("posted before the prefs were saved: {event:?}")
+    };
+    let log = log.lock().unwrap().clone();
+    assert_eq!(log.len(), 1, "posted once: {log:?}");
+    // The fake answered 599 only when the prefs were already on disk; the answer is dropped here, as if
+    // the app had stopped. The next boot:
+    let mut store = Store::default();
+    let effects = store.apply(Event::PrefsLoaded(disk.load_prefs().unwrap()));
+    assert_eq!(store.prefs.drafts["mupu"], format!("mine\n\n{text}"));
+    assert!(store.prefs.quick.is_empty());
+    assert!(
+        !effects.iter().any(|e| matches!(e, Effect::Message { .. })),
+        "{effects:?}"
+    );
+    assert!(effects.contains(&Effect::Persist(herder_native::store::Persist::Prefs)));
+    std::fs::remove_dir_all(dir).unwrap();
+    // The prefs cannot be saved: nothing is posted.
+    let (_, blocked) = scratch("quick-blocked");
+    std::fs::write(&blocked, "a file where the directory should be").unwrap();
+    let (base, log) = serve(|_, _| Reply::Json(200, "{}".into()));
+    let blocked_disk = Disk::at(blocked.join("state"));
+    let message = ("mupu".into(), text);
+    let event = save_then_message(
+        &blocked_disk,
+        &Client::new(base),
+        &bytes,
+        local::next_seq(),
+        message,
     );
     let Event::Compose(C::Sent {
         result: Err(Failure::NotSaved(_)),
@@ -767,4 +840,49 @@ fn a_queued_note_lands_with_the_outbox_while_a_post_is_in_flight() {
     );
     assert!(!store.prefs.drafts.contains_key("mupu"));
     assert!(log.lock().unwrap().iter().all(|l| !l.starts_with("POST")));
+}
+
+/// RM review (lure): a scripted run writes only to a loopback server (the fake serve); its read-only
+/// client posts nothing to any other, state or message, without even connecting.
+#[test]
+fn a_scripted_run_writes_only_to_loopback() {
+    for url in [
+        "http://127.0.0.1:4419",
+        "http://localhost:4400/",
+        "http://[::1]:8080",
+        "http://LOCALHOST",
+    ] {
+        assert!(client::loopback(url), "{url}");
+    }
+    for url in [
+        "http://yamen-superset-f4-med-syd-1:4400",
+        "http://127.0.0.2:4400",
+        "http://localhost.evil:4400",
+        "http://100.64.0.1:4400",
+        "http://user@remote:1/127.0.0.1",
+        r"http://outside.invalid\@localhost/..",
+        "https://localhost:4400",
+        "localhost:4400",
+        "",
+    ] {
+        assert!(!client::loopback(url), "{url}");
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let client = Client::new(format!("http://{}", listener.local_addr().unwrap())).read_only();
+    let row = StateRow {
+        key: "agent".into(),
+        value: json!({"turn": 1, "pos": null, "at": 0, "unread": false, "updated": 1}),
+        updated: 1,
+        write_id: "w".into(),
+        deleted: false,
+    };
+    assert!(client.post_state("read.markers", &[row]).is_err());
+    // RM re-review (lure): the guard reads the host ureq itself would connect to.
+    let tricky = r"http://outside.invalid\@localhost/..";
+    let url = ureq::post(&format!("{tricky}/api/state/read.markers")).request_url();
+    assert_eq!(url.unwrap().host(), "outside.invalid");
+    assert!(client.send_message("agent", "must never send").is_err());
+    let accepted = listener.accept();
+    assert!(matches!(accepted, Err(e) if e.kind() == std::io::ErrorKind::WouldBlock));
 }

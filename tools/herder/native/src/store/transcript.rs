@@ -9,10 +9,13 @@
 //! is tagged `(agent, generation)` and a stale answer is dropped; a `reset` or `rewindow` bumps the
 //! generation, clears the rows and reads the tail again.
 //!
-//! One transcript is live at a time, the zoomed agent's, and none on the lens. Entry wakes coalesce without a timer: one
-//! forward read in flight, and a wake meanwhile asks for one more when it lands.
+//! A transcript is live for each agent panel on screen (DK1: the zoom shows one), and none on the lens;
+//! a panel hidden behind another tab lets its rows go, and reads them again when shown. Only the focused
+//! panel's agent is seen (`attention`). Entry wakes coalesce without a timer: one forward read in flight,
+//! and a wake meanwhile asks for one more when it lands.
 
 use super::condense::{self, Seg};
+use super::markers::Pos;
 use super::{Effect, Fetch, Store, Wake};
 use crate::api::client::Page;
 use crate::api::{AgentDetail, Candidate, Entries, Entry, Kind, Resolved};
@@ -118,9 +121,15 @@ pub struct Read {
 pub enum What {
     Page(Page),
     Detail,
-    /// A mentioned path, its `:line` split off, and whether to scope it to the agent (`agent=`): only
-    /// for a live agent, as the serve rejects names off the roster.
-    Resolve(String, Option<u32>, bool),
+    /// A mentioned path, its `:line` split off, whether to scope it to the agent (`agent=`: only for
+    /// a live agent, as the serve rejects names off the roster), and its number: only the latest
+    /// unanswered one is taken (`Transcript::resolving`).
+    Resolve {
+        query: String,
+        line: Option<u32>,
+        scoped: bool,
+        id: u64,
+    },
 }
 
 /// The request a read makes, for its retries and its notice.
@@ -139,7 +148,7 @@ impl What {
             What::Page(Page::Before { .. }) => Op::Back,
             What::Page(_) => Op::Forward,
             What::Detail => Op::Detail,
-            What::Resolve(..) => Op::Resolve,
+            What::Resolve { .. } => Op::Resolve,
         }
     }
 }
@@ -162,21 +171,30 @@ pub enum Got {
 
 #[derive(Clone, Debug)]
 pub enum Step {
-    /// The zoom closed: drop the transcript and stop streaming its agents.
+    /// The zoom closed: drop the transcripts and stop streaming their agents.
     Hide,
-    /// The viewport neared the first rows: read the page before.
-    Older,
+    /// The agent's viewport neared its first rows: read the page before.
+    Older(String),
     Read(Read, Result<Got, String>),
-    /// A clicked path (`src/x.rs:12`): resolve it, then open it.
-    OpenPath(String),
-    /// Open the agent's working directory.
-    OpenCwd,
-    Dismiss,
+    /// A path clicked in the agent's transcript (`src/x.rs:12`): resolve it, then open it or offer
+    /// the choices.
+    OpenPath {
+        agent: String,
+        mention: String,
+    },
+    /// One of the agent's `choices` picked (`Some(index)`), or none: they close.
+    Choose {
+        agent: String,
+        pick: Option<usize>,
+    },
+    /// Open the git top level of the agent's working directory (resolved as a path).
+    OpenCwd(String),
+    Dismiss(String),
     /// A failed forward or detail read's backoff ran out: read it again.
     Retry(Timer),
     /// The view started (or stopped) following the bottom of `agent`'s rows under `generation`: the
-    /// owner is watching the tail. Taken only while that transcript is still the open one, so an
-    /// observation that outlived a zoom switch or a reset is dropped.
+    /// owner is watching the tail. Taken only while that transcript is still open, so an observation
+    /// that outlived a zoom switch or a reset is dropped.
     Tail {
         agent: String,
         generation: u64,
@@ -203,11 +221,19 @@ pub struct Transcript {
     detail_reading: bool,
     detail_again: bool,
     pub detail: Option<AgentDetail>,
-    /// The view follows the bottom (`Step::Tail`): what lands is seen as it arrives (`attention`).
+    /// The view follows the bottom (`Step::Tail`): what lands is read as it arrives (`markers`).
     pub tail: bool,
+    /// Every entry read in, by offset: its kind and timestamp, for read positions (`end`, `turn_start`).
+    read_in: BTreeMap<u64, (Kind, String)>,
     /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
     /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
     notice: Option<(Op, String)>,
+    /// A clicked path that matched more than one place, until one is picked (`Step::Choose`).
+    pub choices: Option<Choices>,
+    /// Resolves asked so far, and the one whose answer is awaited: an older one's answer, or one
+    /// arriving after another, is dropped (web's `AbortController` guard).
+    resolves: u64,
+    resolving: Option<u64>,
     /// Each op's own retries, so a sibling's success leaves them alone.
     forward_retry: Backoff,
     detail_retry: Backoff,
@@ -224,41 +250,79 @@ struct Backoff {
     timer: Option<u64>,
 }
 
-/// The open transcript, the stream's `agents=` set, and the counter behind every generation.
+/// What a clicked path could mean, as web's file popover: the first `CHOICES` candidates (the serve's
+/// ranking), how many matched, and the mention's line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choices {
+    pub query: String,
+    pub line: Option<u32>,
+    pub candidates: Vec<Candidate>,
+    pub total: usize,
+}
+
+pub const CHOICES: usize = 8;
+
+/// The open transcripts by agent, one per panel on screen; the focused panel's agent; the stream's
+/// `agents=` set; and the counter behind every generation, so a generation names one transcript.
 #[derive(Clone, Debug, Default)]
 pub struct Live {
-    pub open: Option<Transcript>,
+    pub open: BTreeMap<String, Transcript>,
+    pub focused: Option<String>,
     subscribed: Vec<String>,
     generations: u64,
 }
 
+impl Live {
+    /// The focused panel's transcript.
+    pub fn focused(&self) -> Option<&Transcript> {
+        self.open.get(self.focused.as_ref()?)
+    }
+
+    fn generation(&mut self, generation: u64) -> Option<&mut Transcript> {
+        self.open.values_mut().find(|t| t.generation == generation)
+    }
+}
+
 impl Store {
-    /// The zoom shows `agent` in `space` (`Move::View`): subscribe the stream to the space's agents (and
-    /// a previewed outsider), and open the agent's transcript unless it is the open one. A zoom with no
-    /// agent (an empty space) shows none: as zoomed out.
-    pub(super) fn show(&mut self, space: &str, agent: Option<&str>, out: &mut Vec<Effect>) {
+    /// The zoom shows `agent` in `space`, focused, and the panels `beside` it (`Move::View`): subscribe
+    /// the stream to the space's agents (and any outsider shown), open each shown agent's transcript
+    /// unless it is open, and let the others go. A zoom with no agent (an empty space) shows none: as
+    /// zoomed out.
+    pub(super) fn show(
+        &mut self,
+        space: &str,
+        agent: Option<&str>,
+        beside: &[String],
+        out: &mut Vec<Effect>,
+    ) {
         let Some(agent) = agent else {
             return self.transcript_step(Step::Hide, out);
         };
+        let shown: Vec<&str> = beside.iter().map(String::as_str).chain([agent]).collect();
         let space = self.spaces.iter().filter(|s| s.id == space);
         let mut agents: Vec<String> = space.flat_map(|s| s.agents().map(String::from)).collect();
-        if !agents.iter().any(|a| a == agent) {
-            agents.push(agent.to_string());
+        for a in &shown {
+            if !agents.iter().any(|m| m == a) {
+                agents.push(a.to_string());
+            }
         }
         agents.sort();
         self.subscribe(agents, out);
         let live = &mut self.transcript;
-        // Another agent, or one whose tail never arrived (and is not being read): open afresh.
-        let stale = |t: &Transcript| t.agent != agent || !t.loaded() && !t.reading;
-        if live.open.as_ref().is_none_or(stale) {
-            live.generations += 1;
-            let agent = agent.to_string();
-            let mut t = Transcript {
-                agent,
-                ..Transcript::default()
-            };
-            t.reset(live.generations, out);
-            live.open = Some(t);
+        live.focused = Some(agent.to_string());
+        live.open.retain(|a, _| shown.contains(&a.as_str()));
+        for agent in shown {
+            // One whose tail never arrived (and is not being read) opens afresh.
+            let stale = |t: &Transcript| !t.loaded() && !t.reading;
+            if live.open.get(agent).is_none_or(stale) {
+                live.generations += 1;
+                let mut t = Transcript {
+                    agent: agent.to_string(),
+                    ..Transcript::default()
+                };
+                t.reset(live.generations, out);
+                live.open.insert(agent.to_string(), t);
+            }
         }
     }
 
@@ -275,46 +339,71 @@ impl Store {
     }
 
     pub(super) fn transcript_step(&mut self, step: Step, out: &mut Vec<Effect>) {
-        if let Step::Hide = step {
-            self.transcript.open = None;
-            return self.subscribe(Vec::new(), out);
-        }
         let (live, agents) = (&mut self.transcript, &self.fleet.agents);
-        let Some(t) = live.open.as_mut() else { return };
+        let (open, generations) = (&mut live.open, &mut live.generations);
         match step {
-            Step::Hide => {}
-            Step::Older => t.older(out),
-            Step::Read(read, _) if read.agent != t.agent || read.generation != t.generation => {}
-            Step::Read(_, Ok(Got::Page(e))) if e.reset.is_some() => {
-                live.generations += 1;
-                t.reset(live.generations, out);
+            Step::Hide => {
+                (live.open, live.focused) = Default::default();
+                self.subscribe(Vec::new(), out);
             }
-            Step::Read(read, result) => t.answer(read.what, result, out),
-            Step::OpenPath(mention) => {
-                let (path, line) = split_line(&mention);
-                let scoped = agents.contains_key(&t.agent) && !t.retired();
-                t.read(What::Resolve(path, line, scoped), out);
+            Step::Older(agent) => open.get_mut(&agent).into_iter().for_each(|t| t.older(out)),
+            Step::Read(read, result) => {
+                let t = open.get_mut(&read.agent);
+                let Some(t) = t.filter(|t| t.generation == read.generation) else {
+                    return;
+                };
+                match result {
+                    Ok(Got::Page(e)) if e.reset.is_some() => {
+                        *generations += 1;
+                        t.reset(*generations, out);
+                    }
+                    result => t.answer(read.what, result, out),
+                }
             }
-            Step::OpenCwd => {
-                let cwd = t.detail.as_ref().and_then(|d| d.cwd.clone());
-                out.extend(cwd.map(|path| Effect::OpenFile { path, line: None }));
+            Step::OpenPath { agent, mention } => {
+                if let Some(t) = open.get_mut(&agent) {
+                    let (path, line) = split_line(&mention);
+                    let scoped = agents.contains_key(&t.agent) && !t.retired();
+                    t.resolve(path, line, scoped, out);
+                }
             }
-            Step::Dismiss => t.notice = None,
-            Step::Retry(timer) if timer.generation == t.generation => t.retry(timer, out),
-            Step::Retry(_) => {}
+            Step::Choose { agent, pick } => {
+                let choices = open.get_mut(&agent).and_then(|t| t.choices.take());
+                let chosen = choices.and_then(|c| Some(opening(c.candidates.get(pick?)?, c.line)));
+                out.extend(chosen);
+            }
+            // Absolute, so the serve answers with its git top level (`directOpen`), as a folder.
+            Step::OpenCwd(agent) => {
+                if let Some(t) = open.get_mut(&agent)
+                    && let Some(cwd) = t.detail.as_ref().and_then(|d| d.cwd.clone())
+                {
+                    t.resolve(cwd, None, false, out);
+                }
+            }
+            Step::Dismiss(agent) => open
+                .get_mut(&agent)
+                .into_iter()
+                .for_each(|t| t.notice = None),
+            Step::Retry(timer) => {
+                if let Some(t) = live.generation(timer.generation) {
+                    t.retry(timer, out);
+                }
+            }
             Step::Tail {
                 agent,
                 generation,
                 tail,
-            } if agent == t.agent && generation == t.generation => t.tail = tail,
-            Step::Tail { .. } => {}
+            } => {
+                let t = open.get_mut(&agent).filter(|t| t.generation == generation);
+                t.into_iter().for_each(|t| t.tail = tail);
+            }
         }
     }
 
     /// An `entry:` wake for `agent`, or (`None`) a new `hello`: read forward, and the detail again.
     pub(super) fn transcript_wake(&mut self, agent: Option<&str>, out: &mut Vec<Effect>) {
-        let open = self.transcript.open.as_mut();
-        if let Some(t) = open.filter(|t| agent.is_none_or(|a| a == t.agent)) {
+        let open = self.transcript.open.values_mut();
+        for t in open.filter(|t| agent.is_none_or(|a| a == t.agent)) {
             if agent.is_none() {
                 t.notice = None;
                 (t.forward_retry, t.detail_retry) = Default::default();
@@ -324,18 +413,17 @@ impl Store {
         }
     }
 
-    /// A `message` frame: a message addressed to the open agent may now be queued for it.
+    /// A `message` frame: a message addressed to an open agent may now be queued for it.
     pub(super) fn transcript_message(&mut self, to: &[String], out: &mut Vec<Effect>) {
-        let open = self.transcript.open.as_mut();
-        if let Some(t) = open.filter(|t| to.contains(&t.agent)) {
-            t.refresh(out);
-        }
+        let open = self.transcript.open.values_mut();
+        open.filter(|t| to.contains(&t.agent))
+            .for_each(|t| t.refresh(out));
     }
 
     /// The agent's session or position reset: throw the rows away and read the tail again.
     pub(super) fn transcript_rewindow(&mut self, agent: &str, out: &mut Vec<Effect>) {
         let live = &mut self.transcript;
-        if let Some(t) = live.open.as_mut().filter(|t| t.agent == agent) {
+        if let Some(t) = live.open.get_mut(agent) {
             live.generations += 1;
             t.reset(live.generations, out);
         }
@@ -351,6 +439,49 @@ impl Transcript {
     /// The first page has arrived.
     pub fn loaded(&self) -> bool {
         self.session.is_some()
+    }
+
+    /// Where reading reaches: the newest entry read in (web's `latestPosition`).
+    pub fn end(&self) -> Option<Pos> {
+        let (offset, (_, ts)) = self.read_in.last_key_value()?;
+        self.pos(*offset, ts)
+    }
+
+    /// Where reading resumes after a mark unread, over every entry read in (web's `lastTurnStart` and
+    /// `positionBefore`): just before the latest turn's opener (what the owner or another agent sent; a
+    /// delivery stub and the delivery after it open the turn together), else before the newest entry;
+    /// one byte short of an entry with none read in above it. `None` with nothing read in.
+    pub fn turn_start(&self) -> Option<Pos> {
+        use Kind::*;
+        let opens = |k: &Kind| {
+            matches!(
+                k,
+                HumanPrompt | HcomDeliveryStub | HcomDelivery | TaskNotification
+            )
+        };
+        let above = |offset: u64| self.read_in.range(..offset).next_back();
+        let last = *self.read_in.last_key_value()?.0;
+        let mut start = (self.read_in.iter().rev())
+            .find(|(_, (k, _))| opens(k))
+            .map_or(last, |(o, _)| *o);
+        let stub = above(start).filter(|(_, (k, _))| *k == HcomDeliveryStub);
+        if let Some((o, _)) = stub.filter(|_| self.read_in[&start].0 == HcomDelivery) {
+            start = *o;
+        }
+        match above(start) {
+            Some((o, (_, ts))) => self.pos(*o, ts),
+            None => self.pos(start.saturating_sub(1), ""),
+        }
+    }
+
+    fn pos(&self, offset: u64, ts: &str) -> Option<Pos> {
+        let session = self.session.clone()?;
+        let ts = ts.to_string();
+        Some(Pos {
+            session,
+            offset,
+            ts,
+        })
     }
 
     pub fn paging(&self) -> bool {
@@ -369,6 +500,20 @@ impl Transcript {
     pub fn retired(&self) -> bool {
         let detail = self.detail.as_ref();
         detail.is_some_and(|d| d.bus_status == "retired")
+    }
+
+    /// Asks where `query` lives, closing any choices; this one's answer is the only one taken.
+    fn resolve(&mut self, query: String, line: Option<u32>, scoped: bool, out: &mut Vec<Effect>) {
+        self.resolves += 1;
+        (self.choices, self.resolving) = (None, Some(self.resolves));
+        let id = self.resolves;
+        let what = What::Resolve {
+            query,
+            line,
+            scoped,
+            id,
+        };
+        self.read(what, out);
     }
 
     fn read(&self, what: What, out: &mut Vec<Effect>) {
@@ -444,17 +589,35 @@ impl Transcript {
                     self.refresh(out);
                 }
             }
-            (What::Resolve(query, line, _), Ok(Got::Resolved(r))) => match pick(&r) {
-                // VS Code opens a remote path as a folder unless it ends in `:<line>`.
-                Some((path, file)) => {
-                    let line = if file { line.or(Some(1)) } else { None };
-                    out.push(Effect::OpenFile { path, line });
+            // Superseded by a later click, or answered already.
+            (What::Resolve { id, .. }, _) if self.resolving != Some(id) => {}
+            (What::Resolve { query, line, .. }, Ok(Got::Resolved(r))) => {
+                let cwd = self.detail.as_ref().and_then(|d| d.cwd.as_deref());
+                self.resolving = None;
+                match pick(&r, &query, cwd) {
+                    Pick::Open(c) => out.push(opening(c, line)),
+                    Pick::Choose(all) => {
+                        let (total, candidates) = (all.len(), all.into_iter().take(CHOICES));
+                        let candidates = candidates.cloned().collect();
+                        self.choices = Some(Choices {
+                            query,
+                            line,
+                            candidates,
+                            total,
+                        });
+                    }
+                    Pick::Nothing => {
+                        let partly = r.roots.iter().any(|root| root.status != "complete");
+                        let partly = if partly {
+                            " (some roots not fully searched)"
+                        } else {
+                            ""
+                        };
+                        let text = format!("no file matches {query}{partly}");
+                        self.notice = Some((Op::Resolve, text));
+                    }
                 }
-                None => {
-                    let text = format!("no single file matches {query}");
-                    self.notice = Some((Op::Resolve, text));
-                }
-            },
+            }
             (what, result) => {
                 // A failed forward or detail read is owed again (with any wake queued behind it)
                 // after its op's backoff; a failed page back waits until the notice clears.
@@ -463,7 +626,7 @@ impl Transcript {
                     Op::Forward => (self.reading, self.again) = (false, true),
                     Op::Back => self.back = false,
                     Op::Detail => (self.detail_reading, self.detail_again) = (false, true),
-                    Op::Resolve => {}
+                    Op::Resolve => self.resolving = None,
                 }
                 let (generation, token) = (self.generation, self.timers + 1);
                 let backoff = self.backoff(op);
@@ -529,7 +692,11 @@ impl Transcript {
         }
         let back = matches!(page, Page::Before { .. });
         self.succeeded(if back { Op::Back } else { Op::Forward });
-        e.entries.into_iter().for_each(|entry| self.ingest(entry));
+        for entry in e.entries {
+            let read = (entry.kind, entry.timestamp.clone());
+            self.read_in.insert(entry.byte_offset, read);
+            self.ingest(entry);
+        }
         // A window of only hidden entries shows nothing: keep reading back until rows or the start.
         if self.items.is_empty() && !matches!(page, Page::From { .. }) {
             self.older(out);
@@ -578,17 +745,67 @@ impl Transcript {
     }
 }
 
-/// What to open, and whether it is a file, as web's auto-open: every root answered completely and there
-/// is exactly one exact or suffix candidate. Anything else is a notice (Rung 1 has no chooser).
-fn pick(r: &Resolved) -> Option<(String, bool)> {
+/// What a resolved path does.
+#[derive(Debug, PartialEq)]
+enum Pick<'a> {
+    Open(&'a Candidate),
+    Choose(Vec<&'a Candidate>),
+    Nothing,
+}
+
+/// Web's bar for a fuzzy top result: this score per character of the query (`isConfidentResolution`).
+const FUZZY_SCORE_PER_CHAR: i64 = 20;
+
+/// As web's popover (`isConfidentResolution`, `autoOpenCandidate`), plus one rule of ours: a weak fuzzy
+/// top result drops every candidate; the serve's first strong one (exact or suffix) opens when it is
+/// under the agent's own root (the git top level holding its `cwd`); so does the only strong one when
+/// every root answered completely. Anything else left is a choice; nothing left, a notice. The serve
+/// ranks the agent's canonical root first within a tier, so the two agree unless the cwd runs through
+/// a symlink: then the lexical root here is not the serve's. Where the serve's agent root holds a match
+/// it ranks first and the choices are offered; where only the lexical parent, also a live root, holds
+/// one, that repo opens (an accepted limit: the serve does not say which root is the agent's).
+fn pick<'a>(r: &'a Resolved, query: &str, cwd: Option<&str>) -> Pick<'a> {
+    let Some(top) = r.candidates.first() else {
+        return Pick::Nothing;
+    };
+    let bar = FUZZY_SCORE_PER_CHAR * query.chars().count() as i64;
+    if top.tier == "fuzzy" && top.score < bar {
+        return Pick::Nothing;
+    }
+    let within = |root: &str| {
+        let (root, cwd) = (root.trim_end_matches('/'), cwd.unwrap_or_default());
+        cwd == root
+            || cwd
+                .strip_prefix(root)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    let roots = r.roots.iter().map(|o| o.root.as_str());
+    let home = roots
+        .filter(|root| within(root))
+        .max_by_key(|root| root.len());
+    let strong = || {
+        let strong = |c: &&Candidate| c.tier == "exact" || c.tier == "suffix";
+        r.candidates.iter().filter(strong)
+    };
+    let mine = strong().next().filter(|c| Some(c.root.as_str()) == home);
     let complete = r.roots.iter().all(|root| root.status == "complete");
-    let strong = |c: &&Candidate| c.tier == "exact" || c.tier == "suffix";
-    let mut strong = r.candidates.iter().filter(strong);
-    let c = strong
+    let only = strong()
         .next()
-        .filter(|_| strong.next().is_none() && complete)?;
-    let path = format!("{}/{}", c.root.trim_end_matches('/'), c.path);
-    Some((path, c.kind == "file"))
+        .filter(|_| complete && strong().nth(1).is_none());
+    match mine.or(only) {
+        Some(c) => Pick::Open(c),
+        None => Pick::Choose(r.candidates.iter().collect()),
+    }
+}
+
+/// A file opens in its root as the project, at the mention's line; a folder opens its root alone.
+fn opening(c: &Candidate, line: Option<u32>) -> Effect {
+    let file = (c.kind == "file").then(|| c.path.clone());
+    Effect::OpenFile {
+        root: c.root.clone(),
+        line: line.filter(|_| file.is_some()),
+        file,
+    }
 }
 
 /// `src/x.rs:12` or `src/x.rs:12:4` → the path and its line.

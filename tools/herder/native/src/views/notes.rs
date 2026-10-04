@@ -1,33 +1,34 @@
-//! The notes strip (U5, F6): the zoomed agent's notes, right above the composer: a header (the count,
-//! "Send all", add, and capture of the transcript selection), the list (`views::notes_list`, web's
+//! The notes strip (U5, F6): an agent panel's notes, right above its composer: a header (the count,
+//! "Send all" and add), the list (`views::notes_list`, web's
 //! keyboard list), the editor, the last action's confirmation and why anything was not saved. More than a
 //! few notes collapse to their count until the list is entered. Notes are added, captured and edited in
 //! one small editor (`Notes > Input`, so none of the composer's chords fire there), in the card of the
 //! note it edits, and handed into the composer draft, the chosen ones or all. The records and their sync
-//! are `store::notes`; the editor, the last transcript selection and the confirmation are view state here.
+//! are `store::notes`; the editor and the confirmation are view state here. A transcript selection is
+//! noted where it was made (`views::capture`, F7).
 //!
-//! Keys (ARCHITECTURE §4). In the zoom: `a` add (the transcript selection, if any, as its quote), `c`
-//! capture the transcript selection, `p` hand every note to the composer; the list's are in
+//! Keys (ARCHITECTURE §4). In the zoom: `a` add, `p` hand every note to the composer; the list's are in
 //! `notes_list`. In the editor: `enter` or `cmd-enter` save, `shift-enter` a new line, `escape` cancel.
 //! `alt-enter` in the composer queues its draft as a note (`views::composer`).
 
 use crate::store::notes::{Note, Stamp, Step};
 use crate::store::sync::{Hold, Ns};
 use crate::store::{Event, Store};
-use crate::views::lens::{Focus, Ui};
+use crate::views::lens::{Focus, State, Ui};
 use crate::views::notes_list;
+use crate::views::panel::Panel;
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Host, dim};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 #[derive(Clone, Debug, PartialEq, Action)]
 #[action(namespace = notes, no_json)]
 pub enum Notes {
     Add,
-    Capture,
     /// `p` or "Send all": every note into the composer.
     HandOff,
     Save,
@@ -50,19 +51,15 @@ pub struct View {
     pub(super) editing: Option<Editing>,
     /// Text for the editor at the next render.
     load: Option<String>,
-    /// The transcript selection when the pointer last let go, trimmed, with the agent it was made on;
-    /// what `c` captures and `a` quotes. Gone once the zoom leaves that agent.
-    pub(super) selection: Option<(String, String)>,
     /// Why the editor's text was not saved.
     problem: Option<&'static str>,
     pub(super) open: bool,
     pub(super) list: notes_list::State,
-    /// The agent the strip (and its list) is on.
-    agent: Option<String>,
-    /// The last action's confirmation, numbered; it fades `SAID_FOR` later (`fade_later`).
+    /// The last action's confirmation, numbered across panels; it fades `SAID_FOR` later (`fade_later`).
     pub(super) said: Option<(u64, String)>,
-    says: u64,
 }
+
+static SAYS: AtomicU64 = AtomicU64::new(0);
 
 pub(super) struct Editing {
     pub(super) agent: String,
@@ -74,30 +71,32 @@ pub(super) struct Editing {
 }
 
 impl View {
-    pub fn new<H: Host>(window: &mut Window, cx: &mut Context<H>) -> Self {
+    /// `agent`'s strip.
+    pub fn new<H: Host>(agent: &str, window: &mut Window, cx: &mut Context<H>) -> Self {
         let editor = cx.new(|cx| {
             let s = TextareaState::new(window, cx).auto_grow(1, 6);
             s.placeholder("A note on this agent…")
         });
-        cx.subscribe(&editor, |host: &mut H, state, event: &InputEvent, cx| {
-            if let InputEvent::Change = event {
-                host.parts().1.notes.text = state.read(cx).value().to_string();
-            }
-        })
+        let agent = agent.to_string();
+        cx.subscribe(
+            &editor,
+            move |host: &mut H, state, event: &InputEvent, cx| {
+                let strip = host.parts().1.panels.get_mut(&agent);
+                if let (InputEvent::Change, Some(p)) = (event, strip) {
+                    p.notes.text = state.read(cx).value().to_string();
+                }
+            },
+        )
         .detach();
-        notes_list::disarm_on_keys(cx);
         View {
             editor,
             text: String::new(),
             editing: None,
             load: None,
-            selection: None,
             problem: None,
             open: false,
             list: notes_list::State::new(cx),
-            agent: None,
             said: None,
-            says: 0,
         }
     }
 
@@ -105,18 +104,15 @@ impl View {
         self.editor.read(cx).focus_handle(cx)
     }
 
-    /// The pointer let go on `agent`'s transcript with `text` selected (blank: none). Whether it changed.
-    pub fn selected(&mut self, agent: Option<String>, text: &str) -> bool {
-        let text = Some(text.trim()).filter(|t| !t.is_empty());
-        let next = agent.zip(text.map(str::to_string));
-        let changed = self.selection != next;
-        self.selection = next;
-        changed
+    pub(super) fn say(&mut self, what: impl Into<String>) {
+        let seq = SAYS.fetch_add(1, Ordering::Relaxed) + 1;
+        self.said = Some((seq, what.into()));
     }
 
-    pub(super) fn say(&mut self, what: impl Into<String>) {
-        self.says += 1;
-        self.said = Some((self.says, what.into()));
+    /// Its panel is hidden: the editor, the list's selection and the confirmation go.
+    pub(super) fn hide(&mut self) {
+        (self.editing, self.problem, self.said) = (None, None, None);
+        self.list.clear();
     }
 
     /// The strip's confirmation line: an armed delete's prompt, else the last action's.
@@ -147,62 +143,55 @@ pub(super) fn count(n: usize) -> String {
     format!("{n} note{}", if n == 1 { "" } else { "s" })
 }
 
-/// Drop what belonged to another agent (the editor, the selections), before a frame is drawn; load the
-/// editor's text. Focus left in a list that is no longer drawn goes back to the box (or the zoom).
+/// The zoomed agent's strip.
+pub(super) fn strip(ui: &mut State) -> Option<&mut View> {
+    ui.panel_mut().map(|p| &mut p.notes)
+}
+
+/// Before a frame is drawn, in each shown panel: the list keeps only what is listed, and the editor's
+/// text loads. Focus left in a list that is no longer drawn goes back to the box (or the panel).
 pub fn sync(ui: &mut Ui, store: &Store, window: &mut Window, cx: &mut App) {
-    let agent = ui.zoomed_agent().map(String::from);
-    let ids = agent.as_deref().map_or_else(Vec::new, |a| ids(store, a));
-    let notes = &mut ui.notes;
-    if notes.agent != agent {
-        (notes.agent, notes.said) = (agent.clone(), None);
-        notes.list.clear();
+    for (agent, p) in ui.panels.iter_mut().filter(|(_, p)| p.shown) {
+        sync_one(store, agent, p, window, cx);
     }
+}
+
+fn sync_one(store: &Store, agent: &str, p: &mut Panel, window: &mut Window, cx: &mut App) {
+    let (ids, writable) = (ids(store, agent), store.can_send(agent).is_ok());
+    let notes = &mut p.notes;
     let focused = notes_list::sync(&mut notes.list, &ids, window);
-    let other = |a: &String| Some(a) != agent.as_ref();
-    if notes.selection.as_ref().is_some_and(|(a, _)| other(a)) {
-        notes.selection = None;
-    }
-    let mut leave = false;
-    if notes.editing.as_ref().is_some_and(|e| other(&e.agent)) {
-        notes.editing = None;
-        notes.problem = None;
-        leave = notes.focus_handle(cx).is_focused(window);
-    }
     let shown = !ids.is_empty() && (ids.len() <= SHOWN || notes.open);
     if focused && !shown {
-        let writable = agent.is_some_and(|a| store.can_send(&a).is_ok());
         match writable {
-            true => window.focus(&ui.composer.focus_handle(cx), cx),
-            false => leave = true,
+            true => window.focus(&p.composer.focus_handle(cx), cx),
+            false => window.focus(&p.focus, cx),
         }
     }
-    if leave {
-        window.focus(&ui.zoom_focus, cx);
-    }
-    if let Some(text) = ui.notes.load.take() {
-        ui.notes.text = text.clone();
-        ui.notes
+    let notes = &mut p.notes;
+    if let Some(text) = notes.load.take() {
+        notes.text = text.clone();
+        notes
             .editor
             .update(cx, |s, cx| s.set_value(text, window, cx));
     }
 }
 
+/// The number of the zoomed agent's last confirmation, for `fade_later`.
+pub(super) fn said_seq(ui: &State) -> Option<u64> {
+    ui.panel()?.notes.said.as_ref().map(|s| s.0)
+}
+
 /// A confirmation said since `before` (the previous one's number) fades `SAID_FOR` later.
 pub(super) fn fade_later<H: Host>(ui: &Ui, before: Option<u64>, cx: &mut Context<H>) {
-    let Some(seq) = ui
-        .notes
-        .said
-        .as_ref()
-        .map(|s| s.0)
-        .filter(|s| Some(*s) != before)
-    else {
+    let Some(seq) = said_seq(ui).filter(|s| Some(*s) != before) else {
         return;
     };
     cx.spawn(async move |host, cx| {
         cx.background_executor().timer(SAID_FOR).await;
         host.update(cx, |host, cx| {
-            let notes = &mut host.parts().1.notes;
-            if notes.said.take_if(|s| s.0 == seq).is_some() {
+            let panels = host.parts().1.panels.values_mut();
+            let mut said = panels.map(|p| &mut p.notes.said);
+            if said.any(|s| s.take_if(|s| s.0 == seq).is_some()) {
                 cx.notify();
             }
         })
@@ -214,7 +203,9 @@ pub(super) fn fade_later<H: Host>(ui: &Ui, before: Option<u64>, cx: &mut Context
 fn begin(ui: &mut Ui, agent: &str, note: Option<Note>, quote: Option<String>, back: Focus) {
     let text = note.as_ref().map_or(String::new(), |n| n.text.clone());
     let agent = agent.to_string();
-    let notes = &mut ui.notes;
+    let Some(notes) = strip(ui) else {
+        return;
+    };
     notes.editing = Some(Editing {
         agent,
         note,
@@ -236,9 +227,12 @@ pub(super) fn edit(store: &Store, ui: &mut Ui, agent: &str, id: &str) -> Vec<Eve
 }
 
 fn close(ui: &mut Ui) {
-    let back = ui.notes.editing.take().map_or(Focus::Out, |e| e.back);
-    ui.notes.problem = None;
-    ui.focus = Some(back);
+    let notes = strip(ui);
+    let editing = notes.and_then(|v| {
+        v.problem = None;
+        v.editing.take()
+    });
+    ui.focus = Some(editing.map_or(Focus::Out, |e| e.back));
 }
 
 /// `agent`'s notes `ids` into its composer, which takes focus; refused while the box cannot take them.
@@ -246,12 +240,14 @@ pub(super) fn hand_off(store: &Store, ui: &mut Ui, agent: String, ids: Vec<Strin
     if ids.is_empty() {
         return Vec::new();
     }
+    let Some(notes) = strip(ui) else {
+        return Vec::new();
+    };
     if store.hand_off_blocked(&agent) {
-        ui.notes.say("The composer cannot take notes now.");
+        notes.say("The composer cannot take notes now.");
         return Vec::new();
     }
-    let moved = format!("Moved {} to {agent}’s composer.", count(ids.len()));
-    ui.notes.say(moved);
+    notes.say(format!("Moved {} to {agent}’s composer.", count(ids.len())));
     ui.focus = Some(Focus::Box);
     let stamp = stamp();
     vec![Event::Note(Step::HandOff { agent, ids, stamp })]
@@ -261,16 +257,11 @@ pub fn act(store: &Store, ui: &mut Ui, key: &Notes) -> Vec<Event> {
     let Some(agent) = ui.zoomed_agent().map(String::from) else {
         return Vec::new();
     };
-    let notes = &mut ui.notes;
+    let Some(notes) = strip(ui) else {
+        return Vec::new();
+    };
     match key {
-        Notes::Add => {
-            let quote = notes.selection.take_if(|(a, _)| *a == agent).map(|s| s.1);
-            begin(ui, &agent, None, quote, Focus::Out);
-        }
-        Notes::Capture => match notes.selection.take_if(|(a, _)| *a == agent) {
-            Some((_, quote)) => begin(ui, &agent, None, Some(quote), Focus::Out),
-            None => return Vec::new(),
-        },
+        Notes::Add => begin(ui, &agent, None, None, Focus::Out),
         Notes::HandOff => return hand_off(store, ui, agent.clone(), ids(store, &agent)),
         Notes::Save => {
             let Some(editing) = &notes.editing else {
@@ -359,8 +350,7 @@ pub(super) fn editor(v: &View, quote: Option<&str>, t: TypeScale) -> Div {
     el.children(quote).child(input).child(hint)
 }
 
-/// The strip for `agent`: nothing while it has no notes, no editor open, no selection to capture and
-/// nothing to say.
+/// The strip for `agent`: nothing while it has no notes, no editor open and nothing to say.
 pub fn render<H: Host>(
     store: &Store,
     ui: &Ui,
@@ -368,14 +358,13 @@ pub fn render<H: Host>(
     t: TypeScale,
     cx: &mut Context<H>,
 ) -> Option<Div> {
-    let v = &ui.notes;
+    let v = &ui.panels.get(agent)?.notes;
     let notes: Vec<_> = store.notes_of(agent).collect();
     let editing = v.editing.as_ref().filter(|e| e.agent == agent);
-    let selection = v.selection.as_ref().filter(|(a, _)| a == agent);
     let said = v.said();
     let problems = problems(store, v, agent);
     let quiet = said.is_none() && problems.is_empty();
-    if notes.is_empty() && editing.is_none() && selection.is_none() && quiet {
+    if notes.is_empty() && editing.is_none() && quiet {
         return None;
     }
     let (n, open) = (notes.len(), notes.len() <= SHOWN || v.open);
@@ -397,12 +386,7 @@ pub fn render<H: Host>(
             true => h.child(dim("Send all unavailable")),
             false => h.child(chip("sendall", "Send all  p".into(), Notes::HandOff, t)),
         })
-        .child(chip("add", "+ note  a".into(), Notes::Add, t))
-        .children(selection.map(|(_, s)| {
-            chip("capture", format!("❝ {}  c", line(s)), Notes::Capture, t)
-                .max_w(t.px(420.))
-                .truncate()
-        }));
+        .child(chip("add", "+ note  a".into(), Notes::Add, t));
     let list = notes_list::render(store, ui, agent, editing, open, t, cx);
     let new = editing.filter(|e| e.note.is_none());
     let said = said.map(|s| dim(s).text_size(t.small).text_color(rgb(pal::INK)));

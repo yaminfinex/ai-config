@@ -2,11 +2,14 @@
 //!
 //! Spaces come from `spaces` and members from `spaces.members` (server rows shared with web,
 //! tombstones dropped, ordered by `order` then id as web does; members in dock order). Local only
-//! (`Prefs`): each space's row, visible agent and unread mark. Seen marks are `attention`'s.
+//! (`Prefs`): each space's row and visible agent. Read marks are `markers`'.
 
 use crate::api::{Member, MembersValue, SpaceValue, StateRow};
-use crate::store::attention::mark_seen;
+use crate::store::attention::view_block;
 use crate::store::fleet::Fleet;
+use crate::store::markers::Mark;
+use crate::store::notes::Stamp;
+use crate::store::sync::{Ns, Step as SyncStep};
 use crate::store::{Effect, Persist, Prefs, Store};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -26,6 +29,28 @@ impl Space {
             Member::Agent { name } => Some(name.as_str()),
             Member::File { .. } => None,
         })
+    }
+}
+
+/// The version `layouts.json` is written as; a file of another is ignored and each dock opens on its
+/// members. The kit's own `load` never checks its version, so this is ours.
+pub const LAYOUTS: u32 = 1;
+
+/// Each space's dock as the owner left it, local to this Mac (`layouts.json`): the kit's dump of the
+/// dock's tree (splits, groups, tabs by agent), reconciled with the members when rebuilt. Maximize is
+/// not kept.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Layouts {
+    pub version: u32,
+    pub spaces: BTreeMap<String, serde_json::Value>,
+}
+
+impl Default for Layouts {
+    fn default() -> Self {
+        Layouts {
+            version: LAYOUTS,
+            spaces: BTreeMap::new(),
+        }
     }
 }
 
@@ -81,20 +106,36 @@ pub fn derive(
 /// An owner move on the lens. Spaces are named by id.
 #[derive(Clone, Debug)]
 pub enum Move {
-    /// Zoomed into a space, looking at `agent`: the space's unread mark clears, the agent is seen, and
-    /// the zoom opens its transcript and streams the space (`transcript::show`).
+    /// Zoomed into a space, looking at `agent` (the focused panel) with the panels `beside` it on screen:
+    /// the agent's block is viewed (not those beside it; reading it takes the dwell, `markers`), and the
+    /// zoom opens their transcripts and streams the space (`transcript::show`).
     View {
         space: String,
         agent: Option<String>,
+        beside: Vec<String>,
     },
-    /// `m`: every agent in the space is seen, and its unread mark clears.
+    /// `m`: every unread agent in the space is marked read, and its block viewed.
     Read(String),
-    /// `u`: the space needs you (bright, sticky) until the next zoom-in.
+    /// `u`: every agent in the space on the board is marked unread, until left and come back to.
     Unread(String),
+    /// `alt-u` on the focused agent: marked read if unread, else unread (web's toggle).
+    Toggle(String),
     /// Put a space (by id) in a lens row.
     SetRow { space: String, row: Row },
     /// Show the space's (by id) next agent on its card.
     CycleVisible(String),
+    /// A preview tab pinned (DK2): the agent joins the space, last (a `spaces.members` write).
+    Pin {
+        space: String,
+        agent: String,
+        stamp: Stamp,
+    },
+    /// A pinned tab closed: the agent leaves the space.
+    Unpin {
+        space: String,
+        agent: String,
+        stamp: Stamp,
+    },
 }
 
 /// The lens: spaces in rows, the agent each card shows, and where `n` goes next.
@@ -103,26 +144,95 @@ impl Store {
         let (fleet, prefs) = (&self.fleet, &mut self.prefs);
         let space = |id: &str| self.spaces.iter().find(|s| s.id == id);
         let changed = match m {
-            Move::View { space, agent } => {
-                let seen = agent
-                    .as_ref()
-                    .is_some_and(|a| mark_seen(&mut prefs.seen, fleet, a));
-                let changed = prefs.unread.remove(&space) | seen;
-                self.show(&space, agent.as_deref(), out);
-                changed
+            Move::Pin {
+                space,
+                agent,
+                stamp,
+            } => {
+                let joins = |m: &mut Vec<Member>| {
+                    let member = agent_member(&agent);
+                    if !m.contains(&member) {
+                        m.push(member);
+                    }
+                };
+                return self.members_edit(&space, stamp, joins, out);
+            }
+            Move::Unpin {
+                space,
+                agent,
+                stamp,
+            } => {
+                return self.members_edit(
+                    &space,
+                    stamp,
+                    |m| m.retain(|m| *m != agent_member(&agent)),
+                    out,
+                );
+            }
+            Move::View {
+                space,
+                agent,
+                beside,
+            } => {
+                let blocks = &mut prefs.blocks;
+                let viewed = agent.as_ref().is_some_and(|a| view_block(blocks, fleet, a));
+                self.show(&space, agent.as_deref(), &beside, out);
+                viewed
             }
             Move::Read(id) => {
-                let agents = space(&id).into_iter().flat_map(Space::agents);
-                let seen = agents.fold(false, |c, a| mark_seen(&mut prefs.seen, fleet, a) | c);
-                prefs.unread.remove(&id) | seen
+                let agents: Vec<String> =
+                    space(&id).map_or(Vec::new(), |s| live(s, fleet).map(String::from).collect());
+                let viewed = agents
+                    .iter()
+                    .fold(false, |c, a| view_block(&mut prefs.blocks, fleet, a) | c);
+                self.mark(Mark::Read(agents, None), out);
+                viewed
             }
-            Move::Unread(id) => space(&id).is_some() && prefs.unread.insert(id),
+            Move::Unread(id) => {
+                let agents: Vec<String> =
+                    space(&id).map_or(Vec::new(), |s| live(s, fleet).map(String::from).collect());
+                return self.mark(Mark::Unread(agents), out);
+            }
+            Move::Toggle(agent) => return self.mark(Mark::Toggle(agent), out),
             Move::SetRow { space, row } => prefs.rows.insert(space, row) != Some(row),
             Move::CycleVisible(id) => space(&id).is_some_and(|s| cycle_visible(s, fleet, prefs)),
         };
         if changed {
             out.push(Effect::Persist(Persist::Prefs));
         }
+    }
+
+    /// Write `space`'s members as `edit` leaves them, files and all (web's `{members, updated}` row),
+    /// if that changes them.
+    fn members_edit(
+        &mut self,
+        space: &str,
+        stamp: Stamp,
+        edit: impl FnOnce(&mut Vec<Member>),
+        out: &mut Vec<Effect>,
+    ) {
+        let Some(s) = self.spaces.iter().find(|s| s.id == space) else {
+            return;
+        };
+        let mut members = s.members.clone();
+        edit(&mut members);
+        if members == s.members {
+            return;
+        }
+        let previous = self.sync[&Ns::Members]
+            .rows
+            .get(space)
+            .map_or(0, |r| r.updated);
+        let updated = stamp.now.max(previous + 1);
+        let value = serde_json::json!({ "members": members, "updated": updated });
+        let row = StateRow {
+            key: space.to_string(),
+            value,
+            updated,
+            write_id: stamp.write,
+            deleted: false,
+        };
+        self.sync_step(Ns::Members, SyncStep::Edit(vec![row]), out);
     }
 
     /// The spaces in lens order: focus, watch, background, each row in the store's order.
@@ -206,4 +316,9 @@ fn cycle_visible(space: &Space, fleet: &Fleet, prefs: &mut Prefs) -> bool {
         .unwrap_or(current);
     let before = prefs.visible.insert(space.id.clone(), next.to_string());
     before.as_deref() != Some(next)
+}
+
+fn agent_member(name: &str) -> Member {
+    let name = name.to_string();
+    Member::Agent { name }
 }

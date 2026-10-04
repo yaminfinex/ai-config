@@ -2,20 +2,22 @@
 //! background). A bright card with an unread count needs you; a dim one does not; a working agent's
 //! dot pulses. The keys (ARCHITECTURE §4) move the selection, place spaces and zoom in (`space`).
 //!
-//! `Ui` (selection, zoom, help, card text and size) is view state, not domain state: it is not
-//! persisted and never goes through the store. Rows, the visible agent, seen marks and unread spaces
-//! are the store's, changed by dispatching `Move`s.
+//! `Ui` (selection, zoom, help, card text and size, the zoom's agent panels) is view state, not domain
+//! state: it is not persisted and never goes through the store. Rows, the visible agent, seen marks and
+//! unread spaces are the store's, changed by dispatching `Move`s.
 
 use crate::store::fleet::Agent;
 use crate::store::spaces::{Move, Row, Space, Stop};
 use crate::store::{Conn, Event, Store};
+use crate::views::dock::{Ask, Dock};
+use crate::views::panel::Panel;
 use crate::views::space::{self, Anim, Zoom};
 use crate::views::theme::{TypeScale, pal};
 use crate::views::{Dots, Host, dim, glyph, help, label, on, pill, working};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
@@ -65,15 +67,16 @@ pub enum Focus {
     Box,
     Editor,
     List,
+    /// The capture chip or popover (F7).
+    Capture,
     Out,
 }
 
 /// The lens's focus handles around its view state.
 pub struct Ui {
     home: FocusHandle,
+    /// The zoom's own, held while it shows no agent (an empty space).
     pub(super) zoom_focus: FocusHandle,
-    pub(super) composer: crate::views::composer::View,
-    pub(super) notes: crate::views::notes::View,
     state: State,
 }
 
@@ -100,7 +103,14 @@ pub struct State {
     /// Each card's last laid-out bounds, where the zoom morphs from and back to.
     pub(super) cards: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
     pub dots: Dots,
-    pub(super) transcript: crate::views::transcript::View,
+    /// The zoomed space's agent panels by agent (DK1): the zoom's agent's is shown and focused, the
+    /// others hidden (`dock::sync`).
+    pub(super) panels: BTreeMap<String, Panel>,
+    /// The zoomed space's dock (DK2), and what actions asked of it since it was last synced.
+    pub(super) dock: Option<Dock>,
+    pub(super) asks: Vec<Ask>,
+    /// Herder web, where a transcript's mermaid diagram links to.
+    pub(super) web: String,
 }
 
 impl Deref for Ui {
@@ -117,22 +127,23 @@ impl DerefMut for Ui {
 }
 
 impl Ui {
-    pub fn new<H: Host>(window: &mut Window, cx: &mut Context<H>) -> Self {
+    pub fn new<H: Host>(cx: &mut Context<H>) -> Self {
         let (home, zoom_focus) = (cx.focus_handle(), cx.focus_handle());
+        crate::views::notes_list::disarm_on_keys(cx);
         Ui {
             home,
             zoom_focus,
-            composer: crate::views::composer::View::new(window, cx),
-            notes: crate::views::notes::View::new(window, cx),
             state: State::default(),
         }
     }
 
-    /// The element that must hold focus: the zoom shell while zoomed, else the lens.
+    /// The element that must hold focus: the zoomed agent's panel (or the zoom, with none) while
+    /// zoomed, else the lens.
     pub fn focus_target(&self) -> &FocusHandle {
-        match self.zoom {
-            Some(_) => &self.zoom_focus,
-            None => &self.home,
+        match (&self.zoom, self.panel()) {
+            (Some(_), Some(panel)) => &panel.focus,
+            (Some(_), None) => &self.zoom_focus,
+            (None, _) => &self.home,
         }
     }
 }
@@ -148,9 +159,19 @@ impl State {
         self.anim.take_if(|a| a.seq() == seq);
     }
 
-    /// The agent zoomed in on, if any.
+    /// The agent zoomed in on, if any: its panel is the focused one.
     pub fn zoomed_agent(&self) -> Option<&str> {
         self.zoom.as_ref()?.agent.as_deref()
+    }
+
+    /// The zoomed agent's panel.
+    pub(super) fn panel(&self) -> Option<&Panel> {
+        self.panels.get(self.zoomed_agent()?)
+    }
+
+    pub(super) fn panel_mut(&mut self) -> Option<&mut Panel> {
+        let agent = self.zoom.as_ref()?.agent.as_ref()?;
+        self.panels.get_mut(agent)
     }
 
     pub fn selected<'a>(&self, store: &'a Store) -> Option<&'a Space> {

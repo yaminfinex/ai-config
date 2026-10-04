@@ -17,14 +17,14 @@
 //! (`io::save_then_land`), a queued note by that same outbox save, before its posts. The REST reads
 //! and those saves run in `io`.
 
-use crate::api::client::{Client, base_url};
+use crate::api::client::{self, Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
 use crate::views::transcript as transcript_view;
 use crate::views::{
-    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, composer, lens, markdown, notes,
-    notes_list, probe, space, theme,
+    Frame, Host, Quit, TextBigger, TextReset, TextSmaller, capture, composer, dock, lens, markdown,
+    notes, notes_list, paths, probe, space, theme,
 };
 use crate::{harness, platform_mac};
 use futures::StreamExt as _;
@@ -43,6 +43,9 @@ pub const APP_NAME: &str = "herder native";
 const APP_ID: &str = "dev.herder.native";
 /// A burst of changes (a held ⌘+, a run of fleet frames) becomes one write of the latest state.
 const PREFS_COALESCE: Duration = Duration::from_millis(150);
+/// Dock edits (a drag, a divider, tab clicks): the first opens a fixed window, and the latest layout is
+/// written when it ends (not a debounce that restarts on each edit).
+const LAYOUTS_COALESCE: Duration = Duration::from_millis(250);
 const SNAPSHOT_COALESCE: Duration = Duration::from_secs(1);
 
 pub struct Shell {
@@ -63,6 +66,9 @@ impl Shell {
         let (mut store, disk) = (Store::default(), Disk::home());
         if let Some(prefs) = disk.load_prefs() {
             store.apply(Event::PrefsLoaded(prefs));
+        }
+        if let Some(layouts) = disk.load_layouts() {
+            store.apply(Event::LayoutsLoaded(layouts));
         }
         // Local state first, synchronously: nothing live has started yet, so nothing can be overwritten.
         if let Some(snapshot) = disk.load_snapshot() {
@@ -100,12 +106,12 @@ impl Shell {
             })
             .detach();
         }
-        let mut ui = lens::Ui::new(window, cx);
+        let mut ui = lens::Ui::new(cx);
         transcript_view::set_web(&mut ui, &base_url());
         Shell {
             store,
             ui,
-            client: Client::new(base_url()),
+            client: client(),
             disk: Arc::new(disk),
             tx,
             stream: None,
@@ -143,6 +149,8 @@ impl Host for Shell {
             }
         );
         let scale = self.store.prefs.text_scale;
+        // What the store writes on its own (read markers) is stamped with the event's time.
+        self.store.clock = crate::views::notes::stamp();
         let effects = transcript_view::reduce(&mut self.store, &self.ui, event);
         if self.store.prefs.text_scale != scale {
             theme::apply(self.store.prefs.text_scale, cx);
@@ -201,10 +209,11 @@ impl Shell {
                     actions: Vec::new(),
                 }),
                 Effect::Badge(n) => platform_mac::badge(n),
-                Effect::OpenFile { path, line } => {
-                    match markdown::vscode_url(&self.store.prefs.vscode_host, &path, line) {
-                        Some(url) => platform_mac::open(&url, cx),
-                        None => eprintln!("open: no VS Code URL for {path}"),
+                Effect::OpenFile { root, file, line } => {
+                    let host = &self.store.prefs.vscode_host;
+                    match markdown::vscode(host, &root, file.as_deref(), line) {
+                        Some((calls, url)) => platform_mac::vscode(calls, &url, cx),
+                        None => eprintln!("open: cannot open {root} in VS Code on {host}"),
                     }
                 }
             }
@@ -267,6 +276,7 @@ impl Shell {
     fn bytes(&self, file: Persist) -> (&'static str, Vec<u8>, u64) {
         let (name, bytes) = match file {
             Persist::Prefs => (local::PREFS, local::encode(&self.store.prefs)),
+            Persist::Layouts => (local::LAYOUTS, local::encode(&self.store.layouts)),
             Persist::Outbox => (local::OUTBOX, local::encode(&self.store.outbox())),
             Persist::Snapshot => (local::SNAPSHOT, local::encode(&self.store.snapshot())),
         };
@@ -281,6 +291,7 @@ impl Shell {
         }
         let delay = match file {
             Persist::Prefs => PREFS_COALESCE,
+            Persist::Layouts => LAYOUTS_COALESCE,
             _ => SNAPSHOT_COALESCE,
         };
         cx.spawn(async move |this, cx| {
@@ -311,8 +322,16 @@ impl Render for Shell {
             window.on_next_frame(move |_, _| harness::metric(format!("first paint ({from})")));
         }
         harness::RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let events = dock::sync(&mut self.ui, &self.store, window, cx);
+        if !events.is_empty() {
+            cx.defer_in(window, |s, _, cx| {
+                events.into_iter().for_each(|e| s.dispatch(e, cx))
+            });
+        }
         composer::sync(&mut self.ui, &self.store, window, cx);
         notes::sync(&mut self.ui, &self.store, window, cx);
+        capture::sync(&mut self.ui, window, cx);
+        paths::sync(&mut self.ui, &self.store, window, cx);
         let t = theme::type_scale(self.store.prefs.text_scale);
         let lens = lens::render(&self.store, &self.ui, t, window.viewport_size(), cx);
         div()
@@ -410,14 +429,7 @@ impl harness::Probe for Entity<Shell> {
 
     fn action(&self, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>> {
         let s = self.read(cx);
-        probe::action(&s.store, &s.ui, op, arg)
-    }
-
-    fn select(&self, text: &str, cx: &mut App) {
-        self.update(cx, |s, cx| {
-            probe::select(&mut s.ui, text);
-            cx.notify()
-        })
+        probe::action(&s.store, &s.ui, op, arg, cx)
     }
 
     fn find(&self, text: &str, open: bool, cx: &mut App) -> bool {
@@ -439,4 +451,17 @@ fn summon(tag: &str, cx: &mut App) {
         window.activate_window();
         window.dispatch_action(Box::new(space::Summon(tag.to_string().into())), cx);
     });
+}
+
+/// The server's client; in a scripted run read-only unless the server is on loopback (the fake serve):
+/// automation never writes to the live serve (`coldstart` reads it), whatever `HERDER_URL` says.
+fn client() -> Client {
+    let (base, scripted) = (base_url(), platform_mac::quiet());
+    let read_only = scripted && !client::loopback(&base);
+    let client = Client::new(base);
+    if read_only {
+        client.read_only()
+    } else {
+        client
+    }
 }

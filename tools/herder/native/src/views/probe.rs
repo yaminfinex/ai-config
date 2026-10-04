@@ -5,38 +5,58 @@ use crate::store::Store;
 use crate::store::condense::Row;
 use crate::store::condense::Seg;
 use crate::store::transcript::Item;
-use crate::views::composer;
+use crate::views::capture::Capture;
 use crate::views::lens::{self, Pick, State, Ui};
 use crate::views::notes::Notes;
 use crate::views::notes_list::Card;
+use crate::views::paths::Paths;
 use crate::views::space::{Summon, Tab, Zoomed, zoomed};
-use crate::views::transcript::{Fold, OpenLink, Scroll, long};
+use crate::views::transcript::{self, Fold, OpenLink, Scroll, long};
+use crate::views::{composer, dock};
 use gpui_kit::*;
 
-/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `list`, `said`, `header`, `rows`, `parts`, `jump` and `start`; `None` for any other
+/// What the app shows, for `expect`, `box` and `has`, `says`, `notes`, `capture`, `list`, `said`, `header`, `rows`, `parts`, `paths`, `jump` and `start`; `None` for any other
 /// step, and for `start` until the open transcript holds every entry back to its start.
 pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Option<String> {
-    let agent = ui.zoomed_agent();
-    let focused = |handle: FocusHandle| match handle.is_focused(window) {
+    let (agent, panel) = (ui.zoomed_agent(), ui.panel());
+    let focused = |handle: Option<FocusHandle>| match handle.is_some_and(|h| h.is_focused(window)) {
         true => "focused",
         false => "idle",
     };
+    let transcript = panel.map(|p| &p.transcript);
+    let items = store.transcript.focused().map(|t| &t.items);
     Some(match op {
         "expect" => shown(store, ui),
-        // The composer's focus and text.
+        "dock" => dock::describe(store, ui, cx),
+        // The zoomed agent's composer's focus and text.
         "box" | "has" => {
-            let text = ui.composer.state.read(cx).value();
-            format!("{}:{text}", focused(ui.composer.focus_handle(cx)))
+            let state = panel.map(|p| &p.composer.state);
+            let text = state.map_or(String::new(), |s| s.read(cx).value().to_string());
+            let focus = focused(panel.map(|p| p.composer.focus_handle(cx)));
+            format!("{focus}:{text}")
         }
+        // The capture chip or popover (F7): `none`, `chip:<focus>:<quote>`, `open:<focus>:<text>`.
+        "capture" => match panel.and_then(|p| Some((p, p.capture.draft.as_ref()?))) {
+            None => "none".into(),
+            Some((p, d)) => {
+                let focus = focused(Some(p.capture.focus_handle(cx)));
+                match d.open {
+                    false => format!("chip:{focus}:{}", d.quote),
+                    true => format!("open:{focus}:{}", p.capture.text),
+                }
+            }
+        },
         // The line under the composer.
         "says" => agent.map_or_else(String::new, |a| composer::status(store, a).0),
         // The zoomed agent's note count, then the editor: `closed`, or its focus and text.
         "notes" => {
             let n = store.notes_of(agent.unwrap_or("")).count();
-            let focus = focused(ui.notes.focus_handle(cx));
-            match &ui.notes.editing {
+            match panel.filter(|p| p.notes.editing.is_some()) {
                 None => format!("{n}:closed"),
-                Some(_) => format!("{n}:{focus}:{}", ui.notes.text),
+                Some(p) => {
+                    let focus = focused(Some(p.notes.focus_handle(cx)));
+                    format!("{n}:{focus}:{}", p.notes.text)
+                }
             }
         }
         // The notes list's focus, its selection (indexes, newest-updated first) and cursor: `focused:0,1@1`.
@@ -46,20 +66,19 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
                 .map(|n| n.id.as_str())
                 .collect();
             let at = |id: &String| ids.iter().position(|i| i == id);
-            let picked = &ui.notes.list.picked;
+            let list = panel.map(|p| &p.notes.list);
+            let picked = list.map(|l| &l.picked);
             let selected = ids.iter().enumerate();
-            let selected = selected.filter(|(_, id)| picked.selected.contains(**id));
+            let selected =
+                selected.filter(|(_, id)| picked.is_some_and(|p| p.selected.contains(**id)));
             let selected: Vec<String> = selected.map(|(i, _)| i.to_string()).collect();
-            let cursor = picked.cursor.as_ref().and_then(at);
+            let cursor = picked.and_then(|p| p.cursor.as_ref()).and_then(at);
             let cursor = cursor.map_or("-".to_string(), |c| c.to_string());
-            format!(
-                "{}:{}@{cursor}",
-                focused(ui.notes.list.focus.clone()),
-                selected.join(",")
-            )
+            let focus = focused(list.map(|l| l.focus.clone()));
+            format!("{focus}:{}@{cursor}", selected.join(","))
         }
         // The strip's confirmation line.
-        "said" => ui.notes.said().unwrap_or_default(),
+        "said" => panel.and_then(|p| p.notes.said()).unwrap_or_default(),
         "header" => lens::header_line(store),
         // The selected card's space, by name.
         "selected" => ui
@@ -67,28 +86,38 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
             .map_or_else(String::new, |s| s.name.clone()),
         // The zoomed transcript's list rows: how many, how many are runs, and how many runs are open.
         "rows" => {
-            let (rows, runs, open) = ui.transcript.census();
+            let (rows, runs, open) = transcript.map_or((0, 0, 0), |v| v.census());
             format!("{rows} rows, {runs} runs, {open} open")
         }
         // How many answers' status chips and internal notes are open.
         "parts" => {
-            let items = store.transcript.open.as_ref().map(|t| &t.items);
-            let (status, notes) = items.map_or((0, 0), |i| ui.transcript.parts(i));
+            let parts = transcript.zip(items).map(|(v, i)| v.parts(i));
+            let (status, notes) = parts.unwrap_or_default();
             format!("{status} status, {notes} notes")
         }
         // How many tools are open, each showing its input, and how many show an output too.
         "tools" => {
-            let items = store.transcript.open.as_ref().map(|t| &t.items);
-            let (open, output) = items.map_or((0, 0), |i| ui.transcript.tools(i));
+            let tools = transcript.zip(items).map(|(v, i)| v.tools(i));
+            let (open, output) = tools.unwrap_or_default();
             format!("{open} open, {output} with output")
         }
+        // A clicked path's choices (G3): `none`, or `<focus>:<count>@<cursor>`.
+        "paths" => match agent.and_then(|a| store.transcript.open.get(a)?.choices.as_ref()) {
+            None => "none".into(),
+            Some(c) => {
+                let v = panel.map(|p| &p.paths);
+                let focus = focused(v.map(|v| v.focus.clone()));
+                let cursor = v.map_or(0, |v| v.cursor);
+                format!("{focus}:{}@{cursor}", c.candidates.len())
+            }
+        },
         // Whether jump-to-bottom shows.
-        "jump" => match ui.transcript.jumps() {
+        "jump" => match transcript.is_some_and(|v| v.jumps()) {
             true => "shown".into(),
             false => "hidden".into(),
         },
         "start" => {
-            let t = store.transcript.open.as_ref().filter(|t| t.at_start())?;
+            let t = store.transcript.focused().filter(|t| t.at_start())?;
             format!("{}: start reached, {} rows", t.agent, t.items.len())
         }
         _ => return None,
@@ -98,15 +127,19 @@ pub fn ask(store: &Store, ui: &Ui, op: &str, window: &Window, cx: &App) -> Optio
 /// What a click dispatches: `link:<url>` on a transcript link, `summon:<tag>` on a notification,
 /// `click:<capture|sendall|add|note:i[:cmd|:shift]|edit:i|delete:i>` on the notes strip (`i` the zoomed
 /// agent's note, newest-updated first; `note` a click on its card, with ⌘ or ⇧ held; `edit` a double-click), and on the lens and the zoom `click:card:i` (`card2:i` a double-click; `i` the card in lens
-/// order), `click:tab:i` (the zoom's tab, from the left), `click:crumb` (`lens ›`), `click:jump`
+/// order), `click:tab:i` / `click:close:i` / `click:pin:i` (a click on the dock's tab `i`, group by group from
+/// the left; its ×; a double-click on it), `click:max` (the focused group's □), `click:path:i` (a clicked path's candidate), `click:crumb` (`lens ›`), `click:jump`
 /// (jump-to-bottom, while it shows), `click:status` / `click:internal` (the last standalone answer's
 /// status chip that opens, or internal note) and `click:member` / `click:failed` (the first tool, or failed tool, in an open run); `None` where
 /// there is no such thing to click.
-pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Action>> {
+pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str, cx: &App) -> Option<Box<dyn Action>> {
     let notes = |what: Notes| Some(Box::new(what) as Box<dyn Action>);
     let card = |what: Card| Some(Box::new(what) as Box<dyn Action>);
     match op {
-        "link" => return Some(Box::new(OpenLink(arg.to_string().into()))),
+        "link" | "beside" => {
+            let link = OpenLink(arg.to_string().into(), op == "beside");
+            return Some(Box::new(link));
+        }
         "summon" => return Some(Box::new(Summon(arg.to_string().into()))),
         "click" => {}
         _ => return None,
@@ -122,19 +155,28 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
                 zoom: what == "card2",
             }));
         }
-        ("tab", Some(zoom)) => {
-            let mut tabs: Vec<&str> = zoomed(store, zoom)
-                .into_iter()
-                .flat_map(|s| s.agents())
-                .collect();
-            tabs.extend(zoom.agent.as_deref().filter(|a| !tabs.contains(a)));
-            return Some(Box::new(Tab(tabs.get(nth(i)?)?.to_string().into())));
+        ("tab" | "close" | "pin", Some(_)) => {
+            let tab: SharedString = dock::tab_names(ui, cx).get(nth(i)?)?.clone().into();
+            return Some(match what {
+                "tab" => Box::new(Tab(tab)),
+                "close" => Box::new(dock::Close(Some(tab))),
+                _ => Box::new(dock::Pin(tab)),
+            });
+        }
+        ("max", Some(_)) => return Some(Box::new(dock::Maximize)),
+        // A clicked path's candidate `i` (G3).
+        ("path", Some(_)) => {
+            let choices = store.transcript.focused()?.choices.as_ref()?;
+            let i = nth(i).filter(|&i| i < choices.candidates.len())?;
+            return Some(Box::new(Paths::Choose(i)));
         }
         ("crumb", Some(_)) => return Some(Box::new(Zoomed::Out)),
-        ("jump", Some(_)) if ui.transcript.jumps() => return Some(Box::new(Scroll::Bottom)),
+        ("jump", Some(_)) if ui.panel().is_some_and(|p| p.transcript.jumps()) => {
+            return Some(Box::new(Scroll::Bottom));
+        }
         // The last answer's status chip that a click opens, or its internal note.
         ("status" | "internal", Some(_)) => {
-            let items = &store.transcript.open.as_ref()?.items;
+            let items = &store.transcript.focused()?.items;
             let part = |seg: &Seg| match seg {
                 Seg::Status(s) => what == "status" && long(s),
                 Seg::Internal(_) => what == "internal",
@@ -152,13 +194,13 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
         }
         // The first tool in an open run, or the first that failed.
         ("member" | "failed", Some(_)) => {
-            let items = &store.transcript.open.as_ref()?.items;
-            let key = ui.transcript.first_tool(items, what == "failed")?;
+            let items = &store.transcript.focused()?.items;
+            let key = ui.panel()?.transcript.first_tool(items, what == "failed")?;
             return Some(Box::new(Fold(key, 0)));
         }
         (
-            "card" | "card2" | "tab" | "crumb" | "jump" | "status" | "internal" | "member"
-            | "failed",
+            "card" | "card2" | "tab" | "close" | "pin" | "max" | "path" | "crumb" | "jump"
+            | "status" | "internal" | "member" | "failed",
             _,
         ) => {
             return None;
@@ -171,9 +213,10 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
         Some(SharedString::from(note.id.clone()))
     };
     match (what, i) {
+        // The capture chip, a click on which saves the quote.
         ("capture", _) => {
-            ui.notes.selection.as_ref().filter(|(a, _)| a == agent)?;
-            notes(Notes::Capture)
+            let chip = ui.panel()?.capture.draft.as_ref().filter(|d| !d.open);
+            chip.map(|_| Capture::Save.boxed_clone())
         }
         ("sendall", _) => {
             let shown = note("0").is_some() && !store.hand_off_blocked(agent);
@@ -194,20 +237,17 @@ pub fn action(store: &Store, ui: &Ui, op: &str, arg: &str) -> Option<Box<dyn Act
     }
 }
 
-/// Stand in for a pointer selection of `text` in the zoomed transcript (the harness cannot drag).
-pub fn select(ui: &mut Ui, text: &str) {
-    let agent = ui.zoomed_agent().map(String::from);
-    ui.notes.selected(agent, text);
-}
-
 /// Scroll the zoomed transcript so the first row with `text` in an item (as debug-printed) is at the
 /// top, or the member holding it when that row is an open run; with `open`, also open the first run
 /// from that row on (A3's side-by-side shots).
 pub fn find(store: &Store, ui: &Ui, text: &str, open: bool) -> bool {
-    let Some(tr) = store.transcript.open.as_ref() else {
+    let (Some(tr), Some(view)) = (
+        store.transcript.focused(),
+        ui.panel().map(|p| &p.transcript),
+    ) else {
         return false;
     };
-    let rows = ui.transcript.rows.borrow();
+    let rows = view.rows.borrow();
     let items = |r: &Row| tr.items.range(r.first()..=r.last());
     let holds = |r: &Row| items(r).any(|(_, item)| format!("{item:?}").contains(text));
     let Some(ix) = rows.2.iter().position(holds) else {
@@ -221,17 +261,17 @@ pub fn find(store: &Store, ui: &Ui, text: &str, open: bool) -> bool {
             Row::One(_) => None,
         });
     if let Some((run, at)) = run.filter(|_| open) {
-        ui.transcript.toggle(run, at);
+        view.toggle(run, at);
     }
     let member = items(&rows.2[ix]).find(|(_, item)| format!("{item:?}").contains(text));
     if let (Row::Run(..), Some((&key, _))) = (rows.2[ix], member) {
-        return ui.transcript.reveal(key) || scroll_to(ui, ix);
+        return view.reveal(key) || scroll_to(view, ix);
     }
-    scroll_to(ui, ix)
+    scroll_to(view, ix)
 }
 
-fn scroll_to(ui: &Ui, ix: usize) -> bool {
-    ui.transcript.list.scroll_to(ListOffset {
+fn scroll_to(view: &transcript::View, ix: usize) -> bool {
+    view.list.scroll_to(ListOffset {
         item_ix: ix,
         offset_in_item: px(0.),
     });

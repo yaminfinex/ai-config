@@ -3,9 +3,10 @@
 
 use crate::api::Entries;
 use crate::store::spaces::{Move, Row, Space, Stop};
-use crate::store::tests::{board, bump, fleet_frame, frame, loaded, space_of};
+use crate::store::tests::{board, bump, dwell, fleet_frame, frame, loaded, space_of};
 use crate::store::transcript::{Got, Step, What};
 use crate::store::{Effect, Event, Fetch, Store};
+use crate::views::dock::Ask;
 use crate::views::lens::{self, Nav, State};
 use crate::views::space::{self, Zoomed};
 use crate::views::transcript::{self, Scroll};
@@ -32,37 +33,40 @@ fn zoomed(ui: &State) -> Option<(&str, Option<&str>)> {
     zoom.map(|z| (z.space.as_str(), z.agent.as_deref()))
 }
 
-/// The `View` moves among `events`.
-fn viewed(events: Vec<Event>) -> Vec<(String, Option<String>)> {
+/// What the store is told after an action: a `View` move it returned (a summon of the zoom it is
+/// in), else the zoom it leaves, which the dock tells the store (`dock::sync`).
+fn viewed(ui: &State, events: Vec<Event>) -> Vec<(String, Option<String>)> {
     let views = events.into_iter().filter_map(|e| match e {
-        Event::Lens(Move::View { space, agent }) => Some((space, agent)),
+        Event::Lens(Move::View { space, agent, .. }) => Some((space, agent)),
         _ => None,
     });
-    views.collect()
+    let views: Vec<_> = views.collect();
+    match (views.is_empty(), ui.zoom.as_ref()) {
+        (true, Some(z)) => vec![(z.space.clone(), z.agent.clone())],
+        _ => views,
+    }
 }
 
 #[test]
-fn zooming_in_views_the_agent_needing_you_and_tabs_view_the_next() {
+fn zooming_in_views_the_agent_needing_you_and_tab_asks_the_dock() {
     let store = store();
     let herder = space_of(&store, "orch-lega").clone();
     let mut ui = State::default();
     let events = space::zoom_into(&store, &mut ui, &herder, None);
-    assert_eq!(viewed(events), [view(&herder, "orch-lega")]);
+    assert_eq!(viewed(&ui, events), [view(&herder, "orch-lega")]);
     assert_eq!(zoomed(&ui), Some((herder.id.as_str(), Some("orch-lega"))));
     assert!(
         ui.anim.as_ref().is_some_and(|a| a.morphs()),
         "enter morphs from the card"
     );
 
-    assert_eq!(
-        viewed(space::act(&store, &mut ui, Zoomed::Agent(1))),
-        [view(&herder, "conductor-line")]
-    );
-    assert_eq!(
-        viewed(space::act(&store, &mut ui, Zoomed::Agent(1))),
-        [view(&herder, "orch-lega")],
-        "wraps"
-    );
+    // `tab` is the focused group's next tab, which the dock knows (`dock::sync`).
+    assert!(space::act(&store, &mut ui, Zoomed::Agent(1)).is_empty());
+    assert_eq!(ui.asks, [Ask::Step(1)]);
+    assert_eq!(zoomed(&ui), Some((herder.id.as_str(), Some("orch-lega"))));
+    // `alt-u` toggles the zoomed agent read or unread (RM).
+    let toggled = space::act(&store, &mut ui, Zoomed::Read);
+    assert!(matches!(&toggled[..], [Event::Lens(Move::Toggle(a))] if a == "orch-lega"));
 
     let hide = |events: Vec<Event>| matches!(events.as_slice(), [Event::Transcript(_)]);
     assert!(
@@ -96,10 +100,7 @@ fn n_and_brackets_move_between_spaces_and_swipe_when_zoomed() {
     };
     let events = lens::next_needing(&store, &mut ui, true);
     assert_eq!(zoomed(&ui).map(|z| z.0), Some(next.id.as_str()));
-    assert!(matches!(
-        events.as_slice(),
-        [Event::Lens(Move::View { .. })]
-    ));
+    assert_eq!(viewed(&ui, events).len(), 1);
     assert!(
         ui.anim.as_ref().is_some_and(|a| !a.morphs()),
         "a swipe inside the zoom"
@@ -144,11 +145,11 @@ fn n_reaches_an_agent_in_no_space_after_the_spaces() {
     );
     ui.select(&order[1]);
     let events = lens::act(&store, &mut ui, Nav::NextNeeding(true));
-    assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+    assert_eq!(viewed(&ui, events), [(String::new(), Some(alone.into()))]);
     assert_eq!(zoomed(&ui), Some(("", Some(alone))));
     // Zoomed, `n` goes on round: the first space.
     let events = lens::next_needing(&store, &mut ui, false);
-    assert_eq!(viewed(events).len(), 1);
+    assert_eq!(viewed(&ui, events).len(), 1);
     assert_eq!(zoomed(&ui).map(|z| z.0), Some(order[0].as_str()));
 }
 
@@ -159,17 +160,8 @@ fn membership_changing_while_zoomed() {
     let mut ui = State::default();
     space::zoom_into(&store, &mut ui, &herder, None);
 
-    // The zoomed agent leaves the space: tab goes to the first agent still in it.
+    // The space goes: any zoom key morphs back to the lens.
     let at = store.spaces.iter().position(|s| s.id == herder.id).unwrap();
-    store.spaces[at]
-        .members
-        .retain(|m| !matches!(m, crate::api::Member::Agent { name } if name == "orch-lega"));
-    assert_eq!(
-        viewed(space::act(&store, &mut ui, Zoomed::Agent(1))),
-        [view(&herder, "conductor-line")]
-    );
-
-    // The space itself goes: any zoom key morphs back to the lens.
     store.spaces.remove(at);
     let events = space::act(&store, &mut ui, Zoomed::Space(1));
     assert!(matches!(events.as_slice(), [Event::Transcript(_)]));
@@ -225,7 +217,11 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
     store.apply(fleet_frame(b.clone()));
     store.apply(Event::Front(true));
     let (space, agent) = (space_of(&store, "mupu").id.clone(), Some("mupu".into()));
-    let effects = store.apply(Event::Lens(Move::View { space, agent }));
+    let effects = store.apply(Event::Lens(Move::View {
+        space,
+        agent,
+        beside: Vec::new(),
+    }));
     let read = effects.into_iter().find_map(|e| match e {
         Effect::Fetch(Fetch::Transcript(r)) if matches!(r.what, What::Page(_)) => Some(r),
         _ => None,
@@ -235,15 +231,15 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
     let got = Ok(Got::Page(Box::new(page)));
     store.apply(Event::Transcript(Step::Read(read.unwrap(), got)));
     // A render: the list mirrors the rows and follows the bottom, and says so.
-    let mut ui = State::default();
-    ui.transcript
-        .sync(store.transcript.open.as_ref().unwrap(), &store);
-    store.apply(ui.transcript.tail(true));
+    let view = transcript::View::default();
+    view.sync(store.transcript.focused().unwrap(), &store);
+    store.apply(view.tail(true));
+    dwell(&mut store);
     bump(&mut b, "mupu", 1);
     store.apply(frame(&store, b.clone()));
     assert!(!store.agent_needs_you("mupu"), "watched as it lands");
     // `g`, then a fleet frame before any render.
-    for event in transcript::scroll(&store, &mut ui, Scroll::Top) {
+    for event in transcript::scroll(&store, &view, Scroll::Top) {
         store.apply(event);
     }
     bump(&mut b, "mupu", 1);
@@ -252,7 +248,7 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
 }
 
 mod links {
-    use crate::views::markdown::{Mentions, link, path_like, route, vscode_url};
+    use crate::views::markdown::{Mentions, link, path_like, route, vscode, vscode_url};
 
     const WEB: &str = "http://h:4400/agents/riko";
 
@@ -381,6 +377,46 @@ mod links {
         assert_eq!(vscode_url("bad host", "/x", None), None);
         assert_eq!(vscode_url("superset", "relative", None), None);
     }
+
+    /// G3b: two calls, the root opened as VS Code's folder (a URI, each segment encoded) and then the
+    /// file in that window at its line, one argument each, spaces kept; a folder alone is the first
+    /// call. The URL is for when the tool is missing (a file at line 1 at least, so not as a folder).
+    #[test]
+    fn vscode_opens_the_folder_then_goes_to_the_file() {
+        let (calls, url) =
+            vscode("superset", "/home/u/my repo/", Some("a b/x.rs"), Some(7)).unwrap();
+        assert_eq!(
+            calls,
+            [
+                vec![
+                    "--folder-uri",
+                    "vscode-remote://ssh-remote+superset/home/u/my%20repo"
+                ],
+                vec![
+                    "-r",
+                    "--remote",
+                    "ssh-remote+superset",
+                    "-g",
+                    "/home/u/my repo/a b/x.rs:7"
+                ],
+            ]
+        );
+        assert_eq!(
+            url,
+            "vscode://vscode-remote/ssh-remote+superset/home/u/my%20repo/a%20b/x.rs:7"
+        );
+        let (calls, url) = vscode("superset", "/r", Some("x.rs"), None).unwrap();
+        assert_eq!(calls[1][3..], ["-g", "/r/x.rs"]);
+        assert!(url.ends_with("/r/x.rs:1"));
+        let (calls, url) = vscode("superset", "/r", None, Some(3)).unwrap();
+        assert_eq!(
+            calls,
+            [["--folder-uri", "vscode-remote://ssh-remote+superset/r"]]
+        );
+        assert_eq!(url, "vscode://vscode-remote/ssh-remote+superset/r");
+        assert_eq!(vscode("bad host", "/r", None, None), None);
+        assert_eq!(vscode("superset", "relative", None, None), None);
+    }
 }
 
 /// A notification's click (`space::summon`, U6).
@@ -395,7 +431,7 @@ mod summon {
         let chief = space_of(&store, "chief-mihe").clone();
         let mut ui = State::default();
         let events = space::summon(&store, &mut ui, "agent:mupu");
-        assert_eq!(viewed(events), [view(&slack, "mupu")]);
+        assert_eq!(viewed(&ui, events), [view(&slack, "mupu")]);
         assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
 
         // Open elsewhere (a preview in another space): it moves to its own space.
@@ -404,7 +440,7 @@ mod summon {
             agent: Some("mupu".into()),
         });
         let events = space::summon(&store, &mut ui, "agent:mupu");
-        assert_eq!(viewed(events), [view(&slack, "mupu")]);
+        assert_eq!(viewed(&ui, events), [view(&slack, "mupu")]);
         assert_eq!(zoomed(&ui), Some((slack.id.as_str(), Some("mupu"))));
     }
 
@@ -416,7 +452,7 @@ mod summon {
         space::summon(&store, &mut ui, "agent:mupu");
         let events = space::summon(&store, &mut ui, "agent:mupu");
         assert_eq!(
-            viewed(events),
+            viewed(&ui, events),
             [view(&slack, "mupu")],
             "its new turn is seen"
         );
@@ -432,7 +468,7 @@ mod summon {
         let mut ui = State::default();
         let before = ui.selected(&store).map(|s| s.id.clone());
         let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));
-        assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+        assert_eq!(viewed(&ui, events), [(String::new(), Some(alone.into()))]);
         assert_eq!(zoomed(&ui), Some(("", Some(alone))));
         assert!(ui.zoom.as_ref().is_some_and(Zoom::alone));
         assert_eq!(
@@ -442,11 +478,13 @@ mod summon {
         assert_eq!(ui.selected(&store).map(|s| s.id.clone()), before);
         // Summoned again while open: still seen.
         let events = space::summon(&store, &mut ui, &format!("agent:{alone}"));
-        assert_eq!(viewed(events), [(String::new(), Some(alone.into()))]);
+        assert_eq!(viewed(&ui, events), [(String::new(), Some(alone.into()))]);
         for key in [Zoomed::Agent(1), Zoomed::Space(1), Zoomed::Space(-1)] {
             assert!(space::act(&store, &mut ui, key).is_empty());
             assert_eq!(zoomed(&ui), Some(("", Some(alone))));
         }
+        let toggled = space::act(&store, &mut ui, Zoomed::Read);
+        assert!(matches!(&toggled[..], [Event::Lens(Move::Toggle(a))] if a == alone));
         space::act(&store, &mut ui, Zoomed::Out);
         assert_eq!(zoomed(&ui), None);
         assert!(store.spaces.iter().all(|s| s.agents().all(|a| a != alone)));
@@ -459,7 +497,7 @@ mod summon {
         let mut ui = State::default();
         space::summon(&store, &mut ui, "agent:mupu");
         let events = space::summon(&store, &mut ui, &format!("space:{}", herder.id));
-        assert!(viewed(events).is_empty());
+        assert!(viewed(&ui, events).is_empty());
         assert_eq!(zoomed(&ui), None);
         assert_eq!(ui.selected(&store).map(|s| &s.id), Some(&herder.id));
         space::summon(&store, &mut ui, "agent:mupu");
@@ -699,7 +737,7 @@ mod notes_events {
     use crate::views::notes::{self, Notes};
     use crate::views::notes_list::{self, Card};
     use crate::views::space::Zoom;
-    use crate::views::{Host, bind, composer, on, theme};
+    use crate::views::{Host, bind, composer, dock, on, theme};
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
         Context, ElementId, Entity, InteractiveElement as _, IntoElement, Modifiers,
@@ -744,9 +782,16 @@ mod notes_events {
 
     impl Render for Shell {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = dock::sync(&mut self.ui, &self.store, window, cx);
             composer::sync(&mut self.ui, &self.store, window, cx);
             notes::sync(&mut self.ui, &self.store, window, cx);
             let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
+            let panel = div().track_focus(&ui.panel().unwrap().focus).size_full();
+            let panel = panel
+                .flex()
+                .flex_col()
+                .children(notes::render(store, ui, "mupu", t, cx))
+                .child(composer::render(store, ui, "mupu", t, cx));
             let zoom = div()
                 .id("space")
                 .key_context("Space")
@@ -754,10 +799,7 @@ mod notes_events {
                 .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
                 .on_action(on(cx, |store, ui, c: &Card| notes_list::act(store, ui, c)))
                 .size_full()
-                .flex()
-                .flex_col()
-                .children(notes::render(store, ui, "mupu", t, cx))
-                .child(composer::render(store, ui, "mupu", t, cx));
+                .child(panel);
             div().size_full().key_context("Lens").child(zoom)
         }
     }
@@ -799,9 +841,9 @@ mod notes_events {
         let rows: Vec<StateRow> = (ids.iter().rev().enumerate())
             .map(|(i, id)| row(id, "mupu", 1_000 + i as i64))
             .collect();
-        let (shell, cx) = cx.add_window_view(move |window, cx| {
+        let (shell, cx) = cx.add_window_view(move |_, cx| {
             let store = zoomed("mupu", Some("listening"));
-            let mut ui = Ui::new(window, cx);
+            let mut ui = Ui::new(cx);
             let space = store.spaces[0].id.clone();
             ui.zoom = Some(Zoom {
                 space,
@@ -841,11 +883,11 @@ mod notes_events {
     ) -> (Vec<String>, Option<String>, Option<String>) {
         shell.read_with(cx, |s, _| {
             let ids = notes::ids(&s.store, "mupu");
-            let picked = &s.ui.notes.list.picked;
+            let picked = &s.ui.panel().unwrap().notes.list.picked;
             (
                 picked.chosen(&ids),
                 picked.cursor.clone(),
-                s.ui.notes.said(),
+                s.ui.panel().unwrap().notes.said(),
             )
         })
     }
@@ -886,11 +928,16 @@ mod notes_events {
         let editing = |cx: &mut VisualTestContext| {
             cx.update(|window, cx| {
                 let s = shell.read(cx);
-                let focused = s.ui.notes.focus_handle(cx).is_focused(window);
+                let focused =
+                    s.ui.panel()
+                        .unwrap()
+                        .notes
+                        .focus_handle(cx)
+                        .is_focused(window);
                 (
-                    s.ui.notes.editing.is_some(),
+                    s.ui.panel().unwrap().notes.editing.is_some(),
                     focused,
-                    s.ui.notes.text.clone(),
+                    s.ui.panel().unwrap().notes.text.clone(),
                 )
             })
         };
@@ -970,7 +1017,7 @@ mod notes_events {
         assert_eq!(shell.read_with(cx, |s, _| s.copied.clone()), ["note a"]);
         // Focus leaving the list disarms too.
         cx.update(|window, cx| {
-            let box_ = shell.read(cx).ui.composer.focus_handle(cx);
+            let box_ = shell.read(cx).ui.panel().unwrap().composer.focus_handle(cx);
             window.focus(&box_, cx);
             window.render_frame(cx);
         });
@@ -992,7 +1039,7 @@ mod notes_events {
         cx.update(|window, cx| window.press("e", cx));
         cx.run_until_parked();
         let edited = shell.read_with(cx, |s, _| {
-            let editing = s.ui.notes.editing.as_ref();
+            let editing = s.ui.panel().unwrap().notes.editing.as_ref();
             editing.and_then(|e| e.note.as_ref()).map(|n| n.id.clone())
         });
         assert_eq!(edited.as_deref(), Some("b"));
@@ -1003,7 +1050,7 @@ mod notes_events {
         cx: &mut TestAppContext,
     ) {
         let (shell, cx) = open(cx, &["a", "b", "c", "d"]);
-        shell.update(cx, |s, _| s.ui.notes.open = true);
+        shell.update(cx, |s, _| s.ui.panel_mut().unwrap().notes.open = true);
         let hand_off = |cx: &mut VisualTestContext, saved: Result<(), String>| {
             click(cx, "b", Modifiers::none());
             cx.update(|window, cx| window.press("enter", cx));
@@ -1029,7 +1076,7 @@ mod notes_events {
         // Back into the list from the emptied box: the cursor is still on c.
         shell.update(cx, |s, _| s.store.prefs.drafts.clear());
         cx.update(|window, cx| {
-            let box_ = shell.read(cx).ui.composer.focus_handle(cx);
+            let box_ = shell.read(cx).ui.panel().unwrap().composer.focus_handle(cx);
             window.focus(&box_, cx);
         });
         cx.update(|window, cx| window.press("up", cx));
@@ -1040,11 +1087,11 @@ mod notes_events {
 
 /// F2: where regrouped rows splice into the list, and which runs stay open as pages land.
 mod runs {
+    use crate::store::Store;
     use crate::store::condense::{self, Row};
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{drive, history, items, open, reference, wake};
-    use crate::store::transcript::{Key, Step};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::Key;
     use crate::views::transcript::{View, plan};
 
     /// The rows of `agent`'s history from `a` to `b`, read whole.
@@ -1076,7 +1123,7 @@ mod runs {
         let mut joined = 0;
         loop {
             let old = condense::rows(items(&store));
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -1109,7 +1156,7 @@ mod runs {
     }
 
     fn sync(view: &View, store: &Store) {
-        view.sync(store.transcript.open.as_ref().unwrap(), store);
+        view.sync(store.transcript.focused().unwrap(), store);
     }
 
     /// The first and last runs among the view's rows, with their row indices.
@@ -1161,7 +1208,7 @@ mod runs {
         // Pages before join the top run, the wake grows the bottom one.
         let mut joined = false;
         loop {
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -1214,11 +1261,11 @@ mod runs {
 /// A2: answers' parts, entry headers and cards.
 mod entries {
     use crate::api::AgentDetail;
+    use crate::store::Store;
     use crate::store::condense::{self, Seg};
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{drive, history, items, open};
-    use crate::store::transcript::{Item, Key, Step};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::{Item, Key};
     use crate::views::entries::{Bit, Card, bits, queued_age, stamp, waited};
     use crate::views::transcript::{Fold, View, long};
 
@@ -1251,7 +1298,7 @@ mod entries {
         let (mut opened, mut was) = (Vec::new(), Vec::new());
         let mut regrouped = false;
         loop {
-            view.sync(store.transcript.open.as_ref().unwrap(), &store);
+            view.sync(store.transcript.focused().unwrap(), &store);
             for is in [status as fn(&Seg) -> bool, note] {
                 // The last such answer: pages before only add earlier ones.
                 if let Some(fold) = part(&store, is).filter(|f| !opened.contains(f)) {
@@ -1272,7 +1319,7 @@ mod entries {
             for (fold, at) in opened.iter().zip(&was) {
                 regrouped |= row_of(&store, fold.0) != *at;
             }
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -1400,15 +1447,16 @@ mod entries {
 mod layout {
     use crate::api::types::Entry;
     use crate::store::condense::{self, Row};
+    use crate::store::spaces::Move;
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{self, drive, history, items, open, reference};
     use crate::store::tests::{board, bump, frame};
-    use crate::store::transcript::{Item, Key, Step};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::{Item, Key};
+    use crate::store::{Effect, Event, Store};
     use crate::views::lens::Ui;
     use crate::views::space::Zoom;
     use crate::views::transcript::{self, Fold, Mark, OpenLink};
-    use crate::views::{Host, theme};
+    use crate::views::{Host, dock, theme};
     use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt as _;
     use gpui_kit::{
@@ -1420,8 +1468,10 @@ mod layout {
     struct Body {
         store: Store,
         ui: Ui,
-        /// Reduce what the view dispatches, as the shell does (else the test reads the pages itself).
+        /// Reduce what the view dispatches, as the shell does (else the test reads the pages itself),
+        /// keeping the effects for the test to answer.
         reduce: bool,
+        effects: Vec<Effect>,
         /// The links clicked through to the shell (`OpenLink`).
         links: Vec<String>,
     }
@@ -1436,8 +1486,10 @@ mod layout {
         }
 
         fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
-            if self.reduce {
-                drop(transcript::reduce(&mut self.store, &self.ui, event));
+            // The dock keeping its layout is not what these read.
+            if self.reduce && !matches!(event, Event::Layout { .. }) {
+                let effects = transcript::reduce(&mut self.store, &self.ui, event);
+                self.effects.extend(effects);
                 cx.notify();
             }
         }
@@ -1446,10 +1498,11 @@ mod layout {
     }
 
     impl Render for Body {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = dock::sync(&mut self.ui, &self.store, window, cx);
             let zoom = self.ui.zoom.clone().unwrap();
-            let t = theme::type_scale(1.);
-            let body = transcript::render(&self.store, &self.ui, &zoom, t, cx);
+            let (agent, t) = (zoom.agent.unwrap(), theme::type_scale(1.));
+            let body = transcript::render(&self.store, &self.ui, &agent, t, cx);
             let open = cx.listener(|b, link: &OpenLink, _, _| b.links.push(link.0.to_string()));
             use gpui_kit::InteractiveElement as _;
             div()
@@ -1478,14 +1531,15 @@ mod layout {
         let mut store = loaded();
         let effects = open(&mut store, agent);
         drive(&mut store, effects, served_of(agent, served), limit);
-        let (body, cx) = cx.add_window_view(move |window, cx| {
-            let mut ui = Ui::new(window, cx);
+        let (body, cx) = cx.add_window_view(move |_, cx| {
+            let mut ui = Ui::new(cx);
             let (space, agent) = ("none".into(), Some(agent.into()));
             ui.zoom = Some(Zoom { space, agent });
             Body {
                 store,
                 ui,
                 reduce: false,
+                effects: Vec::new(),
                 links: Vec::new(),
             }
         });
@@ -1509,13 +1563,15 @@ mod layout {
     }
 
     fn row(body: &Entity<Body>, ix: usize, cx: &mut VisualTestContext) -> Bounds<Pixels> {
-        body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().rows[&ix])
+        body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.painted.borrow().rows[&ix]
+        })
     }
 
     /// Where `was` (a member, or a pill holding its key) last laid out.
     fn mark(body: &Entity<Body>, was: Mark, cx: &mut VisualTestContext) -> Option<Bounds<Pixels>> {
         body.read_with(cx, |b, _| {
-            let painted = b.ui.transcript.painted.borrow();
+            let painted = b.ui.panel().unwrap().transcript.painted.borrow();
             painted
                 .marks
                 .iter()
@@ -1525,7 +1581,9 @@ mod layout {
     }
 
     fn screen(body: &Entity<Body>, cx: &mut VisualTestContext) -> Bounds<Pixels> {
-        body.read_with(cx, |b, _| b.ui.transcript.list.viewport_bounds())
+        body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.list.viewport_bounds()
+        })
     }
 
     /// Read the page before and then, when `wake`, what the served file has after; then lay out once.
@@ -1538,7 +1596,7 @@ mod layout {
     ) {
         body.update(cx, |b, cx| {
             let all = served_of(agent, served);
-            let effects = b.store.apply(Event::Transcript(Step::Older));
+            let effects = b.store.apply(crate::store::tests::older(&b.store));
             drive(&mut b.store, effects, all, limit);
             if wake {
                 let effects = b.store.apply(transcript_pages::wake(&b.store, agent));
@@ -1579,7 +1637,7 @@ mod layout {
     /// Scroll the top row so the viewport's top is `y` into it.
     fn scroll(body: &Entity<Body>, y: Pixels, cx: &mut VisualTestContext) {
         body.read_with(cx, |b, _| {
-            let list = &b.ui.transcript.list;
+            let list = &b.ui.panel().unwrap().transcript.list;
             list.scroll_to(ListOffset {
                 item_ix: 0,
                 offset_in_item: y,
@@ -1594,7 +1652,9 @@ mod layout {
         let Row::Run(first, last) = rows(body, cx)[0] else {
             panic!("the top row is a run")
         };
-        body.read_with(cx, |b, _| b.ui.transcript.toggle((first, last), 0));
+        body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.toggle((first, last), 0)
+        });
         scroll(body, px(0.), cx);
         let keys: Vec<Key> = body.read_with(cx, |b, _| {
             items(&b.store)
@@ -1602,7 +1662,14 @@ mod layout {
                 .map(|(k, _)| *k)
                 .collect()
         });
-        let most = body.read_with(cx, |b, _| b.ui.transcript.list.max_offset_for_scrollbar().y);
+        let most = body.read_with(cx, |b, _| {
+            b.ui.panel()
+                .unwrap()
+                .transcript
+                .list
+                .max_offset_for_scrollbar()
+                .y
+        });
         let top = row(body, 0, cx).top();
         let mut reach = Vec::new();
         for &key in keys.iter().take(3) {
@@ -1729,7 +1796,15 @@ mod layout {
         scroll(&body, px(0.), cx);
         // The first pill on the strip's last line (what the viewport's top reads, of a line), the
         // viewport's top just above it.
-        let pills = body.read_with(cx, |b, _| b.ui.transcript.painted.borrow().marks.clone());
+        let pills = body.read_with(cx, |b, _| {
+            b.ui.panel()
+                .unwrap()
+                .transcript
+                .painted
+                .borrow()
+                .marks
+                .clone()
+        });
         let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
         let pills: Vec<_> = pills.into_iter().filter(|(m, _)| inside(m)).collect();
         let (read, b) = *pills
@@ -1770,7 +1845,7 @@ mod layout {
         let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
         let key = rows(&body, cx)[2].first();
         body.read_with(cx, |b, _| {
-            let list = &b.ui.transcript.list;
+            let list = &b.ui.panel().unwrap().transcript.list;
             list.scroll_to(ListOffset {
                 item_ix: 2,
                 offset_in_item: px(0.),
@@ -1801,7 +1876,7 @@ mod layout {
                     item_ix: ix,
                     offset_in_item: px(y),
                 };
-                b.ui.transcript.list.scroll_to(at);
+                b.ui.panel().unwrap().transcript.list.scroll_to(at);
             });
         };
         let count = rows(&body, cx).len();
@@ -1832,13 +1907,14 @@ mod layout {
             let live = frame(&b.store, board.clone());
             b.store.apply(live);
             b.store.apply(Event::Front(true));
-            b.store.apply(b.ui.transcript.tail(true));
+            b.store.apply(b.ui.panel().unwrap().transcript.tail(true));
+            crate::store::tests::dwell(&mut b.store);
             bump(&mut board, "mupu", 1);
             let landed = frame(&b.store, board.clone());
             transcript::reduce(&mut b.store, &b.ui, landed);
             assert!(!b.store.agent_needs_you("mupu"), "watched as it lands");
             // The scrollbar's handle moves the list without its scroll handler.
-            let list = &b.ui.transcript.list;
+            let list = &b.ui.panel().unwrap().transcript.list;
             ScrollbarHandle::set_offset(list, point(px(0.), px(0.)));
             assert!(!list.is_following_tail(), "dragged to the top");
             bump(&mut board, "mupu", 1);
@@ -1851,8 +1927,10 @@ mod layout {
     #[gpui_kit::test]
     fn o_at_the_tail_opens_the_last_run_when_it_shows(cx: &mut TestAppContext) {
         let (body, cx) = body(cx, "mupu", (usize::MAX, usize::MAX), (900., 700.));
-        body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
-        let (rows, _, open) = body.read_with(cx, |b, _| b.ui.transcript.census());
+        body.read_with(cx, |b, _| {
+            transcript::toggle_lowest(&b.ui.panel().unwrap().transcript)
+        });
+        let (rows, _, open) = body.read_with(cx, |b, _| b.ui.panel().unwrap().transcript.census());
         assert_eq!(open, 1);
         let last = row(&body, rows - 1, cx);
         assert!(last.size.height > px(0.));
@@ -1865,16 +1943,30 @@ mod layout {
         let rows = rows(&body, cx);
         let n = rows.len();
         assert!(matches!(rows[n - 1], Row::One(_)) && matches!(rows[n - 2], Row::Run(..)));
-        let screen = body.read_with(cx, |b, _| b.ui.transcript.list.viewport_bounds());
+        let screen = body.read_with(cx, |b, _| {
+            b.ui.panel().unwrap().transcript.list.viewport_bounds()
+        });
         let run = body.read_with(cx, |b, _| {
-            b.ui.transcript.painted.borrow().rows.get(&(n - 2)).copied()
+            b.ui.panel()
+                .unwrap()
+                .transcript
+                .painted
+                .borrow()
+                .rows
+                .get(&(n - 2))
+                .copied()
         });
         assert!(
             run.is_none_or(|b| b.bottom() <= screen.top()),
             "the run is off screen"
         );
-        body.read_with(cx, |b, _| transcript::toggle_lowest(&b.ui));
-        assert_eq!(body.read_with(cx, |b, _| b.ui.transcript.census().2), 0);
+        body.read_with(cx, |b, _| {
+            transcript::toggle_lowest(&b.ui.panel().unwrap().transcript)
+        });
+        assert_eq!(
+            body.read_with(cx, |b, _| b.ui.panel().unwrap().transcript.census().2),
+            0
+        );
     }
 
     /// G1: right after a drag selects text (one across the link itself, which opens nothing), a real
@@ -1935,7 +2027,7 @@ mod layout {
                 // The board, whose names the mentions link.
                 let event = frame(&b.store, board());
                 drop(b.store.apply(event));
-                let tr = b.store.transcript.open.as_mut().unwrap();
+                let tr = b.store.transcript.open.values_mut().next().unwrap();
                 for (sub, item) in items.into_iter().enumerate() {
                     tr.items.insert((u64::MAX - 1, sub as u16), item);
                 }
@@ -2011,6 +2103,191 @@ mod layout {
         }
     }
 
+    /// DK1: a panel hidden behind another tab lets its rows go; shown again, it reads its tail afresh,
+    /// pages back as far as where it was read, pages beyond its first screen, and is back there, to the
+    /// pixel. Its session is the one its tail landed with after a frame drawn while loading, and hidden
+    /// again before it was back, where it was read still stands (remi's DK1 P2s).
+    #[gpui_kit::test]
+    fn a_hidden_panel_comes_back_where_it_was_read(cx: &mut TestAppContext) {
+        let (agent, served) = ("conductor-line", (usize::MAX, 100));
+        let (body, cx) = body(cx, agent, served, (720., 600.));
+        let (space, other) = body.read_with(cx, |b, _| {
+            let s = crate::store::tests::space_of(&b.store, agent);
+            let other = s.agents().find(|a| *a != agent).unwrap();
+            (s.id.clone(), other.to_string())
+        });
+        let show = move |b: &mut Body, a: &str| {
+            let (space, agent) = (space.clone(), Some(a.to_string()));
+            b.ui.zoom = Some(Zoom {
+                space: space.clone(),
+                agent: agent.clone(),
+            });
+            let beside = Vec::new();
+            b.store.apply(Event::Lens(Move::View {
+                space,
+                agent,
+                beside,
+            }))
+        };
+        let all = served_of(agent, served.0);
+        // Away and back, a frame drawn before the tail lands: the panel has no session yet.
+        body.update(cx, |b, cx| {
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        let effects = body.update(cx, |b, cx| {
+            cx.notify();
+            show(b, agent)
+        });
+        draw(cx);
+        body.update(cx, |b, cx| {
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        draw(cx);
+        older(&body, agent, served, false, cx);
+        older(&body, agent, served, false, cx);
+        body.read_with(cx, |b, _| {
+            let list = &b.ui.panel().unwrap().transcript.list;
+            list.scroll_to(ListOffset {
+                item_ix: 2,
+                offset_in_item: px(10.),
+            });
+        });
+        draw(cx);
+        let read = rows(&body, cx)[2].first();
+        let was = row(&body, 2, cx).top() - screen(&body, cx).top();
+        // Another member's tab: the panel is hidden, its transcript closed.
+        body.update(cx, |b, cx| {
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        body.read_with(cx, |b, _| {
+            assert!(!b.store.transcript.open.contains_key(agent));
+            assert_eq!(b.ui.panels[agent].transcript.census().0, 0, "its rows went");
+        });
+        // Back, its tail read, and away again before the page before it asked for lands.
+        body.update(cx, |b, cx| {
+            b.reduce = true;
+            let effects = show(b, agent);
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        draw(cx);
+        draw(cx);
+        body.update(cx, |b, cx| {
+            assert_eq!(b.effects.len(), 1, "the page before asked for");
+            b.effects.clear();
+            show(b, &other);
+            cx.notify();
+        });
+        draw(cx);
+        // Back: the tail is read again, and the panel asks for each page before it until that row.
+        body.update(cx, |b, cx| {
+            let effects = show(b, agent);
+            drive(&mut b.store, effects, all, served.1);
+            cx.notify();
+        });
+        let mut back = 0;
+        loop {
+            draw(cx);
+            draw(cx);
+            let pages = body.update(cx, |b, cx| {
+                let effects = std::mem::take(&mut b.effects);
+                cx.notify();
+                drive(&mut b.store, effects, all, served.1)
+            });
+            // Only pages before (the views may not name the api's `Page`).
+            let before = |p: &[_]| p.iter().all(|p| format!("{p:?}").starts_with("Before"));
+            match pages.len() {
+                0 => break,
+                1 if before(&pages) => back += 1,
+                _ => panic!("{pages:?}"),
+            }
+        }
+        assert!(
+            back >= 2,
+            "back to the page it was read in, then on as the top nears"
+        );
+        let ix = rows(&body, cx).iter().position(|r| r.first() == read);
+        let now = row(&body, ix.unwrap(), cx).top() - screen(&body, cx).top();
+        assert!((now - was).abs() < px(0.5), "{was:?} → {now:?}");
+    }
+
+    /// maki's G1 P3: only a tap (pressed and let go with no frame between) on a frame that showed a
+    /// selection is replayed. A click with a frame drawn between press and release goes through as it
+    /// is, and still routes once.
+    #[gpui_kit::test]
+    fn a_click_with_a_frame_between_press_and_release_is_not_replayed(cx: &mut TestAppContext) {
+        use crate::store::condense::Seg;
+        use gpui_kit::base::TextSelection;
+        use gpui_kit::{MouseButton, MouseDownEvent, MouseUpEvent, PlatformInput};
+        let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
+        body.update(cx, |b, cx| {
+            let text = format!("[{}](src/views/transcript.rs)", "transcript ".repeat(40));
+            let tr = b.store.transcript.open.values_mut().next().unwrap();
+            tr.items
+                .insert((u64::MAX - 1, 0), Item::Assistant(vec![Seg::Text(text)]));
+            cx.notify();
+        });
+        draw(cx);
+        draw(cx);
+        let n = rows(&body, cx).len();
+        let at = row(&body, n - 1, cx);
+        let p = point(at.left() + px(700.), at.top() + px(42.));
+        let m = Modifiers::default();
+        let (left, one) = (MouseButton::Left, 1);
+        let down = |position| MouseDownEvent {
+            button: left,
+            position,
+            modifiers: m,
+            click_count: one,
+            first_mouse: false,
+        };
+        let up = |position| MouseUpEvent {
+            button: left,
+            position,
+            modifiers: m,
+            click_count: one,
+        };
+        let replays = |cx: &mut VisualTestContext| {
+            body.read_with(cx, |b, _| {
+                b.ui.panel().unwrap().transcript.taps.replays.get()
+            })
+        };
+        let select = |cx: &mut VisualTestContext| {
+            let to = point(p.x + px(250.), p.y);
+            cx.simulate_mouse_move(p, None, m);
+            cx.simulate_event(down(p));
+            cx.simulate_mouse_move(to, Some(left), m);
+            cx.simulate_event(up(to));
+            draw(cx);
+            assert!(!cx.update(TextSelection::selected_text).is_empty());
+        };
+        let links = |cx: &mut VisualTestContext| body.read_with(cx, |b, _| b.links.len());
+        select(cx);
+        // Down, a frame, up: as it is.
+        cx.update(|window, cx| window.dispatch_event(PlatformInput::MouseDown(down(p)), cx));
+        draw(cx);
+        cx.update(|window, cx| window.dispatch_event(PlatformInput::MouseUp(up(p)), cx));
+        cx.run_until_parked();
+        assert_eq!(
+            (replays(cx), links(cx)),
+            (0, 1),
+            "a click with a frame between"
+        );
+        // A tap: replayed once.
+        select(cx);
+        cx.update(|window, cx| {
+            window.dispatch_event(PlatformInput::MouseDown(down(p)), cx);
+            window.dispatch_event(PlatformInput::MouseUp(up(p)), cx);
+        });
+        cx.run_until_parked();
+        assert_eq!((replays(cx), links(cx)), (1, 2), "a tap");
+    }
+
     /// The owner's crash (10-02, every wheel): leaving the watched tail is published from the list's
     /// scroll handler, which the list calls inside its own borrow, and reducing it asked the list again
     /// ("RefCell already mutably borrowed"). A mouse's lines and a trackpad's pixels, over prose, the
@@ -2020,7 +2297,7 @@ mod layout {
         let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
         let out = body.update(cx, |b, cx| {
             b.reduce = true;
-            let tr = b.store.transcript.open.as_ref().unwrap();
+            let tr = b.store.transcript.focused().unwrap();
             let rows = condense::rows(&tr.items);
             let (ix, first, last) = rows.iter().enumerate().rev().find_map(|(ix, r)| match *r {
                 Row::Run(first, last) => Some((ix, first, last)),
@@ -2036,8 +2313,8 @@ mod layout {
                     }
                 )
             })?;
-            b.ui.transcript.toggle((first, last), ix);
-            b.ui.transcript.fold(Fold(key, 0));
+            b.ui.panel().unwrap().transcript.toggle((first, last), ix);
+            b.ui.panel().unwrap().transcript.fold(Fold(key, 0));
             cx.notify();
             Some(transcript::name("tool", tr.generation, key) + "-out")
         });
@@ -2060,11 +2337,11 @@ mod layout {
         ];
         for (position, delta) in cases {
             body.update(cx, |b, cx| {
-                b.ui.transcript.list.scroll_to(ListOffset {
+                b.ui.panel().unwrap().transcript.list.scroll_to(ListOffset {
                     item_ix: usize::MAX,
                     offset_in_item: px(0.),
                 });
-                let event = b.ui.transcript.tail(true);
+                let event = b.ui.panel().unwrap().transcript.tail(true);
                 drop(b.store.apply(event));
                 cx.notify();
             });
@@ -2077,8 +2354,11 @@ mod layout {
             });
             draw(cx);
             let (tail, following) = body.read_with(cx, |b, _| {
-                let tail = b.store.transcript.open.as_ref().unwrap().tail;
-                (tail, b.ui.transcript.list.is_following_tail())
+                let tail = b.store.transcript.focused().unwrap().tail;
+                (
+                    tail,
+                    b.ui.panel().unwrap().transcript.list.is_following_tail(),
+                )
             });
             assert_eq!(
                 tail, following,
@@ -2092,7 +2372,7 @@ mod layout {
     fn an_open_tool_shows_its_input_and_output_and_closed_hides_them(cx: &mut TestAppContext) {
         let (body, cx) = body(cx, "mupu", (usize::MAX, 100), (1400., 900.));
         let opened = body.update(cx, |b, cx| {
-            let tr = b.store.transcript.open.as_ref().unwrap();
+            let tr = b.store.transcript.focused().unwrap();
             let rows = condense::rows(&tr.items);
             let (ix, first, last) = rows.iter().enumerate().rev().find_map(|(ix, r)| match *r {
                 Row::Run(first, last) => Some((ix, first, last)),
@@ -2107,8 +2387,8 @@ mod layout {
                 } if !r.text.is_empty() => Some((key, input.clone(), r.text.clone())),
                 _ => None,
             })?;
-            b.ui.transcript.toggle((first, last), ix);
-            b.ui.transcript.fold(Fold(key, 0));
+            b.ui.panel().unwrap().transcript.toggle((first, last), ix);
+            b.ui.panel().unwrap().transcript.fold(Fold(key, 0));
             cx.notify();
             Some((
                 transcript::name("tool", tr.generation, key),
@@ -2129,7 +2409,7 @@ mod layout {
         assert_eq!(label("output", cx).as_deref(), Some("OUTPUT"));
         assert_eq!(label("out", cx), Some(output));
         body.update(cx, |b, cx| {
-            b.ui.transcript.fold(Fold(key, 0));
+            b.ui.panel().unwrap().transcript.fold(Fold(key, 0));
             cx.notify();
         });
         draw(cx);
@@ -2286,11 +2566,11 @@ mod prose {
 
 /// A3: a run's members.
 mod members {
+    use crate::store::Store;
     use crate::store::condense;
     use crate::store::tests::loaded;
     use crate::store::tests::transcript_pages::{drive, history, items, open};
-    use crate::store::transcript::{Item, Step, ToolResult};
-    use crate::store::{Event, Store};
+    use crate::store::transcript::{Item, ToolResult};
     use crate::views::entries::{dot, lasted, took};
     use crate::views::theme::pal;
     use crate::views::transcript::{Fold, View};
@@ -2307,7 +2587,7 @@ mod members {
         let effects = open(&mut store, "mupu");
         drive(&mut store, effects, &all, 7);
         let view = View::default();
-        view.sync(store.transcript.open.as_ref().unwrap(), &store);
+        view.sync(store.transcript.focused().unwrap(), &store);
         let tools = items(&store).iter().rev();
         let mut tools = tools.filter(|(_, i)| {
             matches!(
@@ -2323,10 +2603,10 @@ mod members {
         let was = tool_row(&store, key);
         let mut regrouped = false;
         loop {
-            view.sync(store.transcript.open.as_ref().unwrap(), &store);
+            view.sync(store.transcript.focused().unwrap(), &store);
             assert_eq!(view.tools(items(&store)), (1, 1), "open with its output");
             regrouped |= tool_row(&store, key) != was;
-            let effects = store.apply(Event::Transcript(Step::Older));
+            let effects = store.apply(crate::store::tests::older(&store));
             if effects.is_empty() {
                 break;
             }
@@ -2465,9 +2745,9 @@ mod lens_cards {
         }));
         let long = store.cards.text("conductor-line").expect("an answer").len();
         assert!(long > 400, "long enough to be cut: {long}");
-        let (lens, cx) = cx.add_window_view(move |window, cx| Lens {
+        let (lens, cx) = cx.add_window_view(move |_, cx| Lens {
             store,
-            ui: Ui::new(window, cx),
+            ui: Ui::new(cx),
         });
         cx.simulate_resize(size(px(1400.), px(900.)));
         cx.run_until_parked();
@@ -2504,6 +2784,1675 @@ mod lens_cards {
         assert_eq!(
             lines,
             Some(format!("{:?}", gpui_kit::Length::from(t.line * 5.)))
+        );
+    }
+}
+
+/// F7: type-to-capture with real pointer and key events in a headless window under the kit's `Root` (its
+/// selection layer, Tab and cmd-c, as the app's): the zoom, its transcript (mupu's recorded pages, an
+/// answer added at the tail), the chip and the composer.
+mod capture_events {
+    use crate::store::condense::Seg;
+    use crate::store::notes::Step as N;
+    use crate::store::tests::transcript_pages::{drive, history};
+    use crate::store::tests::{board, fleet_frame, loaded};
+    use crate::store::transcript::Item;
+    use crate::store::{Effect, Event, Store, composer, spaces};
+    use crate::views::capture::{self, Capture};
+    use crate::views::lens::Ui;
+    use crate::views::space::Zoom;
+    use crate::views::transcript::{self, Scroll};
+    use crate::views::{Host, bind, dock, on, theme};
+    use gpui_kit::base::TextSelection;
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
+        MouseDownEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, Styled as _,
+        TestAppContext, VisualTestContext, Window, div, point, px, size,
+    };
+
+    struct Shell {
+        store: Store,
+        ui: Ui,
+        /// What reached the store, and the effects it answered with.
+        events: Vec<Event>,
+        effects: Vec<Effect>,
+        scrolled: usize,
+        leaked: bool,
+    }
+
+    impl Host for Shell {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+            // Only the notes and sends: the transcript's own (following the tail) would render again.
+            if matches!(event, Event::Note(_) | Event::Compose(_)) {
+                self.events.push(event.clone());
+                self.effects.extend(self.store.apply(event));
+                cx.notify();
+            }
+        }
+
+        fn copy(&mut self, _: String, _: &mut Context<Self>) {}
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = dock::sync(&mut self.ui, &self.store, window, cx);
+            crate::views::composer::sync(&mut self.ui, &self.store, window, cx);
+            capture::sync(&mut self.ui, window, cx);
+            let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
+            // A zoom key that runs while text is selected breaks the rule.
+            let scroll = cx.listener(|s: &mut Shell, _: &Scroll, window, cx| {
+                s.scrolled += 1;
+                s.leaked |= TextSelection::has_selection(window, cx);
+            });
+            let space = div()
+                .id("space")
+                .key_context("Space")
+                .track_focus(&ui.zoom_focus)
+                .on_action(scroll)
+                .on_action(on(cx, |store, ui, c: &Capture| capture::act(store, ui, c)))
+                .size_full()
+                .child(
+                    div()
+                        .track_focus(&ui.panel().unwrap().focus)
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(transcript::render(store, ui, "mupu", t, cx))
+                        .child(crate::views::composer::render(store, ui, "mupu", t, cx))
+                        .children(capture::render(ui, "mupu", t, cx)),
+                );
+            div().size_full().key_context("Lens").child(space)
+        }
+    }
+
+    /// Zoomed on a writable mupu, its transcript read, `text` the last answer; focus on the zoom.
+    fn open<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+    ) -> (Entity<Shell>, &'a mut VisualTestContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+            bind(cx);
+        });
+        let text = text.to_string();
+        let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let keep = made.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let shell = gpui_kit::AppContext::new(cx, |cx| shell(text, window, cx));
+            *keep.borrow_mut() = Some(shell.clone());
+            gpui_kit::base::Root::new(shell, window, cx)
+        });
+        let shell = made.borrow_mut().take().unwrap();
+        cx.simulate_resize(size(px(1400.), px(900.)));
+        draw(cx);
+        draw(cx);
+        (shell, cx)
+    }
+
+    fn shell(text: String, window: &mut Window, cx: &mut Context<Shell>) -> Shell {
+        {
+            let mut store = loaded();
+            store.apply(fleet_frame(board()));
+            let space = store.spaces[0].id.clone();
+            let view = spaces::Move::View {
+                space: space.clone(),
+                agent: Some("mupu".into()),
+                beside: Vec::new(),
+            };
+            let effects = store.apply(Event::Lens(view));
+            drive(&mut store, effects, &history("mupu"), usize::MAX);
+            let tr = store.transcript.open.values_mut().next().unwrap();
+            tr.items
+                .insert((u64::MAX - 1, 0), Item::Assistant(vec![Seg::Text(text)]));
+            assert!(store.can_send("mupu").is_ok());
+            let mut ui = Ui::new(cx);
+            ui.zoom = Some(Zoom {
+                space,
+                agent: Some("mupu".into()),
+            });
+            window.focus(&ui.zoom_focus, cx);
+            Shell {
+                store,
+                ui,
+                events: Vec::new(),
+                effects: Vec::new(),
+                scrolled: 0,
+                leaked: false,
+            }
+        }
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+    }
+
+    /// The last answer's first line: where a drag across it starts.
+    fn line(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> Point<Pixels> {
+        let at = shell.read_with(cx, |s, _| {
+            let painted = s.ui.panel().unwrap().transcript.painted.borrow();
+            *painted.rows.iter().max_by_key(|(i, _)| **i).unwrap().1
+        });
+        point(at.left() + px(36.), at.top() + px(42.))
+    }
+
+    /// A real drag across 200px of the last answer's first line.
+    fn select(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        let p = line(shell, cx);
+        drag(shell, point(p.x + px(200.), p.y), cx);
+    }
+
+    /// A real drag from the last answer's first line, let go at `to`.
+    fn drag(shell: &Entity<Shell>, to: Point<Pixels>, cx: &mut VisualTestContext) {
+        let (p, m, left) = (line(shell, cx), Modifiers::default(), MouseButton::Left);
+        cx.simulate_mouse_move(p, None, m);
+        cx.simulate_event(MouseDownEvent {
+            button: left,
+            position: p,
+            modifiers: m,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.simulate_mouse_move(to, Some(left), m);
+        cx.simulate_event(MouseUpEvent {
+            button: left,
+            position: to,
+            modifiers: m,
+            click_count: 1,
+        });
+        draw(cx);
+        assert!(
+            !cx.update(TextSelection::selected_text).is_empty(),
+            "the drag selected"
+        );
+    }
+
+    /// The capture as the harness asks it: `none`, `chip:<quote>`, `open:<text>`.
+    fn shown(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> String {
+        shell.read_with(cx, |s, _| match &s.ui.panel().unwrap().capture.draft {
+            None => "none".into(),
+            Some(d) if d.open => format!("open:{}", s.ui.panel().unwrap().capture.text),
+            Some(d) => format!("chip:{}", d.quote),
+        })
+    }
+
+    fn keys(cx: &mut VisualTestContext, keys: &str) {
+        for key in keys.split(' ') {
+            cx.simulate_keystrokes(key);
+            draw(cx);
+        }
+    }
+
+    const TEXT: &str = "Everything in this window has been handled, and nothing else waits.";
+
+    #[gpui_kit::test]
+    fn typing_after_a_selection_notes_it_with_that_key_and_nothing_scrolls(
+        cx: &mut TestAppContext,
+    ) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        let chip = shown(&shell, cx);
+        assert!(
+            chip.starts_with("chip:") && chip.contains("in this window"),
+            "{chip}"
+        );
+        let quote = chip.trim_start_matches("chip:").to_string();
+        // The chip sits under the selected line, at its left.
+        let p = line(&shell, cx);
+        let at = shell.read_with(cx, |s, _| {
+            s.ui.panel().unwrap().capture.draft.as_ref().unwrap().at
+        });
+        assert!(at.y > p.y && at.y < p.y + px(30.), "{at:?} under {p:?}");
+        assert_eq!(at.x, p.x);
+        // Every key types: `j` would scroll the zoom.
+        keys(cx, "j k g");
+        assert_eq!(shown(&shell, cx), "open:jkg");
+        assert_eq!(
+            shell.read_with(cx, |s, _| s.scrolled),
+            0,
+            "a zoom key fired"
+        );
+        keys(cx, "shift-enter o enter");
+        let (events, effects) = shell.read_with(cx, |s, _| (s.events.clone(), s.effects.clone()));
+        let [
+            Event::Note(N::Add {
+                group,
+                text,
+                quote: q,
+                ..
+            }),
+        ] = &events[..]
+        else {
+            panic!("{events:?}")
+        };
+        assert_eq!(
+            (&**group, &**text, q.as_deref()),
+            ("mupu", "jkg\no", Some(&*quote))
+        );
+        // Written as every note is: into the outbox (saved before it is posted, `save_then_send`).
+        assert!(effects.contains(&Effect::Persist(crate::store::Persist::Outbox)));
+        let posts = effects
+            .iter()
+            .filter(|e| matches!(e, Effect::Post { .. }))
+            .count();
+        assert_eq!(posts, 1);
+        let note = shell.read_with(cx, |s, _| s.store.notes_of("mupu").next().cloned());
+        assert_eq!(note.and_then(|n| n.quote), Some(quote));
+        // Closed, the selection is cleared and the zoom's keys are back.
+        assert_eq!(shown(&shell, cx), "none");
+        assert!(cx.update(TextSelection::selected_text).is_empty());
+        keys(cx, "j");
+        assert_eq!(shell.read_with(cx, |s, _| s.scrolled), 1);
+    }
+
+    #[gpui_kit::test]
+    fn enter_opens_it_empty_escape_keeps_nothing_and_gives_the_keys_back(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        keys(cx, "enter");
+        assert_eq!(shown(&shell, cx), "open:");
+        keys(cx, "o k escape");
+        assert_eq!(shown(&shell, cx), "none");
+        // On the chip too.
+        select(&shell, cx);
+        keys(cx, "escape");
+        assert_eq!(shown(&shell, cx), "none");
+        assert!(cx.update(TextSelection::selected_text).is_empty());
+        let (events, scrolled) = shell.read_with(cx, |s, _| (s.events.len(), s.scrolled));
+        assert_eq!((events, scrolled), (0, 0));
+        keys(cx, "j");
+        assert_eq!(
+            shell.read_with(cx, |s, _| s.scrolled),
+            1,
+            "the keys are back"
+        );
+    }
+
+    /// `cmd-c` copies the selection (the kit's Root) and leaves the chip as it is: no note opens.
+    #[gpui_kit::test]
+    fn a_copy_does_not_open_the_note(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        keys(cx, "cmd-c");
+        assert!(
+            shown(&shell, cx).starts_with("chip:"),
+            "{}",
+            shown(&shell, cx)
+        );
+        assert!(!cx.update(TextSelection::selected_text).is_empty());
+    }
+
+    /// `cmd-enter` sends web's note text to the agent on its own (`composer::Step::Quick`): no note,
+    /// the draft untouched.
+    #[gpui_kit::test]
+    fn cmd_enter_sends_the_note_to_the_agent(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        let quote = shown(&shell, cx).trim_start_matches("chip:").to_string();
+        keys(cx, "o k cmd-enter");
+        let (events, effects) = shell.read_with(cx, |s, _| (s.events.clone(), s.effects.clone()));
+        let text = format!("from mupu's transcript:\n> {quote}\n\nok");
+        assert!(
+            matches!(&events[..], [Event::Compose(composer::Step::Quick { agent, text: t })] if agent == "mupu" && *t == text),
+            "{events:?}"
+        );
+        let message = Effect::Message {
+            agent: "mupu".into(),
+            text,
+        };
+        assert!(effects.contains(&message), "{effects:?}");
+        assert_eq!(shown(&shell, cx), "none");
+    }
+
+    /// A click anywhere else closes it, typed text and all (web's).
+    #[gpui_kit::test]
+    fn a_click_elsewhere_closes_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        select(&shell, cx);
+        keys(cx, "o");
+        cx.simulate_click(point(px(1300.), px(20.)), Modifiers::default());
+        draw(cx);
+        assert_eq!(shown(&shell, cx), "none");
+        assert_eq!(shell.read_with(cx, |s, _| s.events.len()), 0);
+    }
+
+    /// miro's P2: focus leaving the chip or the popover any way (here the kit Root's Tab, to the
+    /// composer) cancels it and clears the selection, so no zoom key ever runs with text selected: Esc
+    /// then leaves the box and `j` scrolls, the selection gone.
+    #[gpui_kit::test]
+    fn focus_leaving_it_cancels_it_and_clears_the_selection(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        // GPUI says what lost focus only in an active window (the owner's; a scripted run's is not).
+        cx.update(|window, _| window.activate_window());
+        draw(cx);
+        for typed in ["", "o"] {
+            select(&shell, cx);
+            if !typed.is_empty() {
+                keys(cx, typed);
+                assert_eq!(shown(&shell, cx), format!("open:{typed}"));
+            }
+            keys(cx, "tab");
+            assert_eq!(shown(&shell, cx), "none", "after `{typed}` and tab");
+            assert!(cx.update(TextSelection::selected_text).is_empty());
+            keys(cx, "escape j");
+        }
+        let (events, scrolled, leaked) =
+            shell.read_with(cx, |s, _| (s.events.len(), s.scrolled, s.leaked));
+        assert_eq!((events, leaked), (0, false));
+        assert_eq!(scrolled, 2, "the keys are back once it is gone");
+    }
+
+    /// miro's P2: a drag begun in the transcript and let go outside it (over the composer) still gets the
+    /// chip, so `j` types instead of scrolling.
+    #[gpui_kit::test]
+    fn a_drag_let_go_outside_the_transcript_still_gets_the_chip(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx, TEXT);
+        let p = line(&shell, cx);
+        drag(&shell, point(p.x + px(200.), px(885.)), cx);
+        assert!(
+            shown(&shell, cx).starts_with("chip:"),
+            "{}",
+            shown(&shell, cx)
+        );
+        keys(cx, "j");
+        assert_eq!(shown(&shell, cx), "open:j");
+        let (scrolled, leaked) = shell.read_with(cx, |s, _| (s.scrolled, s.leaked));
+        assert_eq!((scrolled, leaked), (0, false));
+    }
+}
+
+/// The dock (DK2) in a window: the zoom shell drawn as the app draws it (`space::render`, the dock
+/// with its panels), real keys and clicks, and every event the views send applied to the store.
+/// Layout reconcile on load: a saved dock opens with each member once where it was, one preview per
+/// group (the first), members missing from it added to its first group, emptied groups and splits gone,
+/// and the shown tab kept or the one before it.
+#[test]
+fn a_saved_dock_is_reconciled_with_the_members() {
+    use crate::views::dock::{Tree, restore};
+    use gpui_kit::component::dock::{PanelInfo, PanelState};
+    use gpui_kit::{Axis, px};
+    let tab = |agent: &str| {
+        let mut s = PanelState::new("agent");
+        s.info = PanelInfo::panel(serde_json::json!({ "agent": agent }));
+        s
+    };
+    let group = |agents: &[&str], active| PanelState {
+        panel_name: "TabPanel".into(),
+        children: agents.iter().map(|a| tab(a)).collect(),
+        info: PanelInfo::tabs(active),
+    };
+    let split = |children: Vec<PanelState>, sizes: Vec<f32>| PanelState {
+        panel_name: "StackPanel".into(),
+        children,
+        info: PanelInfo::stack(sizes.into_iter().map(px).collect(), Axis::Horizontal),
+    };
+    let saved = split(
+        vec![
+            group(&["a", "gone", "p1", "p2", "b"], 4),
+            group(&["a", "p3", "c"], 2),
+            group(&["gone"], 0),
+        ],
+        vec![600., 500., 300.],
+    );
+    let members: Vec<String> = ["a", "b", "c", "d"].map(String::from).into();
+    let tabs = |agents: &[&str], active| Tree::Tabs {
+        agents: agents.iter().map(|a| a.to_string()).collect(),
+        active,
+    };
+    assert_eq!(
+        restore(&saved, &members),
+        Some(Tree::Split(
+            Axis::Horizontal,
+            vec![
+                (tabs(&["a", "gone", "b", "d"], 2), Some(px(600.))),
+                (tabs(&["p3", "c"], 1), Some(px(500.))),
+            ]
+        )),
+        "gone is the first group's preview, so p1 and p2 go; a once; d appended"
+    );
+    let shown_gone = split(vec![group(&["a", "x", "y"], 2)], vec![0.]);
+    let members = ["a".to_string()];
+    assert_eq!(
+        restore(&shown_gone, &members),
+        Some(Tree::Split(
+            Axis::Horizontal,
+            vec![(tabs(&["a", "x"], 1), None)]
+        )),
+        "y dropped: the tab before it shows"
+    );
+    let mut marked = group(&["a", "gone", "p"], 2);
+    marked.children[2].info =
+        PanelInfo::panel(serde_json::json!({ "agent": "p", "preview": true }));
+    assert_eq!(
+        restore(&split(vec![marked], vec![0.]), &members),
+        Some(Tree::Split(
+            Axis::Horizontal,
+            vec![(tabs(&["a", "p"], 1), None)]
+        )),
+        "p was saved as the group's preview: gone (a member removed since) goes"
+    );
+    assert_eq!(restore(&split(vec![], vec![]), &members), None);
+    assert_eq!(restore(&tab("a"), &members), None, "not a tree of groups");
+}
+
+mod dock_events {
+    use crate::api::Member;
+    use crate::store::spaces::{Layouts, Move};
+    use crate::store::tests::{board, fleet_frame, loaded, space_of};
+    use crate::store::{Event, Store};
+    use crate::views::lens::Ui;
+    use crate::views::space::{self, Zoom};
+    use crate::views::transcript::OpenLink;
+    use crate::views::{Host, bind, dock, theme};
+    use gpui_kit::component::dock::{DockPlacement, InsertTarget};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Context, Entity, InteractiveElement as _, IntoElement, Modifiers, ParentElement as _,
+        Render, Styled as _, TestAppContext, VisualTestContext, Window, div, point, px, size,
+    };
+
+    struct Shell {
+        store: Store,
+        ui: Ui,
+        /// What the store was told is on screen, in order: the focused agent and those beside it.
+        views: Vec<(Option<String>, Vec<String>)>,
+        moves: Vec<Move>,
+        /// The transcript reads the store asked for, unanswered (`feed`).
+        reads: Vec<crate::store::transcript::Read>,
+    }
+
+    impl Host for Shell {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+            if let Event::Lens(m) = &event {
+                if let Move::View { agent, beside, .. } = m {
+                    self.views.push((agent.clone(), beside.clone()));
+                }
+                self.moves.push(m.clone());
+            }
+            for effect in self.store.apply(event) {
+                if let crate::store::Effect::Fetch(crate::store::Fetch::Transcript(r)) = effect {
+                    self.reads.push(r);
+                }
+            }
+            cx.notify();
+        }
+
+        fn copy(&mut self, _: String, _: &mut Context<Self>) {}
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let events = dock::sync(&mut self.ui, &self.store, window, cx);
+            if !events.is_empty() {
+                cx.defer_in(window, |s, _, cx| {
+                    events.into_iter().for_each(|e| s.dispatch(e, cx))
+                });
+            }
+            let t = theme::type_scale(1.);
+            let zoom = self.ui.zoom.clone();
+            let space = zoom.map(|z| space::render(&self.store, &self.ui, &z, t, cx));
+            div().size_full().key_context("Lens").children(space)
+        }
+    }
+
+    const SPACE: [&str; 3] = ["perps-provisioning-mupe", "design-296-lego", "walk-nuna"];
+
+    /// Zoomed into perps (three members) on its second, focused.
+    fn open(cx: &mut TestAppContext) -> (Entity<Shell>, &mut VisualTestContext) {
+        launch(cx, Layouts::default())
+    }
+
+    /// `open`, with `layouts` read from disk at boot.
+    fn launch(
+        cx: &mut TestAppContext,
+        layouts: Layouts,
+    ) -> (Entity<Shell>, &mut VisualTestContext) {
+        boot(cx, layouts, SPACE[1], 1400.)
+    }
+
+    /// Zoomed into perps on `agent`, focused, in a window `width` wide: the zoom (and its dock) comes
+    /// once the window is that wide.
+    fn boot<'a>(
+        cx: &'a mut TestAppContext,
+        layouts: Layouts,
+        agent: &str,
+        width: f32,
+    ) -> (Entity<Shell>, &'a mut VisualTestContext) {
+        let agent = agent.to_string();
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+            bind(cx);
+        });
+        let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let keep = made.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let shell = gpui_kit::AppContext::new(cx, |cx| {
+                let mut store = loaded();
+                store.apply(Event::LayoutsLoaded(layouts));
+                store.apply(fleet_frame(board()));
+                let ui = Ui::new(cx);
+                let (views, moves) = (Vec::new(), Vec::new());
+                Shell {
+                    store,
+                    ui,
+                    views,
+                    moves,
+                    reads: Vec::new(),
+                }
+            });
+            *keep.borrow_mut() = Some(shell.clone());
+            let dots = shell.read(cx).ui.dots.clone();
+            let frame = gpui_kit::AppContext::new(cx, |cx| {
+                crate::views::Frame::new(shell.into(), dots, cx)
+            });
+            gpui_kit::base::Root::new(frame, window, cx)
+        });
+        let shell = made.borrow_mut().take().unwrap();
+        cx.simulate_resize(size(px(width), px(900.)));
+        draw(cx);
+        shell.update(cx, |s, cx| {
+            let space = space_of(&s.store, SPACE[0]).id.clone();
+            let agent = Some(agent);
+            s.ui.zoom = Some(Zoom { space, agent });
+            cx.notify();
+        });
+        draw(cx);
+        cx.update(|window, cx| {
+            let focus = shell.read(cx).ui.focus_target().clone();
+            window.focus(&focus, cx);
+        });
+        draw(cx);
+        (shell, cx)
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+        cx.run_until_parked();
+    }
+
+    fn dock(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> String {
+        cx.update(|_, cx| {
+            let s = shell.read(cx);
+            dock::describe(&s.store, &s.ui, cx)
+        })
+    }
+
+    fn told(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> (Option<String>, Vec<String>) {
+        shell.read_with(cx, |s, _| s.views.last().cloned().unwrap_or_default())
+    }
+
+    /// A real left click at a window point.
+    fn click(cx: &mut VisualTestContext, x: f32, y: f32) {
+        cx.simulate_mouse_move(point(px(x), px(y)), None, Modifiers::none());
+        cx.simulate_click(point(px(x), px(y)), Modifiers::none());
+        draw(cx);
+    }
+
+    fn act(cx: &mut VisualTestContext, action: impl gpui_kit::Action) {
+        cx.dispatch_action(action);
+        draw(cx);
+    }
+
+    /// The visible set drives the store: an `alt`-click on a mention opens it beside, in a group to the
+    /// right, focused; the store is told it is looked at with the other group's shown tab beside it.
+    #[gpui_kit::test]
+    fn an_alt_click_opens_beside_and_the_store_reads_both(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        assert_eq!(
+            dock(&shell, cx),
+            format!("{} [{}*] {}", SPACE[0], SPACE[1], SPACE[2])
+        );
+        assert_eq!(told(&shell, cx), (Some(SPACE[1].into()), Vec::new()));
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        let split = format!("{} {}* {} | [mupu*~]", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), split);
+        assert_eq!(
+            told(&shell, cx),
+            (Some("mupu".into()), vec![SPACE[1].into()])
+        );
+        shell.read_with(cx, |s, _| {
+            let open = &s.store.transcript.open;
+            assert!(
+                open.contains_key("mupu") && open.contains_key(SPACE[1]),
+                "both read"
+            );
+        });
+    }
+
+    /// Seen follows focus across groups: a click in the other group's panel makes its agent the zoom's,
+    /// and only it is seen.
+    #[gpui_kit::test]
+    fn a_click_in_the_other_group_moves_focus_and_seen(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        click(cx, 300., 500.);
+        assert_eq!(
+            told(&shell, cx),
+            (Some(SPACE[1].into()), vec!["mupu".into()])
+        );
+        shell.read_with(cx, |s, _| {
+            assert_eq!(s.store.transcript.focused, Some(SPACE[1].to_string()));
+        });
+        let split = format!("{} [{}*] {} | mupu*~", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), split);
+    }
+
+    /// The tab keys act on the focused group: `tab` and `alt-left` step through it, wrapping, `cmd-1`
+    /// picks; `alt-enter` maximizes it (the other group's tab is no longer beside) and puts it back;
+    /// `cmd-w` closes the focused tab, and a pinned one leaves the space.
+    #[gpui_kit::test]
+    fn the_tab_keys_act_on_the_focused_group(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        click(cx, 300., 500.);
+        let at = |i: usize| {
+            let tab = |j: usize| match j == i {
+                true => format!("[{}*]", SPACE[j]),
+                false => SPACE[j].to_string(),
+            };
+            format!("{} {} {} | mupu*~", tab(0), tab(1), tab(2))
+        };
+        cx.simulate_keystrokes("tab");
+        draw(cx);
+        assert_eq!(dock(&shell, cx), at(2));
+        cx.simulate_keystrokes("tab");
+        draw(cx);
+        assert_eq!(dock(&shell, cx), at(0), "wraps");
+        cx.simulate_keystrokes("alt-left");
+        draw(cx);
+        assert_eq!(dock(&shell, cx), at(2));
+        cx.simulate_keystrokes("cmd-2");
+        draw(cx);
+        assert_eq!(dock(&shell, cx), at(1));
+        assert_eq!(
+            told(&shell, cx),
+            (Some(SPACE[1].into()), vec!["mupu".into()])
+        );
+
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert_eq!(dock(&shell, cx), format!("max {}", at(1)));
+        assert_eq!(told(&shell, cx), (Some(SPACE[1].into()), Vec::new()));
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert_eq!(dock(&shell, cx), at(1));
+
+        cx.simulate_keystrokes("cmd-w");
+        draw(cx);
+        let left = format!("{} [{}*] | mupu*~", SPACE[0], SPACE[2]);
+        assert_eq!(dock(&shell, cx), left, "the group shows the tab after it");
+        shell.read_with(cx, |s, _| {
+            let unpinned = s
+                .moves
+                .iter()
+                .any(|m| matches!(m, Move::Unpin { agent, .. } if agent == SPACE[1]));
+            assert!(unpinned, "the member is removed");
+            let space = space_of(&s.store, SPACE[0]);
+            assert!(space.agents().all(|a| a != SPACE[1]));
+        });
+    }
+
+    /// None of the dock's chords fires in the composer: there they are the box's or nothing.
+    #[gpui_kit::test]
+    fn the_dock_chords_do_not_fire_in_the_composer(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        let before = dock(&shell, cx);
+        cx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let state = ui.panel().unwrap().composer.focus_handle(cx);
+            window.focus(&state, cx);
+        });
+        draw(cx);
+        for keys in ["cmd-w", "cmd-1", "alt-left", "alt-right"] {
+            cx.simulate_keystrokes(keys);
+            draw(cx);
+            assert_eq!(dock(&shell, cx), before, "{keys}");
+        }
+        shell.read_with(cx, |s, _| {
+            assert!(s.moves.iter().all(|m| !matches!(m, Move::Unpin { .. })))
+        });
+    }
+
+    fn pinned(shell: &Entity<Shell>, cx: &mut VisualTestContext, who: &str) -> bool {
+        shell.read_with(cx, |s, _| {
+            let pin = |m: &Move| matches!(m, Move::Pin { agent, .. } if agent == who);
+            s.moves.iter().any(pin) && space_of(&s.store, SPACE[0]).agents().any(|a| a == who)
+        })
+    }
+
+    /// A mention opens a preview in the focused group; the next one opened there replaces it, in its
+    /// place; a double-click on it pins it (the agent joins the space).
+    #[gpui_kit::test]
+    fn a_preview_replaces_the_groups_preview_and_a_double_click_pins_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        let tabs = format!("{} {} {}", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), format!("{tabs} [mupu*~]"));
+        act(cx, OpenLink("herder-agent:support-mifa".into(), false));
+        assert_eq!(dock(&shell, cx), format!("{tabs} [support-mifa*~]"));
+        shell.read_with(cx, |s, _| {
+            assert!(!s.ui.panels.contains_key("mupu"), "its panel went")
+        });
+        act(cx, dock::Pin("support-mifa".into()));
+        assert_eq!(dock(&shell, cx), format!("{tabs} [support-mifa*]"));
+        assert!(pinned(&shell, cx, "support-mifa"));
+    }
+
+    /// A preview dragged into another group is pinned (found by the layout's change), and it is the
+    /// zoom's: it took focus.
+    #[gpui_kit::test]
+    fn a_preview_dragged_to_another_group_is_pinned(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        cx.update(|window, cx| {
+            let area = shell.read(cx).ui.dock.as_ref().unwrap().area.clone();
+            let id = shell.read(cx).ui.panels["mupu"].id;
+            let tree = area.read(cx).layout(DockPlacement::Center).unwrap();
+            let left = tree
+                .find_panel_node(shell.read(cx).ui.panels[SPACE[0]].id)
+                .unwrap();
+            let to = InsertTarget::Tabs {
+                node: left,
+                ix: None,
+                activate: true,
+            };
+            area.update(cx, |a, cx| a.move_panel(id, to, window, cx));
+        });
+        draw(cx);
+        assert!(pinned(&shell, cx, "mupu"));
+        let tabs = format!("{} {} {}", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), format!("{tabs} [mupu*]"));
+    }
+
+    /// Restore after relaunch: the dock as left (its groups in order, the preview, each group's shown
+    /// tab) is saved as it changes, and the next launch opens the space on it; maximize is not kept.
+    #[gpui_kit::test]
+    fn a_dock_opens_after_a_relaunch_as_it_was_left(cx: &mut TestAppContext) {
+        let (shell, vcx) = open(cx);
+        act(vcx, OpenLink("herder-agent:mupu".into(), true));
+        vcx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let area = ui.dock.as_ref().unwrap().area.clone();
+            let (id, mupu) = (ui.panels[SPACE[2]].id, ui.panels["mupu"].id);
+            let tree = area.read(cx).layout(DockPlacement::Center).unwrap();
+            let right = tree.find_panel_node(mupu).unwrap();
+            let to = InsertTarget::Tabs {
+                node: right,
+                ix: None,
+                activate: true,
+            };
+            area.update(cx, |a, cx| a.move_panel(id, to, window, cx));
+        });
+        draw(vcx);
+        vcx.simulate_keystrokes("alt-enter");
+        draw(vcx);
+        let left = format!("max {} {}* | mupu~ [{}*]", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, vcx), left);
+        let layouts = shell.read_with(vcx, |s, _| s.store.layouts.clone());
+        let (shell, vcx) = launch(cx, layouts);
+        let again = format!("{} [{}*] | mupu~ {}*", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(
+            dock(&shell, vcx),
+            again,
+            "opened on its second, not maximized"
+        );
+    }
+
+    /// How many times `who` was pinned.
+    fn pins(shell: &Entity<Shell>, cx: &mut VisualTestContext, who: &str) -> usize {
+        shell.read_with(cx, |s, _| {
+            let pin = |m: &&Move| matches!(m, Move::Pin { agent, .. } if agent == who);
+            s.moves.iter().filter(pin).count()
+        })
+    }
+
+    /// `agent` loaded, so the store takes a send to it.
+    fn writable(shell: &Entity<Shell>, cx: &mut VisualTestContext, agent: &str) {
+        shell.update(cx, |s, _| {
+            let detail = include_str!("../../testdata/agents/mupu/detail.json");
+            let t = s.store.transcript.open.get_mut(agent).unwrap();
+            t.detail = Some(serde_json::from_str(detail).unwrap());
+            assert!(s.store.can_send(agent).is_ok());
+        });
+    }
+
+    /// A send the store takes from a preview pins it, once; one it refuses (nothing to send, the agent
+    /// not loaded) writes nothing.
+    #[gpui_kit::test]
+    fn a_send_from_a_preview_pins_it_and_a_refused_one_does_not(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        cx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let state = ui.panel().unwrap().composer.focus_handle(cx);
+            window.focus(&state, cx);
+        });
+        draw(cx);
+        shell.read_with(cx, |s, _| assert!(!s.store.ready("mupu")));
+        act(cx, crate::views::composer::Compose::Send);
+        assert_eq!(
+            pins(&shell, cx, "mupu"),
+            0,
+            "a refused send wrote the members"
+        );
+        writable(&shell, cx, "mupu");
+        shell.update(cx, |s, _| {
+            s.store.prefs.drafts.insert("mupu".into(), "hello".into());
+        });
+        draw(cx);
+        shell.read_with(cx, |s, _| assert!(s.store.ready("mupu")));
+        act(cx, crate::views::composer::Compose::Send);
+        assert_eq!(pins(&shell, cx, "mupu"), 1);
+        assert!(pinned(&shell, cx, "mupu"));
+    }
+
+    /// A quoted note's quick send (capture) from a preview pins it too, as web's does.
+    #[gpui_kit::test]
+    fn a_quick_send_from_a_preview_pins_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        writable(&shell, cx, "mupu");
+        shell.update(cx, |s, cx| {
+            let panel = s.ui.panels.get_mut("mupu").unwrap();
+            panel.capture.draft = Some(crate::views::capture::Draft {
+                agent: "mupu".into(),
+                quote: "a quote".into(),
+                at: point(px(50.), px(100.)),
+                open: true,
+            });
+            let send = crate::views::capture::Capture::Send;
+            let events = crate::views::capture::act(&s.store, &mut s.ui, &send);
+            let quick = |e: &Event| {
+                matches!(
+                    e,
+                    Event::Compose(crate::store::composer::Step::Quick { .. })
+                )
+            };
+            assert!(events.iter().any(quick));
+            for e in events {
+                s.dispatch(e, cx);
+            }
+        });
+        draw(cx);
+        assert_eq!(pins(&shell, cx, "mupu"), 1);
+        assert!(pinned(&shell, cx, "mupu"));
+    }
+
+    /// A click in the other group's strip (its □) maximizes that group, and the zoom moves to its tab.
+    #[gpui_kit::test]
+    fn the_other_groups_maximize_holds(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        click(cx, 681., 42.);
+        let now = dock(&shell, cx);
+        assert!(now.starts_with("max "), "maximize undone: {now}");
+        assert_eq!(told(&shell, cx), (Some(SPACE[1].into()), vec![]));
+    }
+
+    /// The space's members as another device left them.
+    fn remote(
+        shell: &Entity<Shell>,
+        cx: &mut VisualTestContext,
+        edit: impl FnOnce(&mut Vec<Member>),
+    ) {
+        shell.update(cx, |s, cx| {
+            let id = s.ui.zoom.as_ref().unwrap().space.clone();
+            let space = s.store.spaces.iter_mut().find(|sp| sp.id == id).unwrap();
+            edit(&mut space.members);
+            cx.notify();
+        });
+        draw(cx);
+    }
+
+    fn without(name: &'static str) -> impl FnOnce(&mut Vec<Member>) {
+        move |m| m.retain(|m| !matches!(m, Member::Agent { name: n } if n == name))
+    }
+
+    /// A member another device removes stays open as a preview, unless its group has one: then its tab
+    /// closes, and the group keeps the preview it had (saved marked as such, for a relaunch). Nothing is
+    /// written back.
+    #[gpui_kit::test]
+    fn a_member_removed_elsewhere_leaves_one_preview_in_its_group(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        remote(&shell, cx, without(SPACE[2]));
+        let now = format!("{} [{}*] {}~", SPACE[0], SPACE[1], SPACE[2]);
+        assert_eq!(
+            dock(&shell, cx),
+            now,
+            "no preview there: it becomes the group's"
+        );
+        remote(&shell, cx, without(SPACE[0]));
+        let now = format!("[{}*] {}~", SPACE[1], SPACE[2]);
+        assert_eq!(dock(&shell, cx), now, "the group has a preview: it closes");
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        let now = format!("{} [mupu*~]", SPACE[1]);
+        assert_eq!(dock(&shell, cx), now, "the next preview replaces that one");
+        shell.read_with(cx, |s, _| {
+            let saved = serde_json::to_string(&s.store.layouts).unwrap();
+            assert!(
+                saved.contains(r#"{"agent":"mupu","preview":true}"#),
+                "{saved}"
+            );
+        });
+        remote(&shell, cx, without(SPACE[1]));
+        assert_eq!(
+            dock(&shell, cx),
+            "[mupu*~]",
+            "the zoom's own tab closes too"
+        );
+        assert_eq!(told(&shell, cx).0.as_deref(), Some("mupu"));
+        shell.read_with(cx, |s, _| {
+            assert!(s.moves.iter().all(|m| matches!(m, Move::View { .. })))
+        });
+    }
+
+    /// A member another device adds to a dock with no tab left opens there, the zoom's and focused.
+    #[gpui_kit::test]
+    fn a_member_added_to_an_empty_dock_is_focused(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        for _ in 0..3 {
+            act(cx, dock::Close(None));
+        }
+        assert!(told(&shell, cx).0.is_none());
+        remote(&shell, cx, |m| {
+            m.push(Member::Agent {
+                name: "mupu".into(),
+            })
+        });
+        assert_eq!(told(&shell, cx), (Some("mupu".into()), vec![]));
+        shell.read_with(cx, |s, _| assert_eq!(s.ui.zoomed_agent(), Some("mupu")));
+        cx.update(|window, cx| {
+            let focus = shell.read(cx).ui.panels["mupu"].focus.clone();
+            assert!(
+                focus.contains_focused(window, cx),
+                "the tab keys need it focused"
+            );
+        });
+    }
+
+    /// A tab dropped in its own group (moved there) is the zoom's and takes focus, as one dropped in
+    /// another group does.
+    #[gpui_kit::test]
+    fn a_tab_moved_in_its_group_takes_focus(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        cx.update(|window, cx| {
+            let area = shell.read(cx).ui.dock.as_ref().unwrap().area.clone();
+            let id = shell.read(cx).ui.panels[SPACE[0]].id;
+            let tree = area.read(cx).layout(DockPlacement::Center).unwrap();
+            let node = tree.find_panel_node(id).unwrap();
+            let ix = Some(2);
+            let to = InsertTarget::Tabs {
+                node,
+                ix,
+                activate: true,
+            };
+            area.update(cx, |a, cx| a.move_panel(id, to, window, cx));
+        });
+        draw(cx);
+        assert_eq!(told(&shell, cx).0.as_deref(), Some(SPACE[0]));
+        let now = format!("{} {} [{}*] | mupu*~", SPACE[1], SPACE[2], SPACE[0]);
+        assert_eq!(dock(&shell, cx), now);
+    }
+
+    /// The same by a real drag: the left group's first tab dragged onto its strip's empty end.
+    #[gpui_kit::test]
+    fn a_tab_dragged_in_its_group_takes_focus(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        let left = gpui_kit::MouseButton::Left;
+        cx.simulate_mouse_down(point(px(80.), px(42.)), left, Modifiers::none());
+        cx.simulate_mouse_move(point(px(100.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_move(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_up(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        assert_eq!(
+            told(&shell, cx).0.as_deref(),
+            Some(SPACE[0]),
+            "{}",
+            dock(&shell, cx)
+        );
+        let now = format!("{} {} [{}*] | mupu*~", SPACE[1], SPACE[2], SPACE[0]);
+        assert_eq!(dock(&shell, cx), now);
+    }
+
+    /// A key right after focus moved into another group, before a frame, acts on that group.
+    #[gpui_kit::test]
+    fn a_key_after_a_focus_move_acts_on_the_new_group(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        cx.update(|window, cx| {
+            let focus = shell.read(cx).ui.panels[SPACE[1]].focus.clone();
+            window.focus(&focus, cx);
+        });
+        cx.dispatch_action(space::Zoomed::Agent(1));
+        draw(cx);
+        assert_eq!(told(&shell, cx).0.as_deref(), Some(SPACE[2]));
+    }
+
+    /// mupu's transcript read, its tail from the fixture.
+    fn feed(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        shell.update(cx, |s, cx| {
+            let at = s
+                .reads
+                .iter()
+                .position(|r| r.agent == "mupu")
+                .expect("a read of mupu");
+            let read = s.reads.remove(at);
+            let tail = include_str!("../../testdata/agents/mupu/tail.json");
+            let page: crate::api::Entries = serde_json::from_str(tail).unwrap();
+            let got = Ok(crate::store::transcript::Got::Page(Box::new(page)));
+            s.dispatch(
+                Event::Transcript(crate::store::transcript::Step::Read(read, got)),
+                cx,
+            );
+        });
+        draw(cx);
+    }
+
+    /// Focus on the transcript's text (its selection's own element), as a click there leaves it.
+    fn on_text(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        click(cx, 900., 500.);
+        cx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let p = ui.panels["mupu"].focus.clone();
+            let f = window.focused(cx).expect("focused");
+            assert!(
+                f != p && p.contains(&f, window),
+                "inside mupu's panel, not on it"
+            );
+        });
+    }
+
+    /// The zoom's panel holds focus (keys reach the zoom's bindings).
+    fn keys_live(shell: &Entity<Shell>, cx: &mut VisualTestContext, why: &str) {
+        cx.update(|window, cx| {
+            let ui = &shell.read(cx).ui;
+            let live = window
+                .focused(cx)
+                .is_some_and(|f| ui.focus_target().contains(&f, window));
+            assert!(live, "{why}: focus left the zoom");
+        });
+    }
+
+    /// A maximize lays the dock out anew, and the element focus was on (the transcript's text) goes:
+    /// focus goes back to the zoom's panel, so the keys act without a click, from `alt-enter` and the
+    /// group's □, in and out.
+    #[gpui_kit::test]
+    fn the_keys_act_after_a_maximize_without_a_click(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        feed(&shell, cx);
+        let max = |cx: &mut VisualTestContext| dock(&shell, cx).starts_with("max ");
+        // In: the next key (alt-enter again) acts, and puts it back.
+        on_text(&shell, cx);
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        keys_live(&shell, cx, "maximized");
+        assert!(max(cx));
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert!(!max(cx), "the key after a maximize acts");
+        // Out: from the text of the maximized panel, the same.
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        on_text(&shell, cx);
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        keys_live(&shell, cx, "put back");
+        assert!(!max(cx));
+        cx.simulate_keystrokes("alt-left");
+        draw(cx);
+        cx.simulate_keystrokes("tab");
+        draw(cx);
+        assert_eq!(
+            told(&shell, cx).0.as_deref(),
+            Some("mupu"),
+            "a one-tab group steps to itself"
+        );
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert!(max(cx), "the key after putting back acts");
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        // The □ (mupu's group, the right one) is a click, not a key: the same.
+        on_text(&shell, cx);
+        click(cx, 1381., 42.);
+        keys_live(&shell, cx, "the □");
+        assert!(dock(&shell, cx).starts_with("max "), "{}", dock(&shell, cx));
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert!(
+            !dock(&shell, cx).starts_with("max "),
+            "{}",
+            dock(&shell, cx)
+        );
+    }
+
+    /// The same after the other ways the dock lays out anew: a drop, a close, `cmd-w` on the last tab,
+    /// another device's add and removal.
+    #[gpui_kit::test]
+    fn focus_stays_in_the_zoom_after_any_dock_change(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        act(cx, OpenLink("herder-agent:mupu".into(), true));
+        feed(&shell, cx);
+        on_text(&shell, cx);
+        // mupu's tab dropped on the left group: it is pinned there, and keeps focus.
+        let left = gpui_kit::MouseButton::Left;
+        cx.simulate_mouse_down(point(px(760.), px(42.)), left, Modifiers::none());
+        cx.simulate_mouse_move(point(px(740.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_move(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        cx.simulate_mouse_up(point(px(470.), px(42.)), left, Modifiers::none());
+        draw(cx);
+        keys_live(&shell, cx, "a drop");
+        assert_eq!(
+            told(&shell, cx).0.as_deref(),
+            Some("mupu"),
+            "{}",
+            dock(&shell, cx)
+        );
+        on_text(&shell, cx);
+        remote(&shell, cx, without(SPACE[2]));
+        keys_live(&shell, cx, "a removal elsewhere");
+        remote(&shell, cx, |m| {
+            m.push(Member::Agent {
+                name: "riko".into(),
+            })
+        });
+        keys_live(&shell, cx, "an add elsewhere");
+        on_text(&shell, cx);
+        cx.simulate_keystrokes("cmd-w");
+        draw(cx);
+        keys_live(&shell, cx, "a close");
+        for _ in 0..5 {
+            cx.simulate_keystrokes("cmd-w");
+            draw(cx);
+        }
+        assert_eq!(dock(&shell, cx), "", "every tab closed");
+        keys_live(&shell, cx, "the last tab closed");
+    }
+
+    fn at(cx: &mut VisualTestContext, id: &str) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
+        let id = gpui_kit::ElementId::Name(id.to_string().into());
+        cx.update(|window, _| window.try_find(id).map(|e| e.bounds()))
+    }
+
+    /// Wholly inside the strip's scrolled view.
+    fn in_view(cx: &mut VisualTestContext, agent: &str) -> bool {
+        let view = at(cx, "tab-scroll").expect("the strip");
+        let tab = at(cx, &format!("tab-{agent}")).expect("the tab");
+        tab.left() >= view.left() && tab.right() <= view.right()
+    }
+
+    /// +N lists the tabs not wholly in view, by place, wherever the strip is scrolled to.
+    #[test]
+    fn the_overflow_lists_the_tabs_out_of_view() {
+        use crate::views::tabs::out_of_view;
+        // Four 100-wide tabs from x 10, a view from 10 to 260: two and a half fit.
+        let tabs = || (0..4).map(|i| Some((px(10. + 100. * i as f32), px(110. + 100. * i as f32))));
+        let view = (px(10.), px(260.));
+        assert_eq!(
+            out_of_view(view, px(0.), tabs()),
+            vec![2, 3],
+            "the cut one is out"
+        );
+        assert_eq!(
+            out_of_view(view, px(-150.), tabs()),
+            vec![0, 1],
+            "scrolled to the end"
+        );
+        assert_eq!(
+            out_of_view(view, px(-100.), tabs()),
+            vec![0, 3],
+            "both ends"
+        );
+        assert_eq!(
+            out_of_view(view, px(-99.7), tabs()),
+            vec![0, 3],
+            "half a pixel is in"
+        );
+        let unknown = tabs().take(2).chain([None, Some((px(310.), px(410.)))]);
+        assert_eq!(
+            out_of_view(view, px(0.), unknown),
+            vec![3],
+            "unlaid ones are not"
+        );
+        assert!(
+            out_of_view((px(0.), px(0.)), px(0.), tabs()).is_empty(),
+            "nor in an unlaid view"
+        );
+    }
+
+    /// Perps's three tabs in a window too narrow for them keep their width and scroll (S2); the shown
+    /// tab changing scrolls it into view.
+    #[gpui_kit::test]
+    fn the_shown_tab_scrolls_into_view(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        let widths = |cx: &mut VisualTestContext| {
+            SPACE.map(|a| at(cx, &format!("tab-{a}")).unwrap().size.width)
+        };
+        let wide = widths(cx);
+        cx.simulate_resize(size(px(420.), px(900.)));
+        draw(cx);
+        draw(cx);
+        assert_eq!(widths(cx), wide, "the tabs keep their width");
+        assert!(in_view(cx, SPACE[0]), "the first in view");
+        assert!(!in_view(cx, SPACE[2]), "the third out of view");
+        act(cx, space::Tab(SPACE[2].into()));
+        draw(cx);
+        assert_eq!(
+            dock(&shell, cx),
+            format!("{} {} [{}*]", SPACE[0], SPACE[1], SPACE[2])
+        );
+        assert!(in_view(cx, SPACE[2]), "scrolled to the shown one");
+        assert!(!in_view(cx, SPACE[0]), "the first scrolled away");
+        act(cx, space::Tab(SPACE[0].into()));
+        draw(cx);
+        assert!(in_view(cx, SPACE[0]), "and back");
+        act(cx, space::Tab(SPACE[1].into()));
+        draw(cx);
+        assert!(in_view(cx, SPACE[1]), "the middle one too");
+        let (max, view) = (at(cx, "tab-max").unwrap(), at(cx, "tab-scroll").unwrap());
+        assert!(
+            max.left() >= view.right() && max.right() <= px(420.),
+            "the □ stays in the window"
+        );
+    }
+
+    /// A group opened narrow on a tab out of view at first scrolls to it once laid out.
+    #[gpui_kit::test]
+    fn a_group_opened_narrow_reveals_its_shown_tab(cx: &mut TestAppContext) {
+        let (shell, cx) = boot(cx, Layouts::default(), SPACE[2], 420.);
+        for _ in 0..5 {
+            draw(cx);
+        }
+        assert_eq!(
+            dock(&shell, cx),
+            format!("{} {} [{}*]", SPACE[0], SPACE[1], SPACE[2])
+        );
+        assert!(in_view(cx, SPACE[2]), "the shown tab in view");
+        assert!(!in_view(cx, SPACE[0]), "the first scrolled away");
+    }
+
+    /// Picking under +N the shown tab, narrowed out of view, scrolls to it: the real button and menu.
+    #[gpui_kit::test]
+    fn picking_the_shown_tab_under_more_reveals_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        cx.simulate_resize(size(px(420.), px(900.)));
+        draw(cx);
+        draw(cx);
+        assert!(!in_view(cx, SPACE[1]), "the shown tab narrowed out of view");
+        let more = at(cx, "tab-more").expect("+N");
+        click(cx, more.center().x.into(), more.center().y.into());
+        cx.simulate_keystrokes("down");
+        draw(cx);
+        cx.simulate_keystrokes("enter");
+        for _ in 0..5 {
+            draw(cx);
+        }
+        assert_eq!(
+            dock(&shell, cx),
+            format!("{} [{}*] {}", SPACE[0], SPACE[1], SPACE[2])
+        );
+        assert!(in_view(cx, SPACE[1]), "picked, it is scrolled to");
+    }
+
+    /// A short preview replaced by a wider one: the new one is scrolled to once it is laid out in its
+    /// own width, not judged by the old one's place (fido's review).
+    #[gpui_kit::test]
+    fn a_wider_preview_replacing_a_short_one_is_revealed(cx: &mut TestAppContext) {
+        let (shell, cx) = boot(cx, Layouts::default(), SPACE[1], 710.);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        for _ in 0..6 {
+            draw(cx);
+        }
+        assert!(in_view(cx, "mupu"), "the short preview in view");
+        act(
+            cx,
+            OpenLink("herder-agent:fees-program-design-lifo".into(), false),
+        );
+        for _ in 0..8 {
+            draw(cx);
+        }
+        assert!(dock(&shell, cx).contains("[fees-program-design-lifo*~]"));
+        assert!(in_view(cx, "fees-program-design-lifo"), "the wider one too");
+    }
+
+    /// A tab wider than the strip is never wholly in view: its reveal gives up, and the strip settles,
+    /// asking for no more frames.
+    #[gpui_kit::test]
+    fn an_oversized_tab_settles(cx: &mut TestAppContext) {
+        use gpui_kit::component::dock::TabGroup;
+        let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+        let count = asked.clone();
+        let _watch = cx.update(|cx| {
+            cx.observe_new(move |_: &mut TabGroup, _, cx| {
+                let count = count.clone();
+                cx.observe_self(move |_, _| count.set(count.get() + 1))
+                    .detach();
+            })
+        });
+        let (_shell, cx) = boot(cx, Layouts::default(), SPACE[0], 150.);
+        for _ in 0..15 {
+            draw(cx);
+        }
+        assert!(asked.get() > 0, "the strip drew again while it settled");
+        asked.set(0);
+        for _ in 0..20 {
+            draw(cx);
+        }
+        assert_eq!(asked.get(), 0, "settled");
+        assert!(at(cx, "tab-max").is_some(), "the □ stays");
+    }
+
+    /// A tab's × is there only under the pointer, and closes it.
+    #[gpui_kit::test]
+    fn a_tab_has_its_close_only_on_hover(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        let close = |agent: &str| format!("tab-close-{agent}");
+        assert!(
+            at(cx, &close(SPACE[0])).is_none(),
+            "no × away from the pointer"
+        );
+        assert!(at(cx, &close(SPACE[1])).is_none(), "nor on the shown one");
+        let tab = at(cx, &format!("tab-{}", SPACE[0])).unwrap();
+        cx.simulate_mouse_move(tab.center(), None, Modifiers::none());
+        draw(cx);
+        assert!(at(cx, &close(SPACE[0])).is_some(), "× on the hovered tab");
+        assert!(at(cx, &close(SPACE[1])).is_none(), "and only there");
+        let x = at(cx, &close(SPACE[0])).unwrap();
+        assert!(tab.contains(&x.center()), "inside its tab, no wider");
+        cx.simulate_mouse_move(point(px(700.), px(500.)), None, Modifiers::none());
+        draw(cx);
+        assert!(
+            at(cx, &close(SPACE[0])).is_none(),
+            "gone when the pointer leaves"
+        );
+        cx.simulate_mouse_move(tab.center(), None, Modifiers::none());
+        draw(cx);
+        click(cx, x.center().x.into(), x.center().y.into());
+        assert_eq!(
+            dock(&shell, cx),
+            format!("[{}*] {}", SPACE[1], SPACE[2]),
+            "its × closes it"
+        );
+    }
+}
+
+/// G3: a clicked path's choices with real keys and a press in a headless window: they take focus when
+/// they land, `↑` `↓` move (clamped), `⏎` opens the one under the cursor, `esc` and a press elsewhere
+/// close them; each time focus is back on the panel.
+mod paths_events {
+    use crate::api::{Candidate, ResolveRoot, Resolved};
+    use crate::store::tests::transcript_pages::{drive, history};
+    use crate::store::tests::{board, fleet_frame, loaded};
+    use crate::store::transcript::{Got, Step, What};
+    use crate::store::{Effect, Event, Fetch, Store, spaces};
+    use crate::views::lens::Ui;
+    use crate::views::space::Zoom;
+    use crate::views::{Host, bind, dock, paths, theme, transcript};
+    use gpui_kit::test::TestWindowExt as _;
+    use gpui_kit::{
+        Context, Entity, InteractiveElement as _, IntoElement, Modifiers, MouseButton,
+        MouseDownEvent, MouseUpEvent, ParentElement as _, Render, Styled as _, TestAppContext,
+        VisualTestContext, Window, div, point, px, size,
+    };
+
+    struct Shell {
+        store: Store,
+        ui: Ui,
+        effects: Vec<Effect>,
+    }
+
+    impl Host for Shell {
+        fn parts(&mut self) -> (&Store, &mut Ui) {
+            (&self.store, &mut self.ui)
+        }
+
+        fn view(&self) -> (&Store, &Ui) {
+            (&self.store, &self.ui)
+        }
+
+        fn dispatch(&mut self, event: Event, cx: &mut Context<Self>) {
+            if matches!(event, Event::Transcript(Step::Choose { .. })) {
+                self.effects
+                    .extend(transcript::reduce(&mut self.store, &self.ui, event));
+                cx.notify();
+            }
+        }
+
+        fn copy(&mut self, _: String, _: &mut Context<Self>) {}
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let _ = dock::sync(&mut self.ui, &self.store, window, cx);
+            paths::sync(&mut self.ui, &self.store, window, cx);
+            let (store, ui, t) = (&self.store, &self.ui, theme::type_scale(1.));
+            let panel = ui.panel().unwrap();
+            let at = panel.transcript.pressed();
+            let space = div().key_context("Space").size_full().child(
+                div()
+                    .track_focus(&panel.focus)
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(transcript::render(store, ui, "mupu", t, cx))
+                    .children(paths::render(store, ui, "mupu", at, t, cx)),
+            );
+            div().size_full().key_context("Lens").child(space)
+        }
+    }
+
+    fn candidate(root: &str) -> Candidate {
+        Candidate {
+            root: root.into(),
+            path: "src/x.rs".into(),
+            kind: "file".into(),
+            tier: "suffix".into(),
+            score: 0,
+        }
+    }
+
+    /// Click `src/x.rs:4` and answer with two strong matches in two worktrees.
+    fn offer(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
+        shell.update(cx, |s, cx| {
+            let click = Step::OpenPath {
+                agent: "mupu".into(),
+                mention: "src/x.rs:4".into(),
+            };
+            let effects = s.store.apply(Event::Transcript(click));
+            let Some(Effect::Fetch(Fetch::Transcript(read))) = effects.into_iter().next() else {
+                panic!("no resolve")
+            };
+            assert!(matches!(read.what, What::Resolve { .. }));
+            let roots = ["/w/a", "/w/b"].map(|root| ResolveRoot {
+                root: root.into(),
+                status: "complete".into(),
+            });
+            let got = Got::Resolved(Resolved {
+                candidates: vec![candidate("/w/a"), candidate("/w/b")],
+                roots: roots.into(),
+            });
+            assert!(
+                s.store
+                    .apply(Event::Transcript(Step::Read(read, Ok(got))))
+                    .is_empty()
+            );
+            cx.notify();
+        });
+        draw(cx);
+    }
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.render_frame(cx));
+    }
+
+    /// (choices up, the picker focused, the panel focused, its cursor)
+    fn state(shell: &Entity<Shell>, cx: &mut VisualTestContext) -> (bool, bool, bool, usize) {
+        cx.update(|window, cx| {
+            let s = shell.read(cx);
+            let up = s.store.transcript.focused().unwrap().choices.is_some();
+            let p = s.ui.panel().unwrap();
+            let (picker, panel) = (p.paths.focus.is_focused(window), p.focus.is_focused(window));
+            (up, picker, panel, p.paths.cursor)
+        })
+    }
+
+    fn opened(root: &str) -> Effect {
+        Effect::OpenFile {
+            root: root.into(),
+            file: Some("src/x.rs".into()),
+            line: Some(4),
+        }
+    }
+
+    #[gpui_kit::test]
+    fn the_choices_take_keys_and_give_focus_back(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            theme::seed(cx);
+            gpui_kit::init(cx);
+            theme::dark(cx);
+            bind(cx);
+        });
+        let made = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let keep = made.clone();
+        let (_, cx) = cx.add_window_view(move |window, cx| {
+            let shell = gpui_kit::AppContext::new(cx, |cx| {
+                let mut store = loaded();
+                store.apply(fleet_frame(board()));
+                let space = store.spaces[0].id.clone();
+                let view = spaces::Move::View {
+                    space: space.clone(),
+                    agent: Some("mupu".into()),
+                    beside: Vec::new(),
+                };
+                let effects = store.apply(Event::Lens(view));
+                drive(&mut store, effects, &history("mupu"), usize::MAX);
+                let mut ui = Ui::new(cx);
+                let agent = Some("mupu".into());
+                ui.zoom = Some(Zoom { space, agent });
+                let effects = Vec::new();
+                Shell { store, ui, effects }
+            });
+            *keep.borrow_mut() = Some(shell.clone());
+            gpui_kit::base::Root::new(shell, window, cx)
+        });
+        let shell = made.borrow_mut().take().unwrap();
+        cx.simulate_resize(size(px(1400.), px(900.)));
+        // Active, so focus leaving the choices reports their blur.
+        cx.update(|window, _| window.activate_window());
+        draw(cx);
+        let focus = shell.read_with(cx, |s, _| s.ui.panel().unwrap().focus.clone());
+        cx.update(|window, cx| window.focus(&focus, cx));
+        draw(cx);
+        offer(&shell, cx);
+        assert_eq!(state(&shell, cx), (true, true, false, 0), "landed: focused");
+        for (key, cursor) in [("up", 0), ("down", 1), ("down", 1), ("up", 0), ("down", 1)] {
+            cx.simulate_keystrokes(key);
+            draw(cx);
+            assert_eq!(state(&shell, cx), (true, true, false, cursor), "{key}");
+        }
+        cx.simulate_keystrokes("enter");
+        draw(cx);
+        assert_eq!(state(&shell, cx), (false, false, true, 1));
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![opened("/w/b")]);
+        // A fresh offer starts on the first; esc closes it, opening nothing.
+        offer(&shell, cx);
+        assert_eq!(state(&shell, cx), (true, true, false, 0));
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert_eq!(state(&shell, cx), (false, false, true, 0));
+        cx.simulate_keystrokes("enter");
+        draw(cx);
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![]);
+        // A press anywhere else closes it too.
+        offer(&shell, cx);
+        let (m, at) = (Modifiers::default(), point(px(1300.), px(850.)));
+        cx.simulate_event(MouseDownEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: m,
+            click_count: 1,
+            first_mouse: false,
+        });
+        cx.simulate_event(MouseUpEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: m,
+            click_count: 1,
+        });
+        draw(cx);
+        assert_eq!(state(&shell, cx), (false, false, true, 0));
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![]);
+        // A real click on a row (hit-tested, not the harness's action) opens it, focus back on the panel.
+        offer(&shell, cx);
+        let row = cx.update(|window, _| {
+            window
+                .find(gpui_kit::ElementId::NamedInteger("path".into(), 0))
+                .bounds()
+        });
+        cx.simulate_click(row.center(), Modifiers::default());
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "a row clicked gives focus back"
+        );
+        let effects = shell.update(cx, |s, _| std::mem::take(&mut s.effects));
+        assert_eq!(effects, vec![opened("/w/a")]);
+        // Focus moving away closes them, with no press outside.
+        offer(&shell, cx);
+        cx.update(|window, cx| window.focus(&focus, cx));
+        draw(cx);
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "blur closes the picker"
+        );
+        // Choices gone while they hold focus (a reset) give focus back to the panel.
+        offer(&shell, cx);
+        shell.update(cx, |s, cx| {
+            s.store.transcript.open.get_mut("mupu").unwrap().choices = None;
+            cx.notify();
+        });
+        draw(cx);
+        assert_eq!(
+            state(&shell, cx),
+            (false, false, true, 0),
+            "choices gone give focus back"
         );
     }
 }

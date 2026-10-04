@@ -4,19 +4,26 @@
 //! comes from `theme::type_scale`.
 //!
 //! One file per surface, added by the unit that needs it: `lens` (U2, the home rows and cards), `space`
-//! (U2, the zoom shell and tabs), `transcript` (U3), `composer` (U4), `notes` (U5, the strip) and its
-//! keyboard list `notes_list` (F6); `probe` answers the harness. `theme` holds the palette and the type
-//! scale. This file holds what they share: the key table and its help, the agent chrome (glyph, label,
-//! pill), and the window's `Frame` with the working-dot `Pulse`.
+//! (U2, the zoom shell and tabs), `panel` (DK1, one agent's views below), `transcript` (U3), `composer`
+//! (U4), `notes` (U5, the strip) and its keyboard list `notes_list` (F6), `capture` (F7, type-to-capture
+//! at a transcript selection), `paths` (G3, the choice of where a clicked path lives); `probe`
+//! answers the harness. `theme` holds the palette and the type scale. This file holds what they share:
+//! the key table and its help, the agent chrome (glyph, label, pill), and the window's `Frame` with the
+//! working-dot `Pulse`.
 
+pub mod capture;
 pub mod composer;
+pub mod dock;
 pub mod entries;
 pub mod lens;
 pub mod markdown;
 pub mod notes;
 pub mod notes_list;
+pub mod panel;
+pub mod paths;
 pub mod probe;
 pub mod space;
+pub mod tabs;
 #[cfg(test)]
 mod tests;
 pub mod theme;
@@ -35,10 +42,11 @@ use theme::{TypeScale, pal};
 actions!(herder, [Quit, TextBigger, TextSmaller, TextReset]);
 
 /// Navigation letters bind here (ARCHITECTURE §4): a predicate sees the whole focus stack, so a
-/// focused Input, Terminal or notes list anywhere below turns them off. App-wide chords bind on `Lens`
-/// alone.
-pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList";
-pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList";
+/// focused Input, Terminal or notes list anywhere below turns them off, as does a live transcript
+/// selection (its capture chip holds focus, F7) or a clicked path's choices (G3). App-wide chords bind
+/// on `Lens` alone.
+pub const HOME: &str = "Lens && !Input && !Terminal && !NotesList && !Capture && !Paths";
+pub const SPACE: &str = "Space && !Input && !Terminal && !NotesList && !Capture && !Paths";
 
 pub fn bind(cx: &mut App) {
     cx.bind_keys(bindings());
@@ -89,6 +97,9 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("]", Zoomed::Space(1)),
         ("tab", Zoomed::Agent(1)),
         ("shift-tab", Zoomed::Agent(-1)),
+        ("alt-right", Zoomed::Agent(1)),
+        ("alt-left", Zoomed::Agent(-1)),
+        ("alt-u", Zoomed::Read),
     ];
     let mut keys = vec![
         KeyBinding::new("cmd-q", Quit, Some("Lens")),
@@ -101,15 +112,16 @@ pub fn bindings() -> Vec<KeyBinding> {
     keys.extend(home.map(|(k, a)| KeyBinding::new(k, a, Some(HOME))));
     keys.extend(next.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     keys.extend(zoom.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
+    // The dock's (DK2): close, maximize, the focused group's nth tab.
+    keys.push(KeyBinding::new("cmd-w", dock::Close(None), Some(SPACE)));
+    keys.push(KeyBinding::new("alt-enter", dock::Maximize, Some(SPACE)));
+    let nth = (1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), dock::Nth(n), Some(SPACE)));
+    keys.extend(nth);
     keys.extend(scroll.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     let focus = [("/", Compose::Focus), ("r", Compose::Focus)];
     keys.extend(focus.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     use notes::Notes;
-    let note = [
-        ("a", Notes::Add),
-        ("c", Notes::Capture),
-        ("p", Notes::HandOff),
-    ];
+    let note = [("a", Notes::Add), ("p", Notes::HandOff)];
     keys.extend(note.map(|(k, a)| KeyBinding::new(k, a, Some(SPACE))));
     keys.push(KeyBinding::new("o", transcript::ToggleRun, Some(SPACE)));
     let editor = [
@@ -118,6 +130,28 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("escape", Notes::Cancel),
     ];
     keys.extend(editor.map(|(k, a)| KeyBinding::new(k, a, Some(notes::EDITOR))));
+    use capture::Capture;
+    let chip = [
+        ("enter", Capture::Open),
+        ("space", Capture::Open),
+        ("cmd-enter", Capture::Send),
+        ("escape", Capture::Cancel),
+    ];
+    keys.extend(chip.map(|(k, a)| KeyBinding::new(k, a, Some(capture::CHIP))));
+    let popover = [
+        ("enter", Capture::Save),
+        ("cmd-enter", Capture::Send),
+        ("escape", Capture::Cancel),
+    ];
+    keys.extend(popover.map(|(k, a)| KeyBinding::new(k, a, Some(capture::EDITOR))));
+    use paths::Paths;
+    let picker = [
+        ("up", Paths::Up),
+        ("down", Paths::Down),
+        ("enter", Paths::Open),
+        ("escape", Paths::Close),
+    ];
+    keys.extend(picker.map(|(k, a)| KeyBinding::new(k, a, Some(paths::PICKER))));
     use notes_list::List;
     let list = [
         ("up", List::Move(-1, false)),
@@ -163,6 +197,7 @@ esc           back to the lens
 [ ]           previous / next space
 tab ⇧tab      next / previous agent
 n / N         next space needing you
+⌥U            mark read / unread
 j k           scroll
 space ⇧space  page down / up
 g G           top of loaded (reads older) / end
@@ -171,9 +206,13 @@ o             open / close the lowest run
 ⌘⏎ / ⌘⇧⏎      send / send and back to the lens
 ⌥⏎            keep the box as a note
 esc (in box)  leave the box
-a / c         add a note / note the selection
+a             add a note
 p             notes into the box
 ↑ (in box)    into the notes
+
+selected text
+type / ⏎      a note on it, the key typed / empty
+⏎ ⌘⏎ / esc    save / send to the agent / cancel
 
 notes
 ↑ ↓ ⇧↑ ⇧↓     move / extend the selection
@@ -207,10 +246,10 @@ pub trait Host: Sized + 'static {
 }
 
 /// An action handler: `f` reads the store, moves the view state and returns the events to dispatch;
-/// then focus follows the zoom (the `Space` context is live only while its element has focus), except
-/// that an input in the zoom (the composer, the notes editor) keeps it while the zoom stays put (a
-/// clicked link) and either takes or leaves it when asked; a transition that started gets its end
-/// scheduled.
+/// then the zoom's dock and panels follow it (`dock::sync`) and focus follows the zoomed agent's panel (its keys
+/// are live only while it has focus), except that an input in it (the composer, the notes editor) keeps
+/// focus while the zoom stays put (a clicked link) and either takes or leaves it when asked; a
+/// transition that started gets its end scheduled.
 pub fn on<A: Action, H: Host>(
     cx: &mut Context<H>,
     f: impl Fn(&Store, &mut lens::Ui, &A) -> Vec<Event> + 'static,
@@ -218,16 +257,18 @@ pub fn on<A: Action, H: Host>(
     cx.listener(move |host: &mut H, action: &A, window, cx| {
         let (store, ui) = host.parts();
         let before = ui.anim.as_ref().map(space::Anim::seq);
-        let said = ui.notes.said.as_ref().map(|s| s.0);
+        let said = notes::said_seq(ui);
         let (zoom, held) = (ui.zoom.clone(), window.focused(cx));
-        let events = f(store, ui, action);
+        let mut events = f(store, ui, action);
+        events.extend(dock::sync(ui, store, window, cx));
         let held = held.filter(|h| ui.zoom == zoom && ui.focus_target().contains(h, window));
         let writable = ui.zoomed_agent().is_some_and(|a| store.can_send(a).is_ok());
-        let target = match (ui.focus.take(), held) {
-            (Some(Focus::Box), _) if writable => ui.composer.focus_handle(cx),
-            (Some(Focus::Editor), _) => ui.notes.focus_handle(cx),
-            (Some(Focus::List), _) => ui.notes.list.focus.clone(),
-            (None, Some(held)) => held,
+        let target = match (ui.focus.take(), held, ui.panel()) {
+            (Some(Focus::Box), _, Some(p)) if writable => p.composer.focus_handle(cx),
+            (Some(Focus::Editor), _, Some(p)) => p.notes.focus_handle(cx),
+            (Some(Focus::List), _, Some(p)) => p.notes.list.focus.clone(),
+            (Some(Focus::Capture), _, Some(p)) => p.capture.focus_handle(cx),
+            (None, Some(held), _) => held,
             _ => ui.focus_target().clone(),
         };
         if !target.is_focused(window) {

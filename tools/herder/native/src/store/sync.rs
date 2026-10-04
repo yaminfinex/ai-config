@@ -8,12 +8,16 @@
 //!   edit made while the POST was in flight stays queued;
 //! - after every pull, a queued row is discarded when the pulled row for its key is equal or newer;
 //! - 409 means local-only until a pull succeeds; 413 holds the outbox until the next local edit;
-//!   anything else retries with backoff 500 ms → 10 s.
+//!   a pull's 404 (a server without the namespace) is an empty pull; anything else retries with backoff
+//!   500 ms → 10 s.
+//!
+//! `read.markers` alone merges as web's `mergeMarkerRow` (`markers::merge`), not last-write-wins: a
+//! pulled row merged ahead of its winner is kept in `repairs` for the store to republish.
 //!
 //! `Sync` reports what a step changed (`Changes`), so the store re-derives and persists only then.
 
 use crate::api::{StateRow, StateRows};
-use crate::store::{Effect, Fetch, Wake};
+use crate::store::{Effect, Fetch, Wake, markers};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -27,16 +31,19 @@ pub enum Ns {
     Members,
     #[serde(rename = "notes")]
     Notes,
+    #[serde(rename = "read.markers")]
+    Markers,
 }
 
 impl Ns {
-    pub const ALL: [Ns; 3] = [Ns::Spaces, Ns::Members, Ns::Notes];
+    pub const ALL: [Ns; 4] = [Ns::Spaces, Ns::Members, Ns::Notes, Ns::Markers];
 
     pub fn name(self) -> &'static str {
         match self {
             Ns::Spaces => "spaces",
             Ns::Members => "spaces.members",
             Ns::Notes => "notes",
+            Ns::Markers => "read.markers",
         }
     }
 
@@ -88,6 +95,10 @@ pub struct Sync {
     /// Local edits not yet known to be on the server, the newest per key. Mirrored to `outbox.json`.
     pub outbox: BTreeMap<String, StateRow>,
     pub hold: Option<Hold>,
+    /// A pull has answered since launch.
+    pub pulled: bool,
+    /// `read.markers` rows a pull merged ahead of the winning row, for the store to republish.
+    pub repairs: Vec<StateRow>,
     cursor: u64,
     pulling: bool,
     pull_again: bool,
@@ -105,6 +116,8 @@ impl Sync {
             rows: BTreeMap::new(),
             outbox: BTreeMap::new(),
             hold: None,
+            pulled: false,
+            repairs: Vec::new(),
             cursor: 0,
             pulling: false,
             pull_again: false,
@@ -119,6 +132,7 @@ impl Sync {
     pub fn apply(&mut self, step: Step, out: &mut Vec<Effect>) -> Changes {
         match step {
             Step::Pulled(rows) => self.pulled(rows, out),
+            Step::PullFailed(Some(404)) => self.pulled(StateRows::default(), out),
             Step::PullFailed(status) => {
                 self.pulling = false;
                 self.refused(status, out);
@@ -147,10 +161,22 @@ impl Sync {
         std::mem::take(&mut self.changes)
     }
 
-    /// Last-write-wins merge into `rows`.
+    /// Last-write-wins merge into `rows`; `read.markers` merges as web's (`markers::merge`).
     fn merge(&mut self, rows: impl IntoIterator<Item = StateRow>) {
         for row in rows {
-            if newer(&row, self.rows.get(&row.key)) {
+            let current = self.rows.get(&row.key);
+            let (row, repair) = match self.ns {
+                Ns::Markers => match markers::merge(current, row) {
+                    Some(merged) => merged,
+                    None => continue,
+                },
+                _ if newer(&row, current) => (row, false),
+                _ => continue,
+            };
+            if repair {
+                self.repairs.push(row.clone());
+            }
+            if self.rows.get(&row.key) != Some(&row) {
                 self.rows.insert(row.key.clone(), row);
                 self.changes.rows = true;
             }
@@ -161,7 +187,14 @@ impl Sync {
     /// at once, whichever `send` allows.
     fn queue(&mut self, rows: Vec<StateRow>) {
         self.merge(rows.iter().cloned());
+        self.repairs.clear();
         for row in rows {
+            // What is sent is what merged (a marker keeps a later `at` it already held), at this version.
+            let held = self
+                .rows
+                .get(&row.key)
+                .filter(|r| r.version_cmp(&row) == Ordering::Equal);
+            let row = held.cloned().unwrap_or(row);
             if newer(&row, self.outbox.get(&row.key)) {
                 self.outbox.insert(row.key.clone(), row);
                 self.changes.outbox = true;
@@ -190,7 +223,7 @@ impl Sync {
 
     /// A pull answered: take the rows, drop the queued rows they dominate, send what is left.
     fn pulled(&mut self, got: StateRows, out: &mut Vec<Effect>) {
-        self.pulling = false;
+        (self.pulling, self.pulled) = (false, true);
         if self.hold == Some(Hold::LocalOnly) {
             self.hold = None;
         }
@@ -289,7 +322,7 @@ impl Syncs {
             } else {
                 s.merge(rows)
             }
-            s.changes = Changes::default();
+            (s.changes, s.repairs) = (Changes::default(), Vec::new());
         }
     }
 

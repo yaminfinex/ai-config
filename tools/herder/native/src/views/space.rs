@@ -1,6 +1,6 @@
-//! The zoom shell (`Space` context): one space's agents as tabs over the zoomed agent's transcript
-//! (`transcript`), plus a preview tab for an outsider opened from a mention (local only, never a
-//! member). Zooming into an agent marks it seen and clears the space's unread mark. A notified agent in
+//! The zoom shell (`Space` context): one space's agents as tabs over the zoomed agent's panel
+//! (`panel`: its transcript, notes and composer), plus a preview tab for an outsider opened from a
+//! mention (local only, never a member). Zooming into an agent marks it seen and clears the space's unread mark. A notified agent in
 //! no space opens alone, as a preview in a zoom of no space (`Zoom::alone`); nothing joins a space.
 //!
 //! Transitions, as the spike: `enter` morphs the card's bounds to the window (280 ms) and `escape`
@@ -10,15 +10,11 @@
 use crate::store::spaces::{Move, Space};
 use crate::store::transcript;
 use crate::store::{Event, Store};
-use crate::views::composer::{self, Compose};
+use crate::views::dock::{self, Ask};
 use crate::views::lens::{self, Nav, State, Ui};
 use crate::views::markdown::{AGENT, PATH};
-use crate::views::notes::{self, Notes};
-use crate::views::notes_list::{self, Card};
 use crate::views::theme::{TypeScale, pal};
-use crate::views::transcript::{self as body, Fold, OpenLink, Scroll, ToggleRun};
-use crate::views::{Host, dim, glyph, on, pill};
-use gpui_kit::prelude::FluentBuilder as _;
+use crate::views::{Host, dim, on};
 use gpui_kit::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -30,8 +26,11 @@ pub enum Zoomed {
     Out,
     /// `[` `]`: the previous or next space in lens order, wrapping.
     Space(isize),
-    /// `tab` / `shift-tab`: the next or previous agent in the space, wrapping.
+    /// `tab` / `shift-tab`, `alt-right` / `alt-left`: the next or previous tab in the focused group,
+    /// wrapping.
     Agent(isize),
+    /// `alt-u`: mark the zoomed agent read if it is unread, else unread (web's toggle; RM).
+    Read,
 }
 
 /// A clicked tab: show that agent in this zoom.
@@ -165,7 +164,8 @@ fn zoom_to(ui: &mut State, id: &str, agent: Option<String>, swipe: Option<f32>) 
     if !id.is_empty() {
         ui.select(id);
     }
-    show(ui, id.to_string(), agent)
+    show(ui, id.to_string(), agent);
+    Vec::new()
 }
 
 /// A summon (`Summon`): a notified agent is zoomed into in the first space holding it, or alone in a
@@ -183,7 +183,12 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
                 ui.select(&to.space);
             }
             let Zoom { space, agent } = to;
-            return vec![Event::Lens(Move::View { space, agent })];
+            let beside = Vec::new();
+            return vec![Event::Lens(Move::View {
+                space,
+                agent,
+                beside,
+            })];
         }
         return zoom_to(ui, &to.space, to.agent, None);
     }
@@ -194,38 +199,45 @@ pub fn summon(store: &Store, ui: &mut State, tag: &str) -> Vec<Event> {
     out
 }
 
-pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) -> Vec<Event> {
-    ui.zoom = Some(Zoom {
-        space: space.clone(),
-        agent: agent.clone(),
-    });
-    vec![Event::Lens(Move::View { space, agent })]
+/// The zoom is on `agent` in `space`: the dock shows its tab, opened if it has none, and focuses it
+/// (`dock::sync`), which tells the store.
+pub(super) fn show(ui: &mut State, space: String, agent: Option<String>) {
+    ui.zoom = Some(Zoom { space, agent });
 }
 
-/// A clicked link: a path resolves and opens in VS Code; a member becomes its tab and any other agent
-/// a preview tab in this zoom, never added to the space.
-fn open(ui: &mut State, url: &str) -> Vec<Event> {
-    if let Some(path) = url.strip_prefix(PATH) {
-        return vec![Event::Transcript(transcript::Step::OpenPath(path.into()))];
+/// A link clicked in the zoomed agent's panel: a path resolves and opens in VS Code; an agent opens
+/// its tab (a preview unless a member) in this group, or `beside` it (an `alt`-click).
+pub(super) fn open(ui: &mut State, url: &str, beside: bool) -> Vec<Event> {
+    let (Some(zoom), Some(shown)) = (ui.zoom.clone(), ui.zoomed_agent()) else {
+        return Vec::new();
+    };
+    if let Some(mention) = url.strip_prefix(PATH) {
+        let (agent, mention) = (shown.to_string(), mention.to_string());
+        return vec![Event::Transcript(transcript::Step::OpenPath {
+            agent,
+            mention,
+        })];
     }
-    let (Some(agent), Some(zoom)) = (url.strip_prefix(AGENT), ui.zoom.clone()) else {
+    let Some(agent) = url.strip_prefix(AGENT) else {
         return Vec::new();
     };
     // Linked names are board names; one that has left the board since (retired) opens read-only.
     if agent.is_empty() || zoom.agent.as_deref() == Some(agent) {
         return Vec::new();
     }
-    show(ui, zoom.space, Some(agent.to_string()))
+    if beside {
+        ui.asks.push(Ask::Beside);
+    }
+    show(ui, zoom.space, Some(agent.to_string()));
+    Vec::new()
 }
 
-/// A clicked tab: its agent, unless it is already shown.
+/// A clicked tab: its agent.
 fn tab(ui: &mut State, agent: &str) -> Vec<Event> {
-    match ui.zoom.clone() {
-        Some(zoom) if zoom.agent.as_deref() != Some(agent) => {
-            show(ui, zoom.space, Some(agent.to_string()))
-        }
-        _ => Vec::new(),
+    if let Some(zoom) = ui.zoom.clone() {
+        show(ui, zoom.space, Some(agent.to_string()));
     }
+    Vec::new()
 }
 
 pub(super) fn zoomed<'a>(store: &'a Store, zoom: &Zoom) -> Option<&'a Space> {
@@ -236,6 +248,10 @@ pub fn act(store: &Store, ui: &mut State, key: Zoomed) -> Vec<Event> {
     let Some(zoom) = ui.zoom.clone() else {
         return Vec::new();
     };
+    if key == Zoomed::Read {
+        let agent = zoom.agent.map(Move::Toggle);
+        return agent.map(Event::Lens).into_iter().collect();
+    }
     // Alone, there is no space to move through: only `escape` does anything.
     if zoom.alone() && key != Zoomed::Out {
         return Vec::new();
@@ -243,25 +259,26 @@ pub fn act(store: &Store, ui: &mut State, key: Zoomed) -> Vec<Event> {
     let (Some(space), Zoomed::Space(by) | Zoomed::Agent(by)) = (zoomed(store, &zoom), key) else {
         // `escape`, or the space has gone: morph back to its card, letting the transcript go.
         let card = ui.cards.borrow().get(&zoom.space).copied();
+        ui.panels.values().for_each(|p| p.transcript.clear());
+        if let Some(dock) = ui.dock.as_mut() {
+            dock.told = None;
+        }
         ui.anim = Some(Anim::new(Kind::Out, card, ui.zoom.take()));
         ui.reveal.set(true);
-        ui.transcript.clear();
         return vec![Event::Transcript(transcript::Step::Hide)];
     };
-    let wrap = |at: usize, len: usize| (at as isize + by).rem_euclid(len.max(1) as isize) as usize;
-    if let Zoomed::Space(by) = key {
-        let order = store.lens();
-        let at = order.iter().position(|o| o.id == space.id).unwrap_or(0);
-        return zoom_into(store, ui, order[wrap(at, order.len())], Some(by as f32));
-    }
-    // The zoomed agent may have left the space meanwhile: then `tab` goes to the first one.
-    let agents: Vec<&str> = space.agents().collect();
-    let at = agents
-        .iter()
-        .position(|a| Some(*a) == zoom.agent.as_deref());
-    match agents.get(at.map_or(0, |at| wrap(at, agents.len()))) {
-        Some(next) => show(ui, space.id.clone(), Some(next.to_string())),
-        None => Vec::new(),
+    match key {
+        Zoomed::Space(by) => {
+            let order = store.lens();
+            let at = order.iter().position(|o| o.id == space.id).unwrap_or(0);
+            let next = (at as isize + by).rem_euclid(order.len().max(1) as isize) as usize;
+            zoom_into(store, ui, order[next], Some(by as f32))
+        }
+        // The focused group's next tab (`dock::sync`).
+        _ => {
+            ui.asks.push(Ask::Step(by));
+            Vec::new()
+        }
     }
 }
 
@@ -274,32 +291,6 @@ pub fn render<H: Host>(
 ) -> AnyElement {
     let space = zoomed(store, zoom);
     let current = zoom.agent.as_deref();
-    let members: Vec<&str> = space.into_iter().flat_map(Space::agents).collect();
-    let preview = current.filter(|c| !members.contains(c));
-    let tabs = members.into_iter().chain(preview).map(|name| {
-        let on = Some(name) == current;
-        let agent = store.fleet.agents.get(name);
-        let click = Tab(name.to_string().into());
-        div()
-            .id(SharedString::from(format!("tab-{name}")))
-            .cursor_pointer()
-            .on_click(move |_, window, cx| window.dispatch_action(click.boxed_clone(), cx))
-            .hover(|s| s.text_color(rgb(pal::INK)))
-            .flex()
-            .items_center()
-            .gap(t.px(6.))
-            .px(t.px(10.))
-            .py(t.px(3.))
-            .rounded(t.px(4.))
-            .text_color(rgb(if on { pal::INK } else { pal::SLATE }))
-            .when(on, |el| el.bg(rgb(pal::WASH)))
-            .child(agent.map_or_else(|| div().child("·"), |a| glyph(a, &ui.dots, t)))
-            .child(name.to_string())
-            .when(Some(name) == preview, |el| {
-                el.child(dim("preview").text_size(t.small))
-            })
-            .when(store.agent_needs_you(name), |el| el.child(pill(1, t)))
-    });
     let gone = if zoom.alone() {
         "no space"
     } else {
@@ -317,42 +308,52 @@ pub fn render<H: Host>(
         current.unwrap_or("no agents")
     );
     let crumb = div().flex().gap(t.px(8.)).child(lens).child(crumb);
+    // A slim line over the dock (DK2): where the zoom is, and the keys.
     let bar = div()
         .flex()
+        .flex_none()
         .items_center()
         .gap(t.px(16.))
-        .h(t.px(44.))
-        .px(t.px(16.))
+        .h(t.css(26.))
+        .px(t.css(12.))
+        .text_size(t.small)
+        .text_color(rgb(pal::SLATE))
         .border_b_1()
         .border_color(rgb(pal::RULE))
-        .child(div().flex_1().font_weight(FontWeight::BOLD).child(crumb))
-        .child(
-            dim(match zoom.alone() {
-                true => "esc lens",
-                false => "esc lens · [ ] spaces · tab agents",
-            })
-            .text_size(t.small),
-        );
-    let strip = div().flex().gap(t.px(4.)).px(t.px(12.)).py(t.px(6.));
+        .child(div().flex_1().child(crumb))
+        .child(dim(match zoom.alone() {
+            true => "esc lens",
+            false => "esc lens · [ ] spaces · tab tabs · ⌘W close · ⌥⏎ maximize",
+        }));
+    let empty = dock::empty(ui, cx).then(|| {
+        let empty = div().flex_1().min_h_0().flex().flex_col().p(t.css(24.));
+        empty.child(dim("No agents in this space."))
+    });
+    let area = ui
+        .dock
+        .as_ref()
+        .filter(|_| empty.is_none())
+        .map(|d| d.area.clone());
     div()
         .id("space")
         .key_context("Space")
         .track_focus(&ui.zoom_focus)
         .on_action(on(cx, |store, ui, key: &Zoomed| act(store, ui, *key)))
         .on_action(on(cx, |_, ui, t: &Tab| tab(ui, &t.0)))
-        .on_action(on(cx, |store, ui, s: &Scroll| body::scroll(store, ui, *s)))
-        .on_action(on(cx, |_, ui, _: &ToggleRun| body::toggle_lowest(ui)))
-        .on_action(on(cx, |_, ui, f: &Fold| {
-            ui.transcript.fold(*f);
+        .on_action(on(cx, |store, ui, c: &dock::Close| {
+            dock::close_tab(store, ui, c.0.as_deref())
+        }))
+        .on_action(on(cx, |store, ui, p: &dock::Pin| {
+            dock::pin_tab(store, ui, &p.0)
+        }))
+        .on_action(on(cx, |_, ui, _: &dock::Maximize| {
+            ui.asks.push(dock::Ask::Maximize);
             Vec::new()
         }))
-        .on_action(on(cx, |_, ui, l: &OpenLink| open(ui, &l.0)))
-        .on_action(on(cx, |_, ui, c: &Compose| match c {
-            Compose::Focus => composer::act(ui, *c),
-            _ => Vec::new(),
+        .on_action(on(cx, |_, ui, n: &dock::Nth| {
+            ui.asks.push(dock::Ask::Nth(n.0.saturating_sub(1)));
+            Vec::new()
         }))
-        .on_action(on(cx, |store, ui, n: &Notes| notes::act(store, ui, n)))
-        .on_action(on(cx, |store, ui, c: &Card| notes_list::act(store, ui, c)))
         .on_action(on(cx, |store, ui, nav: &Nav| match nav {
             Nav::NextNeeding(_) => lens::next_needing(store, ui, true),
             _ => Vec::new(),
@@ -362,9 +363,7 @@ pub fn render<H: Host>(
         .flex()
         .flex_col()
         .child(bar)
-        .child(strip.children(tabs))
-        .child(body::render(store, ui, zoom, t, cx))
-        .children(current.and_then(|agent| notes::render(store, ui, agent, t, cx)))
-        .children(current.map(|agent| composer::render(store, ui, agent, t, cx)))
+        .children(area.map(|a| div().flex_1().min_h_0().flex().child(a)))
+        .children(empty)
         .into_any_element()
 }
