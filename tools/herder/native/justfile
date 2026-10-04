@@ -32,7 +32,7 @@ harness script:
 # Key scenario (A0): cmd-= through the real input path must reach TextBigger and persist 1.1.
 # Runs against a throwaway HOME so the owner's prefs are untouched. Then (DK2) the dock's chords typed
 # in the composer change nothing.
-check-keys port="4418": build
+check-keys: build
     #!/usr/bin/env bash
     set -eu
     home=$(mktemp -d)
@@ -42,7 +42,7 @@ check-keys port="4418": build
     rm -rf "$home"
     # The dock's chords (DK2) never fire in the composer: the box keeps its text, the dock its tabs, and
     # nothing is written (fake serve).
-    . scripts/scenario.sh check-keys {{port}}
+    . scripts/scenario.sh check-keys
     dock="dock:mupu*+support-mifa+|+[conductor-line*~]"
     scenario chords "" "wait:1500 key:enter wait:400 draw key:] wait:600 draw beside:herder-agent:conductor-line wait:800 draw $dock key:/ draw key:x tap:cmd-w tap:cmd-1 tap:cmd-9 tap:alt-left tap:alt-right draw box:focused:x $dock quit"
     # Nothing written but the read markers' seeds (RM).
@@ -60,9 +60,9 @@ check-keys port="4418": build
 # fileback cmd-shift-enter stays "sending" until the (slow) send lands, then leaves for the lens, which
 #         takes focus even though escape moved it from the box to the zoom meanwhile (enter zooms in);
 # collide a 409 sender collision makes every box read-only.
-check-composer port="4411":
+check-composer:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-composer {{port}}
+    . scripts/scenario.sh check-composer
     zoom="wait:1500 key:enter wait:400 draw link:herder-agent:mupu wait:1500 draw expect:mupu+preview"
     typed="$zoom key:/ draw key:h key:i draw"
     run() { # MODE NAME POSTS SCRIPT
@@ -107,9 +107,9 @@ check-composer port="4411":
 #          list; cmd-c copies it (logged, never the owner's clipboard);
 # armed    cmd-c, or an unbound letter, between two backspaces disarms the first: the second only arms again,
 #          and nothing is deleted; `e` edits the cursor's note when a cmd-click took it out of the selection.
-check-notes port="4412":
+check-notes:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-notes {{port}}
+    . scripts/scenario.sh check-notes
     zoom="wait:1500 key:enter wait:400 draw link:herder-agent:mupu wait:1500 draw expect:mupu+preview"
     run() { # NOTES NAME POSTS SCRIPT [RELAUNCH-SCRIPT]
         scenario "$2" "$1" "$4" ${5:+"$5"}
@@ -166,9 +166,9 @@ check-notes port="4412":
 #         its click opens it alone (shot u6-no-space), where the transcript, composer and notes work,
 #         esc is the lens again, and no space is written.
 # A blank script (set, so automation) is refused with exit 2 before the app opens.
-check-alerts port="4413":
+check-alerts:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-alerts {{port}}
+    . scripts/scenario.sh check-alerts
     run() { # NAME FRONT SCRIPT TURNS
         HERDER_NATIVE_FRONT=$2 scenario "$1" "$4" "$3"
         grep -q "turn:" "$home/$1.fake" || { echo "check-alerts: $1: no turn was sent"; exit 1; }
@@ -224,9 +224,9 @@ check-alerts port="4413":
 # on a tab shows that agent and a click on `lens ›` zooms out, also from inside the composer and the notes
 # editor (focus leaves them for the zoom); the cards' text reads (`limit=12`) reach the
 # fake serve. Card 1 is `slack` (mupu, support-mifa) in the fixtures' lens order.
-check-mouse port="4414":
+check-mouse:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-mouse {{port}}
+    . scripts/scenario.sh check-mouse
     clicks="click:card:1 draw selected:slack click:card2:1 wait:400 draw expect:mupu"
     clicks+=" click:tab:1 draw expect:support-mifa click:crumb wait:400 draw expect:"
     scenario clicks "" "wait:1500 draw shot:f4-lens $clicks quit"
@@ -270,9 +270,9 @@ check-mouse port="4414":
 # click opens the first tool to its input and output and closes it (shot: a3-member). The wheel (wheel-fix): a
 # mouse's lines and a trackpad's pixels over the lens, then up from the watched tail (it leaves it, as the
 # owner's crash did), over the scrollbar and sideways.
-check-runs port="4415":
+check-runs:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-runs {{port}}
+    . scripts/scenario.sh check-runs
     zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:1500 draw"
     rows() { echo "rows:19+rows,+9+runs,+$1+open"; }
     tools() { echo "tools:$1+open,+$2+with+output"; }
@@ -283,9 +283,9 @@ check-runs port="4415":
 
 # A2 entries: the last answer's status chip opens and closes by click, then its internal note; mupu
 # with two queued messages (shots: a2-status, a2-note).
-check-entries port="4416":
+check-entries:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-entries {{port}}
+    . scripts/scenario.sh check-entries
     zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:1500 draw"
     parts() { echo "parts:$1+status,+$2+notes"; }
     scenario entries "--queued mupu" "$zoom $(parts 0 0) click:status draw $(parts 1 0) shot:a2-status click:status draw $(parts 0 0) find:Internal( wait:300 draw click:internal draw $(parts 0 1) shot:a2-note click:internal draw $(parts 0 0) quit"
@@ -299,9 +299,9 @@ check-entries port="4416":
 # (G2: the text's element goes with the layout, and focus returns to the panel); cmd-w closes the pinned
 # tab (it leaves the space: the second write), and a click on a preview's × closes it (no write). A
 # relaunch on the same HOME opens the dock as it was left.
-check-dock port="4417":
+check-dock:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-dock {{port}}
+    . scripts/scenario.sh check-dock
     slack="wait:1500 key:enter wait:400 draw key:] wait:600 draw"
     scenario dock "" "$slack dock:[mupu*]+support-mifa beside:herder-agent:conductor-line wait:800 draw dock:mupu*+support-mifa+|+[conductor-line*~] shot:dk2-split point:1000,360 wait:300 draw key:alt-enter wait:300 draw dock:max+mupu*+support-mifa+|+[conductor-line*~] key:alt-enter wait:300 draw dock:mupu*+support-mifa+|+[conductor-line*~] point:1000,360 wait:300 draw key:alt-enter wait:300 draw point:1000,360 wait:300 draw key:alt-enter wait:300 draw dock:mupu*+support-mifa+|+[conductor-line*~] key:alt-enter wait:300 draw dock:max+mupu*+support-mifa+|+[conductor-line*~] key:alt-enter wait:300 draw dock:mupu*+support-mifa+|+[conductor-line*~] link:herder-agent:grill-confirm-lubo wait:800 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*~] click:pin:2 wait:300 draw dock:mupu*+support-mifa+|+[grill-confirm-lubo*] drag:154,42,1120,42 wait:300 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:tab draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-2 draw dock:mupu*+|+grill-confirm-lubo+[support-mifa*] key:alt-left draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:max+mupu*+|+[grill-confirm-lubo*]+support-mifa key:alt-enter draw dock:mupu*+|+[grill-confirm-lubo*]+support-mifa key:cmd-w wait:300 draw dock:mupu*+|+[support-mifa*] link:herder-agent:conductor-line wait:600 draw dock:mupu*+|+support-mifa+[conductor-line*~] click:close:2 wait:300 draw dock:mupu*+|+[support-mifa*] wait:600 quit" "$slack dock:[mupu*]+|+support-mifa* quit"
     seen dock "state spaces.members" 2
@@ -319,9 +319,9 @@ check-dock port="4417":
 # focused; the zoom's keys (`p` `j` `o`) do nothing under it; down then enter opens the second, a click on a fresh offer's first opens it, esc closes one
 # opening nothing (the zoom stays); a real click on riko's `submit.rs` offers its two under the pointer; a path also in mupu's own root, ranked first by the serve, opens there at once, and a single match
 # opens at once, its root with a space kept as one argument. Each open is VS Code's CLI argv, logged.
-check-paths port="4419":
+check-paths:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-paths {{port}}
+    . scripts/scenario.sh check-paths
     zoom="wait:1500 summon:agent:mupu wait:1500 draw draw expect:mupu"
     two="link:herder-path:src/views/paths.rs:9 wait:500 draw draw"
     picked="$two paths:focused:2@0 key:down draw paths:focused:2@1 tap:p tap:j tap:o draw paths:focused:2@1 shot:g3-paths key:enter draw paths:none"
@@ -357,9 +357,9 @@ check-paths port="4419":
 # (version 1). In the back, mupu's turn badges and web reading it (`--read`: a row, then a
 # `state-changed` nudge) clears the badge before its notification is due. Zoomed on mupu, frontmost at
 # its tail, the dwell posts one readThrough (a time and a position), and alt-u posts it unread.
-check-read port="4420":
+check-read:
     #!/usr/bin/env bash
-    . scripts/scenario.sh check-read {{port}}
+    . scripts/scenario.sh check-read
     posts() { # NAME PATTERN: the read.markers POSTs with a row matching PATTERN
         grep "state read.markers" "$home/$1.fake" | grep -cE "$2" || true
     }

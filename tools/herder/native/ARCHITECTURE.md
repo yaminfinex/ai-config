@@ -538,7 +538,9 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held ‚å
   an open run, for shots; `run:` opens the run from there too; a selection is a real `drag:`, F7),
   the one file that spells what a script compares against. A scenario that sends anything points
   `HERDER_URL` at `testdata/fake_serve.py` on loopback, never at the real serve (`scripts/scenario.sh`,
-  shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Steps live
+  shared by the `check-*` recipes, does that, the throwaway HOME and the reached-`quit` check). Each fake
+  serve takes a free port and prints it once listening (H1), so checks in other worktrees and seats run
+  alongside without sharing one. Steps live
   in `src/harness.rs`'s module doc, and the scenarios (`just check-keys`, `check-composer`, `check-notes`,
   `check-alerts`, `check-mouse`, `check-runs`, `check-entries`, `check-dock`, `check-paths`, `check-read`) in the justfile's
   comments. `testdata/markers-web.mts` runs web's own read-marker code over fixture rows (unread, merges,
