@@ -237,8 +237,10 @@ if [[ -n $pane ]] && ((force_split == 0)) && probe_output=$(herdr pane get "$pan
   probe_tab=$(jq -r '.result.pane.tab_id // empty' <<<"$probe_output")
   [[ -n $probe_tab ]] || refuse "cannot tell which tab holds pane $pane; pass --force-split to place it anyway"
   probe_panes=$(herdr pane list) || refuse "cannot list herdr panes to check that pane $pane is alone in its tab"
-  probe_count=$(fleet_tab_pane_count "$probe_panes" "$probe_tab")
-  ((probe_count <= 1)) \
+  probe_count=$(fleet_tab_pane_count "$probe_panes" "$probe_tab") \
+    || refuse "herdr pane list is malformed; cannot check that pane $pane is alone in its tab"
+  ((probe_count >= 1)) || refuse "pane $pane is not listed in its tab $probe_tab; pass --force-split to place it anyway"
+  ((probe_count == 1)) \
     || refuse "pane $pane shares tab $probe_tab with $((probe_count - 1)) other pane(s); $shared_tab_reason. Omit placement for a new tab, or pass --force-split"
 fi
 
@@ -315,28 +317,28 @@ elif [[ -n $worktree_branch ]]; then
   cwd=$(jq -er '.result.workspace.worktree.checkout_path | select(length > 0)' <<<"$create_output") \
     || die "worktree create returned no checkout path ($placement_detail, pane=$pane_id left for explicit cleanup)"
   # A worktree workspace that herdr reused may hand back a pane that shares its
-  # tab or already runs something; the seat then takes a fresh tab there.
+  # tab or already runs something. Only a root pane proven to be an idle shell
+  # alone in a known tab is reused; anything else, including process info that
+  # cannot prove idleness, sends the seat to a fresh tab in that workspace.
   root_output=$(herdr pane get "$pane_id") || die "worktree root pane does not exist: $pane_id ($placement_detail left for explicit cleanup)"
   root_tab=$(jq -r '.result.pane.tab_id // empty' <<<"$root_output")
   root_workspace=$(jq -r '.result.workspace.workspace_id // empty' <<<"$create_output")
   [[ -n $root_workspace ]] || root_workspace=$(jq -r '.result.pane.workspace_id // empty' <<<"$root_output")
-  root_shared=0
-  if [[ -n $root_tab ]]; then
-    root_panes=$(herdr pane list) || die "cannot list herdr panes to check worktree pane $pane_id ($placement_detail left for explicit cleanup)"
-    (($(fleet_tab_pane_count "$root_panes" "$root_tab") <= 1)) || root_shared=1
+  root_reuse=0
+  if [[ -n $root_tab ]] && root_panes=$(herdr pane list) \
+    && root_count=$(fleet_tab_pane_count "$root_panes" "$root_tab") && ((root_count == 1)) \
+    && root_process=$(herdr pane process-info --pane "$pane_id") && fleet_idle_shell "$root_process"; then
+    root_reuse=1
   fi
-  root_process=$(herdr pane process-info --pane "$pane_id") || die "cannot inspect worktree pane process state: $pane_id ($placement_detail left for explicit cleanup)"
-  root_idle=0
-  fleet_idle_shell "$root_process" || root_idle=$?
-  ((root_idle != 1)) || root_shared=1
-  if ((root_shared == 1)); then
-    [[ -n $root_workspace ]] || die "worktree pane $pane_id is shared and its workspace is unknown ($placement_detail left for explicit cleanup)"
+  if ((root_reuse == 0)); then
+    root_coords="$placement_detail pane=$pane_id tab=${root_tab:-unknown} workspace=${root_workspace:-unknown}"
+    [[ -n $root_workspace ]] || die "worktree pane $pane_id is not proven alone at an idle shell and its workspace is unknown ($root_coords left for explicit cleanup)"
     tab_output=$(herdr tab create --workspace "$root_workspace" --cwd "$cwd" --no-focus) \
-      || die "herdr tab create failed in worktree workspace $root_workspace ($placement_detail left for explicit cleanup)"
+      || die "herdr tab create failed in worktree workspace $root_workspace ($root_coords left for explicit cleanup)"
     tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$tab_output")
     placement_detail="$placement_detail workspace=$root_workspace${tab_id:+ tab=$tab_id}"
     pane_id=$(jq -er '.result.root_pane.pane_id | select(length > 0)' <<<"$tab_output") \
-      || die "tab create returned no root pane id ($placement_detail left for explicit cleanup)"
+      || die "tab create returned no root pane id ($root_coords, $placement_detail left for explicit cleanup)"
   fi
 else
   if [[ -n $split_from ]]; then
@@ -363,7 +365,7 @@ else
   fleet_idle_shell "$process_output" || idle_rc=$?
   case $idle_rc in
     0) ;;
-    2) die "cannot verify idle shell because process info omitted shell_pid: $pane_id" ;;
+    2) die "cannot verify idle shell because process info is missing or malformed: $pane_id" ;;
     *) die "pane is not at an idle shell: $pane_id" ;;
   esac
   cwd=$(jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' <<<"$pane_output")

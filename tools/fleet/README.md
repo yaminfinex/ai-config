@@ -90,12 +90,16 @@ pane close, and uses only a unique exact label as its fallback:
 tools/fleet/cull.sh review-vava
 ```
 
-If the seat's pane survives the kill holding only its idle shell, cull closes
-it and reports `close=idle-shell` with the pane's cwd and foreground. A pane
-running anything else (dev server, watcher, editor, another agent) is never
-closed; the cull fails and names it. The seat's tab is closed once empty;
-herdr already removes a tab with its last pane, so the output usually reads
-`tab=gone`.
+If the seat's pane survives the kill, cull closes it only through one guarded
+path: no other agent's label is on it, no other hcom seat was launched into it,
+and process info proves it holds only its idle shell, read twice with the same
+shell pid just before the close. It then reports `close=idle-shell` (or
+`close=label-fallback` when the pane still carries the seat's exact label) with
+the pane's cwd and foreground. A pane running anything else (dev server,
+watcher, editor, another agent), or whose process info cannot prove idleness,
+is never closed; the cull fails and names it. cull never closes a tab: herdr
+removes a tab with its last pane, and the output reports `tab=gone` or
+`tab=kept`.
 
 `tools/fleet/drift.sh` is a read-only report of placement drift: tabs holding
 more than one agent pane and panes holding only an idle shell, one per line.

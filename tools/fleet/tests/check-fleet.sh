@@ -60,17 +60,24 @@ printf 'herdr' >>"$FLEET_TEST_CALLS"
 printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
 if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
-  # idle, busy and emptytab keep the seat pane p-seat after hcom kill with its
-  # label gone; idle and emptytab leave a bare shell there, busy a dev server.
-  # emptytab models a herdr that leaves the emptied tab behind.
+  # The p-seat modes keep the seat pane p-seat after hcom kill with its label
+  # gone; idle and emptytab leave a bare shell there, busy a dev server.
+  # emptytab models a herdr that leaves the emptied tab behind. moved puts the
+  # exact label on p-moved after kill, foreign gives p-seat another agent's
+  # label, claimed has another hcom seat launched into p-seat, malformed and
+  # zeropid return process info that cannot prove an idle shell, and flip
+  # turns busy on the second process read. fallback-busy is fallback with a
+  # dev server in the labelled pane.
   case "${1:-} ${2:-}" in
     'pane list')
       case "$FLEET_TEST_CULL_MODE" in
         managed) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-managed","tab_id":"t-seat","label":"◉ gate-vava [codex]"}]}}' ;;
-        fallback) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-fallback","tab_id":"t-seat","label":"▶ gate-vava [codex]"}]}}' ;;
+        fallback | fallback-busy) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-fallback","tab_id":"t-seat","label":"▶ gate-vava [codex]"}]}}' ;;
         ambiguous) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-one","label":"◉ gate-vava [codex]"},{"pane_id":"p-two","label":"○ gate-vava [codex]"}]}}' ;;
-        idle | busy | emptytab)
-          if [[ -e $FLEET_TEST_CULL_STATE/killed ]]; then
+        *)
+          if [[ -e $FLEET_TEST_CULL_STATE/killed && $FLEET_TEST_CULL_MODE == moved ]]; then
+            printf '%s\n' '{"result":{"panes":[{"pane_id":"p-seat","tab_id":"t-seat","label":null},{"pane_id":"p-moved","tab_id":"t-moved","label":"◉ gate-vava [codex]"}]}}'
+          elif [[ -e $FLEET_TEST_CULL_STATE/killed ]]; then
             printf '%s\n' '{"result":{"panes":[{"pane_id":"p-seat","tab_id":"t-seat","label":null},{"pane_id":"p-other","tab_id":"t-other","label":"◉ gate-kemo [claude]"}]}}'
           else
             printf '%s\n' '{"result":{"panes":[{"pane_id":"p-seat","tab_id":"t-seat","label":"◉ gate-vava [codex]"},{"pane_id":"p-other","tab_id":"t-other","label":"◉ gate-kemo [claude]"}]}}'
@@ -83,14 +90,30 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
          [[ $FLEET_TEST_CULL_MODE != managed && -e $FLEET_TEST_CULL_STATE/closed ]]; then
         exit 1
       fi
-      printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-}"'","tab_id":"t-seat","cwd":"/srv/seat","foreground_cwd":"/srv/seat/app"}}}'
+      label=null
+      case $FLEET_TEST_CULL_MODE in
+        fallback | fallback-busy) label='"▶ gate-vava [codex]"' ;;
+        foreign) label='"◉ gate-kemo [claude]"' ;;
+      esac
+      printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-}"'","tab_id":"t-seat","label":'"$label"',"cwd":"/srv/seat","foreground_cwd":"/srv/seat/app"}}}'
       ;;
     'pane process-info')
-      if [[ $FLEET_TEST_CULL_MODE == busy ]]; then
-        printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":[{"pid":77,"name":"node"}]}}}'
-      else
-        printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":[{"pid":42,"name":"zsh"}]}}}'
-      fi
+      reads=0
+      [[ ! -e $FLEET_TEST_CULL_STATE/reads ]] || reads=$(<"$FLEET_TEST_CULL_STATE/reads")
+      reads=$((reads + 1)); printf '%s' "$reads" >"$FLEET_TEST_CULL_STATE/reads"
+      shape=idle
+      case $FLEET_TEST_CULL_MODE in
+        busy | fallback-busy) shape=busy ;;
+        malformed) shape=malformed ;;
+        zeropid) shape=zeropid ;;
+        flip) ((reads < 2)) || shape=busy ;;
+      esac
+      case $shape in
+        busy) printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":[{"pid":77,"name":"node"}]}}}' ;;
+        malformed) printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":false}}}' ;;
+        zeropid) printf '%s\n' '{"result":{"process_info":{"shell_pid":0,"foreground_processes":[{"pid":0,"name":"zsh"}]}}}' ;;
+        *) printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":[{"pid":42,"name":"zsh"}]}}}' ;;
+      esac
       ;;
     'pane close')
       : >"$FLEET_TEST_CULL_STATE/closed"
@@ -111,6 +134,7 @@ fi
 case "$1 $2" in
   'tab create')
     if [[ ${3:-} == --workspace && ${4:-} == w-wt ]]; then
+      [[ ${FLEET_TEST_TAB_CREATE:-} != fail ]] || exit 1
       printf '%s\n' '{"result":{"tab":{"tab_id":"t-wt-fresh"},"root_pane":{"pane_id":"p-wt-fresh","cwd":"/tmp"}}}'
     elif [[ ${FLEET_TEST_DEFAULT_PLACEMENT:-} == 1 ]]; then
       printf '%s\n' '{"result":{"tab":{"tab_id":"tab-default"},"root_pane":{"pane_id":"p-default","cwd":"/tmp"}}}'
@@ -122,11 +146,20 @@ case "$1 $2" in
     if [[ ${FLEET_TEST_UNKNOWN_SPLIT:-} == 1 && ${3:-} == p-source ]]; then
       exit 1
     fi
-    printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-p-test}"'","tab_id":"t-'"${3:-p-test}"'","workspace_id":"w-test","cwd":"'"${FLEET_TEST_PANE_CWD:-/tmp}"'"}}}'
+    # FLEET_TEST_ROOT_TAB=unknown hides the worktree root pane's tab.
+    tab='"t-'"${3:-p-test}"'"'
+    [[ ${FLEET_TEST_ROOT_TAB:-} != unknown || ${3:-} != p-wt ]] || tab=null
+    printf '%s\n' '{"result":{"pane":{"pane_id":"'"${3:-p-test}"'","tab_id":'"$tab"',"workspace_id":"w-test","cwd":"'"${FLEET_TEST_PANE_CWD:-/tmp}"'"}}}'
     ;;
   'pane list')
-    # FLEET_TEST_TAB_SHARED names a pane whose tab also holds a second pane.
-    printf '%s\n' '{"result":{"panes":[{"pane_id":"'"${FLEET_TEST_TAB_SHARED:-none}"'","tab_id":"t-'"${FLEET_TEST_TAB_SHARED:-none}"'"},{"pane_id":"p-neighbour","tab_id":"t-'"${FLEET_TEST_TAB_SHARED:-none}"'"}]}}'
+    # Each known pane sits alone in tab t-<pane>, except FLEET_TEST_TAB_SHARED,
+    # whose tab also holds p-neighbour.
+    panes=
+    for listed in p-test p-wt p-self p-split; do
+      panes="$panes{\"pane_id\":\"$listed\",\"tab_id\":\"t-$listed\"},"
+      [[ $listed != "${FLEET_TEST_TAB_SHARED:-}" ]] || panes="$panes{\"pane_id\":\"p-neighbour\",\"tab_id\":\"t-$listed\"},"
+    done
+    printf '{"result":{"panes":[%s]}}\n' "${panes%,}"
     ;;
   'worktree list')
     printf '%s\n' '{"result":{"source":{"source_checkout_path":"/tmp"}}}'
@@ -144,6 +177,8 @@ case "$1 $2" in
   'pane process-info')
     if [[ ${FLEET_TEST_PROCESS_SHAPE:-} == no-shell-pid ]]; then
       printf '%s\n' '{"result":{"process_info":{"foreground_processes":[{"pid":42,"name":"bash"}]}}}'
+    elif [[ ${FLEET_TEST_PROCESS_SHAPE:-} == malformed ]]; then
+      printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":false}}}'
     else
       printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":[{"pid":42,"name":"bash"}]}}}'
     fi
@@ -171,6 +206,8 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
     'list --json')
       if [[ $FLEET_TEST_CULL_MODE == managed ]]; then
         printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{"pane_id":"p-managed"}}]'
+      elif [[ $FLEET_TEST_CULL_MODE == claimed ]]; then
+        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}},{"name":"gate-kemo","base_name":"kemo","tool":"claude","launch_context":{"pane_id":"p-seat"}}]'
       else
         printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}}]'
       fi
@@ -663,6 +700,34 @@ grep -Fx 'pane=p-wt-fresh' "$TEST_ROOT/wt-shared.out" >/dev/null || fail "worktr
 grep -F 'FLEET_PANE=p-wt-fresh ' "$FLEET_TEST_CALLS" >/dev/null || fail "worktree launch did not target the fresh tab pane"
 pass "worktree spawn takes its own tab even when herdr hands back a shared pane"
 
+for unproven in 'FLEET_TEST_PROCESS_SHAPE=no-shell-pid' 'FLEET_TEST_PROCESS_SHAPE=malformed' 'FLEET_TEST_ROOT_TAB=unknown'; do
+  : >"$FLEET_TEST_CALLS"
+  env "$unproven" PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --worktree-branch wt --repo /tmp \
+    >"$TEST_ROOT/wt-unproven.out" || fail "worktree spawn failed with $unproven"
+  grep -Fx 'herdr tab create --workspace w-wt --cwd /tmp --no-focus' "$FLEET_TEST_CALLS" >/dev/null \
+    || fail "worktree spawn reused a root pane it could not prove ($unproven)"
+  grep -Fx 'pane=p-wt-fresh' "$TEST_ROOT/wt-unproven.out" >/dev/null || fail "worktree spawn did not launch into the fresh tab ($unproven)"
+done
+pass "worktree spawn opens a fresh tab when the root pane's idleness or tab is unproven"
+
+: >"$FLEET_TEST_CALLS"
+if FLEET_TEST_TAB_SHARED=p-wt FLEET_TEST_TAB_CREATE=fail PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --worktree-branch wt --repo /tmp >"$TEST_ROOT/wt-nocreate.out" 2>"$TEST_ROOT/wt-nocreate.err"; then
+  fail "worktree spawn launched although its fresh tab could not be created"
+fi
+grep -F 'herdr tab create failed in worktree workspace w-wt (branch=wt repo=/tmp pane=p-wt tab=t-p-wt workspace=w-wt left for explicit cleanup)' \
+  "$TEST_ROOT/wt-nocreate.err" >/dev/null || fail "worktree tab-create failure did not name its coordinates"
+! grep -E 'hcom .* 1 codex' "$FLEET_TEST_CALLS" >/dev/null || fail "worktree tab-create failure still launched"
+pass "worktree spawn dies with coordinates when its fresh tab cannot be created"
+
+if FLEET_TEST_PROCESS_SHAPE=malformed PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test >/dev/null 2>"$TEST_ROOT/pane-malformed.err"; then
+  fail "spawn reused a pane whose process info is malformed"
+fi
+grep -F 'cannot verify idle shell because process info is missing or malformed: p-test' "$TEST_ROOT/pane-malformed.err" >/dev/null \
+  || fail "spawn did not explain the malformed process info"
+pass "spawn refuses a --pane whose process info is malformed"
+
 printf '0\n' >"$TEST_ROOT/hooks-count"
 FLEET_TEST_HOOKS_BOUND=delayed FLEET_TEST_HOOKS_COUNT="$TEST_ROOT/hooks-count" \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/delayed-hooks.out"
@@ -698,7 +763,7 @@ if FLEET_TEST_PROCESS_SHAPE=no-shell-pid PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test >"$TEST_ROOT/no-shell.out" 2>"$TEST_ROOT/no-shell.err"; then
   fail "spawn accepted an existing pane without a verifiable shell pid"
 fi
-grep -F 'cannot verify idle shell because process info omitted shell_pid' "$TEST_ROOT/no-shell.err" >/dev/null \
+grep -F 'cannot verify idle shell because process info is missing or malformed' "$TEST_ROOT/no-shell.err" >/dev/null \
   || fail "spawn did not explain the missing shell_pid wire shape"
 pass "spawn refuses the shell_pid-absent process-info shape honestly"
 
@@ -949,13 +1014,13 @@ rm -f "$cull_state/killed" "$cull_state/closed"
 : >"$FLEET_TEST_CALLS"
 FLEET_TEST_CULL_MODE=fallback FLEET_TEST_CULL_STATE="$cull_state" \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-fallback.out" 2>"$TEST_ROOT/cull-fallback.err"
-grep -Fx 'culled name=gate-vava pane=p-fallback close=label-fallback tab=gone' "$TEST_ROOT/cull-fallback.out" >/dev/null \
+grep -Fx 'culled name=gate-vava pane=p-fallback close=label-fallback tab=gone cwd=/srv/seat/app foreground=zsh' "$TEST_ROOT/cull-fallback.out" >/dev/null \
   || fail "cull did not report its unique-label fallback close"
 grep -F 'herdr pane close p-fallback' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "cull did not close the unique exact-label fallback pane"
 grep -F 'register culled --name gate-vava --pane p-fallback --close label-fallback' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "fallback cull outcome was not registered"
-pass "cull closes only the unique exact-label fallback pane"
+pass "cull closes the unique exact-label fallback pane once it is an idle shell"
 
 rm -f "$cull_state/killed" "$cull_state/closed"
 : >"$FLEET_TEST_CALLS"
@@ -990,7 +1055,7 @@ if FLEET_TEST_CULL_MODE=busy FLEET_TEST_CULL_STATE="$cull_state" \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-busy.out" 2>"$TEST_ROOT/cull-busy.err"; then
   fail "cull accepted a leftover pane that runs something other than its shell"
 fi
-grep -F 'the expected pane remains without an exact label: p-seat (not an idle shell, kept; cwd=/srv/seat/app foreground=node)' \
+grep -F 'remaining pane p-seat kept: not an idle shell (cwd=/srv/seat/app foreground=node)' \
   "$TEST_ROOT/cull-busy.err" >/dev/null || fail "busy-pane refusal did not name its cwd and foreground"
 ! grep -F 'herdr pane close' "$FLEET_TEST_CALLS" >/dev/null || fail "cull closed a busy pane"
 ! grep -F 'register culled' "$FLEET_TEST_CALLS" >/dev/null || fail "busy-pane refusal registered a cull"
@@ -1000,10 +1065,36 @@ rm -f "$cull_state"/*
 : >"$FLEET_TEST_CALLS"
 FLEET_TEST_CULL_MODE=emptytab FLEET_TEST_CULL_STATE="$cull_state" \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-emptytab.out" 2>"$TEST_ROOT/cull-emptytab.err"
-grep -Fx 'culled name=gate-vava pane=p-seat close=idle-shell tab=closed cwd=/srv/seat/app foreground=zsh' "$TEST_ROOT/cull-emptytab.out" >/dev/null \
-  || fail "cull did not report closing the emptied tab"
-grep -Fx 'herdr tab close t-seat' "$FLEET_TEST_CALLS" >/dev/null || fail "cull left the emptied tab open"
-! grep -F 'herdr tab close t-other' "$FLEET_TEST_CALLS" >/dev/null || fail "cull closed another seat's tab"
-pass "cull closes the seat's tab once it is empty"
+grep -Fx 'culled name=gate-vava pane=p-seat close=idle-shell tab=kept cwd=/srv/seat/app foreground=zsh' "$TEST_ROOT/cull-emptytab.out" >/dev/null \
+  || fail "cull did not report the surviving tab as kept"
+! grep -F 'herdr tab close' "$FLEET_TEST_CALLS" >/dev/null || fail "cull closed a tab"
+pass "cull never closes a tab and reports one herdr kept as tab=kept"
+
+# Every refusal after kill keeps the pane, registers no cull and names why.
+for refusal in \
+  'fallback-busy|remaining pane p-fallback kept: not an idle shell (cwd=/srv/seat/app foreground=node)' \
+  'moved|expected pane p-seat remains but the exact label is now on p-moved; refusing to cull either' \
+  'foreign|remaining pane p-seat kept: it carries another agent'"'"'s label: ◉ gate-kemo [claude]' \
+  'claimed|remaining pane p-seat kept: claimed by seat gate-kemo' \
+  'malformed|remaining pane p-seat kept: idle shell unproven, process info malformed (cwd=/srv/seat/app foreground=unknown)' \
+  'zeropid|remaining pane p-seat kept: idle shell unproven, process info malformed' \
+  'flip|remaining pane p-seat kept: it changed while being checked (cwd=/srv/seat/app foreground=node)'; do
+  mode=${refusal%%|*}
+  reason=${refusal#*|}
+  rm -f "$cull_state"/*
+  : >"$FLEET_TEST_CALLS"
+  if FLEET_TEST_CULL_MODE=$mode FLEET_TEST_CULL_STATE="$cull_state" \
+    PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-$mode.out" 2>"$TEST_ROOT/cull-$mode.err"; then
+    fail "cull $mode closed a pane it should have kept"
+  fi
+  grep -F -- "$reason" "$TEST_ROOT/cull-$mode.err" >/dev/null \
+    || { cat "$TEST_ROOT/cull-$mode.err" >&2; fail "cull $mode did not explain its refusal"; }
+  ! grep -F 'herdr pane close' "$FLEET_TEST_CALLS" >/dev/null || fail "cull $mode closed a pane"
+  ! grep -F 'herdr tab close' "$FLEET_TEST_CALLS" >/dev/null || fail "cull $mode closed a tab"
+  ! grep -F 'register culled' "$FLEET_TEST_CALLS" >/dev/null || fail "cull $mode registered a cull"
+done
+[[ $(grep -c 'herdr pane process-info --pane p-seat' "$FLEET_TEST_CALLS") -eq 2 ]] \
+  || fail "flip cull did not re-read process info before closing"
+pass "cull keeps labelled busy, moved-label, foreign, claimed, malformed and flipped panes"
 
 printf 'ALL GREEN - fleet wrapper contract holds.\n'
