@@ -1,9 +1,9 @@
-# Sourced by the justfile's check-* recipes: `. scripts/scenario.sh RECIPE PORT`. Builds with `shots`
+# Sourced by the justfile's check-* recipes: `. scripts/scenario.sh RECIPE`. Builds with `shots`
 # (screenshots land in shots/), makes a throwaway HOME (gone on exit) and defines `scenario` and `seen`;
 # a recipe keeps only its scripts and its assertions. Nothing reaches the real serve: every run points
-# HERDER_URL at testdata/fake_serve.py on loopback.
+# HERDER_URL at testdata/fake_serve.py on a free loopback port of its own (H1), so checks run side by side.
 set -euo pipefail
-recipe=$1 port=$2
+recipe=$1
 cargo build --release --features shots
 mkdir -p shots
 home=$(mktemp -d) fake=
@@ -13,11 +13,14 @@ trap '[ -z "$fake" ] || kill $fake 2>/dev/null; rm -r "$home"' EXIT
 # ($home/NAME) against one fake serve; env set on the call (HERDER_NATIVE_FRONT) reaches the app. Each run
 # must exit 0 having reached `quit`. The app's log is $home/NAME.log, the fake serve's $home/NAME.fake.
 scenario() {
-    local name=$1 args=$2 script status
+    local name=$1 args=$2 script status port
     shift 2
     # shellcheck disable=SC2086 # the fake serve's arguments are words
-    python3 testdata/fake_serve.py "$port" $args 2>"$home/$name.fake" & fake=$!
-    sleep 0.5
+    python3 testdata/fake_serve.py 0 $args >"$home/$name.port" 2>"$home/$name.fake" & fake=$!
+    # It prints the free port it took once it listens.
+    for _ in $(seq 100); do [ -s "$home/$name.port" ] && break; sleep 0.05; done
+    port=$(head -1 "$home/$name.port")
+    [ -n "$port" ] || { echo "$recipe: $name: the fake serve did not start"; exit 1; }
     for script in "$@"; do
         status=0
         HOME="$home/$name" HERDER_URL=http://127.0.0.1:$port HERDER_NATIVE_SHOT_DIR=shots \

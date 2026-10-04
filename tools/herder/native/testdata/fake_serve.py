@@ -15,7 +15,8 @@ the same order, shows them blocked; a `--read` frame is web reading them (RM): a
 their current turn, then a `state-changed` nudge. A namespace with no fixture (`read.markers`) answers
 404 until something is posted to it. `--queued` gives the agent two queued messages in its detail. `--share` adds the agents to the first space's members too (an agent
 in two spaces). `GET /api/resolve` answers from `resolve.json` by query (G3). Every request is logged on
-stderr.
+stderr. Once it listens it prints its port on stdout: PORT 0 takes a free one, so runs side by side (other
+seats' checks) never share a serve (H1).
 """
 
 import argparse
@@ -198,4 +199,6 @@ if __name__ == "__main__":
     ARGS = p.parse_args()
     if ARGS.notes:
         merge("notes", json.loads(fixture("notes-web.json"))["rows"][:2])
-    ThreadingHTTPServer(("127.0.0.1", ARGS.port), Fake).serve_forever()
+    server = ThreadingHTTPServer(("127.0.0.1", ARGS.port), Fake)
+    print(server.server_address[1], flush=True)
+    server.serve_forever()
