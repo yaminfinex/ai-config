@@ -258,8 +258,8 @@ func (e Event) Validate() error {
 	if e.LauncherKind != "" && !contains(LauncherKinds, e.LauncherKind) {
 		return fmt.Errorf("invalid launcher_kind %q", e.LauncherKind)
 	}
-	if e.Close != "" && e.Close != "managed" && e.Close != "label-fallback" {
-		return fmt.Errorf("%s requires --close managed|label-fallback", e.Kind)
+	if e.Close != "" && e.Close != "managed" && e.Close != "label-fallback" && e.Close != "idle-shell" {
+		return fmt.Errorf("%s requires --close managed|label-fallback|idle-shell", e.Kind)
 	}
 	if e.SteerChars != nil && *e.SteerChars < 0 {
 		return fmt.Errorf("steer_chars must be non-negative")

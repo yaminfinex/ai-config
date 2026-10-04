@@ -944,6 +944,9 @@ func TestValidateAndIDs(t *testing.T) {
 	if err := (Event{ID: NewID(at(0)), At: at(0), Kind: KindCulled, Name: "a", Close: "other"}).Validate(); err == nil {
 		t.Fatal("bad --close accepted")
 	}
+	if err := (Event{ID: NewID(at(0)), At: at(0), Kind: KindCulled, Name: "a", Pane: "p", Close: "idle-shell"}).Validate(); err != nil {
+		t.Fatalf("idle-shell close refused: %v", err)
+	}
 	if err := (Event{ID: NewID(at(0)), At: at(0), Kind: KindLaunchRequested, Tool: "claude"}).Validate(); err == nil {
 		t.Fatal("launch-requested without placement accepted")
 	}

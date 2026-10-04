@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Place one Claude or Codex seat in herdr, then launch it through hcom's
-# per-invocation fleet preset. Failed launches leave created placement in place
+# per-invocation fleet preset. Every seat gets a tab of its own: seats that
+# share a tab get tiny terminals and miss hcom deliveries, so --split-from and a
+# --pane that is not alone in its tab refuse unless --force-split is given. Failed launches leave created placement in place
 # and print its coordinates; cleanup is always explicit. Group and title events
 # are stated after hcom returns the name and before launch-ready.
 
@@ -71,13 +73,18 @@ usage() {
   cat >&2 <<'EOF'
 usage: spawn.sh <claude|codex> [--model MODEL] [--effort LEVEL] --tag TAG
                 [--workspace ID | --worktree-branch NAME --repo PATH |
-                 --pane ID | --split-from PANE_ID|self]
-                [--split-direction right|down] [--prompt TEXT]
+                 --pane ID | --split-from PANE_ID|self --force-split]
+                [--split-direction right|down] [--force-split] [--prompt TEXT]
                 [--group NAME] [--title TEXT]
 
+Every seat gets its own tab. With no placement flag, spawn opens a new tab in
+the caller's workspace; --workspace opens one in that workspace; a worktree
+placement opens a new workspace (or a fresh tab in it if its pane is shared).
+--pane reuses an idle shell pane only when it is alone in its tab.
+--split-from and a shared --pane refuse without --force-split: seats sharing a
+tab get tiny terminals and miss hcom deliveries.
 --split-from self splits beside the caller's own pane (herdr pane current).
 --split-direction defaults to right.
-With no placement flag, spawn opens a new tab in the caller's workspace.
 An absent --group inherits the launching agent's group; --group '' suppresses it.
 EOF
   exit "$rc"
@@ -97,6 +104,7 @@ repo=
 pane=
 split_from=
 split_direction=
+force_split=0
 prompt=
 group=
 group_set=0
@@ -150,6 +158,10 @@ while (($# > 0)); do
       split_direction=$2
       shift 2
       ;;
+    --force-split)
+      force_split=1
+      shift
+      ;;
     --prompt)
       [[ $# -ge 2 ]] || usage
       prompt=$2
@@ -195,7 +207,7 @@ placements=0
 if ((placements == 0)); then
   workspace=${HERDR_WORKSPACE_ID:-}
   [[ -n $workspace ]] \
-    || refuse "no placement flag and no current herdr pane; pass --workspace, --pane, --worktree-branch or --split-from"
+    || refuse "no placement flag and no current herdr pane; pass --workspace, --worktree-branch or --pane"
   placements=1
 fi
 ((placements == 1)) || die "choose exactly one placement: --workspace, --worktree-branch with --repo, --pane, or --split-from"
@@ -206,11 +218,31 @@ if [[ -n $split_direction ]]; then
   [[ -n $split_from ]] || die "--split-direction only applies with --split-from"
   [[ $split_direction == right || $split_direction == down ]] || die "--split-direction must be right or down"
 fi
+if ((force_split == 1)); then
+  [[ -n $split_from || -n $pane ]] || die "--force-split only applies with --split-from or --pane"
+fi
+shared_tab_reason="seats sharing a tab get tiny terminals and miss hcom deliveries"
+if [[ -n $split_from ]] && ((force_split == 0)); then
+  refuse "--split-from puts the seat in a shared tab; $shared_tab_reason. Omit placement for a new tab, or pass --force-split if the operator asked for a split"
+fi
 
 command -v jq >/dev/null || die "jq is required"
 command -v hcom >/dev/null || die "hcom is required"
 command -v herdr >/dev/null || die "herdr is required"
 command -v timeout >/dev/null || die "timeout is required"
+
+# A reused pane must be alone in its tab. An unknown pane falls through to the
+# placement step below, which reports it as a launch failure as before.
+if [[ -n $pane ]] && ((force_split == 0)) && probe_output=$(herdr pane get "$pane" 2>/dev/null); then
+  probe_tab=$(jq -r '.result.pane.tab_id // empty' <<<"$probe_output")
+  [[ -n $probe_tab ]] || refuse "cannot tell which tab holds pane $pane; pass --force-split to place it anyway"
+  probe_panes=$(herdr pane list) || refuse "cannot list herdr panes to check that pane $pane is alone in its tab"
+  probe_count=$(fleet_tab_pane_count "$probe_panes" "$probe_tab") \
+    || refuse "herdr pane list is malformed; cannot check that pane $pane is alone in its tab"
+  ((probe_count >= 1)) || refuse "pane $pane is not listed in its tab $probe_tab; pass --force-split to place it anyway"
+  ((probe_count == 1)) \
+    || refuse "pane $pane shares tab $probe_tab with $((probe_count - 1)) other pane(s); $shared_tab_reason. Omit placement for a new tab, or pass --force-split"
+fi
 
 group=$(jq -rn --arg value "$group" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
 if ((group_set == 1)) && [[ -n $group ]]; then
@@ -284,6 +316,30 @@ elif [[ -n $worktree_branch ]]; then
     || die "worktree create returned no root pane id ($placement_detail left for explicit cleanup)"
   cwd=$(jq -er '.result.workspace.worktree.checkout_path | select(length > 0)' <<<"$create_output") \
     || die "worktree create returned no checkout path ($placement_detail, pane=$pane_id left for explicit cleanup)"
+  # A worktree workspace that herdr reused may hand back a pane that shares its
+  # tab or already runs something. Only a root pane proven to be an idle shell
+  # alone in a known tab is reused; anything else, including process info that
+  # cannot prove idleness, sends the seat to a fresh tab in that workspace.
+  root_output=$(herdr pane get "$pane_id") || die "worktree root pane does not exist: $pane_id ($placement_detail left for explicit cleanup)"
+  root_tab=$(jq -r '.result.pane.tab_id // empty' <<<"$root_output")
+  root_workspace=$(jq -r '.result.workspace.workspace_id // empty' <<<"$create_output")
+  [[ -n $root_workspace ]] || root_workspace=$(jq -r '.result.pane.workspace_id // empty' <<<"$root_output")
+  root_reuse=0
+  if [[ -n $root_tab ]] && root_panes=$(herdr pane list) \
+    && root_count=$(fleet_tab_pane_count "$root_panes" "$root_tab") && ((root_count == 1)) \
+    && root_process=$(herdr pane process-info --pane "$pane_id") && fleet_idle_shell "$root_process"; then
+    root_reuse=1
+  fi
+  if ((root_reuse == 0)); then
+    root_coords="$placement_detail pane=$pane_id tab=${root_tab:-unknown} workspace=${root_workspace:-unknown}"
+    [[ -n $root_workspace ]] || die "worktree pane $pane_id is not proven alone at an idle shell and its workspace is unknown ($root_coords left for explicit cleanup)"
+    tab_output=$(herdr tab create --workspace "$root_workspace" --cwd "$cwd" --no-focus) \
+      || die "herdr tab create failed in worktree workspace $root_workspace ($root_coords left for explicit cleanup)"
+    tab_id=$(jq -r '.result.tab.tab_id // empty' <<<"$tab_output")
+    placement_detail="$placement_detail workspace=$root_workspace${tab_id:+ tab=$tab_id}"
+    pane_id=$(jq -er '.result.root_pane.pane_id | select(length > 0)' <<<"$tab_output") \
+      || die "tab create returned no root pane id ($root_coords, $placement_detail left for explicit cleanup)"
+  fi
 else
   if [[ -n $split_from ]]; then
     if [[ $split_from == self ]]; then
@@ -305,18 +361,13 @@ else
   pane_output=$(herdr pane get "$pane") || die "pane does not exist: $pane"
   pane_id=$(jq -er '.result.pane.pane_id | select(length > 0)' <<<"$pane_output") || die "pane get returned no pane id"
   process_output=$(herdr pane process-info --pane "$pane_id") || die "cannot inspect pane process state: $pane_id"
-  shell_pid=$(jq -r '.result.process_info.shell_pid // empty' <<<"$process_output")
-  [[ -n $shell_pid ]] \
-    || die "cannot verify idle shell because process info omitted shell_pid: $pane_id"
-  if jq -e '
-      .result.process_info as $info
-      | any(($info.foreground_processes // [])[];
-          . as $process
-          | $process.pid != $info.shell_pid
-            or (["bash", "dash", "fish", "ksh", "nu", "sh", "xonsh", "zsh"] | index($process.name)) == null)
-    ' <<<"$process_output" >/dev/null; then
-    die "pane is not at an idle shell: $pane_id"
-  fi
+  idle_rc=0
+  fleet_idle_shell "$process_output" || idle_rc=$?
+  case $idle_rc in
+    0) ;;
+    2) die "cannot verify idle shell because process info is missing or malformed: $pane_id" ;;
+    *) die "pane is not at an idle shell: $pane_id" ;;
+  esac
   cwd=$(jq -r '.result.pane.foreground_cwd // .result.pane.cwd // empty' <<<"$pane_output")
 fi
 
