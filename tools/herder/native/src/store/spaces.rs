@@ -7,6 +7,7 @@
 use crate::api::{Member, MembersValue, SpaceValue, StateRow};
 use crate::store::attention::view_block;
 use crate::store::fleet::Fleet;
+use crate::store::markers::Mark;
 use crate::store::notes::Stamp;
 use crate::store::sync::{Ns, Step as SyncStep};
 use crate::store::{Effect, Persist, Prefs, Store};
@@ -184,17 +185,15 @@ impl Store {
                 let viewed = agents
                     .iter()
                     .fold(false, |c, a| view_block(&mut prefs.blocks, fleet, a) | c);
-                let names: Vec<&str> = agents.iter().map(String::as_str).collect();
-                self.mark_read(&names, None, out);
+                self.mark(Mark::Read(agents, None), out);
                 viewed
             }
             Move::Unread(id) => {
                 let agents: Vec<String> =
                     space(&id).map_or(Vec::new(), |s| live(s, fleet).map(String::from).collect());
-                let names: Vec<&str> = agents.iter().map(String::as_str).collect();
-                return self.mark_unread(&names, out);
+                return self.mark(Mark::Unread(agents), out);
             }
-            Move::Toggle(agent) => return self.toggle_read(&agent, out),
+            Move::Toggle(agent) => return self.mark(Mark::Toggle(agent), out),
             Move::SetRow { space, row } => prefs.rows.insert(space, row) != Some(row),
             Move::CycleVisible(id) => space(&id).is_some_and(|s| cycle_visible(s, fleet, prefs)),
         };

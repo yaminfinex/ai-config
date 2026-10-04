@@ -211,12 +211,8 @@ pub struct Transcript {
     pub detail: Option<AgentDetail>,
     /// The view follows the bottom (`Step::Tail`): what lands is read as it arrives (`markers`).
     pub tail: bool,
-    /// The newest entry read in (where reading reaches) and the one before it; the position just before
-    /// the latest turn's opener, with that opener's offset (`turn_start`).
-    pub end: Option<Pos>,
-    before_end: Option<Pos>,
-    opener: Option<Pos>,
-    opener_at: u64,
+    /// Every entry read in, by offset: its kind and timestamp, for read positions (`end`, `turn_start`).
+    read_in: BTreeMap<u64, (Kind, String)>,
     /// The last failed read, or a path that resolved to nothing to open, and its op. A failed read
     /// holds paging back until that op succeeds, `Dismiss` or a `hello`.
     notice: Option<(Op, String)>,
@@ -407,19 +403,47 @@ impl Transcript {
         self.session.is_some()
     }
 
-    /// Where reading resumes after a mark unread (web's `lastTurnStart` and `positionBefore`): just before
-    /// the latest turn's opener, else before the newest entry; `None` with nothing read in.
+    /// Where reading reaches: the newest entry read in (web's `latestPosition`).
+    pub fn end(&self) -> Option<Pos> {
+        let (offset, (_, ts)) = self.read_in.last_key_value()?;
+        self.pos(*offset, ts)
+    }
+
+    /// Where reading resumes after a mark unread, over every entry read in (web's `lastTurnStart` and
+    /// `positionBefore`): just before the latest turn's opener (what the owner or another agent sent; a
+    /// delivery stub and the delivery after it open the turn together), else before the newest entry;
+    /// one byte short of an entry with none read in above it. `None` with nothing read in.
     pub fn turn_start(&self) -> Option<Pos> {
-        let short = |e: &Pos| Pos {
-            offset: e.offset.saturating_sub(1),
-            ts: String::new(),
-            ..e.clone()
+        use Kind::*;
+        let opens = |k: &Kind| {
+            matches!(
+                k,
+                HumanPrompt | HcomDeliveryStub | HcomDelivery | TaskNotification
+            )
         };
-        let before = self
-            .before_end
-            .clone()
-            .or_else(|| self.end.as_ref().map(short));
-        self.opener.clone().or(before)
+        let above = |offset: u64| self.read_in.range(..offset).next_back();
+        let last = *self.read_in.last_key_value()?.0;
+        let mut start = (self.read_in.iter().rev())
+            .find(|(_, (k, _))| opens(k))
+            .map_or(last, |(o, _)| *o);
+        let stub = above(start).filter(|(_, (k, _))| *k == HcomDeliveryStub);
+        if let Some((o, _)) = stub.filter(|_| self.read_in[&start].0 == HcomDelivery) {
+            start = *o;
+        }
+        match above(start) {
+            Some((o, (_, ts))) => self.pos(*o, ts),
+            None => self.pos(start.saturating_sub(1), ""),
+        }
+    }
+
+    fn pos(&self, offset: u64, ts: &str) -> Option<Pos> {
+        let session = self.session.clone()?;
+        let ts = ts.to_string();
+        Some(Pos {
+            session,
+            offset,
+            ts,
+        })
     }
 
     pub fn paging(&self) -> bool {
@@ -598,17 +622,9 @@ impl Transcript {
         }
         let back = matches!(page, Page::Before { .. });
         self.succeeded(if back { Op::Back } else { Op::Forward });
-        let mut prev: Option<(Kind, Pos)> = None;
         for entry in e.entries {
-            let pos = self.session.clone().map(|session| Pos {
-                session,
-                offset: entry.byte_offset,
-                ts: entry.timestamp.clone(),
-            });
-            if let Some(pos) = pos {
-                self.reached(entry.kind, &pos, prev.as_ref());
-                prev = Some((entry.kind, pos));
-            }
+            let read = (entry.kind, entry.timestamp.clone());
+            self.read_in.insert(entry.byte_offset, read);
             self.ingest(entry);
         }
         // A window of only hidden entries shows nothing: keep reading back until rows or the start.
@@ -621,29 +637,6 @@ impl Transcript {
             if take(&mut self.again) || (full && matches!(page, Page::From { .. })) {
                 self.forward(out);
             }
-        }
-    }
-
-    /// An entry read in at `pos`, after `prev` in its page: the newest moves `end`; a turn's opener (what
-    /// the owner or another agent sent; a delivery stub and its delivery open it together) moves `opener`
-    /// to just before it, the entry above or one byte short when it opens the page.
-    fn reached(&mut self, kind: Kind, pos: &Pos, prev: Option<&(Kind, Pos)>) {
-        if self.end.as_ref().is_none_or(|e| pos.offset > e.offset) {
-            self.before_end = self.end.replace(pos.clone());
-        }
-        use Kind::*;
-        let opens = matches!(
-            kind,
-            HumanPrompt | HcomDeliveryStub | HcomDelivery | TaskNotification
-        );
-        let paired = kind == HcomDelivery && prev.is_some_and(|p| p.0 == HcomDeliveryStub);
-        if opens && !paired && (self.opener.is_none() || pos.offset > self.opener_at) {
-            let before = prev.map(|p| p.1.clone()).unwrap_or_else(|| Pos {
-                offset: pos.offset.saturating_sub(1),
-                ts: String::new(),
-                ..pos.clone()
-            });
-            (self.opener, self.opener_at) = (Some(before), pos.offset);
         }
     }
 

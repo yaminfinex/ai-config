@@ -103,6 +103,10 @@ fn ahead(left: Option<&Pos>, left_at: i64, right: Option<&Pos>, right_at: i64) -
 /// An incoming row against the one held (web's `mergeMarkerRow`): the newer version wins, but reading
 /// never moves backward, except that a newer mark unread stands. `true` when the merge is ahead of the
 /// winning row, to be republished. `None` for a row web would refuse.
+///
+/// A weak row (`WEAK`) against a real one never takes part: the real row wins outright, no repair, so a
+/// seed can never be promoted into a real write that reads a turn away (the owner's rule, web's too).
+/// Weak rows fill an empty slot; two weak rows merge as any two.
 pub fn merge(current: Option<&StateRow>, incoming: StateRow) -> Option<(StateRow, bool)> {
     if !incoming.deleted && parse(&incoming).is_none() {
         return None;
@@ -114,9 +118,13 @@ pub fn merge(current: Option<&StateRow>, incoming: StateRow) -> Option<(StateRow
         Ordering::Greater => (incoming, current.clone()),
         _ => (current.clone(), incoming),
     };
+    let weak = (winner.updated == WEAK) != (loser.updated == WEAK);
     let (Some(w), Some(l)) = (parse(&winner), parse(&loser)) else {
         return Some((winner, false));
     };
+    if weak {
+        return Some((winner, false));
+    }
     if w.unread {
         return Some((winner, false));
     }
@@ -135,7 +143,7 @@ pub fn merge(current: Option<&StateRow>, incoming: StateRow) -> Option<(StateRow
 }
 
 /// What reading writes (web's `readThrough`): the turn end and the newest entry read, neither moving
-/// back, the mark unread cleared. `None` when it changes nothing, or only creeps the position inside a
+/// back, nor the time (a clock behind another device's keeps its `at`), the mark unread cleared. `None` when it changes nothing, or only creeps the position inside a
 /// turn already read sooner than `CREEP_MS`. A `latest` of `None` keeps the position.
 pub fn read_through(
     m: Option<&Marker>,
@@ -158,7 +166,7 @@ pub fn read_through(
     Some(Marker {
         turn: next,
         pos: pos.cloned(),
-        at: now,
+        at: now.max(at),
         unread: false,
     })
 }
@@ -212,8 +220,18 @@ pub struct Reading {
     pub(super) token: u64,
     /// The watched agent has been watched for `DWELL_MS`.
     dwelled: bool,
-    /// Manual unreads the dwell may clear: their agent has been seen not viewed since the mark.
+    /// Manual unreads the dwell may clear: their agent has been left, frontmost, since the mark.
     armed: BTreeSet<String>,
+    /// The owner's marks made before the first pull, made from the merged markers once it answers.
+    held: Vec<Mark>,
+}
+
+/// An owner's mark: read (up to a turn, for a file-back), unread, or `alt-u`'s toggle.
+#[derive(Clone, Debug)]
+pub enum Mark {
+    Read(Vec<String>, Option<u64>),
+    Unread(Vec<String>),
+    Toggle(String),
 }
 
 impl Store {
@@ -233,12 +251,17 @@ impl Store {
             return;
         }
         self.seed(out);
-        // A mark arms once its agent is not viewed (the agent looked at, as only the focused panel reads).
-        let viewed = self.looking_at().map(String::from);
+        for mark in std::mem::take(&mut self.reading.held) {
+            self.mark(mark, out);
+        }
+        // A mark arms once its agent has been left while frontmost: another panel focused, or the zoom
+        // closed. The app going to the back leaves nothing (web arms only with its dock ready and visible).
+        let (front, focused) = (self.alerts.front, self.transcript.focused.clone());
         let (markers, armed) = (&self.markers, &mut self.reading.armed);
         armed.retain(|a| markers.get(a).is_some_and(|m| m.unread));
         let marked = markers.iter().filter(|(_, m)| m.unread).map(|(a, _)| a);
-        armed.extend(marked.filter(|a| viewed.as_ref() != Some(*a)).cloned());
+        let left = marked.filter(|a| front && focused.as_ref() != Some(*a));
+        armed.extend(left.cloned());
         let Some(agent) = self.reading.agent.clone().filter(|_| self.reading.dwelled) else {
             return;
         };
@@ -249,7 +272,7 @@ impl Store {
         }
         let Some(t) = open else { return };
         let turn = self.fleet.agents.get(&agent).and_then(turn_end);
-        if let Some(next) = read_through(marker, turn, t.end.as_ref(), self.clock.now) {
+        if let Some(next) = read_through(marker, turn, t.end().as_ref(), self.clock.now) {
             self.write(vec![(agent, next)], false, out);
         }
     }
@@ -296,12 +319,28 @@ impl Store {
     /// the tail, else `None` (the position kept).
     fn latest(&self, agent: &str) -> Option<Pos> {
         let t = self.transcript.open.get(agent).filter(|t| t.tail)?;
-        t.end.clone()
+        t.end()
+    }
+
+    /// An owner's mark, made from the merged markers: held until the first pull has answered, so it never
+    /// writes over a row this Mac has not seen yet (RM review).
+    pub(super) fn mark(&mut self, mark: Mark, out: &mut Vec<Effect>) {
+        if !self.sync[&Ns::Markers].pulled {
+            return self.reading.held.push(mark);
+        }
+        fn names(v: &[String]) -> Vec<&str> {
+            v.iter().map(String::as_str).collect()
+        }
+        match &mark {
+            Mark::Read(agents, turn) => self.mark_read(&names(agents), *turn, out),
+            Mark::Unread(agents) => self.mark_unread(&names(agents), out),
+            Mark::Toggle(agent) => self.toggle_read(agent, out),
+        }
     }
 
     /// Mark `agents` read now, as the dwell would and whether or not a mark unread is armed (web's
     /// `markReadUpdates`; only those unread), or up to `turn` (a file-back: what the owner saw).
-    pub(super) fn mark_read(&mut self, agents: &[&str], turn: Option<u64>, out: &mut Vec<Effect>) {
+    fn mark_read(&mut self, agents: &[&str], turn: Option<u64>, out: &mut Vec<Effect>) {
         let updates = (agents.iter())
             .filter_map(|&name| {
                 let (a, m) = (self.fleet.agents.get(name), self.markers.get(name));
@@ -318,7 +357,7 @@ impl Store {
 
     /// Mark `agents` unread from the start of their latest turn where it is loaded (web's
     /// `markLastTurnUnread`); each holds until its agent is left and come back to.
-    pub(super) fn mark_unread(&mut self, agents: &[&str], out: &mut Vec<Effect>) {
+    fn mark_unread(&mut self, agents: &[&str], out: &mut Vec<Effect>) {
         let updates = (agents.iter())
             .map(|&name| {
                 let start = self.transcript.open.get(name).and_then(|t| t.turn_start());
@@ -335,7 +374,7 @@ impl Store {
     }
 
     /// `alt-u` (web's toggle): an unread agent is marked read, a read one unread.
-    pub(super) fn toggle_read(&mut self, agent: &str, out: &mut Vec<Effect>) {
+    fn toggle_read(&mut self, agent: &str, out: &mut Vec<Effect>) {
         let (a, m) = (self.fleet.agents.get(agent), self.markers.get(agent));
         match unread(a, m) {
             true => self.mark_read(&[agent], None, out),

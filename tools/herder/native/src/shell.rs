@@ -17,7 +17,7 @@
 //! (`io::save_then_land`), a queued note by that same outbox save, before its posts. The REST reads
 //! and those saves run in `io`.
 
-use crate::api::client::{Client, base_url};
+use crate::api::client::{self, Client, base_url};
 use crate::api::{Wire, sse};
 use crate::local::{self, Disk};
 use crate::store::{Effect, Event, Persist, Store, StreamEvent, TextScale};
@@ -451,10 +451,15 @@ fn summon(tag: &str, cx: &mut App) {
     });
 }
 
-/// The server's client; read-only in a scripted run with no `HERDER_URL`, which reads the live serve
-/// (`coldstart`) and must write nothing to it.
+/// The server's client; in a scripted run read-only unless the server is on loopback (the fake serve):
+/// automation never writes to the live serve (`coldstart` reads it), whatever `HERDER_URL` says.
 fn client() -> Client {
-    let client = Client::new(base_url());
-    let live = platform_mac::quiet() && std::env::var_os("HERDER_URL").is_none();
-    if live { client.read_only() } else { client }
+    let (base, scripted) = (base_url(), platform_mac::quiet());
+    let read_only = scripted && !client::loopback(&base);
+    let client = Client::new(base);
+    if read_only {
+        client.read_only()
+    } else {
+        client
+    }
 }

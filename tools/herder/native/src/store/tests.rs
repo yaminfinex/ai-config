@@ -4355,7 +4355,7 @@ mod read_markers {
             drive(&mut store, effects, &all, transcript::PAGE as usize).len(),
             1
         );
-        let end = |store: &Store| store.transcript.open["mupu"].end.clone().unwrap();
+        let end = |store: &Store| store.transcript.open["mupu"].end().unwrap();
         assert_eq!(end(&store).offset, all[n - 1].byte_offset);
         assert!(store.sync[&Ns::Markers].outbox.is_empty());
         // Five seconds after the last write, the next event writes it.
@@ -4450,8 +4450,10 @@ mod read_markers {
     fn a_stale_remote_row_is_merged_forward_and_republished() {
         let (mut store, _) = live(5_000);
         let mine = turn(&store, "mupu");
+        // A real read of mupu, then an older device's stale one at a newer version.
+        store.apply(remote("mupu", &markers::baseline(mine), 200));
         let stale = markers::baseline(mine - 5);
-        let rows = posted(&store.apply(remote("mupu", &stale, 100)));
+        let rows = posted(&store.apply(remote("mupu", &stale, 300)));
         assert_eq!(rows.len(), 1, "the repair");
         assert_eq!(
             (rows[0].updated, rows[0].write_id.as_str()),
@@ -4460,5 +4462,220 @@ mod read_markers {
         assert_eq!(rows[0].value["turn"], mine);
         assert_eq!(rows[0].value["updated"], 5_000);
         assert_eq!(store.markers["mupu"].turn, mine);
+    }
+
+    /// RM review (lure): a weak seed against a real row takes no part in the merge, either way round: the
+    /// real row wins as written, with no repair, so a seed never reads a turn away. Two weak rows merge.
+    #[test]
+    fn a_weak_seed_never_promotes_into_a_real_write() {
+        let row = |m: &Marker, updated: i64| StateRow {
+            key: "a".into(),
+            value: markers::value(m, updated),
+            updated,
+            write_id: format!("w{updated}"),
+            deleted: false,
+        };
+        let (seed, real) = (
+            row(&markers::baseline(20), WEAK),
+            row(&markers::baseline(10), 1_000),
+        );
+        for (current, incoming) in [(&seed, &real), (&real, &seed)] {
+            let (merged, repair) = markers::merge(Some(current), incoming.clone()).unwrap();
+            assert_eq!((merged, repair), (real.clone(), false));
+        }
+        let other = StateRow {
+            write_id: "x".into(),
+            ..row(&markers::baseline(30), WEAK)
+        };
+        let (merged, _) = markers::merge(Some(&seed), other).unwrap();
+        assert_eq!(markers::parse(&merged).unwrap().turn, 30, "two seeds merge");
+        // In the store: mupu's seed, then web's real row a turn behind: it stands, unread, and nothing posts.
+        let (mut store, _) = live(5_000);
+        let mine = turn(&store, "mupu");
+        assert_eq!(store.sync[&Ns::Markers].rows["mupu"].updated, WEAK);
+        let effects = store.apply(remote("mupu", &markers::baseline(mine - 1), 1_000));
+        assert!(posted(&effects).is_empty());
+        assert_eq!(store.markers["mupu"].turn, mine - 1);
+        assert!(store.agent_needs_you("mupu"));
+    }
+
+    /// RM review (lure): an owner's mark before the first markers pull is held, then made from the
+    /// merged marker, so it never writes over web's read turn, position and time; from an empty local
+    /// store and from a stale snapshot alike.
+    #[test]
+    fn a_mark_before_the_first_pull_waits_for_it() {
+        let webs = Marker {
+            turn: 12,
+            pos: Some(Pos {
+                session: "s".into(),
+                offset: 900,
+                ts: "t".into(),
+            }),
+            at: 1_000,
+            unread: false,
+        };
+        for stale in [None, Some(markers::baseline(5))] {
+            let mut store = Store::default();
+            if let Some(m) = &stale {
+                let row = StateRow {
+                    key: "agent".into(),
+                    value: markers::value(m, 50),
+                    updated: 50,
+                    write_id: "old".into(),
+                    deleted: false,
+                };
+                let rows = [(Ns::Markers, vec![row])].into();
+                let board = Board::default();
+                store.apply(Event::Snapshot(Snapshot { board, rows }));
+            }
+            clock(&mut store, 2_000);
+            store.apply(Event::Boot);
+            let toggle = lens(spaces::Move::Toggle("agent".into()));
+            assert!(posted(&store.apply(toggle)).is_empty(), "held: {stale:?}");
+            let rows = posted(&store.apply(remote("agent", &webs, 1_000)));
+            assert_eq!(rows.len(), 1, "{stale:?}");
+            let want = Marker {
+                unread: true,
+                ..webs.clone()
+            };
+            assert_eq!(markers::parse(&rows[0]), Some(want), "{stale:?}");
+        }
+    }
+
+    /// RM review (lure): a read made on a clock behind another device's keeps the later `at`, and the
+    /// row posted is the one merged.
+    #[test]
+    fn a_read_behind_another_clock_keeps_its_time() {
+        let mut store = Store::default();
+        clock(&mut store, 1_000);
+        let theirs = Marker {
+            turn: 10,
+            pos: None,
+            at: 2_000,
+            unread: true,
+        };
+        store.apply(remote("agent", &theirs, 2_000));
+        let rows = posted(&store.apply(lens(spaces::Move::Toggle("agent".into()))));
+        assert_eq!(store.markers["agent"].at, 2_000);
+        let read = markers::read_through(Some(&theirs), Some(10), None, 1_000);
+        assert_eq!(
+            read.map(|m| m.at),
+            Some(2_000),
+            "reading keeps the later time"
+        );
+        assert_eq!(
+            (
+                rows[0].value["at"].as_i64(),
+                rows[0].value["unread"].as_bool()
+            ),
+            (Some(2_000), Some(false))
+        );
+    }
+
+    /// The outbox sends a marker row as it merged, not as it was edited: an edit behind the time held
+    /// goes out at that time.
+    #[test]
+    fn the_outbox_sends_the_merged_marker() {
+        let mut store = Store::default();
+        let read = Marker {
+            at: 2_000,
+            ..markers::baseline(10)
+        };
+        store.apply(remote("agent", &read, 2_000));
+        let behind = Marker {
+            at: 1_000,
+            ..markers::baseline(11)
+        };
+        let row = StateRow {
+            key: "agent".into(),
+            value: markers::value(&behind, 3_000),
+            updated: 3_000,
+            write_id: "w".into(),
+            deleted: false,
+        };
+        let (ns, step) = (Ns::Markers, Step::Edit(vec![row]));
+        let rows = posted(&store.apply(Event::Sync { ns, step }));
+        assert_eq!(
+            (rows[0].value["turn"].as_u64(), rows[0].value["at"].as_i64()),
+            (Some(11), Some(2_000))
+        );
+    }
+
+    /// RM review (lure): the turn start is web's `lastTurnStart` over everything read in, a delivery
+    /// pair split across pages included: a forward page bringing the delivery after the stub, or an
+    /// older page bringing the stub before a delivery already read.
+    #[test]
+    fn a_delivery_pair_across_pages_resumes_where_webs_does() {
+        use crate::api::Kind;
+        use crate::api::client::Page::{Before, Tail};
+        let mut entries = history("mupu");
+        entries.truncate(3);
+        let kinds = [
+            Kind::AssistantText,
+            Kind::HcomDeliveryStub,
+            Kind::HcomDelivery,
+        ];
+        for (i, entry) in entries.iter_mut().enumerate() {
+            entry.byte_offset = 100 + i as u64 * 100;
+            entry.kind = kinds[i];
+        }
+        let start = |store: &Store| store.transcript.open["mupu"].turn_start().unwrap().offset;
+        // Forward: the tail is assistant@100 and the stub@200; the delivery@300 lands after.
+        let mut store = loaded();
+        let opened = transcript_pages::open(&mut store, "mupu");
+        drive(&mut store, opened, &entries[..2], 100);
+        let more = store.apply(transcript_pages::wake(&store, "mupu"));
+        drive(&mut store, more, &entries, 100);
+        assert_eq!(start(&store), 100);
+        // Backward: the tail is only the delivery@300; the pages before bring the stub and assistant (a
+        // window of hidden entries reads back on its own).
+        let mut store = loaded();
+        let opened = transcript_pages::open(&mut store, "mupu");
+        let mut pages = drive(&mut store, opened, &entries, 1);
+        let back = store.apply(older(&store));
+        pages.extend(drive(&mut store, back, &entries, 1));
+        assert!(
+            matches!(pages[..], [Tail { .. }, Before { .. }, ..]),
+            "{pages:?}"
+        );
+        assert_eq!(start(&store), 100);
+    }
+
+    /// RM review (lure): the app going to the back and coming forward on the same panel is not leaving
+    /// it: a mark unread made there holds through the dwell (web arms only with its dock visible).
+    #[test]
+    fn backgrounding_the_same_panel_does_not_arm_a_mark_unread() {
+        let (mut store, _) = live(1_000);
+        let all = history("mupu");
+        watch(&mut store, "mupu", &all);
+        store.apply(posted_ok());
+        clock(&mut store, 2_000);
+        store.apply(lens(spaces::Move::Toggle("mupu".into())));
+        store.apply(posted_ok());
+        assert!(store.markers["mupu"].unread);
+        store.apply(Event::Front(false));
+        store.apply(Event::Front(true));
+        dwell(&mut store);
+        assert!(store.markers["mupu"].unread, "held");
+        // Nor is a zoom that closes and opens again while the app is in the back.
+        store.apply(Event::Front(false));
+        store.apply(Event::Transcript(transcript::Step::Hide));
+        let space = space_of(&store, "mupu").id.clone();
+        let agent = Some("mupu".to_string());
+        let beside = Vec::new();
+        let effects = store.apply(lens(spaces::Move::View {
+            space,
+            agent,
+            beside,
+        }));
+        drive(&mut store, effects, &all, transcript::PAGE as usize);
+        follow(&mut store, "mupu", true);
+        store.apply(Event::Front(true));
+        dwell(&mut store);
+        assert!(store.markers["mupu"].unread, "left only in the back");
+        // Zooming out (frontmost) leaves it: back on it, the dwell reads it.
+        store.apply(Event::Transcript(transcript::Step::Hide));
+        watch(&mut store, "mupu", &all);
+        assert!(!store.markers["mupu"].unread);
     }
 }

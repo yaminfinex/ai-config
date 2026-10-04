@@ -15,6 +15,22 @@ pub fn base_url() -> String {
     std::env::var("HERDER_URL").unwrap_or_else(|_| DEFAULT_URL.into())
 }
 
+/// Whether `url`'s host is this Mac's loopback (`127.0.0.1`, `::1`, `localhost`, any port): the only
+/// server a scripted run may write to, the fake serve (anything else could be the live serve).
+pub fn loopback(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match host.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(""),
+        None => host.rsplit_once(':').map_or(host, |(h, _)| h),
+    };
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "::1" | "localhost"
+    )
+}
+
 /// Transport failure, or a refusal the server explained.
 #[derive(Debug)]
 pub enum Error {

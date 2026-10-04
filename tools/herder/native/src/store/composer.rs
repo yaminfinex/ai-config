@@ -4,6 +4,7 @@
 //! key and a message must never land twice.
 
 use super::attention::{self, Seen};
+use super::markers::Mark;
 use super::{Attribution, Effect, Persist, Store};
 use crate::api::Refusal;
 
@@ -186,7 +187,8 @@ impl Store {
                             if attention::acknowledge(blocks, &self.fleet, &agent, then) {
                                 out.push(Effect::Persist(Persist::Prefs));
                             }
-                            self.mark_read(&[&agent], Some(then.turn_end), out);
+                            let read = Mark::Read(vec![agent.clone()], Some(then.turn_end));
+                            self.mark(read, out);
                             out.push(Effect::FiledBack { agent });
                         }
                     }

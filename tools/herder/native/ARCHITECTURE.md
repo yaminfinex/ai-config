@@ -107,7 +107,9 @@ Derived shapes are in `store`:
   unread}`, `turn` being the board's `turn_end_id` read (the hcom event id of the agent's latest completed
   turn, monotonic; the board carries no activity timestamp). Rows merge newest-wins, but turn, position
   and time never go back, except that a newer mark unread stands; a pulled row merged ahead of its winner
-  is republished (`Sync::repairs`). **Unread** = a mark unread, or the agent is `listening` or `active` on
+  is republished (`Sync::repairs`), and the outbox sends a row as it merged. A weak row (version 1)
+  against a real one takes no part: the real one wins as written, no repair (the owner's rule, web's
+  too); weak rows only fill an empty slot. **Unread** = a mark unread, or the agent is `listening` or `active` on
   the bus and its `turn_end_id` is above its marker's (web's gate: an agent already working on its next
   turn still counts for the one it ended; before RM native excluded `Working`). No marker is no baseline,
   so nothing is unread: once the first pull has answered and a live board has arrived, every board agent
@@ -124,8 +126,11 @@ Derived shapes are in `store`:
   2026-10-03; web reads every visible group, the stricter rule is safe as reading only moves forward). A
   block that lands on the watched agent is viewed at once. `m` marks the space's unread agents read and
   views their blocks, `u` marks each of its agents on the board unread, `alt-u` toggles the zoomed agent
-  (web's): a mark unread puts reading back before the latest turn's opener (`Transcript::turn_start`) and
-  holds until its agent has been left and come back to (web's arming). A mark read reads to the tail when
+  (web's); these marks and a file-back's are held until the first markers pull has answered, then made
+  from the merged marker. A mark unread puts reading back before the latest turn's opener, over every
+  entry read in (`Transcript::turn_start`, web's `lastTurnStart`), and holds until its agent has been
+  left while frontmost (another panel focused, or the zoom closed; the app going to the back leaves
+  nothing) and come back to. A mark read reads to the tail when
   the transcript is open and following it, else keeps the position.
   Leaving the bottom (a scroll key, the wheel) reaches the store as it happens, before any fleet frame
   behind it (the wheel's from the list's scroll handler, deferred to the end of that event's effects: the
@@ -435,8 +440,9 @@ namespace with `since=0` (tens of kilobytes, one round trip each) into the store
 memory for the session and a `state-changed` frame above it pulls again. Rows resolve last-write-wins on
 `(updated, writeID)`, except `read.markers`, which merges as web's (§3). A pull's 404 is an empty pull.
 The store writes rows on its own (read markers' seeds and dwell) with the time and `writeID` the shell
-stamps on each event (`Store::clock`); a scripted run with no `HERDER_URL` (one reading the live serve,
-`coldstart`) gets a read-only client that posts nothing (`harness: would post …`).
+stamps on each event (`Store::clock`); a scripted run against anything but loopback (one reading the live serve,
+`coldstart`) gets a read-only client that posts nothing (`harness: would post …`): a scripted run
+writes only to a loopback `HERDER_URL` (`client::loopback`: the fake serve), whatever else it names.
 
 The outbox is durable and its cleanup is **version-aware**, copied from web's `stateSync.ts`, because the
 server's `accepted` list omits idempotent and losing rows and so cannot be used as the acknowledgement:
@@ -520,17 +526,17 @@ are restated rather than split: what did not belong in them has moved out (`view
 | File | Budget | File | Budget |
 |---|---|---|---|
 | `api/types.rs` | 332 | `views/mod.rs` | 451 |
-| `api/client.rs` | 222 | `views/lens.rs` | 470 |
+| `api/client.rs` | 238 | `views/lens.rs` | 470 |
 | `api/sse.rs` | 194 | `views/space.rs` | 369 |
 | `store/mod.rs` | 496 | `views/transcript.rs` | 1374 |
-| `store/sync.rs` | 339 | `views/composer.rs` | 246 |
+| `store/sync.rs` | 345 | `views/composer.rs` | 246 |
 | `store/fleet.rs` | 108 | `views/notes.rs` | 414 |
-| `store/spaces.rs` | 325 | `views/notes_list.rs` | 525 |
+| `store/spaces.rs` | 324 | `views/notes_list.rs` | 525 |
 | `store/attention.rs` | 263 | `views/probe.rs` | 273 |
-| `store/transcript.rs` | 709 | `views/markdown.rs` | 238 |
+| `store/transcript.rs` | 702 | `views/markdown.rs` | 238 |
 | `store/condense.rs` | 439 | `views/theme.rs` | 261 |
-| `store/notes.rs` | 432 | `shell.rs` | 460 |
-| `store/composer.rs` | 226 | `shell/io.rs` | 180 |
+| `store/notes.rs` | 432 | `shell.rs` | 465 |
+| `store/composer.rs` | 228 | `shell/io.rs` | 180 |
 | `local.rs` | 101 | `harness.rs` | 389 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 92 |
 |  |  | `views/entries.rs` | 529 |
@@ -538,9 +544,9 @@ are restated rather than split: what did not belong in them has moved out (`view
 |  |  | `views/panel.rs` | 160 |
 |  |  | `views/dock.rs` | 902 |
 |  |  | `views/tabs.rs` | 361 |
-|  |  | `store/markers.rs` | 393 |
+|  |  | `store/markers.rs` | 432 |
 
-About 12,703 lines for Rung 1, tests excluded (RM: +520; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 12,763 lines for Rung 1, tests excluded (RM: +580; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,

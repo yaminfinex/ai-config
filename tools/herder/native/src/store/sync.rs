@@ -189,6 +189,12 @@ impl Sync {
         self.merge(rows.iter().cloned());
         self.repairs.clear();
         for row in rows {
+            // What is sent is what merged (a marker keeps a later `at` it already held), at this version.
+            let held = self
+                .rows
+                .get(&row.key)
+                .filter(|r| r.version_cmp(&row) == Ordering::Equal);
+            let row = held.cloned().unwrap_or(row);
             if newer(&row, self.outbox.get(&row.key)) {
                 self.outbox.insert(row.key.clone(), row);
                 self.changes.outbox = true;
