@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { visibleQueuedMessages } from '../src/features/transcript/queuedMessages.ts'
+import { visibleQueuedMessages } from '../src/features/transcript/queuedMessagesModel.ts'
 import type { QueuedMessage, TranscriptEntry } from '../src/types.ts'
 
 const queued: QueuedMessage[] = [

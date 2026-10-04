@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { failureBanner } from '../src/shared/panelState.ts'
+import { failureBanner } from '../src/shared/panelStateModel.ts'
 
 test('panel failures share one refusal-to-banner presentation', () => {
   const failure = failureBanner('git status', new Error('offline'))
