@@ -16,7 +16,7 @@ use gpui_kit::component::dock::*;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -63,7 +63,7 @@ impl<H: Host> DockAreaRenderer for Skin<H> {
             scroll: ScrollHandle::new(),
             shown: Cell::new(None),
             hovered: Rc::default(),
-            hidden: Rc::default(),
+            reveal: Rc::default(),
         })
     }
 }
@@ -81,9 +81,14 @@ struct Strip<H> {
     shown: Cell<Option<PanelId>>,
     /// The tab under the pointer, the one with a ×.
     hovered: Rc<Cell<Option<PanelId>>>,
-    /// The tabs out of view (by place in the strip) that +N was drawn for, checked again once laid out.
-    hidden: Rc<RefCell<Vec<usize>>>,
+    /// A tab to scroll into view (the shown one when it changes, or one picked under +N) and the tries
+    /// left: it waits for a laid out strip and holds until the tab is wholly in view, as the first
+    /// layouts move the view (+N coming or going).
+    reveal: Rc<Cell<Option<(PanelId, u8)>>>,
 }
+
+/// Layouts a reveal may take before it gives up (a tab wider than the strip is never wholly in view).
+const TRIES: u8 = 4;
 
 impl<H: Host> TabGroupRenderer for Strip<H> {
     fn frame(&self, _: &TabGroupContext, _: &mut Window, _: &mut App) -> Stateful<Div> {
@@ -119,12 +124,25 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .filter_map(|(ix, id)| Some((ix, *id, agent_of(ui, *id)?.to_string())))
             .collect();
         if self.shown.replace(shown) != shown
-            && let Some(at) = drawn.iter().position(|d| Some(d.1) == shown)
+            && let Some(id) = shown
         {
-            self.scroll.scroll_to_item(at);
+            self.reveal.set(Some((id, TRIES)));
         }
         let out = hidden(&self.scroll, drawn.len());
-        *self.hidden.borrow_mut() = out.clone();
+        if let Some((id, tries)) = self.reveal.get()
+            && laid(&self.scroll)
+        {
+            let at = drawn.iter().position(|d| d.1 == id);
+            let unseen =
+                |at: &usize| out.contains(at) || self.scroll.bounds_for_item(*at).is_none();
+            match at.filter(|at| tries > 0 && unseen(at)) {
+                Some(at) => {
+                    self.scroll.scroll_to_item(at);
+                    self.reveal.set(Some((id, tries - 1)));
+                }
+                None => self.reveal.set(None),
+            }
+        }
         let view = window.current_view();
         let tabs: Vec<AnyElement> = drawn
             .iter()
@@ -167,29 +185,36 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .children(tabs)
             .child(rest);
         // Laid out, the tabs out of view may not be those +N was drawn for (a resize, a scroll into
-        // view): draw again.
+        // view), or a reveal is still to land: draw again.
         let check = {
-            let (scroll, was, n) = (self.scroll.clone(), self.hidden.clone(), drawn.len());
+            let (scroll, was, n) = (self.scroll.clone(), out.clone(), drawn.len());
+            let reveal = self.reveal.clone();
             let prepaint = move |_, _: &mut Window, cx: &mut App| {
-                if hidden(&scroll, n) != *was.borrow() {
+                let pending = reveal.get().is_some() && laid(&scroll);
+                if pending || hidden(&scroll, n) != was {
                     cx.defer(move |cx| cx.notify(view));
                 }
             };
             canvas(prepaint, |_, _, _, _| {}).absolute().size_0()
         };
-        let names: Vec<SharedString> = out
+        let names: Vec<(SharedString, PanelId)> = out
             .iter()
             .filter_map(|&at| drawn.get(at))
-            .map(|d| SharedString::from(d.2.clone()))
+            .map(|d| (SharedString::from(d.2.clone()), d.1))
             .collect();
+        let reveal = self.reveal.clone();
         let more = (!names.is_empty()).then(|| {
             let label = format!("+{}", names.len());
             let menu = move |mut menu: PopupMenu, _: &mut Window, _: &mut Context<PopupMenu>| {
-                for name in &names {
-                    let pick = Tab(name.clone());
-                    menu = menu.item(PopupMenuItem::new(name.clone()).on_click(
-                        move |_, window, cx| window.dispatch_action(pick.boxed_clone(), cx),
-                    ));
+                for (name, id) in &names {
+                    // Shown already (scrolled away, or narrowed out), the pick still reveals it.
+                    let (pick, id, reveal) = (Tab(name.clone()), *id, reveal.clone());
+                    let picked = move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                        reveal.set(Some((id, TRIES)));
+                        cx.notify(view);
+                        window.dispatch_action(pick.boxed_clone(), cx);
+                    };
+                    menu = menu.item(PopupMenuItem::new(name.clone()).on_click(picked));
                 }
                 menu.scrollable(true)
             };
@@ -281,6 +306,11 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
                 .into_any_element(),
         )
     }
+}
+
+/// The strip has been laid out: it has a view to scroll in.
+fn laid(scroll: &ScrollHandle) -> bool {
+    scroll.bounds().size.width > px(0.)
 }
 
 /// The tabs out of view, by place in the strip: not wholly inside it where the last layout put them.

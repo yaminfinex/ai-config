@@ -3303,6 +3303,18 @@ mod dock_events {
         cx: &mut TestAppContext,
         layouts: Layouts,
     ) -> (Entity<Shell>, &mut VisualTestContext) {
+        boot(cx, layouts, SPACE[1], 1400.)
+    }
+
+    /// Zoomed into perps on `agent`, focused, in a window `width` wide: the zoom (and its dock) comes
+    /// once the window is that wide.
+    fn boot<'a>(
+        cx: &'a mut TestAppContext,
+        layouts: Layouts,
+        agent: &str,
+        width: f32,
+    ) -> (Entity<Shell>, &'a mut VisualTestContext) {
+        let agent = agent.to_string();
         cx.update(|cx| {
             theme::seed(cx);
             gpui_kit::init(cx);
@@ -3316,10 +3328,7 @@ mod dock_events {
                 let mut store = loaded();
                 store.apply(Event::LayoutsLoaded(layouts));
                 store.apply(fleet_frame(board()));
-                let space = space_of(&store, SPACE[0]).id.clone();
-                let mut ui = Ui::new(cx);
-                let agent = Some(SPACE[1].to_string());
-                ui.zoom = Some(Zoom { space, agent });
+                let ui = Ui::new(cx);
                 let (views, moves) = (Vec::new(), Vec::new());
                 Shell {
                     store,
@@ -3337,7 +3346,14 @@ mod dock_events {
             gpui_kit::base::Root::new(frame, window, cx)
         });
         let shell = made.borrow_mut().take().unwrap();
-        cx.simulate_resize(size(px(1400.), px(900.)));
+        cx.simulate_resize(size(px(width), px(900.)));
+        draw(cx);
+        shell.update(cx, |s, cx| {
+            let space = space_of(&s.store, SPACE[0]).id.clone();
+            let agent = Some(agent);
+            s.ui.zoom = Some(Zoom { space, agent });
+            cx.notify();
+        });
         draw(cx);
         cx.update(|window, cx| {
             let focus = shell.read(cx).ui.focus_target().clone();
@@ -4045,6 +4061,44 @@ mod dock_events {
             max.left() >= view.right() && max.right() <= px(420.),
             "the □ stays in the window"
         );
+    }
+
+    /// A group opened narrow on a tab out of view at first scrolls to it once laid out.
+    #[gpui_kit::test]
+    fn a_group_opened_narrow_reveals_its_shown_tab(cx: &mut TestAppContext) {
+        let (shell, cx) = boot(cx, Layouts::default(), SPACE[2], 420.);
+        for _ in 0..5 {
+            draw(cx);
+        }
+        assert_eq!(
+            dock(&shell, cx),
+            format!("{} {} [{}*]", SPACE[0], SPACE[1], SPACE[2])
+        );
+        assert!(in_view(cx, SPACE[2]), "the shown tab in view");
+        assert!(!in_view(cx, SPACE[0]), "the first scrolled away");
+    }
+
+    /// Picking under +N the shown tab, narrowed out of view, scrolls to it: the real button and menu.
+    #[gpui_kit::test]
+    fn picking_the_shown_tab_under_more_reveals_it(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        cx.simulate_resize(size(px(420.), px(900.)));
+        draw(cx);
+        draw(cx);
+        assert!(!in_view(cx, SPACE[1]), "the shown tab narrowed out of view");
+        let more = at(cx, "tab-more").expect("+N");
+        click(cx, more.center().x.into(), more.center().y.into());
+        cx.simulate_keystrokes("down");
+        draw(cx);
+        cx.simulate_keystrokes("enter");
+        for _ in 0..5 {
+            draw(cx);
+        }
+        assert_eq!(
+            dock(&shell, cx),
+            format!("{} [{}*] {}", SPACE[0], SPACE[1], SPACE[2])
+        );
+        assert!(in_view(cx, SPACE[1]), "picked, it is scrolled to");
     }
 
     /// A tab's × is there only under the pointer, and closes it.

@@ -326,12 +326,13 @@ focused one is seen. Actions never touch the dock: they leave an `Ask` that the 
 top line; `Skin` delegates the rest of the dock's look to the kit's);
 the breadcrumb is a slim line above the dock. It behaves as Zed's (S2): a tab keeps its own width (to 220,
 then an ellipsis) and the strip scrolls sideways (`overflow_x_scroll`, `track_scroll`), the shown tab
-scrolled into view when it changes; +N (the kit's `Button` with `dropdown_menu`, as its `TabBar`) lists
+scrolled into view when it changes or is picked under +N (a reveal waits for a laid out strip and holds,
+a few layouts at most, until the tab is wholly in view); +N (the kit's `Button` with `dropdown_menu`, as its `TabBar`) lists
 the tabs not wholly in view and a pick shows one; × is on the hovered tab only (its place kept, so tabs
 do not move; middle-click and ⌘W close too); the maximized group's □ is selected. The dock keeps one
-renderer per group, so each `Strip` owns its scroll, the shown tab it scrolled to, the hovered tab and
-the +N it drew; +N is worked out from the last layout, and drawn again when the layout says otherwise (a
-resize, a scroll into view). `just check-dock` and `views::tests`' `dock_events` drive it with real
+renderer per group, so each `Strip` owns its scroll, the shown tab, a pending reveal and the hovered
+tab; +N is worked out from the last layout, and drawn again when the layout says otherwise (a resize, a
+scroll into view) or a reveal is pending. `just check-dock` and `views::tests`' `dock_events` drive it with real
 clicks, a real drag and keys; check-dock's crowd puts ten tabs in half a split (the fake serve's
 `--share`) and clicks +N, an item and the □.
 
@@ -554,10 +555,10 @@ are restated rather than split: what did not belong in them has moved out (`view
 |  |  | `views/capture.rs` | 452 |
 |  |  | `views/panel.rs` | 171 |
 |  |  | `views/dock.rs` | 902 |
-|  |  | `views/tabs.rs` | 504 |
+|  |  | `views/tabs.rs` | 534 |
 |  |  | `views/paths.rs` | 198 |
 
-About 13,200 lines for Rung 1, tests excluded (S2: +143; G3: +415; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 13,230 lines for Rung 1, tests excluded (S2: +173; G3: +415; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
