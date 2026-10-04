@@ -82,13 +82,14 @@ struct Strip<H> {
     /// The tab under the pointer, the one with a ×.
     hovered: Rc<Cell<Option<PanelId>>>,
     /// A tab to scroll into view (the shown one when it changes, or one picked under +N) and the tries
-    /// left: it waits for a laid out strip and holds until the tab is wholly in view, as the first
-    /// layouts move the view (+N coming or going).
+    /// left: each render on a laid out strip scrolls to it, and it is done only once a layout has the
+    /// tab, as it is now, wholly in view and the same tabs out of view as +N was drawn for (a new tab's
+    /// place, +N coming or going, move the view).
     reveal: Rc<Cell<Option<(PanelId, u8)>>>,
 }
 
 /// Layouts a reveal may take before it gives up (a tab wider than the strip is never wholly in view).
-const TRIES: u8 = 4;
+const TRIES: u8 = 6;
 
 impl<H: Host> TabGroupRenderer for Strip<H> {
     fn frame(&self, _: &TabGroupContext, _: &mut Window, _: &mut App) -> Stateful<Div> {
@@ -129,13 +130,12 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             self.reveal.set(Some((id, TRIES)));
         }
         let out = hidden(&self.scroll, drawn.len());
+        let mut target = None;
         if let Some((id, tries)) = self.reveal.get()
             && laid(&self.scroll)
         {
-            let at = drawn.iter().position(|d| d.1 == id);
-            let unseen =
-                |at: &usize| out.contains(at) || self.scroll.bounds_for_item(*at).is_none();
-            match at.filter(|at| tries > 0 && unseen(at)) {
+            target = drawn.iter().position(|d| d.1 == id).filter(|_| tries > 0);
+            match target {
                 Some(at) => {
                     self.scroll.scroll_to_item(at);
                     self.reveal.set(Some((id, tries - 1)));
@@ -184,14 +184,20 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .track_scroll(&self.scroll)
             .children(tabs)
             .child(rest);
-        // Laid out, the tabs out of view may not be those +N was drawn for (a resize, a scroll into
-        // view), or a reveal is still to land: draw again.
+        // Laid out (and scrolled), a reveal is done when its tab is in view and +N was drawn for this
+        // layout. Otherwise, or when the tabs out of view are not those +N was drawn for (a resize, a
+        // scroll into view), draw again.
         let check = {
             let (scroll, was, n) = (self.scroll.clone(), out.clone(), drawn.len());
             let reveal = self.reveal.clone();
             let prepaint = move |_, _: &mut Window, cx: &mut App| {
+                let now = hidden(&scroll, n);
+                let seen = |at: usize| scroll.bounds_for_item(at).is_some() && !now.contains(&at);
+                if laid(&scroll) && now == was && target.is_some_and(seen) {
+                    reveal.set(None);
+                }
                 let pending = reveal.get().is_some() && laid(&scroll);
-                if pending || hidden(&scroll, n) != was {
+                if pending || now != was {
                     cx.defer(move |cx| cx.notify(view));
                 }
             };

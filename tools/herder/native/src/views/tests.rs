@@ -4101,6 +4101,54 @@ mod dock_events {
         assert!(in_view(cx, SPACE[1]), "picked, it is scrolled to");
     }
 
+    /// A short preview replaced by a wider one: the new one is scrolled to once it is laid out in its
+    /// own width, not judged by the old one's place (fido's review).
+    #[gpui_kit::test]
+    fn a_wider_preview_replacing_a_short_one_is_revealed(cx: &mut TestAppContext) {
+        let (shell, cx) = boot(cx, Layouts::default(), SPACE[1], 710.);
+        act(cx, OpenLink("herder-agent:mupu".into(), false));
+        for _ in 0..6 {
+            draw(cx);
+        }
+        assert!(in_view(cx, "mupu"), "the short preview in view");
+        act(
+            cx,
+            OpenLink("herder-agent:fees-program-design-lifo".into(), false),
+        );
+        for _ in 0..8 {
+            draw(cx);
+        }
+        assert!(dock(&shell, cx).contains("[fees-program-design-lifo*~]"));
+        assert!(in_view(cx, "fees-program-design-lifo"), "the wider one too");
+    }
+
+    /// A tab wider than the strip is never wholly in view: its reveal gives up, and the strip settles,
+    /// asking for no more frames.
+    #[gpui_kit::test]
+    fn an_oversized_tab_settles(cx: &mut TestAppContext) {
+        use gpui_kit::component::dock::TabGroup;
+        let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+        let count = asked.clone();
+        let _watch = cx.update(|cx| {
+            cx.observe_new(move |_: &mut TabGroup, _, cx| {
+                let count = count.clone();
+                cx.observe_self(move |_, _| count.set(count.get() + 1))
+                    .detach();
+            })
+        });
+        let (_shell, cx) = boot(cx, Layouts::default(), SPACE[0], 150.);
+        for _ in 0..15 {
+            draw(cx);
+        }
+        assert!(asked.get() > 0, "the strip drew again while it settled");
+        asked.set(0);
+        for _ in 0..20 {
+            draw(cx);
+        }
+        assert_eq!(asked.get(), 0, "settled");
+        assert!(at(cx, "tab-max").is_some(), "the □ stays");
+    }
+
     /// A tab's × is there only under the pointer, and closes it.
     #[gpui_kit::test]
     fn a_tab_has_its_close_only_on_hover(cx: &mut TestAppContext) {
