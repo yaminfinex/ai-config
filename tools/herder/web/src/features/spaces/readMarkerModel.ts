@@ -79,9 +79,13 @@ export function comparePositions(left: ReadPosition | null, leftAt: number, righ
 // read past. The one exception is a newer deliberate mark unread, which
 // stands exactly as written. repair is true when the merged marker is
 // ahead of the winning row, so the holder republishes it and the server
-// converges.
+// converges. A weak row only fills an empty slot: against a real row it
+// takes no part in the merge, so a seed never clears a turn the real
+// marker keeps unread.
 export function mergeMarkerRow(current: ReadMarkerRow | undefined, incoming: ReadMarkerRow): { row: ReadMarkerRow, repair: boolean } {
   if (!current) return { row: incoming, repair: false }
+  const currentWeak = current.updated === weakUpdated
+  if (currentWeak !== (incoming.updated === weakUpdated)) return { row: currentWeak ? incoming : current, repair: false }
   const incomingWins = compareStateVersions(incoming.updated, incoming.writeID, current.updated, current.writeID) > 0
   const winner = incomingWins ? incoming : current
   const loser = incomingWins ? current : incoming
