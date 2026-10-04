@@ -99,6 +99,7 @@ pub fn bindings() -> Vec<KeyBinding> {
         ("shift-tab", Zoomed::Agent(-1)),
         ("alt-right", Zoomed::Agent(1)),
         ("alt-left", Zoomed::Agent(-1)),
+        ("alt-u", Zoomed::Read),
     ];
     let mut keys = vec![
         KeyBinding::new("cmd-q", Quit, Some("Lens")),
@@ -196,6 +197,7 @@ esc           back to the lens
 [ ]           previous / next space
 tab ⇧tab      next / previous agent
 n / N         next space needing you
+⌥U            mark read / unread
 j k           scroll
 space ⇧space  page down / up
 g G           top of loaded (reads older) / end

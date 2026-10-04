@@ -6,7 +6,8 @@
 //!
 //! - `fleet`: agents and their status, derived from the board.
 //! - `spaces`: spaces and their members, in lens order; the lens row type and the owner's moves.
-//! - `attention`: seen marks, needs-you, the alerts and the dock badge (U2, U6).
+//! - `attention`: needs-you, the local block marks, the alerts and the dock badge (U2, U6).
+//! - `markers`: the read markers shared with web (`read.markers`): unread, the dwell, seeding (RM).
 //! - `notes`: note records and the owner's note edits, hand-off and queueing (U5).
 //! - `composer`: drafts, who can be written to, and each message send (U4).
 //! - `sync`: the `/api/state` pull cursor and version-aware outbox, one per namespace.
@@ -18,6 +19,7 @@ pub mod cards;
 pub mod composer;
 pub mod condense;
 pub mod fleet;
+pub mod markers;
 pub mod notes;
 pub mod spaces;
 pub mod sync;
@@ -49,10 +51,12 @@ pub struct Prefs {
     pub rows: BTreeMap<String, spaces::Row>,
     /// The visible agent per space id (U2).
     pub visible: BTreeMap<String, String>,
-    /// Per agent, the latest turn end (`turn_end_id`) the owner has seen, and whether this block was.
+    /// Before RM, per agent the latest turn end the owner had seen: read once, to seed `read.markers`
+    /// (`markers`), then gone; its block marks move to `blocks` on load.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub seen: BTreeMap<String, attention::Seen>,
-    /// Spaces the owner marked unread (`u`): they need you until the next zoom-in.
-    pub unread: BTreeSet<String>,
+    /// Agents whose current block the owner has viewed; local, beside the shared read markers.
+    pub blocks: BTreeSet<String>,
     /// The unsent composer text per agent (U4).
     pub drafts: BTreeMap<String, String>,
     /// A quick send from the capture popover (F7) not yet answered, per agent, saved before it goes: a
@@ -71,7 +75,7 @@ impl Default for Prefs {
             rows: BTreeMap::new(),
             visible: BTreeMap::new(),
             seen: BTreeMap::new(),
-            unread: BTreeSet::new(),
+            blocks: BTreeSet::new(),
             drafts: BTreeMap::new(),
             quick: BTreeMap::new(),
             vscode_host: "superset".into(),
@@ -234,14 +238,16 @@ pub enum Effect {
     },
 }
 
-/// What a timer wakes (`Effect::After`): a namespace's, the transcript's or the viewer's retry, or the
-/// end of a notification burst (`attention::BURST_MS`).
+/// What a timer wakes (`Effect::After`): a namespace's, the transcript's or the viewer's retry, the end
+/// of a notification burst (`attention::BURST_MS`) or a dwell.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Wake {
     Sync(Ns),
     Transcript(transcript::Timer),
     Viewer,
     Burst,
+    /// A dwell's second is up (`markers::DWELL_MS`), for the dwell under this token.
+    Dwell(u64),
 }
 
 /// Who this Mac's writes are attributed to (`GET /api/viewer`).
@@ -279,6 +285,12 @@ pub struct Store {
     pub note_problems: BTreeMap<String, String>,
     pub alerts: attention::Alerts,
     pub cards: cards::Cards,
+    /// The live read markers by agent, derived from `read.markers`.
+    pub markers: BTreeMap<String, markers::Marker>,
+    pub reading: markers::Reading,
+    /// The time and a fresh `writeID` for what the event being reduced writes on its own (read markers):
+    /// the shell sets it before each event; tests by hand.
+    pub clock: notes::Stamp,
     first_build: Option<String>,
     /// Live data has arrived; a snapshot is refused from here on.
     live: bool,
@@ -294,7 +306,9 @@ impl Store {
     pub fn apply(&mut self, event: Event) -> Vec<Effect> {
         let (mut out, boot) = (Vec::new(), matches!(event, Event::Boot));
         match event {
-            Event::PrefsLoaded(p) => {
+            Event::PrefsLoaded(mut p) => {
+                let blocked = p.seen.iter().filter(|(_, s)| s.blocked);
+                p.blocks.extend(blocked.map(|(a, _)| a.clone()));
                 self.prefs = p;
                 self.recover(&mut out);
             }
@@ -370,6 +384,7 @@ impl Store {
             Event::Card(got) => self.card_read(got),
             Event::Front(front) => self.alerts.front = front,
             Event::Wake(Wake::Burst) => self.burst_ended(&mut out),
+            Event::Wake(Wake::Dwell(token)) => self.dwelled(token),
             Event::Summon => {}
             Event::TextScale(step) => {
                 let s = self.prefs.text_scale;
@@ -384,6 +399,7 @@ impl Store {
             }
         }
         self.watch(&mut out);
+        self.read(&mut out);
         self.card_reads(&mut out);
         self.transitions(&mut out);
         self.badge(boot, &mut out);
@@ -457,6 +473,7 @@ impl Store {
     fn sync_step(&mut self, ns: Ns, step: Step, out: &mut Vec<Effect>) {
         self.live |= matches!(step, Step::Pulled(_));
         let changes = self.sync.get_mut(ns).apply(step, out);
+        let repairs = std::mem::take(&mut self.sync.get_mut(ns).repairs);
         if changes.outbox {
             out.push(Effect::Persist(Persist::Outbox));
         }
@@ -464,11 +481,18 @@ impl Store {
             self.derive();
             out.push(Effect::Persist(Persist::Snapshot));
         }
+        if !repairs.is_empty() {
+            self.repair(repairs, out);
+        }
     }
 
     fn derive(&mut self) {
         let rows = |ns| &self.sync[&ns].rows;
         self.spaces = spaces::derive(rows(Ns::Spaces), rows(Ns::Members));
         self.notes = notes::derive(rows(Ns::Notes));
+        let live = rows(Ns::Markers)
+            .values()
+            .filter_map(|r| Some((r.key.clone(), markers::parse(r)?)));
+        self.markers = live.collect();
     }
 }

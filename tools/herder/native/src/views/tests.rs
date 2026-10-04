@@ -3,7 +3,7 @@
 
 use crate::api::Entries;
 use crate::store::spaces::{Move, Row, Space, Stop};
-use crate::store::tests::{board, bump, fleet_frame, frame, loaded, space_of};
+use crate::store::tests::{board, bump, dwell, fleet_frame, frame, loaded, space_of};
 use crate::store::transcript::{Got, Step, What};
 use crate::store::{Effect, Event, Fetch, Store};
 use crate::views::dock::Ask;
@@ -64,6 +64,9 @@ fn zooming_in_views_the_agent_needing_you_and_tab_asks_the_dock() {
     assert!(space::act(&store, &mut ui, Zoomed::Agent(1)).is_empty());
     assert_eq!(ui.asks, [Ask::Step(1)]);
     assert_eq!(zoomed(&ui), Some((herder.id.as_str(), Some("orch-lega"))));
+    // `alt-u` toggles the zoomed agent read or unread (RM).
+    let toggled = space::act(&store, &mut ui, Zoomed::Read);
+    assert!(matches!(&toggled[..], [Event::Lens(Move::Toggle(a))] if a == "orch-lega"));
 
     let hide = |events: Vec<Event>| matches!(events.as_slice(), [Event::Transcript(_)]);
     assert!(
@@ -231,6 +234,7 @@ fn a_scroll_key_leaves_the_tail_before_the_next_render() {
     let view = transcript::View::default();
     view.sync(store.transcript.focused().unwrap(), &store);
     store.apply(view.tail(true));
+    dwell(&mut store);
     bump(&mut b, "mupu", 1);
     store.apply(frame(&store, b.clone()));
     assert!(!store.agent_needs_you("mupu"), "watched as it lands");
@@ -374,25 +378,41 @@ mod links {
         assert_eq!(vscode_url("superset", "relative", None), None);
     }
 
-    /// G3: the root opens as VS Code's folder and the file in it at its line, one argument each, spaces
-    /// kept; the URL is for when the tool is missing (a file at line 1 at least, so not as a folder).
+    /// G3b: two calls, the root opened as VS Code's folder (a URI, each segment encoded) and then the
+    /// file in that window at its line, one argument each, spaces kept; a folder alone is the first
+    /// call. The URL is for when the tool is missing (a file at line 1 at least, so not as a folder).
     #[test]
-    fn vscode_opens_the_root_then_goes_to_the_file() {
-        let (args, url) =
+    fn vscode_opens_the_folder_then_goes_to_the_file() {
+        let (calls, url) =
             vscode("superset", "/home/u/my repo/", Some("a b/x.rs"), Some(7)).unwrap();
-        let want = ["--remote", "ssh-remote+superset", "/home/u/my repo", "-g"];
-        assert_eq!(args[..4], want);
-        assert_eq!(args[4], "/home/u/my repo/a b/x.rs:7");
-        assert_eq!(args.len(), 5);
+        assert_eq!(
+            calls,
+            [
+                vec![
+                    "--folder-uri",
+                    "vscode-remote://ssh-remote+superset/home/u/my%20repo"
+                ],
+                vec![
+                    "-r",
+                    "--remote",
+                    "ssh-remote+superset",
+                    "-g",
+                    "/home/u/my repo/a b/x.rs:7"
+                ],
+            ]
+        );
         assert_eq!(
             url,
             "vscode://vscode-remote/ssh-remote+superset/home/u/my%20repo/a%20b/x.rs:7"
         );
-        let (args, url) = vscode("superset", "/r", Some("x.rs"), None).unwrap();
-        assert_eq!(args[3..], ["-g", "/r/x.rs"]);
+        let (calls, url) = vscode("superset", "/r", Some("x.rs"), None).unwrap();
+        assert_eq!(calls[1][3..], ["-g", "/r/x.rs"]);
         assert!(url.ends_with("/r/x.rs:1"));
-        let (args, url) = vscode("superset", "/r", None, Some(3)).unwrap();
-        assert_eq!(args, ["--remote", "ssh-remote+superset", "/r"]);
+        let (calls, url) = vscode("superset", "/r", None, Some(3)).unwrap();
+        assert_eq!(
+            calls,
+            [["--folder-uri", "vscode-remote://ssh-remote+superset/r"]]
+        );
         assert_eq!(url, "vscode://vscode-remote/ssh-remote+superset/r");
         assert_eq!(vscode("bad host", "/r", None, None), None);
         assert_eq!(vscode("superset", "relative", None, None), None);
@@ -463,6 +483,8 @@ mod summon {
             assert!(space::act(&store, &mut ui, key).is_empty());
             assert_eq!(zoomed(&ui), Some(("", Some(alone))));
         }
+        let toggled = space::act(&store, &mut ui, Zoomed::Read);
+        assert!(matches!(&toggled[..], [Event::Lens(Move::Toggle(a))] if a == alone));
         space::act(&store, &mut ui, Zoomed::Out);
         assert_eq!(zoomed(&ui), None);
         assert!(store.spaces.iter().all(|s| s.agents().all(|a| a != alone)));
@@ -1886,6 +1908,7 @@ mod layout {
             b.store.apply(live);
             b.store.apply(Event::Front(true));
             b.store.apply(b.ui.panel().unwrap().transcript.tail(true));
+            crate::store::tests::dwell(&mut b.store);
             bump(&mut board, "mupu", 1);
             let landed = frame(&b.store, board.clone());
             transcript::reduce(&mut b.store, &b.ui, landed);

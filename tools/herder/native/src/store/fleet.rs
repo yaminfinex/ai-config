@@ -19,7 +19,7 @@ pub struct Agent {
     pub context_used: Option<u64>,
     /// The workspace's working directory, for the zoom placeholder.
     pub cwd: Option<String>,
-    /// The id of the latest completed turn (monotonic); what seen marks compare against.
+    /// The id of the latest completed turn (monotonic); what read markers compare against.
     pub turn_end: Option<u64>,
 }
 
@@ -58,15 +58,6 @@ impl Agent {
             cwd: ws.cwd.clone(),
             turn_end: p.turn_end_id,
         }
-    }
-
-    /// The one needs-you predicate: not working, retired or stopped; and a turn ended after `seen` (no
-    /// mark: no baseline yet), or Blocked with this block not yet viewed (`block_seen`; owner ruling, U2).
-    pub fn needs_you(&self, seen: Option<u64>, block_seen: bool) -> bool {
-        let gone = matches!(self.bus_status.as_str(), "retired" | "stopped");
-        let new_turn = matches!((self.turn_end, seen), (Some(turn), Some(seen)) if turn > seen);
-        let blocked = self.status() == Status::Blocked && !block_seen;
-        !gone && self.status() != Status::Working && (new_turn || blocked)
     }
 }
 

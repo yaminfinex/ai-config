@@ -91,6 +91,18 @@ test('merge: a newer deliberate unread stands exactly; a newer read clears an ol
   assert.deepEqual(mergeMarkerRow(marked, cleared), { row: cleared, repair: false })
 })
 
+test('merge: a weak row fills an empty slot but never takes part against a real one', () => {
+  const seed = row('a', 20, false, weakUpdated)
+  const real = row('a', 10, false, 1000, { pos: at('s1', 50), at: 900 })
+  assert.deepEqual(mergeMarkerRow(undefined, seed), { row: seed, repair: false }, 'a weak row fills an empty slot')
+  assert.deepEqual(mergeMarkerRow(seed, real), { row: real, repair: false }, 'a real row replaces a held seed outright')
+  assert.deepEqual(mergeMarkerRow(real, seed), { row: real, repair: false }, 'an incoming seed changes nothing')
+  assert.deepEqual(mergeMarkerRow(row('a', 20, false, weakUpdated, { pos: at('s1', 900), at: 950 }), real), { row: real, repair: false },
+    'a seed further on in turn, position and time still loses whole')
+  assert.deepEqual(mergeMarkerRow(row('a', 30, false, weakUpdated, { writeID: 'w0' }), seed), { row: row('a', 30, false, weakUpdated), repair: true },
+    'two weak rows merge field-wise as before')
+})
+
 test('the first run seeds weak rows from the v2 markers once, and a server row wins over them', () => {
   const storage = memoryStorage({ [readMarkersKey]: JSON.stringify({ version: 2, markers: { mavu: 40, ziru: 7 } }) })
   const store = createReadMarkerStore({ storage, randomID: ids(), now: () => 1000 })
