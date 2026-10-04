@@ -3959,6 +3959,126 @@ mod dock_events {
         assert_eq!(dock(&shell, cx), "", "every tab closed");
         keys_live(&shell, cx, "the last tab closed");
     }
+
+    fn at(cx: &mut VisualTestContext, id: &str) -> Option<gpui_kit::Bounds<gpui_kit::Pixels>> {
+        let id = gpui_kit::ElementId::Name(id.to_string().into());
+        cx.update(|window, _| window.try_find(id).map(|e| e.bounds()))
+    }
+
+    /// Wholly inside the strip's scrolled view.
+    fn in_view(cx: &mut VisualTestContext, agent: &str) -> bool {
+        let view = at(cx, "tab-scroll").expect("the strip");
+        let tab = at(cx, &format!("tab-{agent}")).expect("the tab");
+        tab.left() >= view.left() && tab.right() <= view.right()
+    }
+
+    /// +N lists the tabs not wholly in view, by place, wherever the strip is scrolled to.
+    #[test]
+    fn the_overflow_lists_the_tabs_out_of_view() {
+        use crate::views::tabs::out_of_view;
+        // Four 100-wide tabs from x 10, a view from 10 to 260: two and a half fit.
+        let tabs = || (0..4).map(|i| Some((px(10. + 100. * i as f32), px(110. + 100. * i as f32))));
+        let view = (px(10.), px(260.));
+        assert_eq!(
+            out_of_view(view, px(0.), tabs()),
+            vec![2, 3],
+            "the cut one is out"
+        );
+        assert_eq!(
+            out_of_view(view, px(-150.), tabs()),
+            vec![0, 1],
+            "scrolled to the end"
+        );
+        assert_eq!(
+            out_of_view(view, px(-100.), tabs()),
+            vec![0, 3],
+            "both ends"
+        );
+        assert_eq!(
+            out_of_view(view, px(-99.7), tabs()),
+            vec![0, 3],
+            "half a pixel is in"
+        );
+        let unknown = tabs().take(2).chain([None, Some((px(310.), px(410.)))]);
+        assert_eq!(
+            out_of_view(view, px(0.), unknown),
+            vec![3],
+            "unlaid ones are not"
+        );
+        assert!(
+            out_of_view((px(0.), px(0.)), px(0.), tabs()).is_empty(),
+            "nor in an unlaid view"
+        );
+    }
+
+    /// Perps's three tabs in a window too narrow for them keep their width and scroll (S2); the shown
+    /// tab changing scrolls it into view.
+    #[gpui_kit::test]
+    fn the_shown_tab_scrolls_into_view(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        let widths = |cx: &mut VisualTestContext| {
+            SPACE.map(|a| at(cx, &format!("tab-{a}")).unwrap().size.width)
+        };
+        let wide = widths(cx);
+        cx.simulate_resize(size(px(420.), px(900.)));
+        draw(cx);
+        draw(cx);
+        assert_eq!(widths(cx), wide, "the tabs keep their width");
+        assert!(in_view(cx, SPACE[0]), "the first in view");
+        assert!(!in_view(cx, SPACE[2]), "the third out of view");
+        act(cx, space::Tab(SPACE[2].into()));
+        draw(cx);
+        assert_eq!(
+            dock(&shell, cx),
+            format!("{} {} [{}*]", SPACE[0], SPACE[1], SPACE[2])
+        );
+        assert!(in_view(cx, SPACE[2]), "scrolled to the shown one");
+        assert!(!in_view(cx, SPACE[0]), "the first scrolled away");
+        act(cx, space::Tab(SPACE[0].into()));
+        draw(cx);
+        assert!(in_view(cx, SPACE[0]), "and back");
+        act(cx, space::Tab(SPACE[1].into()));
+        draw(cx);
+        assert!(in_view(cx, SPACE[1]), "the middle one too");
+        let (max, view) = (at(cx, "tab-max").unwrap(), at(cx, "tab-scroll").unwrap());
+        assert!(
+            max.left() >= view.right() && max.right() <= px(420.),
+            "the □ stays in the window"
+        );
+    }
+
+    /// A tab's × is there only under the pointer, and closes it.
+    #[gpui_kit::test]
+    fn a_tab_has_its_close_only_on_hover(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        let close = |agent: &str| format!("tab-close-{agent}");
+        assert!(
+            at(cx, &close(SPACE[0])).is_none(),
+            "no × away from the pointer"
+        );
+        assert!(at(cx, &close(SPACE[1])).is_none(), "nor on the shown one");
+        let tab = at(cx, &format!("tab-{}", SPACE[0])).unwrap();
+        cx.simulate_mouse_move(tab.center(), None, Modifiers::none());
+        draw(cx);
+        assert!(at(cx, &close(SPACE[0])).is_some(), "× on the hovered tab");
+        assert!(at(cx, &close(SPACE[1])).is_none(), "and only there");
+        let x = at(cx, &close(SPACE[0])).unwrap();
+        assert!(tab.contains(&x.center()), "inside its tab, no wider");
+        cx.simulate_mouse_move(point(px(700.), px(500.)), None, Modifiers::none());
+        draw(cx);
+        assert!(
+            at(cx, &close(SPACE[0])).is_none(),
+            "gone when the pointer leaves"
+        );
+        cx.simulate_mouse_move(tab.center(), None, Modifiers::none());
+        draw(cx);
+        click(cx, x.center().x.into(), x.center().y.into());
+        assert_eq!(
+            dock(&shell, cx),
+            format!("[{}*] {}", SPACE[1], SPACE[2]),
+            "its × closes it"
+        );
+    }
 }
 
 /// G3: a clicked path's choices with real keys and a press in a headless window: they take focus when
