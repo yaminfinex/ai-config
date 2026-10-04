@@ -51,7 +51,7 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 | `launch-requested` | tool, model, effort, tag, placement{workspace\|pane\|split_from}, prompt_ref, launcher_kind |
 | `launch-ready` | batch, pane, cwd, session (plus tool/model/effort/tag/placement when no request precedes it) |
 | `launch-failed` | reason, batch, pane |
-| `cull-requested`, `culled` | pane, close (`managed\|label-fallback`) |
+| `cull-requested`, `culled` | pane, close (`managed\|label-fallback\|idle-shell`) |
 | `resume` | pane, from_session, session |
 | `fork` | from_name, pane |
 | `compact-requested` | steer_chars |

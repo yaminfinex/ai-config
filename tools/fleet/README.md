@@ -27,7 +27,10 @@ a pane cwd with no resolvable identity is refused before the pane is touched.
 ## Lifecycle
 
 Spawn one seat in a new tab of an existing workspace, a new herdr-managed
-worktree, or an existing idle shell pane:
+worktree, or an existing idle shell pane that is alone in its tab. Every seat
+gets its own tab: seats sharing a tab get tiny terminals and miss hcom
+deliveries. `--split-from` and a `--pane` that shares its tab refuse (exit 2)
+unless `--force-split` is given:
 
 ```bash
 tools/fleet/spawn.sh claude --model haiku --tag review --workspace w1A --prompt 'Review the change'
@@ -86,6 +89,16 @@ pane close, and uses only a unique exact label as its fallback:
 ```bash
 tools/fleet/cull.sh review-vava
 ```
+
+If the seat's pane survives the kill holding only its idle shell, cull closes
+it and reports `close=idle-shell` with the pane's cwd and foreground. A pane
+running anything else (dev server, watcher, editor, another agent) is never
+closed; the cull fails and names it. The seat's tab is closed once empty;
+herdr already removes a tab with its last pane, so the output usually reads
+`tab=gone`.
+
+`tools/fleet/drift.sh` is a read-only report of placement drift: tabs holding
+more than one agent pane and panes holding only an idle shell, one per line.
 
 When the seat occupied the only pane in a worktree workspace, managed close
 also removes that workspace. The git checkout remains deliberate state: after
