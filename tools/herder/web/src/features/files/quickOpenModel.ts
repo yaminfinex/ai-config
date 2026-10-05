@@ -12,11 +12,7 @@ export type QuickOpenActionRow =
 
 export type QuickOpenMode = { kind: 'normal' } | { kind: 'reassign', subject: string }
 
-export type QuickOpenEnterTarget = { kind: 'action', index: number } | { kind: 'file', index?: number }
 export type QuickOpenKeyboardRow = { kind: 'action', index: number } | { kind: 'file', index: number }
-// The file lookup for the current query: still running (or not yet settled), finished with nothing
-// usable, or finished with a candidate Enter may open.
-export type QuickOpenLookup = 'pending' | 'none' | 'available'
 
 const OPENABLE_KINDS: QuickOpenActionRow['kind'][] = ['space', 'agent', 'reassign']
 
@@ -109,7 +105,7 @@ export function quickOpenMoveSelection(rows: QuickOpenActionRow[], fileKeys: str
   return keys[(current + (direction === 'down' ? 1 : -1) + keys.length) % keys.length]
 }
 
-// A fresh palette (empty query) starts on the first openable row; a typed query leaves Enter to its implicit order.
+// A fresh palette (empty query) starts on the first openable row; a typed query starts on its top match.
 export function quickOpenInitialIndex(rows: QuickOpenActionRow[], rawQuery: string) {
   if (rawQuery.trim()) return -1
   return quickOpenKeyboardRows(rows, 0).findIndex((entry) => entry.kind === 'action' && OPENABLE_KINDS.includes(rows[entry.index].kind))
@@ -120,29 +116,43 @@ export function quickOpenInitialSelection(rows: QuickOpenActionRow[], rawQuery: 
   return index < 0 ? null : quickOpenSelectionKeys(rows, [])[index]
 }
 
-export function quickOpenDefaultActionIndex(rows: QuickOpenActionRow[], rawQuery: string) {
-  const query = rawQuery.trim().toLocaleLowerCase()
-  if (!query) return -1
-  const exact = rows.findIndex((row) => row.kind !== 'create' && row.kind !== 'note' && row.label.toLocaleLowerCase() === query)
-  if (exact >= 0) return exact
-  const agent = rows.findIndex((row) => row.kind === 'agent' && row.name.toLocaleLowerCase().includes(query))
-  if (agent >= 0) return agent
-  return rows.findIndex((row) => row.kind === 'space' && row.label.toLocaleLowerCase().includes(query))
+// The top-match tier of one action row, best first: exact space, exact agent, any other exact action,
+// space prefix, agent prefix, space contains, agent contains. Create and note never rank here.
+function topMatchTier(row: QuickOpenActionRow, query: string) {
+  const rank = matchRank(row.label, query)
+  if (rank < 0) return -1
+  if (row.kind === 'space') return [0, 3, 5][rank]
+  if (row.kind === 'agent') return [1, 4, 6][rank]
+  if (row.kind === 'create' || row.kind === 'note') return -1
+  return rank === 0 ? 2 : -1
 }
 
-export function quickOpenEnterTarget(
-  rows: QuickOpenActionRow[],
-  rawQuery: string,
-  activeIndex: number,
-  lookup: QuickOpenLookup,
-  fileCount = lookup === 'available' ? 1 : 0,
-): QuickOpenEnterTarget | null {
-  if (activeIndex >= 0) return quickOpenKeyboardRows(rows, fileCount)[activeIndex] ?? null
-  const exact = quickOpenDefaultActionIndex(rows, rawQuery)
-  if (exact >= 0) return { kind: 'action', index: exact }
-  if (lookup === 'available') return { kind: 'file' }
-  // A lookup still running is not "no match": Enter does nothing until it settles.
-  if (lookup === 'pending') return null
-  const note = rows.findIndex((row) => row.kind === 'note')
-  return note >= 0 ? { kind: 'action', index: note } : null
+// The row a typed query selects before the user moves it: the best-tier action (rendered order breaks a
+// tie), else the first file, else the note, else create. While the file lookup is still running and no
+// action matches, nothing is selected: the file that would rank above the note has not arrived yet.
+export function quickOpenTopMatch(rows: QuickOpenActionRow[], fileKeys: string[], rawQuery: string, lookupPending = false): string | null {
+  const query = rawQuery.trim().toLocaleLowerCase()
+  if (!query) return quickOpenInitialSelection(rows, '')
+  let best = -1
+  let bestTier = Infinity
+  rows.forEach((row, index) => {
+    const tier = topMatchTier(row, query)
+    if (tier >= 0 && tier < bestTier) [best, bestTier] = [index, tier]
+  })
+  if (best >= 0) return quickOpenRowKey(rows[best])
+  if (fileKeys.length > 0) return `file:${fileKeys[0]}`
+  if (lookupPending) return null
+  const fallback = rows.find((row) => row.kind === 'note') ?? rows.find((row) => row.kind === 'create')
+  return fallback ? quickOpenRowKey(fallback) : null
+}
+
+// The highlighted row: the one the user moved to with the arrows while it is still listed, else the
+// fallback (the top match, or reassign mode's own pick). A query edit clears the moved row.
+export function quickOpenSelection(rows: QuickOpenActionRow[], fileKeys: string[], moved: string | null, fallback: string | null): string | null {
+  return moved !== null && quickOpenSelectionKeys(rows, fileKeys).includes(moved) ? moved : fallback
+}
+
+// Enter acts on exactly the highlighted row; nothing highlighted, nothing happens.
+export function quickOpenEnterTarget(rows: QuickOpenActionRow[], fileCount: number, activeIndex: number): QuickOpenKeyboardRow | null {
+  return activeIndex >= 0 ? quickOpenKeyboardRows(rows, fileCount)[activeIndex] ?? null : null
 }

@@ -4,24 +4,29 @@ import test from 'node:test'
 
 const source = readFileSync(new URL('../src/features/files/QuickOpen.tsx', import.meta.url), 'utf8')
 
-test('QuickOpen clears the query and starts on the first openable row on open or mode changes', () => {
-  assert.match(source, /useEffect\(\(\) => \{\s*setQuery\(''\)[\s\S]*?const initialRows = quickOpenRows\(mode, '', rowContext\)[\s\S]*?setSelection\(open \? mode\.kind === 'normal' \? quickOpenInitialSelection\(initialRows, ''\) : reassignSelection\(initialRows, ''\) : null\)[\s\S]*?\}, \[open, mode\]\)/)
+test('QuickOpen clears the query and any arrow-moved row on open or mode changes, so it starts on the first openable row', () => {
+  assert.match(source, /useEffect\(\(\) => \{\s*setQuery\(''\)[\s\S]*?setMoved\(null\)[\s\S]*?\}, \[open, mode\]\)/)
+  assert.match(source, /const fallback = normalMode \? quickOpenTopMatch\(actions, fileKeys, query, lookupPending\) : reassignSelection\(actions, query\)/)
+  assert.match(source, /const selection = quickOpenSelection\(actions, fileKeys, moved, fallback\)/)
 })
 
-test('QuickOpen resets the selection only on a real query edit, never when the debounce settles', () => {
+test('QuickOpen resets an arrow-moved selection only on a real query edit, never when the debounce settles', () => {
   // Every effect whose dependency list names `debounced` must leave the selection alone.
   const effects = [...source.matchAll(/useEffect\(\(\) => ([\s\S]*?), \[([^\]]*)\]\)/g)].map(([, body, deps]) => ({ body, deps: deps.split(',').map((dep) => dep.trim()) }))
   assert.ok(effects.length >= 3, `expected the QuickOpen effects, found ${effects.length}`)
-  for (const effect of effects.filter(({ deps }) => deps.includes('debounced'))) assert.doesNotMatch(effect.body, /setSelection\(/)
+  for (const effect of effects.filter(({ deps }) => deps.includes('debounced'))) assert.doesNotMatch(effect.body, /setMoved\(/)
   assert.doesNotMatch(source, /setActiveIndex/)
-  assert.match(source, /onChange=\{\(event\) => \{\s*setQuery\(event\.target\.value\)[\s\S]*?const nextRows = quickOpenRows\(mode, event\.target\.value, rowContext\)[\s\S]*?setSelection\(normalMode \? quickOpenInitialSelection\([\s\S]*?: reassignSelection\(/)
-  assert.match(source, /setSelection\(quickOpenMoveSelection\(actions, fileKeys, selection, event\.key === 'ArrowDown' \? 'down' : 'up'\)\)/)
+  assert.match(source, /onChange=\{\(event\) => \{\s*setQuery\(event\.target\.value\)[\s\S]*?setMoved\(null\)/)
+  assert.match(source, /setMoved\(quickOpenMoveSelection\(actions, fileKeys, selection, event\.key === 'ArrowDown' \? 'down' : 'up'\)\)/)
+  // Enter acts on the highlighted row and nothing else.
+  assert.match(source, /const target = quickOpenEnterTarget\(actions, candidates\.length, activeIndex\)/)
+  assert.doesNotMatch(source, /keyboardCandidate|quickOpenDefaultActionIndex/)
   assert.doesNotMatch(source, /useState\(-1\)/)
   assert.match(source, /scrollIntoView\(\{ block: 'nearest' \}\)/)
 })
 
 test('QuickOpen gets every mode-dependent action list from quickOpenRows', () => {
-  assert.equal((source.match(/quickOpenRows\(/g) ?? []).length, 3)
+  assert.equal((source.match(/quickOpenRows\(/g) ?? []).length, 1)
   assert.doesNotMatch(source, /normalMode\s*\?\s*quickOpenActionRows/)
   assert.doesNotMatch(source, /reassignCandidates\(/)
 })
