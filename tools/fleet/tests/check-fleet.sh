@@ -175,7 +175,20 @@ case "$1 $2" in
     printf '%s\n' '{"result":{"pane":{"pane_id":"p-self","workspace_id":"w-current","cwd":"/tmp"}}}'
     ;;
   'pane process-info')
-    if [[ ${FLEET_TEST_PROCESS_SHAPE:-} == no-shell-pid ]]; then
+    # FLEET_TEST_ROOT_SEQ scripts the worktree root pane's reads in order
+    # (busy, unknown, idle, respawned), then FLEET_TEST_ROOT_AFTER for the rest.
+    if [[ -n ${FLEET_TEST_ROOT_SEQ:-} && ${4:-} == p-wt ]]; then
+      read -ra root_seq <<<"$FLEET_TEST_ROOT_SEQ"
+      root_read=$(($(cat "$FLEET_TEST_ROOT_COUNT" 2>/dev/null || printf 0) + 1))
+      printf '%s\n' "$root_read" >"$FLEET_TEST_ROOT_COUNT"
+      root_state=${root_seq[root_read - 1]:-${FLEET_TEST_ROOT_AFTER:-idle}}
+      case $root_state in
+        busy) printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":[{"pid":42,"name":"bash"},{"pid":43,"name":"mise"}]}}}' ;;
+        unknown) printf '%s\n' '{"result":{"process_info":{"foreground_processes":[]}}}' ;;
+        respawned) printf '%s\n' '{"result":{"process_info":{"shell_pid":44,"foreground_processes":[{"pid":44,"name":"bash"}]}}}' ;;
+        *) printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":[{"pid":42,"name":"bash"}]}}}' ;;
+      esac
+    elif [[ ${FLEET_TEST_PROCESS_SHAPE:-} == no-shell-pid ]]; then
       printf '%s\n' '{"result":{"process_info":{"foreground_processes":[{"pid":42,"name":"bash"}]}}}'
     elif [[ ${FLEET_TEST_PROCESS_SHAPE:-} == malformed ]]; then
       printf '%s\n' '{"result":{"process_info":{"shell_pid":42,"foreground_processes":false}}}'
@@ -327,7 +340,12 @@ exit 0
 EOF
 chmod +x "$TEST_ROOT/bin/herdr" "$TEST_ROOT/bin/hcom" "$TEST_ROOT/bin/herder" "$TEST_ROOT/bin/sleep"
 
+# A fleet seat running this battery exports its own launch context.
+unset FLEET_PANE FLEET_TOOL FLEET_LAUNCHER
 export FLEET_TEST_CALLS=$TEST_ROOT/calls
+export FLEET_TEST_ROOT_COUNT=$TEST_ROOT/root-reads
+# Root-pane settle reads need no real delay against the fake herdr.
+export FLEET_ROOT_SETTLE_INTERVAL=0
 HCOM_NOTES=stale PATH="$TEST_ROOT/bin:$PATH" \
   "$FLEET/spawn.sh" codex --tag gate --pane p-test --prompt hello >"$TEST_ROOT/spawn.out"
 grep -Fx 'name=gate-vava' "$TEST_ROOT/spawn.out" >/dev/null || fail "spawn did not print full hcom name"
@@ -709,6 +727,32 @@ for unproven in 'FLEET_TEST_PROCESS_SHAPE=no-shell-pid' 'FLEET_TEST_PROCESS_SHAP
   grep -Fx 'pane=p-wt-fresh' "$TEST_ROOT/wt-unproven.out" >/dev/null || fail "worktree spawn did not launch into the fresh tab ($unproven)"
 done
 pass "worktree spawn opens a fresh tab when the root pane's idleness or tab is unproven"
+
+# A just-created root pane runs its shell's startup hooks (mise, dircolors)
+# before settling; spawn waits for a steady idle shell rather than stranding it.
+for settling in 'busy busy unknown idle idle idle' 'unknown unknown unknown' 'busy idle busy idle unknown' 'idle respawned'; do
+  : >"$FLEET_TEST_CALLS"
+  rm -f -- "$FLEET_TEST_ROOT_COUNT"
+  FLEET_TEST_ROOT_SEQ=$settling PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --worktree-branch wt --repo /tmp \
+    >"$TEST_ROOT/wt-settle.out" || fail "worktree spawn failed while its root pane settled ($settling)"
+  grep -Fx 'pane=p-wt' "$TEST_ROOT/wt-settle.out" >/dev/null || fail "worktree spawn stranded a root pane that settled idle ($settling)"
+  ! grep -F 'herdr tab create' "$FLEET_TEST_CALLS" >/dev/null || fail "worktree spawn opened a fresh tab for a settling root pane ($settling)"
+done
+pass "worktree spawn reuses a root pane that settles to an idle shell after startup"
+
+flapping=$(printf 'busy idle idle %.0s' 1 2 3 4 5)
+for stuck in 'busy|busy' 'unknown|unknown' "${flapping% }|busy"; do
+  : >"$FLEET_TEST_CALLS"
+  rm -f -- "$FLEET_TEST_ROOT_COUNT"
+  FLEET_TEST_ROOT_SEQ=${stuck%|*} FLEET_TEST_ROOT_AFTER=${stuck#*|} PATH="$TEST_ROOT/bin:$PATH" \
+    "$FLEET/spawn.sh" codex --tag gate --worktree-branch wt --repo /tmp >"$TEST_ROOT/wt-stuck.out" \
+    || fail "worktree spawn failed with a root pane that never settled ($stuck)"
+  grep -Fx 'herdr tab create --workspace w-wt --cwd /tmp --no-focus' "$FLEET_TEST_CALLS" >/dev/null \
+    || fail "worktree spawn reused a root pane that never settled idle ($stuck)"
+  grep -Fx 'pane=p-wt-fresh' "$TEST_ROOT/wt-stuck.out" >/dev/null || fail "worktree spawn did not launch into the fresh tab ($stuck)"
+  [[ $(cat "$FLEET_TEST_ROOT_COUNT") -eq 15 ]] || fail "worktree spawn did not bound its root-pane settle reads ($stuck)"
+done
+pass "worktree spawn opens a fresh tab after a bounded wait when the root pane never settles idle"
 
 : >"$FLEET_TEST_CALLS"
 if FLEET_TEST_TAB_SHARED=p-wt FLEET_TEST_TAB_CREATE=fail PATH="$TEST_ROOT/bin:$PATH" \
