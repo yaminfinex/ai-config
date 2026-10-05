@@ -294,6 +294,29 @@ requested_args+=(${launcher_attrib[@]+"${launcher_attrib[@]}"})
 register_event launch-requested "${requested_args[@]}"
 request=$(sed -n 's/^request=//p' <<<"$HERDER_OUTPUT" | head -n 1)
 
+# A just-created root pane is still running its shell's startup files: rc hooks
+# such as `mise activate` and `dircolors` hold the foreground for tens of
+# milliseconds, with idle reads in between, so one read right after
+# `worktree create` often says busy. Re-read until the pane is an idle shell on
+# FLEET_ROOT_SETTLE_STREAK consecutive reads with one shell_pid, giving up after
+# FLEET_ROOT_SETTLE_TRIES reads FLEET_ROOT_SETTLE_INTERVAL seconds apart.
+root_settled_idle() {
+  local target=$1 tries=${FLEET_ROOT_SETTLE_TRIES:-15} interval=${FLEET_ROOT_SETTLE_INTERVAL:-0.2}
+  local need=${FLEET_ROOT_SETTLE_STREAK:-3} streak=0 shell='' process try
+
+  for ((try = 1; try <= tries; try++)); do
+    ((try == 1)) || sleep "$interval"
+    if process=$(herdr pane process-info --pane "$target") && fleet_idle_shell "$process" \
+      && [[ -z $shell || $(fleet_shell_pid "$process") == "$shell" ]]; then
+      shell=$(fleet_shell_pid "$process")
+      ((++streak < need)) || return 0
+    else
+      streak=0 shell=''
+    fi
+  done
+  return 1
+}
+
 placement_kind=
 placement_detail=
 cwd=
@@ -327,7 +350,7 @@ elif [[ -n $worktree_branch ]]; then
   root_reuse=0
   if [[ -n $root_tab ]] && root_panes=$(herdr pane list) \
     && root_count=$(fleet_tab_pane_count "$root_panes" "$root_tab") && ((root_count == 1)) \
-    && root_process=$(herdr pane process-info --pane "$pane_id") && fleet_idle_shell "$root_process"; then
+    && root_settled_idle "$pane_id"; then
     root_reuse=1
   fi
   if ((root_reuse == 0)); then
