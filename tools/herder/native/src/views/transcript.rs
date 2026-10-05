@@ -803,7 +803,9 @@ fn strip<H: Host>(store: &Store, tr: &Transcript, t: TypeScale, cx: &mut Context
         .children(facts)
         .children(cwd)
         .when(tr.retired(), |el| el.child(retired))
-        .when(tr.paging(), |el| el.child(dim("reading older…")))
+        // Laid out while hidden: a strip with nothing else in it keeps its height, so the rows below do
+        // not drop a line while a page is in flight (H2).
+        .child(dim("reading older…").when(!tr.paging(), |el| el.invisible()))
 }
 
 /// One row of the list: an item, or a run.

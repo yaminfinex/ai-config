@@ -1868,6 +1868,27 @@ mod layout {
     }
 
     #[gpui_kit::test]
+    fn reading_older_leaves_the_rows_where_they_are(cx: &mut TestAppContext) {
+        // H2: with no model, context or folder to show, the strip above the list was empty until
+        // "reading older…" filled it, pushing every row down a line while a page was in flight.
+        let limit = split("mupu");
+        let (body, cx) = body(cx, "mupu", (usize::MAX, limit), (420., 320.));
+        let paging = |body: &Entity<Body>, cx: &mut VisualTestContext| {
+            body.read_with(cx, |b, _| b.store.transcript.focused().unwrap().paging())
+        };
+        assert!(!paging(&body, cx), "no page is in flight");
+        let idle = screen(&body, cx).top();
+        body.update(cx, |b, cx| {
+            // Asked, not answered: the effects stay unread.
+            let _ = b.store.apply(crate::store::tests::older(&b.store));
+            cx.notify();
+        });
+        draw(cx);
+        assert!(paging(&body, cx), "the page before is in flight");
+        assert_eq!(screen(&body, cx).top(), idle);
+    }
+
+    #[gpui_kit::test]
     fn a_page_landing_before_a_scroll_is_painted_keeps_the_scroll(cx: &mut TestAppContext) {
         // A key (or the harness's `find`) scrolls, and a page lands before the next frame: what is
         // read is where the list now is, not what was last painted (the tail).
