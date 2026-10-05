@@ -1,17 +1,19 @@
 //! The dock's tab strip (DK2), drawn to web's measurements: the kit's own (`TabGroupSkin`) is private,
 //! always draws a menu and has no top line. The rest of the dock's look is the kit's (`Skin`), and what
 //! the tabs do is the dock's (`dock`). It behaves as Zed's (S2): tabs keep their width and the strip
-//! scrolls, the shown one into view; those out of view are under +N; a tab's × is there on hover; the
-//! maximized group's □ is selected.
+//! scrolls, the shown one into view; those out of view are under +N; a tab's × is there on hover. Its
+//! look is the owner's calm one (S3, `s3-calm-spec.md`): no boxes or dividers, the shown tab medium
+//! over an underline, a dot only for news, faded edges where tabs are cut, and a ⤢ that turns into a
+//! selected ⤡ while the group is maximized.
 
 use crate::store::Store;
 use crate::views::dock::{Close, Pin, agent_of, members};
 use crate::views::space::{Anim, Tab};
-use crate::views::theme::{MONO_T, TypeScale, pal, type_scale};
+use crate::views::theme::{SANS_T, TypeScale, pal, type_scale};
 use crate::views::{Host, pill};
 use gpui_kit::base::ResizeHandleContext;
-use gpui_kit::component::Sizable as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::Icon;
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_kit::component::dock::*;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -68,11 +70,10 @@ impl<H: Host> DockAreaRenderer for Skin<H> {
     }
 }
 
-/// A group's tab strip, web's (`.dv-tabs-and-actions-container`, measured): 32 tall on the panel colour
-/// under a 1px rule; each tab mono 12, divided by a rule, the shown one on the ground under a 2px blue
-/// line, the focused group's in ink and the rest dim; a preview italic after a hollow dot; the status
-/// dot, the tool, needs-you, and × on hover; +N for those out of view and the group's □ (maximize) at
-/// the right, where the tabs do not scroll them away. The dock keeps one for each group.
+/// A group's tab strip (S3 A1): 32 tall on the group's ground under a 1px rule, sans 13; each tab its
+/// status dot, its name, needs-you and × on hover; fades where tabs are cut; +N for those out of view
+/// and the group's ⤢ (maximize) at the right, where the tabs do not scroll them away. The dock keeps
+/// one for each group.
 struct Strip<H> {
     host: WeakEntity<H>,
     /// The tabs' sideways scroll.
@@ -130,6 +131,7 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             self.reveal.set(Some((id, TRIES)));
         }
         let out = hidden(&self.scroll, drawn.len());
+        let hovered = self.hovered.get();
         let mut target = None;
         if let Some((id, tries)) = self.reveal.get()
             && laid(&self.scroll)
@@ -149,7 +151,8 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .map(|(ix, id, agent)| {
                 let state = TabState {
                     shown: Some(*id) == shown,
-                    lit: here && Some(*id) == shown,
+                    here,
+                    hovered: hovered == Some(*id),
                     preview: !members.contains(agent),
                 };
                 let hover = Hover {
@@ -184,6 +187,26 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .track_scroll(&self.scroll)
             .children(tabs)
             .child(rest);
+        // Over the scroller, where it cuts tabs: the ground fading in (S3 A6). No handlers, so the
+        // pointer goes through.
+        let fade = |angle: f32| {
+            let ground = rgb(pal::GROUND);
+            let clear = linear_color_stop(ground, 0.).opacity(0.);
+            let bg = linear_gradient(angle, clear, linear_color_stop(ground, 1.).opacity(0.85));
+            div().absolute().top_0().h_full().w(t.css(40.)).bg(bg)
+        };
+        let scroller = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(scroller.test_support())
+            .when(out.left, |el| {
+                el.child(fade(270.).left_0().id("tab-fade-left").test_support())
+            })
+            .when(out.right, |el| {
+                el.child(fade(90.).right_0().id("tab-fade-right").test_support())
+            });
         // Laid out (and scrolled), a reveal is done when its tab is in view and +N was drawn for this
         // layout. Otherwise, or when the tabs out of view are not those +N was drawn for (a resize, a
         // scroll into view), draw again.
@@ -192,7 +215,8 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             let reveal = self.reveal.clone();
             let prepaint = move |_, _: &mut Window, cx: &mut App| {
                 let now = hidden(&scroll, n);
-                let seen = |at: usize| scroll.bounds_for_item(at).is_some() && !now.contains(&at);
+                let seen =
+                    |at: usize| scroll.bounds_for_item(at).is_some() && !now.tabs.contains(&at);
                 if laid(&scroll) && now == was && target.is_some_and(seen) {
                     reveal.set(None);
                 }
@@ -204,6 +228,7 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             canvas(prepaint, |_, _, _, _| {}).absolute().size_0()
         };
         let names: Vec<(SharedString, PanelId)> = out
+            .tabs
             .iter()
             .filter_map(|&at| drawn.get(at))
             .map(|d| (SharedString::from(d.2.clone()), d.1))
@@ -224,41 +249,72 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
                 }
                 menu.scrollable(true)
             };
-            let button = Button::new("tab-more").xsmall().ghost().label(label);
-            let button = button
-                .text_color(rgb(pal::SLATE))
-                .dropdown_menu(menu)
-                .anchor(Anchor::TopRight);
-            let el = div()
-                .flex_none()
-                .h_full()
-                .px(t.css(4.))
+            // The kit's button and menu (S3 A7), quiet: slate on nothing, the wash under the pointer and
+            // while open, its label and chevron in ink under the pointer.
+            let tint = ButtonCustomVariant::new(cx)
+                .foreground(rgb(pal::SLATE).into())
+                .hover(rgb(pal::WASH).into())
+                .active(rgb(pal::WASH).into());
+            let face = div()
                 .flex()
-                .items_center();
-            el.border_l_1().border_color(rgb(pal::RULE)).child(button)
+                .items_center()
+                .gap(t.css(3.))
+                .font_family(SANS_T)
+                .text_size(t.css(11.))
+                .text_color(rgb(pal::SLATE))
+                .group_hover("tab-more", |s| s.text_color(rgb(pal::INK)))
+                .child(label)
+                .child(icon(CHEVRON).size(t.css(11.)));
+            Button::new("tab-more")
+                .custom(tint)
+                .group("tab-more")
+                .h(t.css(22.))
+                .px(t.css(6.))
+                .rounded(t.css(4.))
+                .child(face)
+                .dropdown_menu(menu)
+                .anchor(Anchor::TopRight)
         });
+        // ⤢ in every group, dimmer away from the focus; maximized, the strip's one lit control: ⤡ on
+        // the selection under a blue edge (S3 A7).
         let zoomed = group.is_zoomed();
         let max = div()
             .id("tab-max")
             .flex_none()
-            .h_full()
-            .px(t.css(9.))
+            .size(t.css(22.))
+            .rounded(t.css(4.))
             .flex()
             .items_center()
+            .justify_center()
             .cursor_pointer()
-            .when(zoomed, |el| el.bg(rgb(pal::SELECT)))
-            .hover(|s| s.bg(rgb(pal::WASH)))
+            .aria_label(if zoomed { "Restore" } else { "Maximize" })
+            .aria_selected(zoomed)
+            .map(|el| match zoomed {
+                true => el
+                    .bg(rgb(pal::SELECT))
+                    .border_1()
+                    .border_color(rgb(pal::BLUE))
+                    .text_color(rgb(pal::INK))
+                    .hover(|s| s.bg(rgb(pal::SELECT_HOVER))),
+                false => el
+                    .text_color(rgb(if here { pal::SLATE } else { pal::DIMMER }))
+                    .hover(|s| s.bg(rgb(pal::WASH)).text_color(rgb(pal::INK))),
+            })
             .on_click({
                 let g = group.clone();
                 move |_, window, cx| g.toggle_zoom(window, cx)
             })
-            .child(
-                div()
-                    .size(t.css(11.))
-                    .border_1()
-                    .rounded(t.css(1.5))
-                    .border_color(rgb(if zoomed { pal::INK } else { pal::SLATE })),
-            );
+            .child(icon(if zoomed { RESTORE } else { MAXIMIZE }).size(t.css(12.)));
+        let end = div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .items_center()
+            .gap(t.css(2.))
+            .pl(t.css(4.))
+            .pr(t.css(8.))
+            .children(more)
+            .child(max.test_support());
         div()
             .id("tab-strip")
             .flex_none()
@@ -266,15 +322,14 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
             .relative()
             .flex()
             .h(t.css(32.))
-            .bg(rgb(pal::PANEL))
+            .bg(rgb(pal::GROUND))
             .border_b_1()
             .border_color(rgb(pal::RULE))
-            .font_family(MONO_T)
-            .text_size(t.css(12.))
-            .child(scroller.test_support())
+            .font_family(SANS_T)
+            .text_size(t.css(13.))
+            .child(scroller)
             .child(check)
-            .children(more)
-            .child(max.test_support())
+            .child(end)
             .into_any_element()
     }
 
@@ -319,11 +374,30 @@ fn laid(scroll: &ScrollHandle) -> bool {
     scroll.bounds().size.width > px(0.)
 }
 
-/// The tabs out of view, by place in the strip: not wholly inside it where the last layout put them.
-fn hidden(scroll: &ScrollHandle, n: usize) -> Vec<usize> {
+/// The tabs out of view where the last layout put them, and on which sides they are cut.
+#[derive(Clone, Default, PartialEq)]
+struct Out {
+    /// By place in the strip: not wholly inside it.
+    tabs: Vec<usize>,
+    /// Some begins before the view's left edge.
+    left: bool,
+    /// Some ends past its right edge.
+    right: bool,
+}
+
+fn hidden(scroll: &ScrollHandle, n: usize) -> Out {
     let (view, dx) = (scroll.bounds(), scroll.offset().x);
-    let items = (0..n).map(|ix| scroll.bounds_for_item(ix).map(|b| (b.left(), b.right())));
-    out_of_view((view.left(), view.right()), dx, items)
+    let bounds = |ix| scroll.bounds_for_item(ix).map(|b| (b.left(), b.right()));
+    let tabs = out_of_view((view.left(), view.right()), dx, (0..n).map(bounds));
+    // Each side on its own: a tab wider than the view is cut on both.
+    let slack = px(0.5);
+    let before = |ix: &usize| bounds(*ix).is_some_and(|(l, _)| l + dx < view.left() - slack);
+    let past = |ix: &usize| bounds(*ix).is_some_and(|(_, r)| r + dx > view.right() + slack);
+    Out {
+        left: tabs.iter().any(before),
+        right: tabs.iter().any(past),
+        tabs,
+    }
 }
 
 /// The items, each `(left, right)` unscrolled or unknown, not wholly inside `view` scrolled by `dx`; an
@@ -356,8 +430,9 @@ struct Hover {
 #[derive(Clone, Copy)]
 struct TabState {
     shown: bool,
-    /// Shown in the focused group.
-    lit: bool,
+    /// In the focused group.
+    here: bool,
+    hovered: bool,
     preview: bool,
 }
 
@@ -376,45 +451,34 @@ fn tab(
     cx: &App,
 ) -> AnyElement {
     let name = SharedString::from(agent.to_string());
-    let a = store.fleet.agents.get(agent);
-    let bus = a.map_or("", |a| a.bus_status.as_str());
-    let tool: &str = match a.map(|a| a.tool.as_str()).unwrap_or("") {
-        "claude" => "✱",
-        "codex" => "⬡",
-        "" | "-" => "",
-        other => &other[..other.len().min(2)],
+    let bus = store
+        .fleet
+        .agents
+        .get(agent)
+        .map_or("", |a| a.bus_status.as_str());
+    // Its slot always there, so news coming and going does not move the tab (S3 A2).
+    let dot = div().id(SharedString::from(format!("tab-dot-{agent}")));
+    let dot = (dot.flex_none().size(t.css(6.)).rounded_full())
+        .when_some(news(bus), |el, c| el.bg(rgb(c)).aria_label(bus.to_string()));
+    // The shown tab medium in both groups, so only becoming shown changes a tab's width (S3 A3).
+    let ink = match (s.shown, s.here, s.hovered) {
+        (true, true, _) => pal::INK,
+        (true, false, _) | (false, _, true) => pal::CODE_INK,
+        (false, _, false) => pal::SLATE,
     };
-    let dot = || div().flex_none().size(t.css(7.)).rounded_full();
-    let ring = s
-        .preview
-        .then(|| dot().border_1().border_color(rgb(pal::BLUE)));
     let title = div()
+        .min_w_0()
         .overflow_hidden()
         .text_ellipsis()
         .whitespace_nowrap()
+        .text_color(rgb(ink))
+        .when(s.shown, |el| el.font_weight(FontWeight::MEDIUM))
+        .when(s.preview, |el| el.italic())
         .child(name.clone());
-    let title = title.when(s.preview, |el| el.italic().text_color(rgb(pal::SLATE)));
-    let label = div()
-        .flex()
-        .min_w_0()
-        .items_center()
-        .gap(t.css(5.))
-        .children(ring)
-        .child(title);
-    let meta = div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(t.css(4.))
-        .text_color(rgb(pal::SLATE));
-    let meta = meta.child(dot().bg(rgb(dot_color(bus))));
-    let meta = meta.when(!tool.is_empty(), |el| {
-        el.child(div().text_size(t.css(10.)).child(tool.to_string()))
-    });
-    let meta = meta.when(store.agent_needs_you(agent), |el| el.child(pill(1, t)));
+    let needs = store.agent_needs_you(agent).then(|| pill(1, t));
     // Away from the pointer its place stays, so the tab keeps its width.
-    let slot = div().flex_none().h_full().w(t.css(25.)).ml_auto();
-    let close = if hover.on.get() != Some(hover.id) {
+    let slot = div().flex_none().size(t.css(14.));
+    let close = if !s.hovered {
         slot.into_any_element()
     } else {
         let name = name.clone();
@@ -422,9 +486,7 @@ fn tab(
             .flex()
             .items_center()
             .justify_center()
-            .pr(t.css(7.))
-            .pb(px(1.))
-            .text_size(t.css(15.))
+            .rounded(t.css(3.))
             .text_color(rgb(pal::SLATE))
             .hover(|s| s.bg(rgb(pal::WASH)).text_color(rgb(pal::INK)))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -432,10 +494,19 @@ fn tab(
                 cx.stop_propagation();
                 window.dispatch_action(Box::new(Close(Some(name.clone()))), cx);
             })
-            .child("×")
+            .child(icon(CLOSE).size(t.css(9.)))
             .test_support()
             .into_any_element()
     };
+    // Under the name (and needs-you) of the shown tab, on the rule: blue in the focused group.
+    let line = div()
+        .absolute()
+        .bottom_0()
+        .left(t.css(20.))
+        .right(t.css(24.))
+        .h(px(2.))
+        .rounded(px(1.))
+        .bg(rgb(if s.here { pal::BLUE } else { pal::TAB_LINE }));
     let (pick, pinned, gone) = (
         Tab(name.clone()),
         Pin(name.clone()),
@@ -452,12 +523,9 @@ fn tab(
         .h_full()
         .flex()
         .items_center()
-        .gap(t.css(8.))
-        .pl(t.css(11.))
-        .border_r_1()
-        .border_color(rgb(pal::RULE))
-        .bg(rgb(if s.shown { pal::GROUND } else { pal::PANEL }))
-        .text_color(rgb(if s.lit { pal::INK } else { pal::SLATE }))
+        .gap(t.css(6.))
+        .pl(t.css(8.))
+        .pr(t.css(4.))
         .cursor_pointer()
         .on_hover(move |&over, _, cx| {
             if over {
@@ -492,32 +560,34 @@ fn tab(
                     g.drop_panel(d.clone(), Some(ix), true, window, cx)
                 })
         })
-        .when(s.shown, |el| {
-            el.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(2.))
-                    .bg(rgb(pal::BLUE)),
-            )
-        })
-        .child(label)
-        .child(meta)
+        .when(s.shown, |el| el.child(line))
+        .child(dot.test_support())
+        .child(title)
+        .children(needs)
         .child(close)
         .test_support()
         .into_any_element()
 }
 
-fn dot_color(bus: &str) -> u32 {
+/// A tab's dot, only for news: the agent working, or stuck (S3 A5).
+fn news(bus: &str) -> Option<u32> {
     match bus {
-        "active" => pal::BLUE,
-        "listening" => pal::OPERATOR,
-        "blocked" => pal::RED,
-        "retired" => pal::QUEUE_TITLE,
-        _ => 0x565A66,
+        "active" => Some(pal::BLUE),
+        "blocked" => Some(pal::RED),
+        _ => None,
     }
+}
+
+/// The strip's glyphs, Lucide's as the kit ships them (`gpui-kit-assets`): the app registers no asset
+/// source, so they are drawn from their bytes.
+const CHEVRON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
+const CLOSE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>"#;
+const MAXIMIZE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg>"#;
+const RESTORE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14 10 7-7"/><path d="M20 10h-6V4"/><path d="m3 21 7-7"/><path d="M4 14h6v6"/></svg>"#;
+
+/// A glyph in its parent's text colour.
+fn icon(svg: &[u8]) -> Icon {
+    Icon::default().data(svg)
 }
 
 /// A tab being dragged.
@@ -532,8 +602,8 @@ impl Render for Dragged {
             .border_1()
             .border_color(rgb(pal::EDGE))
             .text_color(rgb(pal::INK))
-            .font_family(MONO_T)
-            .text_size(px(12.))
+            .font_family(SANS_T)
+            .text_size(px(13.))
             .opacity(0.85)
             .child(self.0.clone())
     }

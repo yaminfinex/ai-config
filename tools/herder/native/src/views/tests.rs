@@ -1786,6 +1786,40 @@ mod layout {
         held(&body, read, was, cx);
     }
 
+    /// A closed run's strip is one row, 24 tall, however many pills (S3 B1): the line's end cuts them.
+    #[gpui_kit::test]
+    fn a_closed_strip_is_one_row(cx: &mut TestAppContext) {
+        let (body, cx) = body(cx, "mupu", (usize::MAX, split("mupu")), (220., 320.));
+        let Row::Run(first, last) = rows(&body, cx)[0] else {
+            panic!("the top row is a run")
+        };
+        scroll(&body, px(0.), cx);
+        let marks = body.read_with(cx, |b, _| {
+            let painted = b.ui.panel().unwrap().transcript.painted.clone();
+            painted.borrow().marks.clone()
+        });
+        let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
+        let pills: Vec<_> = marks.into_iter().filter(|(m, _)| inside(m)).collect();
+        let cut = pills.iter().filter(|(_, b)| b.size.width == px(0.)).count();
+        assert!(cut > 0, "too many for the line: some past its end");
+        let top = pills[0].1.top();
+        assert!(pills.iter().all(|(_, b)| b.top() == top), "one line");
+        let narrow = row(&body, 0, cx);
+        assert_eq!(
+            narrow.bottom() - pills[0].1.center().y,
+            px(12.),
+            "centred in a strip 24 tall"
+        );
+        cx.simulate_resize(size(px(900.), px(320.)));
+        draw(cx);
+        scroll(&body, px(0.), cx);
+        assert_eq!(
+            row(&body, 0, cx).size.height,
+            narrow.size.height,
+            "as tall wide"
+        );
+    }
+
     #[gpui_kit::test]
     fn a_page_growing_the_closed_top_strip_leaves_the_pill_read_in_place(cx: &mut TestAppContext) {
         let limit = split("mupu");
@@ -1794,8 +1828,7 @@ mod layout {
             panic!("the top row is a run")
         };
         scroll(&body, px(0.), cx);
-        // The first pill on the strip's last line (what the viewport's top reads, of a line), the
-        // viewport's top just above it.
+        // The strip is one line (S3 B1): its last pill drawn, the viewport's top just above it.
         let pills = body.read_with(cx, |b, _| {
             b.ui.panel()
                 .unwrap()
@@ -1807,19 +1840,16 @@ mod layout {
         });
         let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
         let pills: Vec<_> = pills.into_iter().filter(|(m, _)| inside(m)).collect();
+        assert!(pills.len() > 1, "a strip of pills");
+        assert!(
+            pills.iter().all(|(_, b)| b.top() == pills[0].1.top()),
+            "the strip is one line"
+        );
         let (read, b) = *pills
             .iter()
-            .max_by(|a, b| {
-                (a.1.top(), b.1.left())
-                    .partial_cmp(&(b.1.top(), a.1.left()))
-                    .unwrap()
-            })
+            .filter(|(_, b)| b.size.width > px(0.))
+            .max_by(|a, b| a.1.left().partial_cmp(&b.1.left()).unwrap())
             .unwrap();
-        let line = pills
-            .iter()
-            .map(|(_, b)| b.top())
-            .fold(b.top(), Pixels::min);
-        assert!(b.top() > line, "the strip wraps");
         scroll(&body, b.top() - row(&body, 0, cx).top() - px(4.), cx);
         let was = mark(&body, read, cx).unwrap().top();
         let top = screen(&body, cx).top();
@@ -3877,7 +3907,7 @@ mod dock_events {
 
     /// Focus on the transcript's text (its selection's own element), as a click there leaves it.
     fn on_text(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
-        click(cx, 900., 500.);
+        click(cx, 900., 600.);
         cx.update(|window, cx| {
             let ui = &shell.read(cx).ui;
             let p = ui.panels["mupu"].focus.clone();
@@ -4170,6 +4200,128 @@ mod dock_events {
         }
         assert_eq!(asked.get(), 0, "settled");
         assert!(at(cx, "tab-max").is_some(), "the □ stays");
+    }
+
+    /// The tabs keep their width whatever the pointer or the agents' status do (S3 A2): the dot and ×
+    /// slots are always there, and only the shown tab is medium. (Blocked needs the operator: its pill
+    /// is new content.)
+    #[gpui_kit::test]
+    fn a_tab_keeps_its_width_through_hover_and_news(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        let widths = |cx: &mut VisualTestContext| {
+            SPACE.map(|a| at(cx, &format!("tab-{a}")).unwrap().size.width)
+        };
+        let wide = widths(cx);
+        let tab = at(cx, &format!("tab-{}", SPACE[0])).unwrap();
+        cx.simulate_mouse_move(tab.center(), None, Modifiers::none());
+        draw(cx);
+        assert!(at(cx, &format!("tab-close-{}", SPACE[0])).is_some());
+        assert_eq!(widths(cx), wide, "hovered");
+        let news = |cx: &mut VisualTestContext| {
+            SPACE.map(|a| {
+                let id = gpui_kit::ElementId::Name(format!("tab-dot-{a}").into());
+                cx.update(|window, _| window.find(id).label().map(String::from))
+            })
+        };
+        for bus in ["active", "listening", "idle", "blocked", "active"] {
+            shell.update(cx, |s, cx| {
+                for agent in SPACE {
+                    s.store.fleet.agents.get_mut(agent).unwrap().bus_status = bus.into();
+                }
+                cx.notify();
+            });
+            draw(cx);
+            let dot = matches!(bus, "active" | "blocked").then(|| bus.to_string());
+            assert_eq!(
+                news(cx),
+                [dot.clone(), dot.clone(), dot],
+                "a dot only for news"
+            );
+            if bus != "blocked" {
+                assert_eq!(widths(cx), wide, "{bus}");
+            }
+        }
+    }
+
+    /// One tab wider than the strip, scrolled into its middle, is cut on both sides: both fades (lobe's
+    /// review).
+    #[gpui_kit::test]
+    fn a_tab_cut_on_both_sides_fades_on_both(cx: &mut TestAppContext) {
+        let (_shell, cx) = open(cx);
+        act(cx, dock::Close(Some(SPACE[1].into())));
+        act(cx, dock::Close(Some(SPACE[2].into())));
+        cx.simulate_resize(size(px(150.), px(900.)));
+        for _ in 0..8 {
+            draw(cx);
+        }
+        let view = at(cx, "tab-scroll").unwrap();
+        cx.simulate_event(gpui_kit::ScrollWheelEvent {
+            position: view.center(),
+            delta: gpui_kit::ScrollDelta::Pixels(point(px(-20.), px(0.))),
+            touch_phase: gpui_kit::TouchPhase::Moved,
+            modifiers: Modifiers::none(),
+        });
+        for _ in 0..3 {
+            draw(cx);
+        }
+        let tab = at(cx, &format!("tab-{}", SPACE[0])).unwrap();
+        assert!(
+            tab.left() < view.left() && tab.right() > view.right(),
+            "the tab straddles the view"
+        );
+        assert!(at(cx, "tab-fade-left").is_some(), "cut on the left");
+        assert!(at(cx, "tab-fade-right").is_some(), "and on the right");
+    }
+
+    /// The scroller fades on a side only where it cuts tabs (S3 A6).
+    #[gpui_kit::test]
+    fn the_strip_fades_where_it_cuts_tabs(cx: &mut TestAppContext) {
+        let (_shell, cx) = open(cx);
+        let fades = |cx: &mut VisualTestContext| {
+            let at = |cx: &mut VisualTestContext, id: &str| at(cx, id).is_some();
+            (at(cx, "tab-fade-left"), at(cx, "tab-fade-right"))
+        };
+        assert_eq!(fades(cx), (false, false), "all in view");
+        cx.simulate_resize(size(px(420.), px(900.)));
+        draw(cx);
+        draw(cx);
+        assert_eq!(fades(cx), (false, true), "the end cut");
+        act(cx, space::Tab(SPACE[0].into()));
+        draw(cx);
+        act(cx, space::Tab(SPACE[1].into()));
+        for _ in 0..3 {
+            draw(cx);
+        }
+        assert!(in_view(cx, SPACE[1]));
+        assert_eq!(fades(cx), (true, true), "the middle one: both cut");
+        act(cx, space::Tab(SPACE[2].into()));
+        for _ in 0..3 {
+            draw(cx);
+        }
+        assert_eq!(fades(cx), (true, false), "scrolled to the end");
+    }
+
+    /// Maximized, the group's ⤢ is a selected ⤡ and the keys say ⌥⏎ restores (S3 A7).
+    #[gpui_kit::test]
+    fn the_maximized_group_shows_restore(cx: &mut TestAppContext) {
+        let (_shell, cx) = open(cx);
+        let state = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| {
+                let max = window.find(gpui_kit::ElementId::Name("tab-max".into()));
+                let keys = window.find(gpui_kit::ElementId::Name("crumb-keys".into()));
+                let restore = keys.label().unwrap().ends_with("⌥⏎ restore");
+                (max.label().map(String::from), max.selected(), restore)
+            })
+        };
+        let maximize = (Some("Maximize".into()), Some(false), false);
+        assert_eq!(state(cx), maximize);
+        let max = at(cx, "tab-max").unwrap();
+        click(cx, max.center().x.into(), max.center().y.into());
+        draw(cx);
+        assert_eq!(state(cx), (Some("Restore".into()), Some(true), true));
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert_eq!(state(cx), maximize, "and back by the key");
     }
 
     /// A tab's × is there only under the pointer, and closes it.

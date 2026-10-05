@@ -350,12 +350,16 @@ scrolled into view when it changes or is picked under +N (a reveal waits for a l
 on each render, and is done only after a layout has the tab wholly in view with +N drawn for that
 layout; six renders at most, as a tab wider than the strip never is); +N (the kit's `Button` with `dropdown_menu`, as its `TabBar`) lists
 the tabs not wholly in view and a pick shows one; × is on the hovered tab only (its place kept, so tabs
-do not move; middle-click and ⌘W close too); the maximized group's □ is selected. The dock keeps one
+do not move; middle-click and ⌘W close too). Its look is the owner's calm one (S3, `s3-calm-spec.md`):
+sans 13 on the group's ground with no boxes or dividers, the shown tab medium over an underline (blue in
+the focused group), a dot only for news (active, blocked) in a slot that is always there, fades where
+the scroller cuts tabs, and a ⤢ that is a selected ⤡ while the group is maximized (the crumb's keys then
+say ⌥⏎ restore); the glyphs are Lucide's drawn from their bytes, as the app registers no asset source. The dock keeps one
 renderer per group, so each `Strip` owns its scroll, the shown tab, a pending reveal and the hovered
 tab; +N is worked out from the last layout, and drawn again when the layout says otherwise (a resize, a
 scroll into view) or a reveal is pending. `just check-dock` and `views::tests`' `dock_events` drive it with real
 clicks, a real drag and keys; check-dock's crowd puts ten tabs in half a split (the fake serve's
-`--share`) and clicks +N, an item and the □.
+`--share`), hovers a tab, and clicks +N, an item, the ⤢ and the ⤡ (`hover:` moves the pointer only).
 
 **Paths (G3).** A path in the transcript opens in VS Code, its git root as the window's folder and the file
 at its line, by two calls of its CLI, about 3 s apart on the background executor (G3b: one call with both
@@ -430,15 +434,16 @@ while scrolling) and, while the list is not following the tail, web's accent "Ju
 above the bottom; a click is `Scroll::Bottom`.
 
 Entries are drawn as web's (A2, spec §1; `views::entries` builds them, `transcript` decides what is open).
-An answer is a 3px #3a3c45 rule, padding 3 0 3 12, a header (the agent in SF Mono 11/600, the time `8h ago`
+An answer has no rule on its left (S3 B2), padding 3 0 3 15 so its text sits where web's 3px rule and 12
+put it, a header (the agent in SF Mono 11/600, the time `8h ago`
 in mono 9 at the right, 6 above the text), then its markdown, or its fenced parts in a column 4 apart:
 text, a status chip cut at 26 characters that a click opens in full (`‹` closes it), an internal note as a
 thinking pill `› internal note · N words` that opens to a body on the code ground. One card builder serves
-the three cards (`entries::Card`): another agent's message (blue edge), an operator's note (green edge on
-#1b2420, indented min(6%, 54), at most 820 wide) and the owner's prompt (green edge on the right, #1d2320,
-min(10%, 90), 790); radius 8, padding 9 12, a header of the sender, `web operator`, `→ recipient`, the
-intent, `#id`, the thread and the time. GPUI draws one border colour, so the edge is the outer box's
-ground past the inner box. Another agent's message keeps the 5-line cut, with web's `Show full message`
+the three cards (`entries::Card`): another agent's message (blue edge), an operator's note (green edge,
+indented min(6%, 54), at most 820 wide) and the owner's prompt (green edge on the right, min(10%, 90),
+790); in the calm look (S3 B3) each is a 1px rule with no ground and no radius and a 2px edge, padding 9 12
+(14 on the edge's side), a header of the sender, `web operator`, `→ recipient`, the intent, `#id`, the
+thread and the time. GPUI draws one border colour, so the edge is a child over the box's open side. Another agent's message keeps the 5-line cut, with web's `Show full message`
 toggle; an operator's is whole. The compact divider carries its time and web's token counts; a summary
 without metadata is a fold (`.entry-expander`, 6 apart like a system chip); a model switch is a status-tone
 chip; queued messages are web's amber box under the list. What is open is `View::open`, by item key and
@@ -447,10 +452,12 @@ through the `Fold` action, which the harness clicks too. Limits, nearest kept: n
 owner's prompt and a queued message past an hour show an age), no fade on a cut message, no letter spacing
 on the queued title, the owner's prompt as markdown on a 1.55 line (web: plain text, 1.5).
 
-Runs are drawn as web's (A3, spec §1 "Activity strip", "Expanded run details", "Latest activity"). The strip
-is a summary of min-height 24, padding 2 5, radius 6, ruled and on the panel under the pointer or open,
-with the dimmer `›` and its pills (mono 9, padding 1 7, 14 tall; a cut status on the button's 17.5 line; a
-merged failed tool keeps F2's red). Open, its members sit on a rail (padding 2 8 4 14, a rule on the left)
+Runs are drawn as web's (A3, spec §1 "Activity strip", "Expanded run details", "Latest activity"), the strip
+in the calm look (S3 B1): min-height 24, padding 2 5, no box, the dimmer `›` then its pills as one line of
+mono 9 text on an 11 line, ` · ` between them, dimmer, a message in the operator's name colour and a merged
+failed tool in F2's red; slate under the pointer (a second line without its own colours over the first)
+and while open; too long, the line's end ellipsizes. Each pill's mark is read from the line's layout (one
+past the end sits at the end), so anchoring holds. Open, its members sit on a rail (padding 2 8 4 14, a rule on the left)
 at their own margins (`Kind::item`): a tool or a thinking is an expander (`entries::expander`, 27 tall,
 6 apart); a tool shows its status dot (green, red, blue running), name, summary cut to the row, duration
 (result time less call time, web's `formatDuration`) and time, and opens to `INPUT` and `OUTPUT` sections
@@ -564,7 +571,7 @@ mid-write leaves the previous file intact. The shell coalesces bursts (a held �
 
 ## 8. Line budgets (Rung 1)
 
-Current budgets, at each file's size after S2 (S2 grew `views/tabs` by the strip's scroll, +N and its check after layout, the reveal and the hover ×; G3b grew `views/markdown` and `platform_mac` by VS Code's two calls, the folder then the file; RM added `store/markers` for the read markers shared with web and grew `store/transcript` by the read positions, `store/sync` by the markers' merge and repairs, `store/mod` by the clock and the dwell's wake, `api/client` by the read-only client; G3 added `views/paths` for a clicked path's choices, and grew `store/transcript` by the pick rules, the choices and each resolve's number, `views/markdown` by the CLI's argv, `platform_mac` by running it, and `probe` by `paths` and the picks; DK2 added `views/dock` for the dock in the zoom: its sync with the zoom, asks, previews and pins, layouts and their restore, and `views/tabs` for the tab strip drawn to web's measurements; and grew `store/spaces` by the members writes and the layouts, `views/space` lost the hand-drawn tab row; DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
+Current budgets, at each file's size after S3 (S3 grew `views/tabs` by the calm look's states, fades and glyphs, `views/transcript` by the run strip's one line and its marks read from the line's layout, `harness` by `hover:`; S2 grew `views/tabs` by the strip's scroll, +N and its check after layout, the reveal and the hover ×; G3b grew `views/markdown` and `platform_mac` by VS Code's two calls, the folder then the file; RM added `store/markers` for the read markers shared with web and grew `store/transcript` by the read positions, `store/sync` by the markers' merge and repairs, `store/mod` by the clock and the dwell's wake, `api/client` by the read-only client; G3 added `views/paths` for a clicked path's choices, and grew `store/transcript` by the pick rules, the choices and each resolve's number, `views/markdown` by the CLI's argv, `platform_mac` by running it, and `probe` by `paths` and the picks; DK2 added `views/dock` for the dock in the zoom: its sync with the zoom, asks, previews and pins, layouts and their restore, and `views/tabs` for the tab strip drawn to web's measurements; and grew `store/spaces` by the members writes and the layouts, `views/space` lost the hand-drawn tab row; DK1 added `views/panel` for the agent panels and grew `store/transcript` by a transcript per panel on screen, `views/transcript` by a hidden panel's place and its restore, and the views that were one per zoom (`capture`, `notes`, `notes_list`, `probe`, `lens`) by reaching their panel; F7 added `views/capture` for type-to-capture, web's chip and popover, and grew `store/composer` by the quick send and its recovery, `views/transcript` by the release's anchor and the replay's frame rule, and `probe` by `capture`, while `views/notes` lost U5's selection seam; A3 grew `views/entries` by the members' looks (tool, thinking, durations, detail sections), `views/transcript` by the strip, rail and latest block and the bare fenced answer, `condense` and `store/transcript` by the tool's input, output and times, and `probe`/`harness` by `tools`, `run:` and the member clicks; A2 added `views/entries` for the entries' looks and grew `views/transcript` by the answer's parts and their folds, `condense` and `store/transcript` by the segments and the delivery's header, `theme` by the card, badge and queued tints, and `probe` and `harness` by `parts` and the part clicks; A1 grew `views/transcript` by the row kinds and their gaps, the scrollbar and the jump pill, `views/theme` by the transcript's fonts and markdown styles, and `probe`/`harness` by `jump` and `find`; F4 grew `lens`, `space` and `probe` by the card text and the mouse; F6 added web's keyboard list as `views/notes_list` (its selection model `Picked`, the list keys and the cards) and grew `views/notes` by the strip's header, confirmations and the card editor; F2 grew `condense` and `views/transcript` by the runs) (tests excluded: `store/tests.rs`, `views/tests.rs` and the
 `mod tests` in `api/sse.rs` and `local.rs`). How each grew past its first budget is in the run-log.
 `shell.rs` (boot and running effects) and `store/mod.rs` (the event and effect vocabulary and `apply`)
 are restated rather than split: what did not belong in them has moved out (`views::probe`,
@@ -574,27 +581,27 @@ are restated rather than split: what did not belong in them has moved out (`view
 |---|---|---|---|
 | `api/types.rs` | 335 | `views/mod.rs` | 461 |
 | `api/client.rs` | 234 | `views/lens.rs` | 470 |
-| `api/sse.rs` | 194 | `views/space.rs` | 369 |
-| `store/mod.rs` | 498 | `views/transcript.rs` | 1380 |
+| `api/sse.rs` | 194 | `views/space.rs` | 372 |
+| `store/mod.rs` | 498 | `views/transcript.rs` | 1466 |
 | `store/sync.rs` | 345 | `views/composer.rs` | 246 |
 | `store/fleet.rs` | 108 | `views/notes.rs` | 414 |
 | `store/spaces.rs` | 324 | `views/notes_list.rs` | 525 |
 | `store/attention.rs` | 263 | `views/probe.rs` | 290 |
 | `store/transcript.rs` | 822 | `views/markdown.rs` | 273 |
-| `store/condense.rs` | 439 | `views/theme.rs` | 261 |
+| `store/condense.rs` | 439 | `views/theme.rs` | 265 |
 | `store/notes.rs` | 432 | `shell.rs` | 467 |
 | `store/composer.rs` | 228 | `shell/io.rs` | 180 |
-| `local.rs` | 101 | `harness.rs` | 390 |
+| `local.rs` | 101 | `harness.rs` | 407 |
 | `store/cards.rs` | 182 | `platform_mac.rs` | 142 |
-|  |  | `views/entries.rs` | 529 |
+|  |  | `views/entries.rs` | 528 |
 |  |  | `views/capture.rs` | 452 |
 |  |  | `views/panel.rs` | 171 |
 |  |  | `views/dock.rs` | 902 |
-|  |  | `views/tabs.rs` | 540 |
+|  |  | `views/tabs.rs` | 607 |
 |  |  | `views/paths.rs` | 198 |
 |  |  | `store/markers.rs` | 440 |
 
-About 13,846 lines for Rung 1, tests excluded (S2: +179; G3b: +23; RM: +584; G3: +415; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
+About 14,022 lines for Rung 1, tests excluded (S3: +176; S2: +179; G3b: +23; RM: +584; G3: +415; G2: +8; DK2: +1,405; DK1: +366; F7: +520). F2 took `store/condense.rs` and `views/transcript.rs` past
 its design's estimates (~320, ~530): the fence parser, run grouping, pills and timestamps, and the run strip,
 open members, latest line and splice plan; its review added the painted bounds that `hold` and `o` read. Going over a budget needs a stated reason in the unit's DONE
 report and the reviewer's agreement; the usual answer is a move into the right module, not a bigger number,
