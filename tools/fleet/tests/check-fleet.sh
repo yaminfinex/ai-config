@@ -201,8 +201,9 @@ EOF
 cat >"$TEST_ROOT/bin/hcom" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'hcom FLEET_PANE=%q FLEET_TOOL=%q HCOM_TERMINAL=%q HCOM_NOTES_SET=%q' \
-  "${FLEET_PANE:-}" "${FLEET_TOOL:-}" "${HCOM_TERMINAL:-}" "${HCOM_NOTES+x}" >>"$FLEET_TEST_CALLS"
+printf 'hcom FLEET_PANE=%q FLEET_TOOL=%q HCOM_TERMINAL=%q HCOM_NOTES_SET=%q PERSIST=%q' \
+  "${FLEET_PANE:-}" "${FLEET_TOOL:-}" "${HCOM_TERMINAL:-}" "${HCOM_NOTES+x}" \
+  "${CLAUDE_CODE_FORCE_SESSION_PERSISTENCE:-}" >>"$FLEET_TEST_CALLS"
 printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
 if [[ ${1:-} == list && ${2:-} == self && ${3:-} == --json ]]; then
@@ -602,6 +603,7 @@ pass "spawn caps the launcher wait and reports preserved coordinates"
 
 : >"$FLEET_TEST_CALLS"
 PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --effort high --tag gate --pane p-test >"$TEST_ROOT/codex-effort.out"
+cp "$FLEET_TEST_CALLS" "$TEST_ROOT/codex-calls"
 grep -F 'model_reasoning_effort=\"high\"' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "codex effort did not reach the launch argv as a config override"
 
@@ -610,6 +612,14 @@ PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" claude --effort max --tag gate --p
 grep -F -- '--effort max' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "claude effort did not reach the launch argv"
 pass "spawn maps reasoning effort to each tool's CLI"
+
+# A seat launched from inside Claude Code inherits CLAUDE_CODE_CHILD_SESSION,
+# which turns transcript saving off; claude seats force it back on.
+grep -E '^hcom .* PERSIST=1 1 claude ' "$FLEET_TEST_CALLS" >/dev/null \
+  || fail "claude launch did not force session persistence"
+grep -E '^hcom .* PERSIST=1 1 codex ' "$TEST_ROOT/codex-calls" >/dev/null \
+  && fail "codex launch was given the claude persistence override"
+pass "spawn forces transcript saving for claude seats only"
 
 : >"$FLEET_TEST_CALLS"
 if PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --effort max --tag gate --pane p-test \

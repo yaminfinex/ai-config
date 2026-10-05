@@ -414,6 +414,10 @@ fi
 [[ -z $prompt ]] || launch+=(--hcom-prompt "$prompt")
 if [[ $tool == claude ]]; then
   launch+=(--dangerously-skip-permissions)
+  # hcom passes this process's environment to the seat, so a seat launched
+  # from inside Claude Code inherits its child-session marker and would not
+  # save its transcript; the operator could not read the seat.
+  export CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1
 else
   launch+=(--dangerously-bypass-approvals-and-sandbox)
 fi
