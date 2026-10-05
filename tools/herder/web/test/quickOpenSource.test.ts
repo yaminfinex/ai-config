@@ -6,7 +6,8 @@ const source = readFileSync(new URL('../src/features/files/QuickOpen.tsx', impor
 
 test('QuickOpen clears the query and any arrow-moved row on open or mode changes, so it starts on the first openable row', () => {
   assert.match(source, /useEffect\(\(\) => \{\s*setQuery\(''\)[\s\S]*?setMoved\(null\)[\s\S]*?\}, \[open, mode\]\)/)
-  assert.match(source, /const fallback = normalMode \? quickOpenTopMatch\(actions, fileKeys, query, lookupPending\) : reassignSelection\(actions, query\)/)
+  assert.match(source, /const fallback = normalMode \? quickOpenTopMatch\(actions, confident && fileKey\(confident\), query, lookupPending\) : reassignSelection\(actions, query\)/)
+  assert.match(source, /const confident = settledResolution \? autoOpenCandidate\(settledResolution\) : null/)
   assert.match(source, /const selection = quickOpenSelection\(actions, fileKeys, moved, fallback\)/)
 })
 

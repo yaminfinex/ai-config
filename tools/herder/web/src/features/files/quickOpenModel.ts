@@ -128,9 +128,10 @@ function topMatchTier(row: QuickOpenActionRow, query: string) {
 }
 
 // The row a typed query selects before the user moves it: the best-tier action (rendered order breaks a
-// tie), else the first file, else the note, else create. While the file lookup is still running and no
-// action matches, nothing is selected: the file that would rank above the note has not arrived yet.
-export function quickOpenTopMatch(rows: QuickOpenActionRow[], fileKeys: string[], rawQuery: string, lookupPending = false): string | null {
+// tie), else the confident file (autoOpenCandidate's, as its file key; a fuzzy file never preselects, so
+// free text still lands on the note), else the note, else create. While the file lookup is still running
+// and no action matches, nothing is selected: a confident file may yet arrive above the note.
+export function quickOpenTopMatch(rows: QuickOpenActionRow[], confidentFileKey: string | null, rawQuery: string, lookupPending = false): string | null {
   const query = rawQuery.trim().toLocaleLowerCase()
   if (!query) return quickOpenInitialSelection(rows, '')
   let best = -1
@@ -140,7 +141,7 @@ export function quickOpenTopMatch(rows: QuickOpenActionRow[], fileKeys: string[]
     if (tier >= 0 && tier < bestTier) [best, bestTier] = [index, tier]
   })
   if (best >= 0) return quickOpenRowKey(rows[best])
-  if (fileKeys.length > 0) return `file:${fileKeys[0]}`
+  if (confidentFileKey !== null) return `file:${confidentFileKey}`
   if (lookupPending) return null
   const fallback = rows.find((row) => row.kind === 'note') ?? rows.find((row) => row.kind === 'create')
   return fallback ? quickOpenRowKey(fallback) : null

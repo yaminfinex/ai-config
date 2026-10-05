@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { autoOpenCandidate } from '../src/features/files/fileResolution.ts'
+import type { ResolveResponse } from '../src/types.ts'
 import { quickOpenActionRows, quickOpenEnterTarget, quickOpenInitialIndex, quickOpenInitialSelection, quickOpenKeyboardRows, quickOpenMoveSelection, quickOpenSelectedIndex, quickOpenSelection, quickOpenSelectionKeys, quickOpenTopMatch } from '../src/features/files/quickOpenModel.ts'
 
 const spaces = [
@@ -58,9 +60,9 @@ test('an exact space or an empty query suppresses create', () => {
 })
 
 // The top match for a typed query, as the row it highlights.
-const top = (query: string, spaceList = spaces, agents: string[] = [], fileKeys: string[] = [], pending = false, activePanel = false) => {
+const top = (query: string, spaceList = spaces, agents: string[] = [], confidentFile: string | null = null, pending = false, activePanel = false) => {
   const rows = quickOpenActionRows(query, spaceList, agents, activePanel, 'main')
-  return quickOpenTopMatch(rows, fileKeys, query, pending)
+  return quickOpenTopMatch(rows, confidentFile, query, pending)
 }
 
 test('top match tier 1: an exact space name beats an exact agent and every prefix', () => {
@@ -84,24 +86,45 @@ test('top match tier 5: a space contains match beats an agent contains match', (
 })
 
 test('top match tier 6: an agent contains match beats files', () => {
-  assert.equal(top('liha', spaces, ['test-liha'], ['r\0liha.ts']), 'action:agent:test-liha')
+  assert.equal(top('liha', spaces, ['test-liha'], 'r\0liha.ts'), 'action:agent:test-liha')
   // rendered order breaks a tie inside a tier
   assert.equal(top('liha', spaces, ['test-liha', 'my-liha']), 'action:agent:test-liha')
 })
 
-test('top match tier 7: the first file when no space or agent matches, and pane actions never preselect on a partial match', () => {
-  assert.equal(top('missing', spaces, ['test-liha'], ['r\0a.ts', 'r\0b.ts']), 'file:r\0a.ts')
-  assert.equal(top('send', spaces, [], ['r\0send.ts'], false, true), 'file:r\0send.ts')
-  assert.equal(top('Send this pane to a new space', spaces, [], [], false, true), 'action:send-new')
+test('top match tier 7: the confident file when no space or agent matches, and pane actions never preselect on a partial match', () => {
+  assert.equal(top('missing', spaces, ['test-liha'], 'r\0a.ts'), 'file:r\0a.ts')
+  assert.equal(top('send', spaces, [], 'r\0send.ts', false, true), 'file:r\0send.ts')
+  assert.equal(top('Send this pane to a new space', spaces, [], null, false, true), 'action:send-new')
 })
 
 test('top match tier 8: the note, then create, once the lookup finds nothing; a running lookup selects nothing yet', () => {
   assert.equal(top('new place', spaces, []), 'action:note')
-  assert.equal(top('new place', spaces, [], [], true), null)
-  assert.equal(top('new place', spaces, [], ['r\0a.ts'], true), 'file:r\0a.ts')
-  assert.equal(quickOpenTopMatch([{ kind: 'create', name: 'x', label: 'Create space “x”' }], [], 'x'), 'action:create:x')
+  assert.equal(top('new place', spaces, [], null, true), null)
+  assert.equal(top('new place', spaces, [], 'r\0a.ts', true), 'file:r\0a.ts')
+  assert.equal(quickOpenTopMatch([{ kind: 'create', name: 'x', label: 'Create space “x”' }], null, 'x'), 'action:create:x')
+})
+
+// The component's wiring: the file key of autoOpenCandidate(resolution), or null.
+const fileKey = (candidate: { root: string, kind?: string, path: string }) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`
+const confidentKey = (resolution: ResolveResponse) => {
+  const candidate = autoOpenCandidate(resolution)
+  return candidate && fileKey(candidate)
+}
+
+test('only a confident file is a top match: a fuzzy file list leaves the note highlighted, an exact/suffix one picks that file', () => {
+  const query = 'call bob about the app'
+  const rows = quickOpenActionRows(query, spaces, ['test-liha'])
+  const roots = [{ root: '/repo', status: 'complete' as const }]
+  const fuzzy: ResolveResponse = { roots, candidates: [{ root: '/repo', path: 'src/App.tsx', tier: 'fuzzy', score: 900 }, { root: '/repo', path: 'src/Bob.ts', tier: 'fuzzy', score: 500 }] }
+  const fuzzyKeys = fuzzy.candidates.map(fileKey)
+  assert.equal(quickOpenSelection(rows, fuzzyKeys, null, quickOpenTopMatch(rows, confidentKey(fuzzy), query)), 'action:note')
+  // the fuzzy file is still one arrow away
+  assert.equal(quickOpenMoveSelection(rows, fuzzyKeys, 'action:create:call bob about the app', 'down'), `file:${fuzzyKeys[0]}`)
+  const confident: ResolveResponse = { roots, candidates: [{ root: '/repo', path: 'src/App.tsx', tier: 'fuzzy', score: 900 }, { root: '/repo', path: 'src/Bob.ts', tier: 'suffix', score: 100 }] }
+  const confidentKeys = confident.candidates.map(fileKey)
+  assert.equal(quickOpenSelection(rows, confidentKeys, null, quickOpenTopMatch(rows, confidentKey(confident), query)), `file:${confidentKeys[1]}`)
   // An action match does not wait for the lookup.
-  assert.equal(top('main', spaces, [], [], true), 'action:space:main')
+  assert.equal(top('main', spaces, [], null, true), 'action:space:main')
 })
 
 test('an empty query keeps the first openable row as its top match', () => {
@@ -112,7 +135,7 @@ test('an empty query keeps the first openable row as its top match', () => {
 test('a typed query always highlights a row Enter acts on: Enter equals the highlighted row', () => {
   for (const [query, agents, files] of [['main', [], []], ['podi', ['podi'], []], ['missing', [], ['r\0a.ts']], ['missing', [], []], ['rev', ['reviewer'], ['r\0a.ts']]] as const) {
     const rows = quickOpenActionRows(query, spaces, [...agents])
-    const selection = quickOpenSelection(rows, [...files], null, quickOpenTopMatch(rows, [...files], query))
+    const selection = quickOpenSelection(rows, [...files], null, quickOpenTopMatch(rows, files[0] ?? null, query))
     const index = quickOpenSelectedIndex(rows, [...files], selection)
     assert.ok(index >= 0, `${query} highlights a row`)
     const target = quickOpenEnterTarget(rows, files.length, index)
@@ -121,32 +144,32 @@ test('a typed query always highlights a row Enter acts on: Enter equals the high
   }
 })
 
-test('an arrow-moved selection survives the file results settling; an unmoved one re-ranks to the first file', () => {
+test('an arrow-moved selection survives the file results settling; an unmoved one re-ranks to the confident file', () => {
   const query = 'missing'
   const rows = quickOpenActionRows(query, spaces, ['test-liha'])
   // before files: the lookup is running, nothing matches, so nothing is highlighted
-  assert.equal(quickOpenSelection(rows, [], null, quickOpenTopMatch(rows, [], query, true)), null)
+  assert.equal(quickOpenSelection(rows, [], null, quickOpenTopMatch(rows, null, query, true)), null)
   const moved = quickOpenMoveSelection(rows, [], null, 'up')
   assert.equal(moved, 'action:note')
   const files = ['r\0a.ts', 'r\0b.ts']
-  assert.equal(quickOpenSelection(rows, files, moved, quickOpenTopMatch(rows, files, query)), 'action:note')
-  assert.equal(quickOpenSelection(rows, files, null, quickOpenTopMatch(rows, files, query)), 'file:r\0a.ts')
+  assert.equal(quickOpenSelection(rows, files, moved, quickOpenTopMatch(rows, 'r\0b.ts', query)), 'action:note')
+  assert.equal(quickOpenSelection(rows, files, null, quickOpenTopMatch(rows, 'r\0b.ts', query)), 'file:r\0b.ts')
   // a moved file that vanishes falls back to the top match
-  assert.equal(quickOpenSelection(rows, ['r\0b.ts'], 'file:r\0a.ts', quickOpenTopMatch(rows, ['r\0b.ts'], query)), 'file:r\0b.ts')
+  assert.equal(quickOpenSelection(rows, ['r\0b.ts'], 'file:r\0a.ts', quickOpenTopMatch(rows, null, query)), 'action:note')
 })
 
 test('a query edit re-picks the top match (the component clears the moved row on every edit)', () => {
   const first = quickOpenActionRows('rev', spaces, ['podi'])
-  const moved = quickOpenMoveSelection(first, [], quickOpenTopMatch(first, [], 'rev'), 'down')
+  const moved = quickOpenMoveSelection(first, [], quickOpenTopMatch(first, null, 'rev'), 'down')
   assert.notEqual(moved, 'action:space:review')
   const edited = quickOpenActionRows('podi', spaces, ['podi'])
-  assert.equal(quickOpenSelection(edited, [], null, quickOpenTopMatch(edited, [], 'podi')), 'action:agent:podi')
+  assert.equal(quickOpenSelection(edited, [], null, quickOpenTopMatch(edited, null, 'podi')), 'action:agent:podi')
 })
 
 test('create is never the top match while a note row exists, but an arrow-selected create is what Enter takes', () => {
   const rows = quickOpenActionRows('new place', spaces, [])
   const createIndex = rows.findIndex((row) => row.kind === 'create')
-  assert.equal(quickOpenTopMatch(rows, [], 'new place'), 'action:note')
+  assert.equal(quickOpenTopMatch(rows, null, 'new place'), 'action:note')
   assert.deepEqual(quickOpenEnterTarget(rows, 0, quickOpenSelectedIndex(rows, [], 'action:create:new place')), { kind: 'action', index: createIndex })
 })
 

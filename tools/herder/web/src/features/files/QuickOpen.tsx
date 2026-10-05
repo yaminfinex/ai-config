@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { assignAgent, mutationProblem, queryKeys, resolveFiles } from '../../api/client'
 import type { Board, FileCandidate, FileTarget, FolderTarget } from '../../types'
-import { mentionLine } from './fileResolution'
+import { autoOpenCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
@@ -74,10 +74,12 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const settled = query.trim() === debounced
   const settledResolution = settled ? resolution.data : undefined
   const candidates = normalMode ? settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? [] : []
-  const fileKeys = candidates.map((candidate) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`)
+  const fileKey = (candidate: FileCandidate) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`
+  const fileKeys = candidates.map(fileKey)
+  const confident = settledResolution ? autoOpenCandidate(settledResolution) : null
   // The lookup is pending until the query settles and the resolve for it has answered; a settled error counts as finished.
   const lookupPending = Boolean(query.trim()) && !(settled && (settledResolution || resolution.error))
-  const fallback = normalMode ? quickOpenTopMatch(actions, fileKeys, query, lookupPending) : reassignSelection(actions, query)
+  const fallback = normalMode ? quickOpenTopMatch(actions, confident && fileKey(confident), query, lookupPending) : reassignSelection(actions, query)
   const selection = quickOpenSelection(actions, fileKeys, moved, fallback)
   const activeIndex = quickOpenSelectedIndex(actions, fileKeys, selection)
   useEffect(() => {
