@@ -723,3 +723,88 @@ func mustString(value string) string {
 	}
 	return string(raw)
 }
+
+func TestChannelMessages(t *testing.T) {
+	t.Parallel()
+	result, err := ReadFrom(filepath.Join("testdata", "channel.jsonl"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Entries) != 4 {
+		t.Fatalf("got %d entries, want 4 (queue operations stay ignored)", len(result.Entries))
+	}
+	type sender struct{ Kind, Name, Login string }
+	type message struct {
+		Raw         bool    `json:"raw"`
+		Source      string  `json:"source"`
+		SourceLabel string  `json:"source_label"`
+		MessageID   string  `json:"message_id"`
+		CreatedAt   string  `json:"created_at"`
+		SessionID   string  `json:"session_id"`
+		Sender      *sender `json:"sender"`
+		SenderRaw   string  `json:"sender_raw"`
+		Text        string  `json:"text"`
+	}
+	decode := func(i int) (string, []message) {
+		t.Helper()
+		entry := result.Entries[i]
+		if entry.Kind != KindChannelMessage {
+			t.Fatalf("entry %d kind = %q, want channel_message", i, entry.Kind)
+		}
+		var payload struct {
+			Server      string    `json:"server"`
+			SourceLabel string    `json:"source_label"`
+			Messages    []message `json:"messages"`
+		}
+		if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Server != "plugin:invented-transcript:inventa" || payload.SourceLabel != "inventa" {
+			t.Fatalf("entry %d server = %q label %q", i, payload.Server, payload.SourceLabel)
+		}
+		if strings.Contains(string(entry.Payload), "avatar") || strings.Contains(string(entry.Payload), "invented-actor") {
+			t.Fatalf("entry %d carries the avatar or actor id: %s", i, entry.Payload)
+		}
+		return entry.UUID, payload.Messages
+	}
+
+	_, one := decode(0)
+	want := message{Source: "plugin:invented-transcript:inventa", SourceLabel: "inventa", MessageID: "session-input-one", CreatedAt: "2026-01-02T03:04:05.000Z", SessionID: "invented-channel-session", Sender: &sender{"human", "Invented Person", "invented-login"}, Text: "hello from outside"}
+	if len(one) != 1 || !reflect.DeepEqual(one[0], want) {
+		t.Fatalf("one block = %+v", one)
+	}
+
+	_, two := decode(1)
+	if len(two) != 2 || two[0].Text != "first **message**" || two[0].MessageID != "session-input-two" ||
+		two[1].Text != "second message" || two[1].Sender == nil || two[1].Sender.Login != "second-login" || two[1].Sender.Name != "" {
+		t.Fatalf("two blocks = %+v", two)
+	}
+
+	_, malformed := decode(2)
+	if len(malformed) != 1 || malformed[0].Sender != nil || malformed[0].SenderRaw != `{"kind":"human", broken` || malformed[0].Text != "sender did not parse" {
+		t.Fatalf("malformed sender = %+v", malformed)
+	}
+
+	_, loose := decode(3)
+	if len(loose) != 1 || !loose[0].Raw || !strings.Contains(loose[0].Text, "preamble outside any tag") || !strings.Contains(loose[0].Text, "dangling tag text") {
+		t.Fatalf("non-channel text = %+v", loose)
+	}
+}
+
+func TestChannelMessageKeepsSurroundingText(t *testing.T) {
+	t.Parallel()
+	var payload struct {
+		Messages []struct {
+			Raw  bool   `json:"raw"`
+			Text string `json:"text"`
+		} `json:"messages"`
+	}
+	raw := parseChannelMessages("before\n<channel source=\"a:b\">inside</channel>\nafter", "")
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	got := payload.Messages
+	if len(got) != 3 || !got[0].Raw || got[0].Text != "before" || got[1].Raw || got[1].Text != "inside" || !got[2].Raw || got[2].Text != "after" {
+		t.Fatalf("segments = %+v", got)
+	}
+}

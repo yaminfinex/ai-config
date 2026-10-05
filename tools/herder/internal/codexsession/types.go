@@ -25,6 +25,7 @@ const (
 	KindHcomStub         = claudesession.KindHcomStub
 	KindHcomDelivery     = claudesession.KindHcomDelivery
 	KindTaskNotification = claudesession.KindTaskNotification
+	KindChannelMessage   = claudesession.KindChannelMessage
 	KindInjectedSystem   = claudesession.KindInjectedSystem
 	KindCommandOutput    = claudesession.KindCommandOutput
 	KindCompactDivider   = claudesession.KindCompactDivider

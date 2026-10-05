@@ -332,6 +332,7 @@ export type EntryKind =
   | 'hcom_delivery_stub'
   | 'hcom_delivery'
   | 'task_notification'
+  | 'channel_message'
   | 'injected_system'
   | 'command_stdout'
   | 'compact_divider'

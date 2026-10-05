@@ -5,6 +5,7 @@ import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMe
 import type { TranscriptEntry } from '../../types'
 import { aggregateActivityPills, approximateActivityAge, cleanViewDisposition, isCleanConversationDelivery, splitFinalActivityRun, statusChipTruncates } from './cleanView'
 import { cleanRows, cleanRowSpan, dividerRow, messageText, objectValue, valueText, type CleanActivity, type ObjectValue } from './cleanRows'
+import { channelMessagePresentation } from './channelMessageModel'
 import { deliveryExpandLabel, hcomDeliveryPresentation } from './deliveryModel'
 import { parseAssistantFencing } from './fencingModel'
 import { systemEntryPresentation, unknownEntryLabel } from './systemEntries'
@@ -201,6 +202,22 @@ function HcomCards({ entry, entryIndex, now, showSystem, cleanView, relationship
   })}</>
 }
 
+function ChannelCards({ entry, now }: { entry: TranscriptEntry, now: number }) {
+  const cards = channelMessagePresentation(entry.payload)
+  if (cards.length === 0) return <div className="entry-card channel-card"><header><span className="channel-chip">channel</span><span>empty channel message</span><Timestamp timestamp={entry.timestamp} now={now} /></header></div>
+  return <>{cards.map((card) => card.kind === 'raw'
+    ? <article className="entry-card channel-card channel-raw" key={`${entry.uuid ?? entry.byteOffset}:${card.key}`}>
+      <header><span className="channel-chip">{card.sourceLabel}</span><span>unparsed channel text</span><Timestamp timestamp={entry.timestamp} now={now} /></header>
+      <pre data-note-capture-content>{card.body}</pre>
+    </article>
+    : <article className="entry-card channel-card" key={`${entry.uuid ?? entry.byteOffset}:${card.key}`}>
+      <header><span className="channel-avatar" aria-hidden="true">{card.initials}</span><strong>{card.sender}</strong>
+        <span className="channel-chip" title={card.source}>{card.sourceLabel}</span><span>via channel</span>
+        <Timestamp timestamp={card.createdAt || entry.timestamp} now={now} absolute />
+      </header><HcomMessageBody body={card.body} preview={card.preview} />
+    </article>)}</>
+}
+
 function ActivityStrip({ activities, entries, relationships, agentName, now }: { activities: CleanActivity[], entries: TranscriptEntry[], relationships: EntryRelationships, agentName: string, now: number }) {
   const [open, setOpen] = useState(false)
   return <details className="activity-strip" onToggle={(event) => setOpen(event.currentTarget.open)}><summary aria-label={`${activities.length} hidden transcript activities`}>
@@ -249,6 +266,7 @@ function EntryView({ entry, index, entries, relationships, agentName, now, showS
     const delivery = entries[index + 1]
     return delivery?.kind === 'hcom_delivery' ? <HcomCards entry={delivery} entryIndex={index + 1} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} /> : cleanView ? null : <div className="system-chip">hcom delivery pending attachment · <Timestamp timestamp={entry.timestamp} now={now} /></div>
   }
+  if (entry.kind === 'channel_message') return <ChannelCards entry={entry} now={now} />
   if (entry.kind === 'hcom_delivery') return <HcomCards entry={entry} entryIndex={index} now={now} showSystem={showSystem} cleanView={cleanView} relationships={relationships} />
   if (entry.kind === 'tool_use') return <ToolEntry entry={entry} result={relationships.toolResults.get(valueText(payload.tool_use_id))} now={now} />
   if (entry.kind === 'tool_result') return <details className="entry-expander tool-entry"><summary><span className={`tool-status ${payload.is_error === true ? 'error' : 'success'}`} /><strong>unpaired tool result</strong><Timestamp timestamp={entry.timestamp} now={now} /></summary><div className="entry-detail" data-note-capture-content><pre>{resultText(payload.content)}</pre></div></details>

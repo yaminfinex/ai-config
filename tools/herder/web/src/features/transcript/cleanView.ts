@@ -10,6 +10,7 @@ export const cleanViewDisposition = {
   hcom_delivery_stub: 'delivery', // Carrier for a following parsed hcom conversation delivery.
   hcom_delivery: 'delivery', // Parsed hcom cards are classified individually below.
   task_notification: 'activity', // Background work is compact progress.
+  channel_message: 'show', // Someone outside the fleet writing in, like an owner prompt.
   injected_system: 'system', // Governed by the system-entries preference.
   command_stdout: 'activity', // Slash-command activity joins a compact run.
   compact_divider: 'show', // A real conversation epoch boundary.
