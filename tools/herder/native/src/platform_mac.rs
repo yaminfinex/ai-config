@@ -17,7 +17,7 @@ pub fn quiet() -> bool {
     std::env::var_os("HERDER_NATIVE_SCRIPT").is_some()
 }
 
-/// A quiet run with `HERDER_NATIVE_FRONT=1` counts as frontmost, though its window stays behind.
+/// A quiet run with `HERDER_NATIVE_FRONT=1` counts as frontmost, though its window is never shown.
 pub fn assume_front() -> bool {
     quiet() && std::env::var("HERDER_NATIVE_FRONT").is_ok_and(|v| v == "1")
 }
@@ -116,18 +116,6 @@ pub fn summon_chord(chord: &str, pressed: impl Fn() + Send + Sync + 'static) {
     }));
     // Dropping the manager unregisters the chord; it lives as long as the app.
     std::mem::forget(manager);
-}
-
-/// Push every window of this app behind the other apps' windows without activating anything.
-/// Automated runs call this right after opening, so the owner keeps focus (settled decision 8).
-pub fn order_back() {
-    let Some(mtm) = MainThreadMarker::new() else {
-        return;
-    };
-    let app = NSApplication::sharedApplication(mtm);
-    for window in app.windows().iter() {
-        window.orderBack(None);
-    }
 }
 
 /// Whether any window of this app is at least partly on screen (AppKit's occlusion state). An
