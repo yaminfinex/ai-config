@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -191,6 +192,40 @@ func serveFileRaw(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
+}
+
+// serveFileImage streams an allowed image under the same root universe and
+// file law as serveFileRaw. It is a separate endpoint so raw keeps its single
+// text/plain contract and 4 MiB cap; the type here comes from the bytes.
+func serveFileImage(w http.ResponseWriter, r *http.Request, deps dependencies) {
+	root, path, ok := fileQueries(w, r, false)
+	if !ok {
+		return
+	}
+	set, _, err := liveRootSet(r.Context(), deps)
+	if err != nil {
+		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
+		return
+	}
+	if !set.Contains(root) && !directOpenRoot(root) {
+		refuse(w, http.StatusNotFound, "unknown root", fmt.Sprintf("root %q is not in the live readable universe nor an existing absolute directory", root))
+		return
+	}
+	file, info, mime, err := fileapi.OpenImage(root, path)
+	if err != nil {
+		serveFileError(w, err)
+		return
+	}
+	defer file.Close()
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	if mime == "image/svg+xml" {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	}
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.CopyN(w, file, info.Size())
 }
 
 func serveTree(w http.ResponseWriter, r *http.Request, deps dependencies) {

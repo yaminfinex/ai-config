@@ -150,6 +150,7 @@ export type FileRead = {
   root: string
   path: string
   binary: true
+  image_mime?: string
   size: number
   fetched_at: string
 } | {
@@ -157,6 +158,7 @@ export type FileRead = {
   path: string
   content: string
   binary: false
+  image_mime?: string
   size: number
   truncated: boolean
   fetched_at: string

@@ -992,6 +992,13 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveFileRaw(w, r, deps)
 	})
+	mux.HandleFunc("/api/files/image", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveFileImage(w, r, deps)
+	})
 	mux.HandleFunc("/api/files/tree", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")

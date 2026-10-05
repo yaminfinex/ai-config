@@ -20,6 +20,9 @@ import (
 const (
 	SoftCap int64 = 256 * 1024
 	HardCap int64 = 4 * 1024 * 1024
+	// ImageCap bounds an image whose bytes sniff as an allowed type. Images
+	// stream rather than load, so they may exceed the text HardCap.
+	ImageCap int64 = 25 * 1024 * 1024
 )
 
 var (
@@ -32,6 +35,7 @@ type File struct {
 	Path      string    `json:"path"`
 	Content   *string   `json:"content,omitempty"`
 	Binary    bool      `json:"binary"`
+	ImageMime string    `json:"image_mime,omitempty"`
 	Size      int64     `json:"size"`
 	Truncated *bool     `json:"truncated,omitempty"`
 	FetchedAt time.Time `json:"fetched_at"`
@@ -50,7 +54,7 @@ type Entry struct {
 }
 
 func Read(root, path string, now func() time.Time) (File, error) {
-	file, info, relative, resolved, err := openReadableFile(root, path)
+	file, info, relative, resolved, err := openReadableFile(root, path, ImageCap)
 	if err != nil {
 		return File{}, err
 	}
@@ -60,6 +64,14 @@ func Read(root, path string, now func() time.Time) (File, error) {
 		return File{}, fmt.Errorf("read file %q: %w", resolved, err)
 	}
 	result := File{Root: root, Path: filepath.ToSlash(relative), Size: info.Size(), FetchedAt: now()}
+	result.ImageMime = SniffImage(relative, content)
+	if result.ImageMime != "" && (result.ImageMime != svgMime || info.Size() > HardCap) {
+		result.Binary = true
+		return result, nil
+	}
+	if info.Size() > HardCap {
+		return File{}, hardCapRefusal(resolved, info.Size())
+	}
 	truncated := int64(len(content)) > SoftCap
 	if truncated {
 		content = content[:SoftCap]
@@ -80,7 +92,7 @@ func Read(root, path string, now func() time.Time) (File, error) {
 // ReadRaw returns the complete bytes for a regular, root-contained file. It
 // retains Read's hard cap while bypassing only its soft cap.
 func ReadRaw(root, path string) ([]byte, os.FileInfo, error) {
-	file, info, _, resolved, err := openReadableFile(root, path)
+	file, info, _, resolved, err := openReadableFile(root, path, HardCap)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -90,9 +102,36 @@ func ReadRaw(root, path string) ([]byte, os.FileInfo, error) {
 		return nil, nil, fmt.Errorf("read file %q: %w", resolved, err)
 	}
 	if int64(len(content)) > HardCap {
-		return nil, nil, fmt.Errorf("%w: file %q is %d bytes; files above 4 MiB are not served", ErrRefused, resolved, len(content))
+		return nil, nil, hardCapRefusal(resolved, int64(len(content)))
 	}
 	return content, info, nil
+}
+
+// OpenImage opens a regular, root-contained file for streaming under the same
+// relative, symlink, and .git law as Read, provided its leading bytes sniff as
+// an allowed image type. The returned file is positioned at its start and the
+// caller must close it. Anything else, or anything above ImageCap, is refused.
+func OpenImage(root, path string) (*os.File, os.FileInfo, string, error) {
+	file, info, relative, resolved, err := openReadableFile(root, path, ImageCap)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	head := make([]byte, sniffLen)
+	n, err := io.ReadFull(file, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		file.Close()
+		return nil, nil, "", fmt.Errorf("read file %q: %w", resolved, err)
+	}
+	mime := SniffImage(relative, head[:n])
+	if mime == "" {
+		file.Close()
+		return nil, nil, "", fmt.Errorf("%w: file %q is not an allowed image type", ErrRefused, resolved)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		file.Close()
+		return nil, nil, "", fmt.Errorf("seek file %q: %w", resolved, err)
+	}
+	return file, info, mime, nil
 }
 
 // Stat reports whether path names an existing, root-contained file or
@@ -125,7 +164,7 @@ func Stat(root, path string) (string, error) {
 	}
 }
 
-func openReadableFile(root, path string) (*os.File, os.FileInfo, string, string, error) {
+func openReadableFile(root, path string, limit int64) (*os.File, os.FileInfo, string, string, error) {
 	relative, err := validateRelative(path, false)
 	if err != nil {
 		return nil, nil, "", "", err
@@ -150,11 +189,18 @@ func openReadableFile(root, path string) (*os.File, os.FileInfo, string, string,
 		file.Close()
 		return nil, nil, "", "", fmt.Errorf("%w: path %q resolves to non-file %q", ErrRefused, filepath.Join(root, relative), resolved)
 	}
-	if info.Size() > HardCap {
+	if info.Size() > limit {
 		file.Close()
-		return nil, nil, "", "", fmt.Errorf("%w: file %q is %d bytes; files above 4 MiB are not served", ErrRefused, resolved, info.Size())
+		if limit == HardCap {
+			return nil, nil, "", "", hardCapRefusal(resolved, info.Size())
+		}
+		return nil, nil, "", "", fmt.Errorf("%w: file %q is %d bytes; files above 4 MiB, or 25 MiB for images, are not served", ErrRefused, resolved, info.Size())
 	}
 	return file, info, relative, resolved, nil
+}
+
+func hardCapRefusal(resolved string, size int64) error {
+	return fmt.Errorf("%w: file %q is %d bytes; files above 4 MiB are not served", ErrRefused, resolved, size)
 }
 
 func Tree(root, path string) (TreeResult, error) {

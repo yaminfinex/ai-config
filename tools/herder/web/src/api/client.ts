@@ -135,6 +135,29 @@ export async function getFileRaw(root: string, path: string, fetcher: Fetcher = 
   return response.text()
 }
 
+// fileImageURL addresses the streamed image bytes. The version (the file
+// read's fetched_at) makes a refetched file reload its image.
+export function fileImageURL(root: string, path: string, version: string) {
+  return `/api/files/image?${new URLSearchParams({ root, path, v: version })}`
+}
+
+// imageFailureReason explains why an <img> could not load: the server's
+// refusal when it refused, otherwise a decode failure in the browser.
+export async function imageFailureReason(url: string, mime: string, fetcher: Fetcher = fetch) {
+  let response: Response
+  try {
+    response = await fetcher(url)
+  } catch (error) {
+    return `the image could not be fetched (${error instanceof Error ? error.message : String(error)})`
+  }
+  if (!response.ok) {
+    const problem = await refusal(response)
+    return `${problem.error}: ${problem.detail}`
+  }
+  await response.body?.cancel()
+  return `this browser could not decode the ${mime} image`
+}
+
 export function getFileTree(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
   const query = new URLSearchParams({ root, path })
   return requestJSON<FileTreeRead>(`/api/files/tree?${query}`, { signal }, fetcher)
