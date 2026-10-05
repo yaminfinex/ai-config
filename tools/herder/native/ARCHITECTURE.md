@@ -350,12 +350,16 @@ scrolled into view when it changes or is picked under +N (a reveal waits for a l
 on each render, and is done only after a layout has the tab wholly in view with +N drawn for that
 layout; six renders at most, as a tab wider than the strip never is); +N (the kit's `Button` with `dropdown_menu`, as its `TabBar`) lists
 the tabs not wholly in view and a pick shows one; × is on the hovered tab only (its place kept, so tabs
-do not move; middle-click and ⌘W close too); the maximized group's □ is selected. The dock keeps one
+do not move; middle-click and ⌘W close too). Its look is the owner's calm one (S3, `s3-calm-spec.md`):
+sans 13 on the group's ground with no boxes or dividers, the shown tab medium over an underline (blue in
+the focused group), a dot only for news (active, blocked) in a slot that is always there, fades where
+the scroller cuts tabs, and a ⤢ that is a selected ⤡ while the group is maximized (the crumb's keys then
+say ⌥⏎ restore); the glyphs are Lucide's drawn from their bytes, as the app registers no asset source. The dock keeps one
 renderer per group, so each `Strip` owns its scroll, the shown tab, a pending reveal and the hovered
 tab; +N is worked out from the last layout, and drawn again when the layout says otherwise (a resize, a
 scroll into view) or a reveal is pending. `just check-dock` and `views::tests`' `dock_events` drive it with real
 clicks, a real drag and keys; check-dock's crowd puts ten tabs in half a split (the fake serve's
-`--share`) and clicks +N, an item and the □.
+`--share`), hovers a tab, and clicks +N, an item, the ⤢ and the ⤡ (`hover:` moves the pointer only).
 
 **Paths (G3).** A path in the transcript opens in VS Code, its git root as the window's folder and the file
 at its line, by two calls of its CLI, about 3 s apart on the background executor (G3b: one call with both

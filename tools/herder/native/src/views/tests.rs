@@ -4172,6 +4172,98 @@ mod dock_events {
         assert!(at(cx, "tab-max").is_some(), "the □ stays");
     }
 
+    /// The tabs keep their width whatever the pointer or the agents' status do (S3 A2): the dot and ×
+    /// slots are always there, and only the shown tab is medium. (Blocked needs the operator: its pill
+    /// is new content.)
+    #[gpui_kit::test]
+    fn a_tab_keeps_its_width_through_hover_and_news(cx: &mut TestAppContext) {
+        let (shell, cx) = open(cx);
+        let widths = |cx: &mut VisualTestContext| {
+            SPACE.map(|a| at(cx, &format!("tab-{a}")).unwrap().size.width)
+        };
+        let wide = widths(cx);
+        let tab = at(cx, &format!("tab-{}", SPACE[0])).unwrap();
+        cx.simulate_mouse_move(tab.center(), None, Modifiers::none());
+        draw(cx);
+        assert!(at(cx, &format!("tab-close-{}", SPACE[0])).is_some());
+        assert_eq!(widths(cx), wide, "hovered");
+        let news = |cx: &mut VisualTestContext| {
+            SPACE.map(|a| {
+                let id = gpui_kit::ElementId::Name(format!("tab-dot-{a}").into());
+                cx.update(|window, _| window.find(id).label().map(String::from))
+            })
+        };
+        for bus in ["active", "listening", "idle", "blocked", "active"] {
+            shell.update(cx, |s, cx| {
+                for agent in SPACE {
+                    s.store.fleet.agents.get_mut(agent).unwrap().bus_status = bus.into();
+                }
+                cx.notify();
+            });
+            draw(cx);
+            let dot = matches!(bus, "active" | "blocked").then(|| bus.to_string());
+            assert_eq!(
+                news(cx),
+                [dot.clone(), dot.clone(), dot],
+                "a dot only for news"
+            );
+            if bus != "blocked" {
+                assert_eq!(widths(cx), wide, "{bus}");
+            }
+        }
+    }
+
+    /// The scroller fades on a side only where it cuts tabs (S3 A6).
+    #[gpui_kit::test]
+    fn the_strip_fades_where_it_cuts_tabs(cx: &mut TestAppContext) {
+        let (_shell, cx) = open(cx);
+        let fades = |cx: &mut VisualTestContext| {
+            let at = |cx: &mut VisualTestContext, id: &str| at(cx, id).is_some();
+            (at(cx, "tab-fade-left"), at(cx, "tab-fade-right"))
+        };
+        assert_eq!(fades(cx), (false, false), "all in view");
+        cx.simulate_resize(size(px(420.), px(900.)));
+        draw(cx);
+        draw(cx);
+        assert_eq!(fades(cx), (false, true), "the end cut");
+        act(cx, space::Tab(SPACE[0].into()));
+        draw(cx);
+        act(cx, space::Tab(SPACE[1].into()));
+        for _ in 0..3 {
+            draw(cx);
+        }
+        assert!(in_view(cx, SPACE[1]));
+        assert_eq!(fades(cx), (true, true), "the middle one: both cut");
+        act(cx, space::Tab(SPACE[2].into()));
+        for _ in 0..3 {
+            draw(cx);
+        }
+        assert_eq!(fades(cx), (true, false), "scrolled to the end");
+    }
+
+    /// Maximized, the group's ⤢ is a selected ⤡ and the keys say ⌥⏎ restores (S3 A7).
+    #[gpui_kit::test]
+    fn the_maximized_group_shows_restore(cx: &mut TestAppContext) {
+        let (_shell, cx) = open(cx);
+        let state = |cx: &mut VisualTestContext| {
+            cx.update(|window, _| {
+                let max = window.find(gpui_kit::ElementId::Name("tab-max".into()));
+                let keys = window.find(gpui_kit::ElementId::Name("crumb-keys".into()));
+                let restore = keys.label().unwrap().ends_with("⌥⏎ restore");
+                (max.label().map(String::from), max.selected(), restore)
+            })
+        };
+        let maximize = (Some("Maximize".into()), Some(false), false);
+        assert_eq!(state(cx), maximize);
+        let max = at(cx, "tab-max").unwrap();
+        click(cx, max.center().x.into(), max.center().y.into());
+        draw(cx);
+        assert_eq!(state(cx), (Some("Restore".into()), Some(true), true));
+        cx.simulate_keystrokes("alt-enter");
+        draw(cx);
+        assert_eq!(state(cx), maximize, "and back by the key");
+    }
+
     /// A tab's × is there only under the pointer, and closes it.
     #[gpui_kit::test]
     fn a_tab_has_its_close_only_on_hover(cx: &mut TestAppContext) {

@@ -40,7 +40,8 @@
 //! from that row on; A3) · `wheel:<x>,<y>,<l|p>,<dx>,<dy>` (one wheel event at a window point, in a
 //! mouse's lines or a trackpad's pixels, through `Window::dispatch_event`; wheel-fix) · `point:<x>,<y>`
 //! and `drag:<x>,<y>,<x2>,<y2>` (a real left click, or press, move and let go, at window points, the same
-//! way; G1; `fast:` draws no frame between press and release) · `paths:<none|focused:count@cursor|idle:count@cursor>` and
+//! way; G1; `fast:` draws no frame between press and release) · `hover:<x>,<y>` (the pointer moved there,
+//! no button; S3) · `paths:<none|focused:count@cursor|idle:count@cursor>` and
 //! `click:path:i` (a clicked path's choices, and a click on candidate `i`; G3). Units add `type:` as they need it.
 //!
 //! `HERDER_NATIVE_WINDOW=<w>x<h>` sizes the window.
@@ -240,6 +241,22 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                     metric(format!("{op} {arg}"));
                 }
                 None => fail(format!("{op} {arg}: want x,y (point) or x,y,x2,y2 (drag)")),
+            },
+            // `hover:x,y`: the pointer moved there, no button held, then a frame (S3's hovered tab).
+            "hover" => match drag(arg) {
+                Some((position, _)) => {
+                    let input = PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers: Modifiers::default(),
+                    });
+                    let _ = cx.update(|window, cx| {
+                        window.dispatch_event(input, cx);
+                        window.draw(cx).clear(cx);
+                    });
+                    metric(format!("hover {arg}"));
+                }
+                None => fail(format!("hover {arg}: want x,y")),
             },
             // `wheel:x,y,l|p,dx,dy`: one wheel event at a window point, in lines (a mouse) or pixels (a
             // trackpad), through the window's event path as the platform sends it.
