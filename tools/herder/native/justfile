@@ -309,12 +309,13 @@ check-dock:
     seen dock "state spaces.members" 2
     seen dock "message to" 0
     # Ten tabs in half a split (S2): chief crowded by the fake serve's --share, a preview opened beside.
-    # Real clicks at 1512 wide (S3's artboards), a tab hovered for the split's shot: +N on the left
+    # Real clicks at 1512 wide (S3's artboards): the crowded group's shown tab takes the focus from the
+    # preview beside it, a tab hovered for the split's shot; +N on the left
     # group's strip, its last item (the tab scrolled out of view) shows it; the group's ⤢ maximizes, the
     # ⤡ of the maximized group restores.
     crowd="--share mupu,support-mifa,swap-bench-mora,fees-program-design-lifo,telegram-review-mire,orch-lega,conductor-line,e2e-cli-lipo,api-gateway-luko"
     ten="mupu+support-mifa+swap-bench-mora+fees-program-design-lifo+telegram-review-mire+orch-lega+conductor-line+e2e-cli-lipo"
-    HERDER_NATIVE_WINDOW=1512x600 scenario crowd "$crowd" "wait:1500 key:enter wait:800 draw beside:herder-agent:grill-confirm-lubo wait:800 draw draw dock:chief-mihe*+$ten+api-gateway-luko+|+[grill-confirm-lubo*~] hover:246,41 shot:s3-split point:698,41 wait:400 draw draw shot:s3-menu point:652,181 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ shot:s3-picked point:736,41 wait:400 draw draw dock:max+chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ hover:1000,400 shot:s3-max point:1487,41 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ quit"
+    HERDER_NATIVE_WINDOW=1512x600 scenario crowd "$crowd" "wait:1500 key:enter wait:800 draw beside:herder-agent:grill-confirm-lubo wait:800 draw draw dock:chief-mihe*+$ten+api-gateway-luko+|+[grill-confirm-lubo*~] point:69,41 wait:400 draw draw dock:[chief-mihe*]+$ten+api-gateway-luko+|+grill-confirm-lubo*~ hover:246,41 shot:s3-split point:698,41 wait:400 draw draw shot:s3-menu point:652,181 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ shot:s3-picked point:736,41 wait:400 draw draw dock:max+chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ hover:1000,400 shot:s3-max point:1487,41 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ quit"
     echo "check-dock: ok (alt-click opens beside, a preview replaces the group's and a double-click pins it, a real drag moves a tab across, tab keys step the focused group, alt-enter maximizes and the keys act after it with focus left on the text, in and out, cmd-w closes and unpins, a click on × closes a preview, a relaunch restores the dock; ten tabs in half a split scroll, +N shows one out of view, the ⤢ maximizes and the ⤡ restores)"
 
 # Path clicks (G3), through `scripts/scenario.sh` (the fake serve answers `/api/resolve` from

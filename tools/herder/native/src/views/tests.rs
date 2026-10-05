@@ -4243,6 +4243,36 @@ mod dock_events {
         }
     }
 
+    /// One tab wider than the strip, scrolled into its middle, is cut on both sides: both fades (lobe's
+    /// review).
+    #[gpui_kit::test]
+    fn a_tab_cut_on_both_sides_fades_on_both(cx: &mut TestAppContext) {
+        let (_shell, cx) = open(cx);
+        act(cx, dock::Close(Some(SPACE[1].into())));
+        act(cx, dock::Close(Some(SPACE[2].into())));
+        cx.simulate_resize(size(px(150.), px(900.)));
+        for _ in 0..8 {
+            draw(cx);
+        }
+        let view = at(cx, "tab-scroll").unwrap();
+        cx.simulate_event(gpui_kit::ScrollWheelEvent {
+            position: view.center(),
+            delta: gpui_kit::ScrollDelta::Pixels(point(px(-20.), px(0.))),
+            touch_phase: gpui_kit::TouchPhase::Moved,
+            modifiers: Modifiers::none(),
+        });
+        for _ in 0..3 {
+            draw(cx);
+        }
+        let tab = at(cx, &format!("tab-{}", SPACE[0])).unwrap();
+        assert!(
+            tab.left() < view.left() && tab.right() > view.right(),
+            "the tab straddles the view"
+        );
+        assert!(at(cx, "tab-fade-left").is_some(), "cut on the left");
+        assert!(at(cx, "tab-fade-right").is_some(), "and on the right");
+    }
+
     /// The scroller fades on a side only where it cuts tabs (S3 A6).
     #[gpui_kit::test]
     fn the_strip_fades_where_it_cuts_tabs(cx: &mut TestAppContext) {

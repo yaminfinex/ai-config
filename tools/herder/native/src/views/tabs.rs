@@ -192,7 +192,7 @@ impl<H: Host> TabGroupRenderer for Strip<H> {
         let fade = |angle: f32| {
             let ground = rgb(pal::GROUND);
             let clear = linear_color_stop(ground, 0.).opacity(0.);
-            let bg = linear_gradient(angle, clear, linear_color_stop(ground, 0.85));
+            let bg = linear_gradient(angle, clear, linear_color_stop(ground, 1.).opacity(0.85));
             div().absolute().top_0().h_full().w(t.css(40.)).bg(bg)
         };
         let scroller = div()
@@ -389,10 +389,13 @@ fn hidden(scroll: &ScrollHandle, n: usize) -> Out {
     let (view, dx) = (scroll.bounds(), scroll.offset().x);
     let bounds = |ix| scroll.bounds_for_item(ix).map(|b| (b.left(), b.right()));
     let tabs = out_of_view((view.left(), view.right()), dx, (0..n).map(bounds));
-    let before = |ix: &usize| bounds(*ix).is_some_and(|(l, _)| l + dx < view.left());
+    // Each side on its own: a tab wider than the view is cut on both.
+    let slack = px(0.5);
+    let before = |ix: &usize| bounds(*ix).is_some_and(|(l, _)| l + dx < view.left() - slack);
+    let past = |ix: &usize| bounds(*ix).is_some_and(|(_, r)| r + dx > view.right() + slack);
     Out {
         left: tabs.iter().any(before),
-        right: tabs.iter().any(|ix| !before(ix)),
+        right: tabs.iter().any(past),
         tabs,
     }
 }

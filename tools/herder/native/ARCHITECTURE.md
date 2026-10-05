@@ -434,7 +434,8 @@ while scrolling) and, while the list is not following the tail, web's accent "Ju
 above the bottom; a click is `Scroll::Bottom`.
 
 Entries are drawn as web's (A2, spec §1; `views::entries` builds them, `transcript` decides what is open).
-An answer is a 3px #3a3c45 rule, padding 3 0 3 12, a header (the agent in SF Mono 11/600, the time `8h ago`
+An answer has no rule on its left (S3 B2), padding 3 0 3 15 so its text sits where web's 3px rule and 12
+put it, a header (the agent in SF Mono 11/600, the time `8h ago`
 in mono 9 at the right, 6 above the text), then its markdown, or its fenced parts in a column 4 apart:
 text, a status chip cut at 26 characters that a click opens in full (`‹` closes it), an internal note as a
 thinking pill `› internal note · N words` that opens to a body on the code ground. One card builder serves
@@ -442,8 +443,7 @@ the three cards (`entries::Card`): another agent's message (blue edge), an opera
 indented min(6%, 54), at most 820 wide) and the owner's prompt (green edge on the right, min(10%, 90),
 790); in the calm look (S3 B3) each is a 1px rule with no ground and no radius and a 2px edge, padding 9 12
 (14 on the edge's side), a header of the sender, `web operator`, `→ recipient`, the intent, `#id`, the
-thread and the time. GPUI draws one border colour, so the edge is a child over the box's open side. An
-answer has no rule on its left (S3 B2), its text 15 in as before. Another agent's message keeps the 5-line cut, with web's `Show full message`
+thread and the time. GPUI draws one border colour, so the edge is a child over the box's open side. Another agent's message keeps the 5-line cut, with web's `Show full message`
 toggle; an operator's is whole. The compact divider carries its time and web's token counts; a summary
 without metadata is a fold (`.entry-expander`, 6 apart like a system chip); a model switch is a status-tone
 chip; queued messages are web's amber box under the list. What is open is `View::open`, by item key and
