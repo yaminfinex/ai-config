@@ -62,6 +62,10 @@ pub mod pal {
     pub const BLUE: u32 = 0x5B93FF;
     /// A selected note, and selected text outside the transcript (the composer, the notes).
     pub const SELECT: u32 = 0x31406B;
+    /// The maximized group's restore chip under the pointer (S3).
+    pub const SELECT_HOVER: u32 = 0x3A4C7D;
+    /// The shown tab's underline in a group without the focus (S3).
+    pub const TAB_LINE: u32 = 0x4A4D57;
     /// Selected transcript text: Chromium's default, as web shows it (spec §1 Selection). The kit
     /// paints a selection over the glyphs, not under them, so it is `SELECTION_OVER` at half
     /// opacity, which on the ground is exactly this (2 × #375576 − #1b1c21).

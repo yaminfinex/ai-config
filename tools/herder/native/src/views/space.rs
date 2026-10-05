@@ -308,7 +308,13 @@ pub fn render<H: Host>(
         current.unwrap_or("no agents")
     );
     let crumb = div().flex().gap(t.px(8.)).child(lens).child(crumb);
-    // A slim line over the dock (DK2): where the zoom is, and the keys.
+    // A slim line over the dock (DK2): where the zoom is, and the keys; ⌥⏎ restores a maximized group.
+    let maximized = (ui.dock.as_ref()).is_some_and(|d| d.area.read(cx).zoomed_group().is_some());
+    let keys = match (zoom.alone(), maximized) {
+        (true, _) => "esc lens",
+        (false, false) => "esc lens · [ ] spaces · tab tabs · ⌘W close · ⌥⏎ maximize",
+        (false, true) => "esc lens · [ ] spaces · tab tabs · ⌘W close · ⌥⏎ restore",
+    };
     let bar = div()
         .flex()
         .flex_none()
@@ -321,10 +327,7 @@ pub fn render<H: Host>(
         .border_b_1()
         .border_color(rgb(pal::RULE))
         .child(div().flex_1().child(crumb))
-        .child(dim(match zoom.alone() {
-            true => "esc lens",
-            false => "esc lens · [ ] spaces · tab tabs · ⌘W close · ⌥⏎ maximize",
-        }));
+        .child(dim(keys).id("crumb-keys").aria_label(keys).test_support());
     let empty = dock::empty(ui, cx).then(|| {
         let empty = div().flex_1().min_h_0().flex().flex_col().p(t.css(24.));
         empty.child(dim("No agents in this space."))

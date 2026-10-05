@@ -803,7 +803,9 @@ fn strip<H: Host>(store: &Store, tr: &Transcript, t: TypeScale, cx: &mut Context
         .children(facts)
         .children(cwd)
         .when(tr.retired(), |el| el.child(retired))
-        .when(tr.paging(), |el| el.child(dim("reading older…")))
+        // Laid out while hidden: a strip with nothing else in it keeps its height, so the rows below do
+        // not drop a line while a page is in flight (H2).
+        .child(dim("reading older…").when(!tr.paging(), |el| el.invisible()))
 }
 
 /// One row of the list: an item, or a run.
@@ -871,9 +873,9 @@ impl<H: Host> Paint<'_, H> {
         name(kind, self.tr.generation, key)
     }
 
-    /// A run (spec §1 "Activity strip", "Expanded run details", "Latest activity"): its strip of
-    /// pills, a click opening it to every member on a rail. Closed and last, its last member is drawn
-    /// in full under its age instead of as a pill.
+    /// A run (spec §1 "Activity strip", "Expanded run details", "Latest activity"): its strip, the
+    /// pills as one line of text (S3 B1), a click opening it to every member on a rail. Closed and
+    /// last, its last member is drawn in full under its age instead of as a pill.
     fn run(&self, (first, last): (Key, Key), tail: bool) -> Div {
         let (view, tr, t, ix) = (self.view, self.tr, self.t, self.ix);
         let members = || tr.items.range(first..=last);
@@ -891,28 +893,31 @@ impl<H: Host> Paint<'_, H> {
                 cx.notify();
             });
         };
-        let lit = |el: Stateful<Div>| el.border_color(rgb(pal::RULE)).bg(rgb(pal::PANEL));
         let strip = (!pills.is_empty()).then(|| {
             let el = div()
                 .id(self.id("run", first))
+                .group("run")
                 .cursor_pointer()
                 .on_click(toggle);
-            let el = el.flex().flex_wrap().items_center().gap(t.css(5.));
+            let el = el.flex().items_center().gap(t.css(8.)).overflow_hidden();
             let el = el.min_h(t.css(24.)).px(t.css(5.)).py(t.css(2.));
-            let el = el.border_1().rounded(t.css(6.)).text_size(t.css(10.));
-            let el = match open {
-                true => lit(el),
-                false => el
-                    .border_color(transparent_black())
-                    .hover(|s| s.border_color(rgb(pal::RULE)).bg(rgb(pal::PANEL))),
-            };
-            el.child(chevron(open, t))
-                .children(pills.iter().enumerate().map(|(i, p)| {
+            // Each pill's place in the line, read where it was drawn (scroll anchoring).
+            let marks: Vec<(Mark, (usize, usize))> = segments(&pills)
+                .into_iter()
+                .zip(&pills)
+                .enumerate()
+                .map(|(i, (at, p))| {
                     let end = pills.get(i + 1).map_or(n, |next| next.at);
-                    let mark = Mark::Pill(keys[p.at], keys[end - 1]);
-                    let at = record(&view.painted, move |pt, b| pt.marks.push((mark, b)));
-                    pill(p, t).relative().child(at)
-                }))
+                    (Mark::Pill(keys[p.at], keys[end - 1]), at)
+                })
+                .collect();
+            el.text_size(t.css(10.)).child(chevron(open, t)).child(line(
+                &pills,
+                open,
+                &view.painted,
+                marks,
+                t,
+            ))
         });
         // Members on the rail, each a fold 6 apart, or an answer or card at its own margins (spec §2).
         let detail = open.then(|| {
@@ -1298,27 +1303,110 @@ fn hold<H: Host>(
     Some(canvas(measure, |_, _, _, _| {}))
 }
 
-/// A run's pill (spec §1 "Activity strip and pills"): `Bash ×4`, 14 tall; a status cut to web's width,
-/// on the button's taller line when cut; red when a merged tool failed.
-fn pill(p: &Pill, t: TypeScale) -> Div {
+/// A pill's text: `Bash ×4`, a status cut to web's width.
+fn label(p: &Pill) -> String {
     let text = match p.count {
         1 => p.label.clone(),
         n => format!("{} ×{n}", p.label),
     };
-    let line = if p.tone == Tone::Status && long(&text) {
-        13.5
-    } else {
-        10.
-    };
-    let text = match p.tone {
+    match p.tone {
         Tone::Status => cut(&text, STATUS),
         _ => text,
+    }
+}
+
+const BETWEEN: &str = " · ";
+
+/// The pills' byte ranges in their line, each after a ` · `.
+fn segments(pills: &[Pill]) -> Vec<(usize, usize)> {
+    let mut at = 0;
+    let mut out = Vec::new();
+    for (i, p) in pills.iter().enumerate() {
+        at += if i == 0 { 0 } else { BETWEEN.len() };
+        let end = at + label(p).len();
+        out.push((at, end));
+        at = end;
+    }
+    out
+}
+
+/// A run's pills as one line of mono 9 text (S3 B1): `Read ×2 · ✉ kono · Bash`, dimmer, a message's in
+/// the operator's name colour and a failed tool's red; slate under the pointer and while open. Too long,
+/// the line's end ellipsizes. Each pill records where it was drawn (its place past the end, at the
+/// line's end).
+fn line(
+    pills: &[Pill],
+    open: bool,
+    painted: &Rc<RefCell<Painted>>,
+    marks: Vec<(Mark, (usize, usize))>,
+    t: TypeScale,
+) -> Div {
+    let text: String = (pills.iter().map(label)).collect::<Vec<_>>().join(BETWEEN);
+    let tint = |c: u32| HighlightStyle {
+        color: Some(rgb(c).into()),
+        ..Default::default()
     };
-    let el = toned(div(), p.tone, t).flex_none().line_height(t.css(line));
-    let el = el.when(p.error, |el| {
-        el.border_color(rgb(pal::PORT)).text_color(rgb(pal::PORT))
-    });
-    el.child(text)
+    let spans = segments(pills);
+    // The separators, and with `toned` each pill that has a colour of its own.
+    let styled = |toned: bool| {
+        let mut marked = Vec::new();
+        for (i, (p, &(from, to))) in pills.iter().zip(&spans).enumerate() {
+            if i > 0 {
+                marked.push((from - BETWEEN.len()..from, tint(pal::DIMMER)));
+            }
+            let own = match (p.error, p.tone) {
+                (true, _) => Some(pal::PORT),
+                (false, Tone::Message) => Some(pal::OPERATOR_NAME),
+                _ => None,
+            };
+            if let Some(c) = own.filter(|_| toned) {
+                marked.push((from..to, tint(c)));
+            }
+        }
+        StyledText::new(text.clone()).with_highlights(marked)
+    };
+    let shown = styled(!open);
+    let laid = shown.layout().clone();
+    let painted = painted.clone();
+    let record = move |b: Bounds<Pixels>, _: &mut Window, _: &mut App| {
+        let x = |ix: usize| laid.position_for_index(ix).map_or(b.right(), |p| p.x);
+        let mut painted = painted.borrow_mut();
+        for &(mark, (from, to)) in &marks {
+            let at = Bounds::from_corners(point(x(from), b.top()), point(x(to), b.bottom()));
+            painted.marks.push((mark, at));
+        }
+    };
+    let el = div().relative().flex_1().min_w_0().overflow_hidden();
+    let el = el.whitespace_nowrap().text_ellipsis();
+    let el = el
+        .font_family(MONO_T)
+        .text_size(t.css(9.))
+        .line_height(t.css(11.));
+    let el = el.text_color(rgb(if open { pal::SLATE } else { pal::DIMMER }));
+    // Under the pointer every pill is slate: the line without its own colours over the coloured one.
+    let el = match open {
+        true => el.child(shown),
+        false => el
+            .child(div().group_hover("run", |s| s.invisible()).child(shown))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .text_color(rgb(pal::SLATE))
+                    .invisible()
+                    .group_hover("run", |s| s.visible())
+                    .child(styled(false)),
+            ),
+    };
+    el.child(
+        canvas(record, |_, _, _, _| {})
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full(),
+    )
 }
 
 /// Whether a status is cut, so its chip opens (web's `statusChipTruncates`).

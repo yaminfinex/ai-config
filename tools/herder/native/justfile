@@ -119,14 +119,14 @@ check-notes:
     run "" empty 0 "$zoom notes:0:closed shot:u5-empty quit"
     run --notes editor 1 "$zoom notes:2:closed shot:u5-notes key:a draw notes:2:focused: key:enter draw notes:2:focused: key:n key:j key:[ key:] key:a key:c key:p key:/ draw notes:2:focused:nj[]acp/ tap:alt-enter tap:cmd-shift-enter draw box:idle: notes:2:focused:nj[]acp/ shot:u5-editing key:cmd-enter wait:800 draw notes:3:closed box:idle: quit"
     run --notes edit 2 "$zoom click:edit:0 draw notes:2:focused:check+the+outbox+after+a+409 key:cmd-a key:backspace draw notes:2:focused: key:enter draw notes:2:focused: shot:u5-refused key:o key:k key:enter wait:800 draw notes:2:closed box:idle: click:delete:1 draw notes:2:closed shot:u5-delete click:delete:1 wait:800 draw notes:1:closed quit"
-    drag="drag:30,210,250,210 draw" # across the first line of mupu's last-but-one answer, at the tail
+    drag="drag:30,246,250,246 draw" # across the first line of mupu's last-but-one answer, at the tail
     capture="$zoom $drag capture:chip:focused:Everything+in+this+window shot:f7-chip link:herder-agent:chief-mihe wait:600 draw capture:none"
     capture+=" link:herder-agent:mupu wait:1500 draw expect:mupu+preview capture:none $drag key:o draw key:k draw capture:open:focused:ok shot:f7-popover"
     run --notes capture 1 "$capture key:enter wait:800 draw notes:3:closed capture:none said:Saved. box:idle: quit"
     grep -q 'state notes: .*Everything in this window has been h' "$home/capture.fake" || { echo "check-notes: capture: no quote posted"; exit 1; }
     dropped="$zoom $drag key:k draw capture:open:focused:k jump:hidden key:escape draw capture:none notes:2:closed jump:hidden"
     dropped+=" key:k draw jump:shown key:shift-g draw $drag capture:chip:focused point:600,60 draw capture:none"
-    dropped+=" drag:30,210,250,800 draw capture:chip:focused key:j draw capture:open:focused:j key:escape draw capture:none" # let go over the composer
+    dropped+=" drag:30,246,250,800 draw capture:chip:focused key:j draw capture:open:focused:j key:escape draw capture:none" # let go over the composer
     run --notes dropped 0 "$dropped quit"
     scenario sent --notes "$zoom $drag key:o draw key:k draw key:cmd-enter wait:800 draw capture:none notes:2:closed said:Sending+a+note+to+mupu box:idle: quit"
     seen sent "state notes:" 0
@@ -246,7 +246,7 @@ check-mouse:
     lubo="wait:1500 summon:agent:grill-confirm-lubo wait:1500 draw draw"
     kono="wait:400 draw expect:confirm-fresh-kono+preview"
     HERDER_NATIVE_WINDOW=1400x900 scenario links "" "$lubo point:44,527 $kono quit" "$lubo point:43,672 $kono quit" \
-        "wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw point:40,116 wait:200 point:100,142 wait:400 draw quit"
+        "wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw point:40,132 wait:200 point:100,158 wait:400 draw quit"
     grep -q "platform: would open https://github.com/infinex-xyz/boomerang/pull/453" "$home/links.log" || { echo "check-mouse: the URL was not opened"; exit 1; }
     seen links "GET /api/resolve?q=submit.rs" 1
     # After selecting text by a drag (one across the URL itself), one click on each link opens it once:
@@ -255,9 +255,9 @@ check-mouse:
     riko="wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw"
     pull="$riko find:Pull+453 wait:300 draw draw"
     HERDER_NATIVE_WINDOW=1400x900 scenario selected "" \
-        "$pull drag:60,208,400,208 wait:200 draw drag:40,116,400,116 wait:200 draw point:40,116 wait:300 draw drag:60,208,400,208 wait:200 draw fast:40,116 wait:300 draw drag:60,208,400,208 wait:200 draw fast:100,142 wait:400 draw quit"
+        "$pull drag:60,224,400,224 wait:200 draw drag:40,132,400,132 wait:200 draw point:40,132 wait:300 draw drag:60,224,400,224 wait:200 draw fast:40,132 wait:300 draw drag:60,224,400,224 wait:200 draw fast:100,158 wait:400 draw quit"
     HERDER_NATIVE_WINDOW=1400x900 scenario named "" \
-        "$riko find:asked+chief+mihe wait:300 draw draw drag:60,208,400,208 wait:200 draw fast:120,158 wait:400 draw expect:fees-program-design-lifo+preview quit"
+        "$riko find:asked+chief+mihe wait:300 draw draw drag:60,224,400,224 wait:200 draw fast:120,174 wait:400 draw expect:fees-program-design-lifo+preview quit"
     opened=$(grep -c "platform: would open https://github.com/infinex-xyz/boomerang/pull/453" "$home/selected.log" || true)
     [ "$opened" = 2 ] || { echo "check-mouse: after a selection the URL opened $opened times, expected 2"; exit 1; }
     seen selected "GET /api/resolve?q=submit.rs" 1
@@ -289,7 +289,9 @@ check-entries:
     zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:1500 draw"
     parts() { echo "parts:$1+status,+$2+notes"; }
     scenario entries "--queued mupu" "$zoom $(parts 0 0) click:status draw $(parts 1 0) shot:a2-status click:status draw $(parts 0 0) find:Internal( wait:300 draw click:internal draw $(parts 0 1) shot:a2-note click:internal draw $(parts 0 0) quit"
-    echo "check-entries: ok (mupu's last cut status chip opens and closes by click, its internal note too; queued box in the shots)"
+    # S3's transcript at 1512 wide: riko's tail has an operator card, run strips, answers and an hcom card.
+    HERDER_NATIVE_WINDOW=1512x900 scenario calm "" "wait:1500 summon:agent:riko wait:1500 draw draw shot:s3-transcript find:queue-wake+DONE wait:300 draw draw shot:s3-strip run:queue-wake+DONE wait:300 draw draw shot:s3-cards quit"
+    echo "check-entries: ok (mupu's last cut status chip opens and closes by click, its internal note too; queued box in the shots; riko's tail in s3-transcript)"
 
 # The dock in the zoom (DK2), through `scripts/scenario.sh` (fake serve, own HOME); in slack (mupu,
 # support-mifa): an alt-click on a mention opens it beside, in a new group to the right; a mention opened in
@@ -307,12 +309,14 @@ check-dock:
     seen dock "state spaces.members" 2
     seen dock "message to" 0
     # Ten tabs in half a split (S2): chief crowded by the fake serve's --share, a preview opened beside.
-    # Real clicks at 1416 wide: +N on the left group's strip, its last item (the tab scrolled out of
-    # view) shows it; the group's □ maximizes, the □ of the maximized group restores.
+    # Real clicks at 1512 wide (S3's artboards): the crowded group's shown tab takes the focus from the
+    # preview beside it, a tab hovered for the split's shot; +N on the left
+    # group's strip, its last item (the tab scrolled out of view) shows it; the group's ⤢ maximizes, the
+    # ⤡ of the maximized group restores.
     crowd="--share mupu,support-mifa,swap-bench-mora,fees-program-design-lifo,telegram-review-mire,orch-lega,conductor-line,e2e-cli-lipo,api-gateway-luko"
     ten="mupu+support-mifa+swap-bench-mora+fees-program-design-lifo+telegram-review-mire+orch-lega+conductor-line+e2e-cli-lipo"
-    HERDER_NATIVE_WINDOW=1416x600 scenario crowd "$crowd" "wait:1500 key:enter wait:800 draw beside:herder-agent:grill-confirm-lubo wait:800 draw draw dock:chief-mihe*+$ten+api-gateway-luko+|+[grill-confirm-lubo*~] shot:s2-split point:666,41 wait:400 draw draw shot:s2-menu point:570,204 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ shot:s2-picked point:693,41 wait:400 draw draw dock:max+chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ shot:s2-max point:1401,41 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ quit"
-    echo "check-dock: ok (alt-click opens beside, a preview replaces the group's and a double-click pins it, a real drag moves a tab across, tab keys step the focused group, alt-enter maximizes and the keys act after it with focus left on the text, in and out, cmd-w closes and unpins, a click on × closes a preview, a relaunch restores the dock; ten tabs in half a split scroll, +N shows one out of view, the □ maximizes and restores)"
+    HERDER_NATIVE_WINDOW=1512x600 scenario crowd "$crowd" "wait:1500 key:enter wait:800 draw beside:herder-agent:grill-confirm-lubo wait:800 draw draw dock:chief-mihe*+$ten+api-gateway-luko+|+[grill-confirm-lubo*~] point:69,41 wait:400 draw draw dock:[chief-mihe*]+$ten+api-gateway-luko+|+grill-confirm-lubo*~ hover:246,41 shot:s3-split point:698,41 wait:400 draw draw shot:s3-menu point:652,181 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ shot:s3-picked point:736,41 wait:400 draw draw dock:max+chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ hover:1000,400 shot:s3-max point:1487,41 wait:400 draw draw dock:chief-mihe+$ten+[api-gateway-luko*]+|+grill-confirm-lubo*~ quit"
+    echo "check-dock: ok (alt-click opens beside, a preview replaces the group's and a double-click pins it, a real drag moves a tab across, tab keys step the focused group, alt-enter maximizes and the keys act after it with focus left on the text, in and out, cmd-w closes and unpins, a click on × closes a preview, a relaunch restores the dock; ten tabs in half a split scroll, +N shows one out of view, the ⤢ maximizes and the ⤡ restores)"
 
 # Path clicks (G3), through `scripts/scenario.sh` (the fake serve answers `/api/resolve` from
 # testdata/resolve.json): zoomed on mupu (cwd /home/ubuntu/slack-eyes), a path in two worktrees offers both,
@@ -331,7 +335,7 @@ check-paths:
     scenario paths "" "$zoom $picked $clicked $closed $single quit"
     # By a real pointer: riko's `submit.rs` (check-mouse's links, 1400×900) offers two, under the click.
     riko="wait:1500 summon:agent:riko wait:1500 draw key:g wait:800 draw key:g wait:800 draw find:Pull+453 wait:300 draw"
-    HERDER_NATIVE_WINDOW=1400x900 scenario pointed "" "$riko wait:1000 draw draw point:100,142 wait:500 draw draw paths:focused:2@0 shot:g3-paths-pointed key:escape draw paths:none quit"
+    HERDER_NATIVE_WINDOW=1400x900 scenario pointed "" "$riko wait:1000 draw draw point:100,158 wait:500 draw draw paths:focused:2@0 shot:g3-paths-pointed key:escape draw paths:none quit"
     # Each open is two calls of the code CLI (G3b): the root as a window's folder, then the file in it.
     code() { grep -cF "platform: would run code $1" "$home/paths.log" || true; }
     opens() {

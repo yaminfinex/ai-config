@@ -298,49 +298,48 @@ pub(super) fn header(bits: Vec<Bit>, when: String, operator: bool, t: TypeScale)
         .child(time(when, t).ml_auto())
 }
 
-/// An answer (spec §1 "Assistant block"): a 3px rule on the left, the header, then the text with its
-/// last paragraph's margin.
+/// An answer (spec §1 "Assistant block"): the header, then the text with its last paragraph's margin;
+/// no rule on the left (S3 B2), its text where it was beside one (3 + 12).
 pub(super) fn answer(head: Div, body: Div, t: TypeScale) -> AnyElement {
-    let el = div().border_l(t.css(3.)).border_color(rgb(pal::EDGE));
-    el.pl(t.css(12.))
+    div()
+        .pl(t.css(15.))
         .py(t.css(3.))
         .child(head)
         .child(body)
         .into_any_element()
 }
 
-/// One entry card, for every kind (spec §1 "Operator / prompt card and delivery card"): radius 8, a
-/// 1px rule, padding 9 12, and a 3px edge, the owner's on the right; an operator's and the owner's are
-/// tinted, indented and narrower. GPUI draws one border colour, so the edge is the outer box's
-/// ground showing past the inner one (web's coloured border side, nearest). An item that is no card
-/// draws as another agent's message.
+/// One entry card, for every kind (spec §1 "Operator / prompt card and delivery card", S3 B3): a 1px
+/// rule, padding 9 12, no ground and no radius, and a 2px edge in the kind's colour, the owner's on the
+/// right; an operator's and the owner's are indented and narrower. GPUI draws one border colour, so
+/// the edge is a child over the box's open side. An item that is no card draws as another agent's
+/// message.
 pub(super) fn card(item: &Item, width: Pixels, head: Div, body: Div, t: TypeScale) -> AnyElement {
     let look = Card::of(item).unwrap_or(Card::Hcom);
-    let (edge, ground, indent) = match look {
-        Card::Hcom => (pal::BLUE, pal::PANEL, None),
-        Card::Operator => (pal::OPERATOR, pal::OPERATOR_GROUND, Some((0.06, 54., 820.))),
-        Card::Human => (pal::OPERATOR, pal::HUMAN_GROUND, Some((0.1, 90., 790.))),
+    let (edge, indent) = match look {
+        Card::Hcom => (pal::BLUE, None),
+        Card::Operator => (pal::OPERATOR, Some((0.06, 54., 820.))),
+        Card::Human => (pal::OPERATOR, Some((0.1, 90., 790.))),
     };
-    let inner = div()
-        .flex_1()
-        .min_w_0()
-        .border_1()
-        .border_color(rgb(pal::RULE));
-    let inner = inner.bg(rgb(ground)).px(t.css(12.)).py(t.css(9.));
-    let inner = inner.child(head).child(body);
-    let (outer, inner_r) = (t.css(8.), t.css(5.));
-    let el = div().flex().bg(rgb(edge)).rounded(outer);
+    let el = div().relative().border_1().border_color(rgb(pal::RULE));
+    let el = el.py(t.css(9.)).child(head).child(body);
     // Web's margin-left min(6%, 54px) and max-width, of the row's width.
     let el = el.when_some(indent, |el, (share, most, max)| {
         el.ml(t.css(most).min(width * share)).max_w(t.css(max))
     });
+    let (strip, inset) = (t.css(2.), t.css(12.));
+    let edge = div().absolute().top_0().bottom_0().w(strip).bg(rgb(edge));
     let el = match look {
         Card::Human => el
-            .pr(t.css(3.))
-            .child(inner.border_r_0().rounded_l(outer).rounded_r(inner_r)),
+            .border_r_0()
+            .pl(inset)
+            .pr(inset + strip)
+            .child(edge.right_0()),
         _ => el
-            .pl(t.css(3.))
-            .child(inner.border_l_0().rounded_r(outer).rounded_l(inner_r)),
+            .border_l_0()
+            .pl(inset + strip)
+            .pr(inset)
+            .child(edge.left_0()),
     };
     el.into_any_element()
 }
