@@ -3,12 +3,12 @@ import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { assignAgent, mutationProblem, queryKeys, resolveFiles } from '../../api/client'
 import type { Board, FileCandidate, FileTarget, FolderTarget } from '../../types'
-import { keyboardCandidate, mentionLine } from './fileResolution'
+import { autoOpenCandidate, mentionLine } from './fileResolution'
 import { FileResults } from './FileResults'
 import { candidateDestination } from '../folders/folderModel'
 import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { dialogTabTargetIndex } from '../launch/launchModel.ts'
-import { quickOpenEnterTarget, quickOpenInitialSelection, quickOpenMoveSelection, quickOpenSelectedIndex, type QuickOpenActionRow, type QuickOpenLookup, type QuickOpenMode } from './quickOpenModel.ts'
+import { quickOpenEnterTarget, quickOpenMoveSelection, quickOpenSelectedIndex, quickOpenSelection, quickOpenTopMatch, type QuickOpenActionRow, type QuickOpenMode } from './quickOpenModel.ts'
 import { useNotes } from '../notes/NotesProvider.tsx'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 import { useWorkspaceActionsContext, useWorkspaceData } from '../workspace/workspaceContext.tsx'
@@ -47,8 +47,9 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const workspaceData = useWorkspaceData()
   const notes = useNotes()
   const [query, setQuery] = useState('')
-  // The selection is a row identity (see quickOpenSelectionKeys); its index is derived per render.
-  const [selection, setSelection] = useState<string | null>(null)
+  // The row the user moved to with the arrows, as a row identity (see quickOpenSelectionKeys); null until
+  // they move, so the highlight follows the top match as rows and file results arrive.
+  const [moved, setMoved] = useState<string | null>(null)
   const [assignmentProblem, setAssignmentProblem] = useState('')
   const assignmentSource = useRef(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -73,14 +74,19 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const settled = query.trim() === debounced
   const settledResolution = settled ? resolution.data : undefined
   const candidates = normalMode ? settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? [] : []
-  const fileKeys = candidates.map((candidate) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`)
+  const fileKey = (candidate: FileCandidate) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`
+  const fileKeys = candidates.map(fileKey)
+  const confident = settledResolution ? autoOpenCandidate(settledResolution) : null
+  // The lookup is pending until the query settles and the resolve for it has answered; a settled error counts as finished.
+  const lookupPending = Boolean(query.trim()) && !(settled && (settledResolution || resolution.error))
+  const fallback = normalMode ? quickOpenTopMatch(actions, confident && fileKey(confident), query, lookupPending) : reassignSelection(actions, query)
+  const selection = quickOpenSelection(actions, fileKeys, moved, fallback)
   const activeIndex = quickOpenSelectedIndex(actions, fileKeys, selection)
   useEffect(() => {
     setQuery('')
     setAssignmentProblem('')
     assignmentSource.current += 1
-    const initialRows = quickOpenRows(mode, '', rowContext)
-    setSelection(open ? mode.kind === 'normal' ? quickOpenInitialSelection(initialRows, '') : reassignSelection(initialRows, '') : null)
+    setMoved(null)
     if (!open) return
     restoreFocus.current = document.activeElement as HTMLElement | null
     const frame = requestAnimationFrame(() => inputRef.current?.focus())
@@ -90,7 +96,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
     }
   }, [open, mode])
 
-  // The selection resets only on a real query edit (see onChange); the debounce settling never touches it.
+  // A moved selection resets only on a real query edit (see onChange); the debounce settling never touches it.
   useEffect(() => {
     if (activeIndex < 0) return
     resultsRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
@@ -165,20 +171,14 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
         onChange={(event) => {
           setQuery(event.target.value)
           setAssignmentProblem('')
-          const nextRows = quickOpenRows(mode, event.target.value, rowContext)
-          setSelection(normalMode ? quickOpenInitialSelection(nextRows, event.target.value) : reassignSelection(nextRows, event.target.value))
+          setMoved(null)
         }} onKeyDown={(event) => {
           if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-            setSelection(quickOpenMoveSelection(actions, fileKeys, selection, event.key === 'ArrowDown' ? 'down' : 'up'))
+            setMoved(quickOpenMoveSelection(actions, fileKeys, selection, event.key === 'ArrowDown' ? 'down' : 'up'))
           } else if (event.key === 'Enter') {
-            const candidate = settledResolution
-              ? keyboardCandidate(settledResolution, candidates, activeIndex - leadingCount)
-              : null
-            // The lookup is pending until the query settles and the resolve for it has answered; a settled error counts as no match.
-            const lookup: QuickOpenLookup = !query.trim() || (settled && (settledResolution || resolution.error)) ? (candidate ? 'available' : 'none') : 'pending'
-            const target = quickOpenEnterTarget(actions, query, activeIndex, lookup, candidates.length)
+            const target = quickOpenEnterTarget(actions, candidates.length, activeIndex)
             if (target?.kind === 'action') void chooseAction(actions[target.index])
-            else if (target?.kind === 'file' && candidate) choose(candidate, placementFromModifiers(event, groupID))
+            else if (target?.kind === 'file') choose(candidates[target.index], placementFromModifiers(event, groupID))
           } else return
           event.preventDefault()
         }} />

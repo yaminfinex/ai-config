@@ -19,7 +19,8 @@ export function ShortcutReference({ open, onClose }: { open: boolean, onClose: (
     [labels.goToBottom, 'Go to bottom and resume follow'],
     [labels.toggleMaximize, 'Maximize or restore active pane'],
     [labels.toggleRead, 'Toggle the active agent read or unread'],
-    [openInSideKeys(navigator.userAgent), 'Open in closest side group'],
+    [openInSideKeys(navigator.userAgent), 'Open a link or path in closest side group'],
+    [`${openInSideKeys(navigator.userAgent)} a transcript entry`, 'Mark unread from that entry'],
     ['?', 'Open this reference'],
   ] as const
   return <div className="shortcut-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose() }}>

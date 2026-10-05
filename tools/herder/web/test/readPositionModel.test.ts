@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import type { ReadMarker } from '../src/features/spaces/readMarkerModel.ts'
 import { dividerIndex, lastTurnStart, latestPosition, markLastTurnUnread, markUnreadAt, positionBefore, positionWriteMs, readThrough, viewedAtLabel } from '../src/features/spaces/readPositionModel.ts'
 import { dividerRow, type CleanRow } from '../src/features/transcript/cleanRows.ts'
-import { blockMenuIndex, initialDividerSnapshot, nextDividerSnapshot } from '../src/features/transcript/transcriptReadModel.ts'
+import { altClickUnreadIndex, blockMenuIndex, initialDividerSnapshot, nextDividerSnapshot } from '../src/features/transcript/transcriptReadModel.ts'
 import type { EntriesPage, EntryKind, TranscriptEntry } from '../src/types.ts'
 
 const entry = (kind: EntryKind, byteOffset: number): TranscriptEntry => ({ kind, byteOffset, line: byteOffset, timestamp: `t${byteOffset}`, payload: null })
@@ -140,6 +141,34 @@ test('the block menu opens on a block, not over a selection, a link or a text bo
   assert.equal(blockMenuIndex(target({}), ''), null)
   assert.equal(blockMenuIndex(target({ 'data-entry-index': 'x' }), ''), null)
   assert.equal(blockMenuIndex(null, ''), null)
+})
+
+test('a plain ⌥-click marks unread from the same entry the right-click menu offers', () => {
+  // A fake element inside entry 4, optionally inside one ancestor matching `inside` (e.g. 'a', 'button').
+  const target = (index: string | null, inside?: string) => ({
+    closest: (selector: string) => {
+      if (inside && selector.split(', ').includes(inside)) return { getAttribute: () => null }
+      return selector === '[data-entry-index]' && index !== null ? { getAttribute: () => index } : null
+    },
+  })
+  const alt = { button: 0, altKey: true, metaKey: false, ctrlKey: false, shiftKey: false }
+  assert.equal(altClickUnreadIndex(alt, target('4'), ''), 4)
+  assert.equal(altClickUnreadIndex(alt, target('4'), ''), blockMenuIndex(target('4'), ''), 'right-click and ⌥-click resolve the same entry')
+  assert.equal(altClickUnreadIndex({ ...alt, altKey: false }, target('4'), ''), null, 'a plain click is a plain click')
+  assert.equal(altClickUnreadIndex({ ...alt, metaKey: true }, target('4'), ''), null)
+  assert.equal(altClickUnreadIndex({ ...alt, ctrlKey: true }, target('4'), ''), null)
+  assert.equal(altClickUnreadIndex({ ...alt, shiftKey: true }, target('4'), ''), null)
+  assert.equal(altClickUnreadIndex({ ...alt, button: 1 }, target('4'), ''), null)
+  assert.equal(altClickUnreadIndex(alt, target('4'), 'dragged text'), null, 'a click that ends a selection')
+  for (const inside of ['a', 'button', '.path-link', 'textarea']) assert.equal(altClickUnreadIndex(alt, target('4', inside), ''), null, `${inside} keeps its own ⌥-click`)
+  assert.equal(altClickUnreadIndex(alt, target(null), ''), null, 'outside any entry')
+  assert.equal(altClickUnreadIndex(alt, null, ''), null)
+})
+
+test('the transcript wires ⌥-click to the same onMarkUnread as the menu, without a menu or a text selection', () => {
+  const panel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  assert.match(panel, /const index = altClickUnreadIndex\(event, [^\n]*window\.getSelection\(\)\?\.toString\(\) \?\? ''\)\s*if \(index === null\) return\s*event\.preventDefault\(\)\s*event\.stopPropagation\(\)\s*onMarkUnread\(index\)/)
+  assert.match(panel, /onContextMenu=\{onTranscriptContextMenu\} onClickCapture=\{onTranscriptClickCapture\}/)
 })
 
 test('the footer reads the local time of the last read, with the date once it is not today', () => {
