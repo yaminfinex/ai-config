@@ -119,14 +119,14 @@ check-notes:
     run "" empty 0 "$zoom notes:0:closed shot:u5-empty quit"
     run --notes editor 1 "$zoom notes:2:closed shot:u5-notes key:a draw notes:2:focused: key:enter draw notes:2:focused: key:n key:j key:[ key:] key:a key:c key:p key:/ draw notes:2:focused:nj[]acp/ tap:alt-enter tap:cmd-shift-enter draw box:idle: notes:2:focused:nj[]acp/ shot:u5-editing key:cmd-enter wait:800 draw notes:3:closed box:idle: quit"
     run --notes edit 2 "$zoom click:edit:0 draw notes:2:focused:check+the+outbox+after+a+409 key:cmd-a key:backspace draw notes:2:focused: key:enter draw notes:2:focused: shot:u5-refused key:o key:k key:enter wait:800 draw notes:2:closed box:idle: click:delete:1 draw notes:2:closed shot:u5-delete click:delete:1 wait:800 draw notes:1:closed quit"
-    drag="drag:30,210,250,210 draw" # across the first line of mupu's last-but-one answer, at the tail
+    drag="drag:30,246,250,246 draw" # across the first line of mupu's last-but-one answer, at the tail
     capture="$zoom $drag capture:chip:focused:Everything+in+this+window shot:f7-chip link:herder-agent:chief-mihe wait:600 draw capture:none"
     capture+=" link:herder-agent:mupu wait:1500 draw expect:mupu+preview capture:none $drag key:o draw key:k draw capture:open:focused:ok shot:f7-popover"
     run --notes capture 1 "$capture key:enter wait:800 draw notes:3:closed capture:none said:Saved. box:idle: quit"
     grep -q 'state notes: .*Everything in this window has been h' "$home/capture.fake" || { echo "check-notes: capture: no quote posted"; exit 1; }
     dropped="$zoom $drag key:k draw capture:open:focused:k jump:hidden key:escape draw capture:none notes:2:closed jump:hidden"
     dropped+=" key:k draw jump:shown key:shift-g draw $drag capture:chip:focused point:600,60 draw capture:none"
-    dropped+=" drag:30,210,250,800 draw capture:chip:focused key:j draw capture:open:focused:j key:escape draw capture:none" # let go over the composer
+    dropped+=" drag:30,246,250,800 draw capture:chip:focused key:j draw capture:open:focused:j key:escape draw capture:none" # let go over the composer
     run --notes dropped 0 "$dropped quit"
     scenario sent --notes "$zoom $drag key:o draw key:k draw key:cmd-enter wait:800 draw capture:none notes:2:closed said:Sending+a+note+to+mupu box:idle: quit"
     seen sent "state notes:" 0
@@ -289,7 +289,9 @@ check-entries:
     zoom="wait:1500 key:enter wait:400 key:] wait:600 draw expect:mupu wait:1500 draw"
     parts() { echo "parts:$1+status,+$2+notes"; }
     scenario entries "--queued mupu" "$zoom $(parts 0 0) click:status draw $(parts 1 0) shot:a2-status click:status draw $(parts 0 0) find:Internal( wait:300 draw click:internal draw $(parts 0 1) shot:a2-note click:internal draw $(parts 0 0) quit"
-    echo "check-entries: ok (mupu's last cut status chip opens and closes by click, its internal note too; queued box in the shots)"
+    # S3's transcript at 1512 wide: riko's tail has an operator card, run strips, answers and an hcom card.
+    HERDER_NATIVE_WINDOW=1512x900 scenario calm "" "wait:1500 summon:agent:riko wait:1500 draw draw shot:s3-transcript find:queue-wake+DONE wait:300 draw draw shot:s3-strip run:queue-wake+DONE wait:300 draw draw shot:s3-cards quit"
+    echo "check-entries: ok (mupu's last cut status chip opens and closes by click, its internal note too; queued box in the shots; riko's tail in s3-transcript)"
 
 # The dock in the zoom (DK2), through `scripts/scenario.sh` (fake serve, own HOME); in slack (mupu,
 # support-mifa): an alt-click on a mention opens it beside, in a new group to the right; a mention opened in

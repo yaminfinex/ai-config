@@ -1786,6 +1786,40 @@ mod layout {
         held(&body, read, was, cx);
     }
 
+    /// A closed run's strip is one row, 24 tall, however many pills (S3 B1): the line's end cuts them.
+    #[gpui_kit::test]
+    fn a_closed_strip_is_one_row(cx: &mut TestAppContext) {
+        let (body, cx) = body(cx, "mupu", (usize::MAX, split("mupu")), (220., 320.));
+        let Row::Run(first, last) = rows(&body, cx)[0] else {
+            panic!("the top row is a run")
+        };
+        scroll(&body, px(0.), cx);
+        let marks = body.read_with(cx, |b, _| {
+            let painted = b.ui.panel().unwrap().transcript.painted.clone();
+            painted.borrow().marks.clone()
+        });
+        let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
+        let pills: Vec<_> = marks.into_iter().filter(|(m, _)| inside(m)).collect();
+        let cut = pills.iter().filter(|(_, b)| b.size.width == px(0.)).count();
+        assert!(cut > 0, "too many for the line: some past its end");
+        let top = pills[0].1.top();
+        assert!(pills.iter().all(|(_, b)| b.top() == top), "one line");
+        let narrow = row(&body, 0, cx);
+        assert_eq!(
+            narrow.bottom() - pills[0].1.center().y,
+            px(12.),
+            "centred in a strip 24 tall"
+        );
+        cx.simulate_resize(size(px(900.), px(320.)));
+        draw(cx);
+        scroll(&body, px(0.), cx);
+        assert_eq!(
+            row(&body, 0, cx).size.height,
+            narrow.size.height,
+            "as tall wide"
+        );
+    }
+
     #[gpui_kit::test]
     fn a_page_growing_the_closed_top_strip_leaves_the_pill_read_in_place(cx: &mut TestAppContext) {
         let limit = split("mupu");
@@ -1794,8 +1828,7 @@ mod layout {
             panic!("the top row is a run")
         };
         scroll(&body, px(0.), cx);
-        // The first pill on the strip's last line (what the viewport's top reads, of a line), the
-        // viewport's top just above it.
+        // The strip is one line (S3 B1): its last pill drawn, the viewport's top just above it.
         let pills = body.read_with(cx, |b, _| {
             b.ui.panel()
                 .unwrap()
@@ -1807,19 +1840,16 @@ mod layout {
         });
         let inside = |m: &Mark| matches!(*m, Mark::Pill(f, l) if first <= f && l <= last);
         let pills: Vec<_> = pills.into_iter().filter(|(m, _)| inside(m)).collect();
+        assert!(pills.len() > 1, "a strip of pills");
+        assert!(
+            pills.iter().all(|(_, b)| b.top() == pills[0].1.top()),
+            "the strip is one line"
+        );
         let (read, b) = *pills
             .iter()
-            .max_by(|a, b| {
-                (a.1.top(), b.1.left())
-                    .partial_cmp(&(b.1.top(), a.1.left()))
-                    .unwrap()
-            })
+            .filter(|(_, b)| b.size.width > px(0.))
+            .max_by(|a, b| a.1.left().partial_cmp(&b.1.left()).unwrap())
             .unwrap();
-        let line = pills
-            .iter()
-            .map(|(_, b)| b.top())
-            .fold(b.top(), Pixels::min);
-        assert!(b.top() > line, "the strip wraps");
         scroll(&body, b.top() - row(&body, 0, cx).top() - px(4.), cx);
         let was = mark(&body, read, cx).unwrap().top();
         let top = screen(&body, cx).top();
@@ -3877,7 +3907,7 @@ mod dock_events {
 
     /// Focus on the transcript's text (its selection's own element), as a click there leaves it.
     fn on_text(shell: &Entity<Shell>, cx: &mut VisualTestContext) {
-        click(cx, 900., 500.);
+        click(cx, 900., 600.);
         cx.update(|window, cx| {
             let ui = &shell.read(cx).ui;
             let p = ui.panels["mupu"].focus.clone();
