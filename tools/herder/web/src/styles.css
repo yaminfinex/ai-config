@@ -328,6 +328,8 @@ h2, h3, p { margin-top: 0; }
 .space-mark { min-width: 16px; height: 14px; padding: 0 4px; border-radius: 7px; font: 600 9px/14px var(--mono); text-align: center; }
 .space-mark.unread { background: var(--space-mark-unread-bg); color: var(--space-mark-unread-text); }
 .space-mark.blocked { background: var(--space-mark-blocked-bg); color: var(--space-mark-blocked-text); box-shadow: 0 0 0 1px var(--space-mark-blocked-bg); }
+.space-mark.draft { border: 1px dashed var(--dim); background: transparent; color: var(--dim); line-height: 12px; }
+.draft-mark { flex: 0 0 auto; height: 13px; padding: 0 3px; border: 1px dashed var(--dim); border-radius: 4px; color: var(--dim); font: 9px/11px var(--mono); white-space: nowrap; }
 .space-close { width: 18px; height: 18px; flex: 0 0 18px; padding: 0 0 1px; border: 0; border-radius: 3px; background: transparent; color: var(--dim); font-size: 13px; }
 .space-close:hover, .space-close:focus-visible { background: var(--accent-dim); color: var(--text); }
 .space-rename { min-width: 0; height: 20px; flex: 1; padding: 0 6px; border: 0; outline: 1px solid var(--accent); background: var(--bg); color: var(--text); font: 12px system-ui, -apple-system, 'Segoe UI', sans-serif; }

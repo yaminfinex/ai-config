@@ -4,6 +4,7 @@ import { usePositionedMenu } from '../../shared/usePositionedMenu.tsx'
 import type { SpaceDefinition, SpaceResult } from './spacesModel.ts'
 import type { SpacesStatus } from './spacesStore.ts'
 import { attentionLabel, quietAttention, spaceMenuItems, totalAttention, type SpaceAttention } from './spaceAttentionModel.ts'
+import { draftCountLabel } from '../drafts/draftMarksModel.ts'
 
 type Props = {
   enabled: boolean
@@ -25,12 +26,14 @@ type Props = {
   announcement: string
 }
 
-// AttentionMarks shows a space's waiting (quiet) and blocked (loud) agent
-// counts; the text alternative lives on the owning row.
+// AttentionMarks shows a space's waiting (quiet), blocked (loud) and
+// draft (outlined) agent counts; the text alternative lives on the owning
+// row.
 export function AttentionMarks({ attention }: { attention: SpaceAttention }) {
   return <span className="space-marks" aria-hidden="true">
     {attention.blocked.length > 0 && <span className="space-mark blocked">{attention.blocked.length}</span>}
     {attention.unread.length > 0 && <span className="space-mark unread">{attention.unread.length}</span>}
+    {attention.drafts.length > 0 && <span className="space-mark draft" title={`${draftCountLabel(attention.drafts.length)}: unsent messages or notes`}>{attention.drafts.length}</span>}
   </span>
 }
 

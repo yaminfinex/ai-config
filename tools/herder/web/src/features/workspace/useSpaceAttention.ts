@@ -29,6 +29,7 @@ import {
   type SpaceDefinition,
   type ViewingState,
 } from '../spaces/index.ts'
+import { useDraftMarks } from '../drafts/useDraftMarks.ts'
 
 function documentVisible() {
   return typeof document === 'undefined' || document.visibilityState === 'visible'
@@ -43,7 +44,7 @@ function transcriptEnd(queryClient: QueryClient, name: string): ReadPosition | n
   return queryClient.getQueryState(queryKeys.entries(name))?.status === 'error' ? null : undefined
 }
 
-// useSpaceAttention derives each space's waiting/blocked agents from the
+// useSpaceAttention derives each space's waiting/blocked/draft agents from the
 // live dock (active space), the stored layouts (other spaces), the fleet
 // board and the shared read markers, and records reading for the dwell.
 export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpaceID, activeAgents }: {
@@ -57,6 +58,7 @@ export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpace
   const queryClient = useQueryClient()
   const { store, pulled } = useReadMarkersContext()
   const markers = useReadMarkers()
+  const drafts = useDraftMarks()
   const [visible, setVisible] = useState(documentVisible)
   const [storageTick, setStorageTick] = useState(0)
   const [viewing, setViewing] = useState<ViewingState>({})
@@ -153,7 +155,7 @@ export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpace
   }, [board, markRead, markUnread, store])
 
   const attention = useMemo(() => Object.fromEntries(Object.entries(openBySpace)
-    .map(([id, agents]) => [id, spaceAttention(board, agents, markers)])) as Record<string, SpaceAttention>, [board, markers, openBySpace])
+    .map(([id, agents]) => [id, spaceAttention(board, agents, markers, drafts)])) as Record<string, SpaceAttention>, [board, drafts, markers, openBySpace])
   const markSpaceRead = useCallback((spaceID: string) => markRead(attention[spaceID]?.unread ?? []), [attention, markRead])
   return { attention, markUnread, markRead, toggleRead, markSpaceRead }
 }

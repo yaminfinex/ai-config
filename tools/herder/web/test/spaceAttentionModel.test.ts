@@ -122,9 +122,9 @@ test('space attention collects unread and blocked open agents from the board, su
   ], [pane('lone', 'listening', { turn_end_id: 8 })])
   const markers = marks({ mavu: 1, ziru: 1, kobe: 3, 'kobe-two': 2, lone: 1 })
   assert.deepEqual(spaceAttention(board, ['mavu', 'ziru', 'kobe', 'kobe-sub', 'kobe-two', 'lone', 'ghost'], markers), {
-    unread: ['mavu', 'kobe-two', 'lone'], blocked: ['ziru', 'kobe-sub'],
+    unread: ['mavu', 'kobe-two', 'lone'], blocked: ['ziru', 'kobe-sub'], drafts: [],
   })
-  assert.deepEqual(spaceAttention(undefined, ['mavu'], markers), { unread: [], blocked: [] })
+  assert.deepEqual(spaceAttention(undefined, ['mavu'], markers), { unread: [], blocked: [], drafts: [] })
 })
 
 test('a deliberate mark unread is quiet unread; blocked stays loud', () => {
@@ -133,7 +133,7 @@ test('a deliberate mark unread is quiet unread; blocked stays loud', () => {
   assert.equal(agentAttention(pane('a', 'listening'), marked), 'unread', 'with no turn end yet')
   assert.equal(agentAttention(pane('a', 'blocked', { turn_end_id: 50 }), marked), 'blocked')
   const board = boardOf([pane('mavu', 'listening', { turn_end_id: 50 }), pane('ziru', 'blocked')])
-  assert.deepEqual(spaceAttention(board, ['mavu', 'ziru'], { mavu: marked, ziru: { ...m(1), unread: true } }), { unread: ['mavu'], blocked: ['ziru'] })
+  assert.deepEqual(spaceAttention(board, ['mavu', 'ziru'], { mavu: marked, ziru: { ...m(1), unread: true } }), { unread: ['mavu'], blocked: ['ziru'], drafts: [] })
 })
 
 test('markers follow the agent name, not its placement: placed to unplaced and back keeps read and unread', () => {
@@ -142,7 +142,7 @@ test('markers follow the agent name, not its placement: placed to unplaced and b
   const seeded = seed({}, placed, ['mavu'])
   assert.deepEqual(seeded, { mavu: m(20) })
   assert.deepEqual(seedUpdates(seeded, unplaced, ['mavu']), {}, 'moving out of its pane re-seeds nothing')
-  assert.deepEqual(spaceAttention(unplaced, ['mavu'], seeded), { unread: [], blocked: [] }, 'moving does not invent a completion')
+  assert.deepEqual(spaceAttention(unplaced, ['mavu'], seeded), { unread: [], blocked: [], drafts: [] }, 'moving does not invent a completion')
   const finishedUnplaced = boardOf([], [{ ...pane('mavu', 'listening', { turn_end_id: 27 }), pane_id: '' }])
   assert.deepEqual(spaceAttention(finishedUnplaced, ['mavu'], seeded).unread, ['mavu'], 'a turn ended while unplaced')
   const backInPlace = boardOf([pane('mavu', 'listening', { turn_end_id: 27 })])
@@ -175,10 +175,10 @@ test('a first turn end that arrives late is an unknown baseline, seeded silently
 test('a missing turn_end_id keeps the marker and is never unread; blocked still shows', () => {
   const markers = { mavu: { ...m(40), at: 1000 } }
   const missing = boardOf([pane('mavu', 'listening')])
-  assert.deepEqual(spaceAttention(missing, ['mavu'], markers), { unread: [], blocked: [] })
+  assert.deepEqual(spaceAttention(missing, ['mavu'], markers), { unread: [], blocked: [], drafts: [] })
   assert.deepEqual(seedUpdates(markers, missing, ['mavu']), {})
   assert.deepEqual(read(markers, missing, ['mavu']), markers, 'viewing without an id or a position records nothing')
-  assert.deepEqual(spaceAttention(boardOf([pane('mavu', 'blocked')]), ['mavu'], markers), { unread: [], blocked: ['mavu'] })
+  assert.deepEqual(spaceAttention(boardOf([pane('mavu', 'blocked')]), ['mavu'], markers), { unread: [], blocked: ['mavu'], drafts: [] })
 })
 
 test('viewing records the latest turn end and never moves a marker backwards', () => {
@@ -218,14 +218,14 @@ test('pruning keeps agents open or on the board, and waits for a board', () => {
 })
 
 test('labels read naturally for every count combination', () => {
-  assert.equal(attentionLabel({ unread: ['a', 'b'], blocked: ['c'] }), '2 agents waiting, 1 blocked')
-  assert.equal(attentionLabel({ unread: ['a'], blocked: [] }), '1 agent waiting')
-  assert.equal(attentionLabel({ unread: [], blocked: ['c', 'd'] }), '2 agents blocked')
-  assert.equal(attentionLabel({ unread: [], blocked: [] }), 'no agents waiting')
+  assert.equal(attentionLabel({ unread: ['a', 'b'], blocked: ['c'], drafts: [] }), '2 agents waiting, 1 blocked')
+  assert.equal(attentionLabel({ unread: ['a'], blocked: [], drafts: [] }), '1 agent waiting')
+  assert.equal(attentionLabel({ unread: [], blocked: ['c', 'd'], drafts: [] }), '2 agents blocked')
+  assert.equal(attentionLabel({ unread: [], blocked: [], drafts: [] }), 'no agents waiting')
 })
 
 test('the folded total counts an agent open in two spaces once', () => {
-  assert.deepEqual(totalAttention([{ unread: ['a', 'b'], blocked: ['c'] }, { unread: ['a'], blocked: ['c', 'd'] }]), { unread: ['a', 'b'], blocked: ['c', 'd'] })
+  assert.deepEqual(totalAttention([{ unread: ['a', 'b'], blocked: ['c'], drafts: [] }, { unread: ['a'], blocked: ['c', 'd'], drafts: [] }]), { unread: ['a', 'b'], blocked: ['c', 'd'], drafts: [] })
 })
 
 const at = (offset: number) => ({ session: 's1', offset, ts: `t${offset}` })
@@ -289,6 +289,6 @@ test('a space marks read exactly the agents its badge counts, over unread, read 
     pira: { turn: 0, pos: null, at: 4000, unread: false },
   })
   const after = spaceAttention(board, agents, { ...markers, ...updates })
-  assert.deepEqual(after, { unread: [], blocked: ['tano'] }, 'blocked stays loud')
+  assert.deepEqual(after, { unread: [], blocked: ['tano'], drafts: [] }, 'blocked stays loud')
   assert.deepEqual(spaceMenuItems(after), [], 'nothing left to mark: no menu')
 })
