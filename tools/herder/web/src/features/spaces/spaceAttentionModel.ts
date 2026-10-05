@@ -3,9 +3,12 @@ import { findAgentRow } from '../../shared/agentStatus.ts'
 import { panelParams, readStoredSpaceLayout } from '../layout/dockLayout.ts'
 import { baselineMarker, type ReadMarker, type ReadMarkers, type ReadPosition } from './readMarkerModel.ts'
 import { readThrough } from './readPositionModel.ts'
+import { draftCountLabel, type DraftMarks } from '../drafts/draftMarksModel.ts'
 
-export type SpaceAttention = { unread: string[], blocked: string[] }
-export const quietAttention: SpaceAttention = { unread: [], blocked: [] }
+// drafts names the agents with something unsent (a composer draft or
+// notes); it rides alongside unread and blocked rather than replacing them.
+export type SpaceAttention = { unread: string[], blocked: string[], drafts: string[] }
+export const quietAttention: SpaceAttention = { unread: [], blocked: [], drafts: [] }
 
 type StoredDock = { panels?: Record<string, { params?: unknown }> } | null | undefined
 
@@ -53,11 +56,12 @@ export function agentAttention(row: Row | undefined, marker: ReadMarker | undefi
   return id !== null && marker !== undefined && id > marker.turn ? 'unread' : null
 }
 
-export function spaceAttention(board: Board | undefined, agents: readonly string[], markers: ReadMarkers): SpaceAttention {
-  const result: SpaceAttention = { unread: [], blocked: [] }
+export function spaceAttention(board: Board | undefined, agents: readonly string[], markers: ReadMarkers, drafts: DraftMarks = {}): SpaceAttention {
+  const result: SpaceAttention = { unread: [], blocked: [], drafts: [] }
   for (const name of agents) {
     const state = agentAttention(findAgentRow(board, name), markers[name])
     if (state) result[state].push(name)
+    if (drafts[name]) result.drafts.push(name)
   }
   return result
 }
@@ -163,16 +167,20 @@ export function spaceMenuItems(attention: SpaceAttention): { id: 'read', label: 
 export function attentionLabel(attention: SpaceAttention): string {
   const unread = attention.unread.length
   const blocked = attention.blocked.length
+  const drafts = attention.drafts.length
   const agents = (count: number) => `${count} agent${count === 1 ? '' : 's'}`
-  if (unread && blocked) return `${agents(unread)} waiting, ${blocked} blocked`
-  if (unread) return `${agents(unread)} waiting`
-  if (blocked) return `${agents(blocked)} blocked`
-  return 'no agents waiting'
+  const waiting = unread && blocked ? `${agents(unread)} waiting, ${blocked} blocked`
+    : unread ? `${agents(unread)} waiting`
+      : blocked ? `${agents(blocked)} blocked`
+        : ''
+  if (drafts) return waiting ? `${waiting}, ${draftCountLabel(drafts)}` : draftCountLabel(drafts)
+  return waiting || 'no agents waiting'
 }
 
 export function totalAttention(values: readonly SpaceAttention[]): SpaceAttention {
   return {
     unread: [...new Set(values.flatMap((value) => value.unread))],
     blocked: [...new Set(values.flatMap((value) => value.blocked))],
+    drafts: [...new Set(values.flatMap((value) => value.drafts))],
   }
 }

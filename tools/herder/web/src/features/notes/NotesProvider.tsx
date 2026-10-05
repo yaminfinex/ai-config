@@ -68,6 +68,12 @@ export function useNotes() {
   return value
 }
 
+// useNotesStoreIfAny is the notes store where a NotesProvider exists, null
+// elsewhere (components that only decorate with notes render without one).
+export function useNotesStoreIfAny(): NotesStore | null {
+  return useContext(NotesContext)?.store ?? null
+}
+
 export function useAllNotes(): Note[] {
   const { store } = useNotes()
   const signal = useMemo(() => allNotesSignal(store), [store])

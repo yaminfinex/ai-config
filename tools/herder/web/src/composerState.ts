@@ -1,7 +1,11 @@
 export const composerDraftPrefix = 'herder.web.messageDraft.v1:'
 
-type ComposerStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+type ComposerStorage = Pick<Storage, 'length' | 'key' | 'getItem' | 'setItem' | 'removeItem'>
 const composerDraftListeners = new Map<string, Set<(text: string) => void>>()
+// Store-wide listeners hear every local draft write, for any agent; another
+// tab's writes arrive as window storage events instead.
+const composerDraftsListeners = new Set<() => void>()
+const notifyComposerDrafts = () => composerDraftsListeners.forEach((listener) => listener())
 
 export function resolveComposerStorage(accessor: () => ComposerStorage = () => window.localStorage): ComposerStorage | null {
   try {
@@ -32,9 +36,33 @@ export function persistComposerDraft(agentName: string, text: string, storage: P
     if (!storage) return
     if (text) storage.setItem(composerDraftKey(agentName), text)
     else storage.removeItem(composerDraftKey(agentName))
+    notifyComposerDrafts()
   } catch {
     // Draft persistence is best-effort when browser storage is unavailable.
   }
+}
+
+// readComposerDrafts is every stored composer draft, by agent, blank or not.
+export function readComposerDrafts(storage: Pick<Storage, 'length' | 'key' | 'getItem'> | null = resolveComposerStorage()): Record<string, string> {
+  const drafts: Record<string, string> = {}
+  try {
+    if (!storage) return drafts
+    for (let index = 0; index < storage.length; index++) {
+      const key = storage.key(index)
+      if (!key?.startsWith(composerDraftPrefix)) continue
+      let agent: string
+      try { agent = decodeURIComponent(key.slice(composerDraftPrefix.length)) } catch { continue }
+      drafts[agent] = storage.getItem(key) ?? ''
+    }
+  } catch {
+    // Unreadable storage has no drafts to show.
+  }
+  return drafts
+}
+
+export function subscribeComposerDrafts(listener: () => void) {
+  composerDraftsListeners.add(listener)
+  return () => { composerDraftsListeners.delete(listener) }
 }
 
 export function subscribeComposerDraft(agentName: string, listener: (text: string) => void) {
@@ -60,6 +88,7 @@ export function appendComposerDraft(
     const text = existing ? `${existing}\n\n${addition}` : addition
     storage.setItem(composerDraftKey(agentName), text)
     composerDraftListeners.get(agentName)?.forEach((listener) => listener(text))
+    notifyComposerDrafts()
     return { ok: true, text }
   } catch {
     return { ok: false, reason: 'The composer draft could not be saved. Your notes were left in place.' }

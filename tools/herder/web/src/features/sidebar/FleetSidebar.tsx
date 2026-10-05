@@ -18,6 +18,8 @@ import { groupHeaderTooltip, openGroupTooltip } from './groupDropModel'
 import { addPendingGroup, realGroupLabels, remainingPendingGroups, removePendingGroup, validateGroupName } from './pendingGroupsModel'
 import { dropAssignment, planSidebarDrop } from './reparentModel'
 import { useAgentRowMenu } from '../workspace/DockTabMenu.tsx'
+import { DraftMark } from '../drafts/DraftMark.tsx'
+import { useDraftMarks } from '../drafts/useDraftMarks.ts'
 
 const emptyExpandedItems: string[] = []
 
@@ -43,6 +45,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
   onKnownManagerItems: (items: string[]) => void
 }) {
   const agentRowMenu = useAgentRowMenu()
+  const drafts = useDraftMarks()
   const [selectedItems, setSelectedItems] = useState<string[]>([])
   const [renaming, setRenaming] = useState<RenameState | null>(null)
   const [assignmentProblem, setAssignmentProblem] = useState<LifecycleProblem | null>(null)
@@ -298,6 +301,7 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
             {view === 'supervision' && node.marker === 'unknown-manager' && pane?.agent && pane.agent !== '-' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
               onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
             {(folder || node.placeholder) && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
+            {pane?.agent && pane.agent !== '-' && <DraftMark drafts={drafts[pane.agent]} />}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
           title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${pane.group ? ` · group ${pane.group}` : ''} · ${sideHint}` : node.placeholder ? `group ${node.name} · placeholder · drop an agent here to create it` : groupHeader ? groupHeaderTooltip(node, memberCount) : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}

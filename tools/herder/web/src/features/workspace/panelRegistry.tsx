@@ -18,6 +18,8 @@ import { useAgentUnread, useWorkspaceActionsContext, useWorkspaceData } from './
 import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace, type PanelKind } from './panelRegistryModel'
 import { liveRosterNames } from '../notes/notesPresentation'
 import { useDockTabMenu } from './DockTabMenu'
+import { DraftMark } from '../drafts/DraftMark.tsx'
+import { useDraftMarks } from '../drafts/useDraftMarks.ts'
 import { ErrorBoundary } from '../../shared/ErrorBoundary'
 import { agentBoardTitle } from '../../shared/agentIdentity'
 
@@ -154,12 +156,13 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
   const meta = params.kind === 'agent' ? '' : presentation.meta
   const tabRef = useRef<HTMLDivElement | null>(null)
   const tabMenu = useDockTabMenu(tabRef, api.id, params)
+  const drafts = useDraftMarks()
   return <><div ref={tabRef} className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
     onContextMenu={tabMenu.onContextMenu}
     onDoubleClick={(event) => { if (params.preview) actions.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) actions.closePanel(api.id) }}>
     <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{presentation.icon}{title}</span>
-    {params.kind === 'agent' && <span className="dock-tab-meta"><AgentStatusDot status={status} /><ToolBadge tool={agentBoardTool(data.board, params.name)} /></span>}
+    {params.kind === 'agent' && <span className="dock-tab-meta"><DraftMark drafts={drafts[params.name]} /><AgentStatusDot status={status} /><ToolBadge tool={agentBoardTool(data.board, params.name)} /></span>}
     {params.kind !== 'agent' && meta && <span className="dock-tab-meta">{meta}</span>}
     <button type="button" className="dock-tab-close" aria-label={`Close ${title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closePanel(api.id)}>×</button>
   </div>{tabMenu.menu}</>
