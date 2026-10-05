@@ -583,6 +583,7 @@ func TestFileEndpointsRefuseGitDirectoryAsDirectOpenRoot(t *testing.T) {
 		for _, path := range []string{
 			"/api/files?root=" + url.QueryEscape(root) + "&path=config",
 			"/api/files/raw?root=" + url.QueryEscape(root) + "&path=config",
+			"/api/files/image?root=" + url.QueryEscape(root) + "&path=config",
 			"/api/files/tree?root=" + url.QueryEscape(root),
 			"/api/backlog?root=" + url.QueryEscape(root) + "&path=",
 		} {
@@ -771,5 +772,92 @@ func writeFileAPIFixture(t *testing.T, root, name, contents string) {
 	}
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestImageFileEndpointStreamsSniffedTypesWithHeaders(t *testing.T) {
+	root := newFileAPIGitRepo(t)
+	png := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{7}, int(fileapi.HardCap))...)
+	if err := os.WriteFile(filepath.Join(root, "shot.png"), png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svg := `<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`
+	writeFileAPIFixture(t, root, "icon.svg", svg)
+	deps := fileAPIDeps(t, []string{root}, nil)
+	for _, test := range []struct {
+		path, mime, csp string
+		body            []byte
+	}{
+		{"shot.png", "image/png", "", png},
+		{"icon.svg", "image/svg+xml", "default-src 'none'; style-src 'unsafe-inline'; sandbox", []byte(svg)},
+	} {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/files/image?root="+url.QueryEscape(root)+"&path="+test.path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s", test.path, response.Code, response.Body.String())
+		}
+		for header, want := range map[string]string{
+			"Content-Type": test.mime, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store",
+			"Content-Security-Policy": test.csp, "Content-Length": fmt.Sprint(len(test.body)),
+		} {
+			if got := response.Header().Get(header); got != want {
+				t.Errorf("%s %s = %q, want %q", test.path, header, got, want)
+			}
+		}
+		if !bytes.Equal(response.Body.Bytes(), test.body) {
+			t.Errorf("%s body differs", test.path)
+		}
+	}
+}
+
+func TestImageFileEndpointPinsRefusals(t *testing.T) {
+	root := newFileAPIGitRepo(t)
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "outside.png"), []byte("\x89PNG\r\n\x1a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "outside.png"), filepath.Join(root, "escape.png")); err != nil {
+		t.Fatal(err)
+	}
+	writeFileAPIFixture(t, root, "renamed.png", "just text\n")
+	large, err := os.Create(filepath.Join(root, "large.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := large.Write([]byte("\x89PNG\r\n\x1a\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := large.Truncate(fileapi.ImageCap + 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := large.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deps := fileAPIDeps(t, []string{root}, nil)
+	rootQuery := url.QueryEscape(root)
+	for _, test := range []struct {
+		path   string
+		status int
+		shape  string
+	}{
+		{"/api/files/image?root=" + rootQuery + "&path=missing.png", http.StatusNotFound, `"error":"not found"`},
+		{"/api/files/image?root=" + rootQuery + "&path=renamed.png", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/image?root=" + rootQuery + "&path=.git%2Fconfig", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/image?root=" + rootQuery + "&path=large.png", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/image?root=" + rootQuery + "&path=escape.png", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/image?root=" + rootQuery + "&path=..%2Fx.png", http.StatusConflict, `"error":"refused by substrate"`},
+		{"/api/files/image?root=relative%2Froot&path=x.png", http.StatusNotFound, `"error":"unknown root"`},
+		{"/api/files/image?root=" + rootQuery, http.StatusBadRequest, `"error":"bad request"`},
+	} {
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+		if response.Code != test.status || !strings.Contains(response.Body.String(), test.shape) {
+			t.Errorf("%s = %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+	response := httptest.NewRecorder()
+	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/files/image", nil))
+	if response.Code != http.StatusBadRequest {
+		t.Errorf("POST image = %d %s", response.Code, response.Body.String())
 	}
 }

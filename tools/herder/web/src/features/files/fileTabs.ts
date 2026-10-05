@@ -11,8 +11,14 @@ export function isHtmlPath(path: string) {
   return /\.html?$/iu.test(path)
 }
 
+// isSvgPath only picks the initial Rendered mode; whether a file is an image
+// is the server's sniffed image_mime, never this.
+export function isSvgPath(path: string) {
+  return /\.svg$/iu.test(path)
+}
+
 export function initialFileViewMode(target: FileTarget): FileViewMode {
-  return (isMarkdownPath(target.path) || isHtmlPath(target.path)) && !target.line ? 'rendered' : 'source'
+  return (isMarkdownPath(target.path) || isHtmlPath(target.path) || isSvgPath(target.path)) && !target.line ? 'rendered' : 'source'
 }
 
 function updateFileTab(tab: FileTab, target: FileTarget): FileTab {

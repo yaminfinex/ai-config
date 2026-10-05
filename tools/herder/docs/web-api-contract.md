@@ -588,7 +588,7 @@ the path and no other root is indexed; with no such root the answer is an
 honest 200 with `candidates:[]` and `roots:[]`. Relative mentions and bare
 names are unchanged: all live roots, agent-first preference, current tiers.
 
-`/api/files`, `/api/files/raw`, `/api/files/tree`, and `/api/backlog` accept,
+`/api/files`, `/api/files/raw`, `/api/files/image`, `/api/files/tree`, and `/api/backlog` accept,
 in addition to the live root set, any `root` that is an absolute, clean,
 existing directory with no `.git` component lexically or at its resolved
 location (the shape a direct open emits), so a directly opened file under
@@ -701,7 +701,15 @@ GET `/api/files?root={root-id}&path={root-relative-file}`
   shortened. A binary response is
   `{"root":"...","path":"relative/file.bin","binary":true,"size":123,"fetched_at":"..."}`;
   `content` and `truncated` are absent rather than fabricated. Files above the
-  4 MiB hard cap are never served.
+  4 MiB hard cap are never served, except an image (below).
+
+  When the file's leading bytes sniff as an allowed image type the response
+  adds `"image_mime":"image/png"` (or `image/jpeg`, `image/gif`, `image/webp`,
+  `image/avif`, `image/bmp`, `image/x-icon`, `image/svg+xml`). The type comes
+  from magic numbers, never the extension alone; SVG additionally needs the
+  `.svg` extension and a root `<svg>` element. A raster image is always
+  `binary:true` and may be up to 25 MiB. An SVG keeps its text shape (content,
+  truncated) up to 4 MiB and is `binary:true` without content above it.
 
 GET `/api/files/raw?root={root-id}&path={root-relative-file}`
   Reads the complete bytes of one regular file for the sandboxed HTML preview,
@@ -710,6 +718,19 @@ GET `/api/files/raw?root={root-id}&path={root-relative-file}`
   Success is always `text/plain; charset=utf-8` with
   `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, and an exact
   `Content-Length`; checked-out HTML is never served as an executable page.
+
+GET `/api/files/image?root={root-id}&path={root-relative-file}`
+  Streams the complete bytes of one image for the file panel's image view.
+  Root, containment, `.git`, file-kind, and refusal rules are identical to
+  `/api/files`. The file is served only when its bytes sniff as an allowed
+  type (the `image_mime` rule above); anything else is 409 `refused by
+  substrate`. The cap is 25 MiB, separate from the 4 MiB text cap, and the
+  body streams rather than loads. Success carries the sniffed `Content-Type`,
+  `X-Content-Type-Options: nosniff`, `Cache-Control: no-store`, and an exact
+  `Content-Length`. SVG additionally carries
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox`
+  so opening the URL directly never runs script. This is a separate endpoint
+  so `/api/files/raw` keeps its single `text/plain` contract.
 
 GET `/api/files/tree?root={root-id}&path={optional-root-relative-directory}`
   Lists exactly one directory level; an absent or empty path means the root.

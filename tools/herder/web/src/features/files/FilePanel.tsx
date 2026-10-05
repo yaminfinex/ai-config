@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useInfiniteQuery, useQuery, type UseQueryResult } from '@tanstack/react-query'
-import { getFile, getFileRaw, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
+import { fileImageURL, getFile, getFileRaw, getGitDiff, getGitFile, getGitLog, getGitStatus, queryKeys, resolveFiles } from '../../api/client'
 import type { FileTarget, FolderTarget, GitDiffRead, GitLogEntry, GitLogRead } from '../../types'
 import { Banner } from '../../shared/presentation'
 import { fileMarkdownComponents, Markdown } from '../../shared/Markdown'
@@ -19,6 +19,8 @@ import { useTranscriptFileResolver } from './TranscriptFileResolver'
 import { useNoteCapture } from '../notes/useNoteCapture'
 import type { NoteSource } from '../notes/notesStore'
 import { htmlPreviewModel } from './htmlPreviewModel'
+import { binaryDetail, fileBodyKind, imageDimensions, imageFailureText, imageLoadFor, svgRenderable, type ImageLoad } from './imageViewModel'
+import { FileImage } from './FileImage'
 
 function formattedBytes(size: number) {
   return `${size.toLocaleString()} bytes`
@@ -108,7 +110,14 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
   const data = gitState.revision ? revisionQuery.data : fileQuery.data
   const markdown = isMarkdownPath(viewedPath)
   const html = isHtmlPath(viewedPath)
-  const renderable = markdown || html
+  const revision = Boolean(gitState.revision)
+  const imageMime = data && 'fetched_at' in data ? data.image_mime : undefined
+  const imageSrc = data && 'fetched_at' in data && imageMime ? fileImageURL(target.root, target.path, data.fetched_at) : ''
+  const [imageLoadState, setImageLoad] = useState<ImageLoad | null>(null)
+  const imageLoad = imageLoadFor(imageLoadState, imageSrc)
+  const [imageFit, setImageFit] = useState(true)
+  const svgImage = Boolean(data && svgRenderable(data.binary, imageMime, revision))
+  const renderable = markdown || html || svgImage
   const truncated = Boolean(data && !data.binary && data.truncated)
   const rawQueryEnabled = gitState.mode === 'current' && !gitState.revision && html && truncated && viewMode === 'rendered'
   const rawQuery = useQuery({
@@ -121,6 +130,9 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
   const preview = htmlPreviewModel(html, truncated, rawState, data ? formattedBytes(data.size) : '')
   const effectiveViewMode = preview.renderedEnabled ? viewMode : 'source'
   const rawFailure = rawQuery.error ? failureBanner('raw file', rawQuery.error) : null
+  const bodyKind = data ? fileBodyKind({ binary: data.binary, imageMime, revision, viewMode: effectiveViewMode, imageFailed: imageLoad.status === 'error' }) : 'text'
+  const imageFailure = imageMime && imageLoad.status === 'error' ? imageLoad : null
+  const dimensions = bodyKind === 'image' ? imageDimensions(imageLoad) : null
   const missionMarkdown = Boolean(data && !data.binary && /(?:^|\/)mission\.md$/iu.test(viewedPath))
   const facts = data && !data.binary && missionMarkdown ? missionFacts(data.content) : null
   const hasFacts = facts && Object.keys(facts).length > 0
@@ -152,10 +164,14 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
           disabled={mode !== 'current' && !gitAvailable} title={mode !== 'current' && gitReason ? gitReason : undefined}
           onClick={() => onGitState(selectGitFileMode(gitState, mode))}>{mode[0].toUpperCase() + mode.slice(1)}</button>)}
       </div>
-      {gitState.mode === 'current' && renderable && <div className="detail-toggle file-view-toggle" aria-label={`${html ? 'HTML' : 'Markdown'} view`}>
+      {gitState.mode === 'current' && renderable && <div className="detail-toggle file-view-toggle" aria-label={`${html ? 'HTML' : svgImage ? 'SVG' : 'Markdown'} view`}>
         <button type="button" className={effectiveViewMode === 'rendered' ? 'active' : ''} aria-pressed={effectiveViewMode === 'rendered'} disabled={!preview.renderedEnabled}
-          title={html ? preview.renderedEnabled ? 'Render HTML. Scripts do not run.' : 'Rendered view is unavailable because this file is truncated.' : undefined} onClick={() => onViewMode('rendered')}>Rendered</button>
+          title={html ? preview.renderedEnabled ? 'Render HTML. Scripts do not run.' : 'Rendered view is unavailable because this file is truncated.' : svgImage ? 'Render SVG as an image. Scripts do not run.' : undefined} onClick={() => onViewMode('rendered')}>Rendered</button>
         <button type="button" className={effectiveViewMode === 'source' ? 'active' : ''} aria-pressed={effectiveViewMode === 'source'} onClick={() => onViewMode('source')}>Source</button>
+      </div>}
+      {gitState.mode === 'current' && bodyKind === 'image' && <div className="detail-toggle file-image-toggle-group" aria-label="Image size">
+        <button type="button" className={imageFit ? 'active' : ''} aria-pressed={imageFit} title="Fit to the panel width, never enlarged" onClick={() => setImageFit(true)}>Fit</button>
+        <button type="button" className={imageFit ? '' : 'active'} aria-pressed={!imageFit} onClick={() => setImageFit(false)}>Actual size</button>
       </div>}
     </header>
     {gitState.mode === 'current' && (gitState.revision ? revisionQuery.isPending : fileQuery.isPending) && <PanelState as="div" className="file-state">Reading {gitState.revision ? 'historical revision' : 'current file'}…</PanelState>}
@@ -170,15 +186,17 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
       }} />}
     </PanelState>}
     {gitState.mode === 'current' && data && !failure && <>
-      <div className="file-facts">{'fetched_at' in data ? <span>Fetched {new Date(data.fetched_at).toLocaleString()}</span> : <span>Revision {data.sha.slice(0, 12)} · immutable</span>}<span>{formattedBytes(data.size)}</span>{gitState.revision && <span>{gitState.revision.path}</span>}{target.line && !gitState.revision && <span>line {target.line}</span>}</div>
+      <div className="file-facts">{'fetched_at' in data ? <span>Fetched {new Date(data.fetched_at).toLocaleString()}</span> : <span>Revision {data.sha.slice(0, 12)} · immutable</span>}<span>{formattedBytes(data.size)}</span>{bodyKind === 'image' && <span>{dimensions ?? 'Loading image…'}</span>}{bodyKind === 'image' && <span>{imageMime}</span>}{gitState.revision && <span>{gitState.revision.path}</span>}{target.line && !gitState.revision && <span>line {target.line}</span>}</div>
       {markdown && viewMode === 'rendered' && hasFacts && <section className="mission-fact-strip" aria-label="Mission facts">
         {facts.title && <span><small>title</small>{facts.title}</span>}
         {facts.status && <span><small>status</small>{facts.status}</span>}
         {facts.created && <span><small>created</small>{facts.created}</span>}
         {facts.updated && <span><small>updated</small>{facts.updated}</span>}
       </section>}
-      {data.binary ? <PanelState className="file-state binary" title="Binary file" detail={<>No text content is available for this {formattedBytes(data.size)} file.</>} />
+      {bodyKind === 'image' ? <FileImage src={imageSrc} mime={imageMime ?? ''} path={data.path} fit={imageFit} onToggleFit={() => setImageFit((fit) => !fit)} onLoad={setImageLoad} />
+        : data.binary ? <PanelState className="file-state binary" title="Binary file" detail={binaryDetail(formattedBytes(data.size), imageFailure)} />
         : <div className="file-content" role="region" aria-label={`Read-only contents of ${data.path}`} onDoubleClick={fileResolver.onDoubleClick}>
+          {imageFailure && <div className="truncation-banner">{imageFailureText(imageFailure)} Showing the source instead.</div>}
           {data.truncated && !(html && effectiveViewMode === 'rendered') && <div className="truncation-banner">Showing the first 256 KiB of {formattedBytes(data.size)}. The file is truncated.</div>}
           {html && effectiveViewMode === 'rendered' && rawQueryEnabled && rawQuery.isPending ? <PanelState as="div" className="file-state">Reading full HTML preview…</PanelState>
             : html && effectiveViewMode === 'rendered' && rawFailure ? <Banner source={rawFailure.source} detail={rawFailure.detail} />
