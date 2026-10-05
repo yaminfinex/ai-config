@@ -22,7 +22,7 @@ import { TranscriptLiveTail } from './TranscriptLiveTail'
 import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
 import type { FileTarget, FolderTarget } from '../../types'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
-import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
+import { openInSideKeys, openInSideLabel, placementFromModifiers, type OpenPlacement } from '../layout/openPlacement'
 import { PanelState } from '../../shared/PanelState'
 import { AgentNotesStrip } from '../notes/AgentNotesStrip'
 import { useNoteCapture } from '../notes/useNoteCapture'
@@ -31,7 +31,7 @@ import { queueComposerNote } from '../notes/noteQueue'
 import { agentHeaderIdentity } from '../../shared/agentIdentity'
 import { usePositionedMenu } from '../../shared/usePositionedMenu.tsx'
 import { dividerIndex, useReadMarker, viewedAtLabel } from '../spaces/index.ts'
-import { blockMenuIndex, initialDividerSnapshot, nextDividerSnapshot } from './transcriptReadModel'
+import { altClickUnreadIndex, blockMenuIndex, initialDividerSnapshot, nextDividerSnapshot } from './transcriptReadModel'
 
 export function AgentHeaderIdentity({ name }: { name: string }) {
   const identity = agentHeaderIdentity(name)
@@ -83,6 +83,14 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     event.preventDefault()
     setBlockMenuEntry(index)
     blockMenu.open({ x: event.clientX, y: event.clientY }, event.currentTarget)
+  }
+  // ⌥-click marks unread from the clicked entry with no menu; capture runs it before the entry's own handlers.
+  const onTranscriptClickCapture = (event: MouseEvent<HTMLElement>) => {
+    const index = altClickUnreadIndex(event, event.target instanceof Element ? event.target : null, window.getSelection()?.toString() ?? '')
+    if (index === null) return
+    event.preventDefault()
+    event.stopPropagation()
+    onMarkUnread(index)
   }
   const [notesFocusRequest, setNotesFocusRequest] = useState(0)
   // The capture chip's quick send is the Composer's own send sequence. Only viewer
@@ -144,7 +152,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
     {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
     {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} active={active} onFocus={() => onTerminalFocus(screenPaneID)} onBlur={() => onTerminalFocus(undefined)} /> : <div className="transcript-viewport">
-      <section className="transcript" data-follow-scroll aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick} onContextMenu={onTranscriptContextMenu}>
+      <section className="transcript" data-follow-scroll aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick} onContextMenu={onTranscriptContextMenu} onClickCapture={onTranscriptClickCapture}>
         {unavailable ? <PanelState className="transcript-unavailable" title={unavailable.title} detail={unavailable.detail}>
           {unavailableParent && <button type="button" onClick={() => onOpenAgent(unavailableParent)}>Open parent</button>}
         </PanelState> : <>
@@ -161,7 +169,7 @@ export function AgentPanel({ name, agents, active, liveStatus, screenPaneID, men
       </section>
       {fileResolver.element}
       {blockMenu.position && createPortal(<div ref={blockMenu.menuRef} className="dock-tab-menu" role="menu" aria-label="Transcript actions" style={{ left: blockMenu.position.x, top: blockMenu.position.y }}>
-        <button type="button" role="menuitem" onClick={() => { blockMenu.close(false); onMarkUnread(blockMenuEntry) }}>Mark unread from here</button>
+        <button type="button" role="menuitem" title={`Shortcut: ${openInSideKeys(navigator.userAgent)} the entry`} onClick={() => { blockMenu.close(false); onMarkUnread(blockMenuEntry) }}>Mark unread from here</button>
       </div>, document.body)}
       <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onBottom={transcriptFollow.jumpToBottom} />
     </div>}

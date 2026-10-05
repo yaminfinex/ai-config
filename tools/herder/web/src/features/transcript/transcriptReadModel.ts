@@ -40,3 +40,15 @@ export function blockMenuIndex(target: MenuTarget | null, selection: string): nu
   const index = Number(target.closest('[data-entry-index]')?.getAttribute('data-entry-index') ?? NaN)
   return Number.isSafeInteger(index) && index >= 0 ? index : null
 }
+
+type ClickModifiers = { button: number, altKey: boolean, metaKey: boolean, ctrlKey: boolean, shiftKey: boolean }
+
+// altClickUnreadIndex is the entry a plain ⌥-click (Alt-click) marks unread
+// from, Slack's gesture: the same entry the right-click menu would offer
+// (blockMenuIndex, so a click that ends a text selection does nothing), but
+// never on a link, button or path, which keep ⌥-click as open in the side group.
+export function altClickUnreadIndex(click: ClickModifiers, target: MenuTarget | null, selection: string): number | null {
+  if (click.button !== 0 || !click.altKey || click.metaKey || click.ctrlKey || click.shiftKey) return null
+  if (target?.closest('button, summary, .path-link')) return null
+  return blockMenuIndex(target, selection)
+}
