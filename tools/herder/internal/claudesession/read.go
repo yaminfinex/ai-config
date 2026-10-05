@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"os"
 	"regexp"
@@ -45,7 +46,8 @@ type envelope struct {
 	IsCompactSummary bool   `json:"isCompactSummary"`
 	PromptSource     string `json:"promptSource"`
 	Origin           struct {
-		Kind string `json:"kind"`
+		Kind   string `json:"kind"`
+		Server string `json:"server"`
 	} `json:"origin"`
 	Message struct {
 		Role    string          `json:"role"`
@@ -439,6 +441,11 @@ func classifyUser(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
 	if env.IsCompactSummary || strings.HasPrefix(text, "This session is being continued") {
 		return KindCompactDivider, raw
 	}
+	// Channel messages arrive as meta records, so they are claimed before the
+	// injected-system fallback below.
+	if env.Origin.Kind == "channel" {
+		return KindChannelMessage, parseChannelMessages(text, env.Origin.Server)
+	}
 	if env.IsMeta {
 		if feedback, ok := strings.CutPrefix(strings.TrimSpace(text), "Stop hook feedback:"); ok {
 			if payload, ok := parseHcomDeliveryEnvelope(feedback, "stop_hook_feedback"); ok {
@@ -460,6 +467,67 @@ func classifyUser(env envelope, raw json.RawMessage) (Kind, json.RawMessage) {
 		return KindHumanPrompt, raw
 	}
 	return KindUnknown, raw
+}
+
+var (
+	channelBlockPattern = regexp.MustCompile(`(?s)<channel((?:\s+[\w-]+="[^"]*")*)\s*>(.*?)</channel>`)
+	channelAttrPattern  = regexp.MustCompile(`([\w-]+)="([^"]*)"`)
+)
+
+// parseChannelMessages splits a channel record into its <channel> blocks in
+// order. Text outside a block, including a tag that does not parse, stays as
+// a raw segment so nothing the agent saw is silently dropped. The sender's
+// actor id and avatar URL are deliberately not carried: the web never fetches
+// remote content named by a transcript.
+func parseChannelMessages(text, server string) json.RawMessage {
+	messages := []map[string]any{}
+	raw := func(segment string) {
+		if segment = strings.TrimSpace(segment); segment != "" {
+			messages = append(messages, map[string]any{"raw": true, "text": segment})
+		}
+	}
+	last := 0
+	for _, match := range channelBlockPattern.FindAllStringSubmatchIndex(text, -1) {
+		raw(text[last:match[0]])
+		last = match[1]
+		attrs := map[string]string{}
+		for _, attr := range channelAttrPattern.FindAllStringSubmatch(text[match[2]:match[3]], -1) {
+			attrs[attr[1]] = html.UnescapeString(attr[2])
+		}
+		source := attrs["source"]
+		if source == "" {
+			source = server
+		}
+		message := map[string]any{
+			"source":       source,
+			"source_label": channelSourceLabel(source),
+			"message_id":   attrs["message_id"],
+			"created_at":   attrs["created_at"],
+			"session_id":   attrs["session_id"],
+			"text":         strings.TrimSpace(text[match[4]:match[5]]),
+		}
+		if sender := attrs["sender"]; sender != "" {
+			var parsed struct {
+				Kind  string `json:"kind"`
+				Name  string `json:"name"`
+				Login string `json:"login"`
+			}
+			if json.Unmarshal([]byte(sender), &parsed) == nil && (parsed.Name != "" || parsed.Login != "" || parsed.Kind != "") {
+				message["sender"] = map[string]string{"kind": parsed.Kind, "name": parsed.Name, "login": parsed.Login}
+			} else {
+				message["sender_raw"] = sender
+			}
+		}
+		messages = append(messages, message)
+	}
+	raw(text[last:])
+	return mustJSON(map[string]any{"server": server, "source_label": channelSourceLabel(server), "messages": messages})
+}
+
+// channelSourceLabel is the last ':' segment of a channel source, e.g.
+// "plugin:zobrist-transcript:zobrist" is "zobrist".
+func channelSourceLabel(source string) string {
+	return source[strings.LastIndex(source, ":")+1:]
 }
 
 func isCommandOutput(text string) bool {

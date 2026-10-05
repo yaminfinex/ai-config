@@ -35,6 +35,7 @@ test('fixture law classifies every transcript kind explicitly', () => {
     hcom_delivery_stub: 'delivery',
     hcom_delivery: 'delivery',
     task_notification: 'activity',
+    channel_message: 'show',
     injected_system: 'system',
     command_stdout: 'activity',
     compact_divider: 'show',

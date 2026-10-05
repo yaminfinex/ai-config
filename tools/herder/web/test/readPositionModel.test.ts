@@ -32,6 +32,7 @@ test('the latest turn starts at its opener, a delivery stub and its delivery tog
   assert.equal(lastTurnStart(transcript.slice(0, 2)), 0)
   assert.equal(lastTurnStart([entry('assistant_text', 1), entry('tool_use', 2)] as TranscriptEntry[]), 1, 'no opener: the last entry')
   assert.equal(lastTurnStart([]), -1)
+  assert.equal(lastTurnStart([entry('assistant_text', 1), entry('channel_message', 2), entry('tool_use', 3)] as TranscriptEntry[]), 1, 'an outside channel message opens a turn like a delivery')
 })
 
 test('mark unread moves the position to just before the chosen entry and keeps the turn', () => {

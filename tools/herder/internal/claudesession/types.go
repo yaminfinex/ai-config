@@ -13,6 +13,7 @@ const (
 	KindHcomStub         Kind = "hcom_delivery_stub"
 	KindHcomDelivery     Kind = "hcom_delivery"
 	KindTaskNotification Kind = "task_notification"
+	KindChannelMessage   Kind = "channel_message"
 	KindInjectedSystem   Kind = "injected_system"
 	KindCommandOutput    Kind = "command_stdout"
 	KindCompactDivider   Kind = "compact_divider"

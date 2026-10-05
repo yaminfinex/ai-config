@@ -21,8 +21,8 @@ export function positionBefore(session: string, entries: readonly TranscriptEntr
   return previous ? entryPosition(session, previous) : { session, offset: Math.max(0, entry.byteOffset - 1), ts: '' }
 }
 
-// A turn opens with what the owner or another agent sent it.
-const turnOpeners = new Set<EntryKind>(['human_prompt', 'hcom_delivery_stub', 'hcom_delivery', 'task_notification'])
+// A turn opens with what the owner, another agent or an outside channel sent it.
+const turnOpeners = new Set<EntryKind>(['human_prompt', 'hcom_delivery_stub', 'hcom_delivery', 'task_notification', 'channel_message'])
 
 // lastTurnStart is the index of the entry that opened the latest turn, the
 // last entry when no opener is in the window, or -1 for an empty window.
