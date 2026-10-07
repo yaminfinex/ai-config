@@ -1151,4 +1151,67 @@ done
   || fail "flip cull did not re-read process info before closing"
 pass "cull keeps labelled busy, moved-label, foreign, claimed, malformed and flipped panes"
 
+# prune-build-cache proves its mbx settings, then only previews unless the
+# caller passes --apply.
+mkdir -p -- "$TEST_ROOT/mbx" "$TEST_ROOT/not-a-mount"
+cat >"$TEST_ROOT/mbx/mbx" <<'EOF'
+#!/usr/bin/env bash
+if [[ $1 == settings && $2 == get ]]; then
+  case $3 in
+    cache_dir) printf '%s\n' "${FAKE_MBX_CACHE_DIR-/srv/cache/mbx}" ;;
+    gc.auto) printf '%s\n' "${FAKE_MBX_GC_AUTO-false}" ;;
+    gc.max_total_size) printf '%s\n' "${FAKE_MBX_MAX_TOTAL-400GiB}" ;;
+    gc.min_free_size) printf '%s\n' "${FAKE_MBX_MIN_FREE-100GiB}" ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+printf 'mbx %s\n' "$*" >>"$FLEET_TEST_CALLS"
+EOF
+chmod +x "$TEST_ROOT/mbx/mbx"
+prune() {
+  MBX_BIN="$TEST_ROOT/mbx/mbx" CACHE_MOUNT=/ "$FLEET/prune-build-cache.sh" "$@"
+}
+: >"$FLEET_TEST_CALLS"
+prune >/dev/null
+[[ $(cat "$FLEET_TEST_CALLS") == 'mbx gc --dry-run' ]] || fail "prune without --apply did more than preview"
+: >"$FLEET_TEST_CALLS"
+prune --apply >/dev/null
+[[ $(cat "$FLEET_TEST_CALLS") == 'mbx gc' ]] || fail "prune --apply did not run mbx gc"
+for args in '--dry-run' '--apply --apply' 'apply'; do
+  : >"$FLEET_TEST_CALLS"
+  # shellcheck disable=SC2086
+  if prune $args >/dev/null 2>&1; then
+    fail "prune accepted '$args'"
+  fi
+  [[ ! -s $FLEET_TEST_CALLS ]] || fail "prune ran mbx for '$args'"
+done
+: >"$FLEET_TEST_CALLS"
+if MBX_BIN="$TEST_ROOT/mbx/mbx" CACHE_MOUNT="$TEST_ROOT/not-a-mount" "$FLEET/prune-build-cache.sh" --apply >/dev/null 2>&1; then
+  fail "prune ran with the cache drive unmounted"
+fi
+[[ ! -s $FLEET_TEST_CALLS ]] || fail "prune ran mbx with the cache drive unmounted"
+for refusal in \
+  '/|FAKE_MBX_CACHE_DIR=|cache_dir is unset' \
+  '/proc|FAKE_MBX_CACHE_DIR=/srv/cache/mbx|cache_dir /srv/cache/mbx is not under /proc' \
+  '/|FAKE_MBX_GC_AUTO=true|gc.auto is not false' \
+  '/|FAKE_MBX_MAX_TOTAL=|gc.max_total_size is unset' \
+  '/|FAKE_MBX_MIN_FREE=|gc.min_free_size is unset'; do
+  mount=${refusal%%|*}
+  setting=${refusal#*|}
+  reason=${setting#*|}
+  setting=${setting%%|*}
+  for args in '' '--apply'; do
+    : >"$FLEET_TEST_CALLS"
+    # shellcheck disable=SC2086
+    if env "$setting" MBX_BIN="$TEST_ROOT/mbx/mbx" CACHE_MOUNT="$mount" \
+      "$FLEET/prune-build-cache.sh" $args >/dev/null 2>"$TEST_ROOT/prune.err"; then
+      fail "prune ran with $setting"
+    fi
+    grep -F -- "$reason" "$TEST_ROOT/prune.err" >/dev/null || fail "prune did not explain refusing $setting"
+    [[ ! -s $FLEET_TEST_CALLS ]] || fail "prune ran mbx gc with $setting"
+  done
+done
+pass "prune-build-cache proves its settings, previews by default, prunes only with --apply, and refuses bad arguments or an unmounted drive"
+
 printf 'ALL GREEN - fleet wrapper contract holds.\n'
