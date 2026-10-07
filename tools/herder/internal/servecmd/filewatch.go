@@ -166,7 +166,7 @@ func startFileWatches(ctx context.Context, deps dependencies, requests []fileWat
 	if len(requests) == 0 || deps.fileWatcher == nil {
 		return nil
 	}
-	set, _, err := liveRootSet(ctx, deps)
+	set, _, err := deps.fleet().Roots(ctx)
 	if err != nil {
 		return nil
 	}

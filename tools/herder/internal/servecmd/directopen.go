@@ -60,6 +60,7 @@ func directOpen(ctx context.Context, query string) (resolveResponse, bool) {
 	return resolveResponse{
 		Candidates: []fileresolver.Result{{Root: root, Path: filepath.ToSlash(relative), Kind: candidateKind, Tier: fileresolver.TierExact}},
 		Roots:      []fileresolver.RootOutcome{{Root: root, Status: fileresolver.RootComplete}},
+		Total:      1,
 	}, true
 }
 

@@ -109,7 +109,9 @@ export function getEntries(name: string, options: { from?: number, limit: number
   return requestJSON<EntriesPage>(`/api/agents/${encodeURIComponent(name)}/entries?${query}`, undefined, fetcher)
 }
 
-export function resolveFiles(queryText: string, context?: ResolveContext, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+// The server ranks every match and returns the top `limit` (its default is 10)
+// with `total`; omit limit unless a caller shows a different number of rows.
+export function resolveFiles(queryText: string, context?: ResolveContext, fetcher: Fetcher = fetch, signal?: AbortSignal, limit?: number) {
   const query = new URLSearchParams({ q: queryText })
   if (typeof context === 'string') {
     if (context) query.set('agent', context)
@@ -117,6 +119,7 @@ export function resolveFiles(queryText: string, context?: ResolveContext, fetche
     query.set('root', context.root)
     query.set('path', context.path)
   }
+  if (limit !== undefined) query.set('limit', String(limit))
   return requestJSON<ResolveResponse>(`/api/resolve?${query}`, { signal }, fetcher)
 }
 

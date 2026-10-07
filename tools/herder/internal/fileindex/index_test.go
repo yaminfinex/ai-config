@@ -2,69 +2,205 @@ package fileindex
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"ai-config/tools/herder/internal/filecandidate"
 )
 
-func TestIndexCachesPerRootUntilTTLOrForcedRefresh(t *testing.T) {
+func TestIndexServesStaleAndRefreshesInBackgroundOrOnForcedRefresh(t *testing.T) {
+	var clock sync.Mutex
 	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
-	gitCalls := 0
+	readNow := func() time.Time { clock.Lock(); defer clock.Unlock(); return now }
+	advance := func(d time.Duration) { clock.Lock(); now = now.Add(d); clock.Unlock() }
+	var gitCalls atomic.Int32
 	index := New(Options{
 		TTL: time.Minute,
-		Now: func() time.Time { return now },
+		Now: readNow,
 		Run: func(_ context.Context, dir, name string, args ...string) (CommandOutput, error) {
 			if dir != "/opaque/root" || name != "git" {
-				t.Fatalf("run dir=%q name=%q args=%q", dir, name, args)
+				t.Errorf("run dir=%q name=%q args=%q", dir, name, args)
 			}
-			gitCalls++
-			if gitCalls == 1 {
+			call := gitCalls.Add(1)
+			if call == 1 {
 				// A load longer than the TTL must still produce a fresh entry.
-				now = now.Add(2 * time.Minute)
+				advance(2 * time.Minute)
 			}
-			return CommandOutput{Stdout: []byte([]string{"first\x00", "second\x00", "third\x00"}[gitCalls-1])}, nil
+			return CommandOutput{Stdout: []byte([]string{"first\x00", "second\x00", "third\x00"}[call-1])}, nil
 		},
 	})
+	paths := func(refresh bool) []string {
+		t.Helper()
+		candidates, err := index.Candidates(context.Background(), "/opaque/root", refresh)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, candidate := range candidates {
+			out = append(out, candidate.Path)
+		}
+		return out
+	}
 
 	first, err := index.Candidates(context.Background(), "/opaque/root", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first[0].Path = "caller mutation"
-	cached, err := index.Candidates(context.Background(), "/opaque/root", false)
-	if err != nil {
-		t.Fatal(err)
+	if got := paths(false); !reflect.DeepEqual(got, []string{"first"}) || gitCalls.Load() != 1 {
+		t.Fatalf("cached=%q gitCalls=%d", got, gitCalls.Load())
 	}
-	if !reflect.DeepEqual(cached, []filecandidate.Candidate{{Path: "first", Kind: filecandidate.KindFile}}) || gitCalls != 1 {
-		t.Fatalf("cached=%q gitCalls=%d", cached, gitCalls)
+	advance(30 * time.Second)
+	if got := paths(false); !reflect.DeepEqual(got, []string{"first"}) || gitCalls.Load() != 1 {
+		t.Fatalf("within TTL after slow load: cached=%q gitCalls=%d", got, gitCalls.Load())
 	}
-	now = now.Add(30 * time.Second)
-	if stillCached, err := index.Candidates(context.Background(), "/opaque/root", false); err != nil || gitCalls != 1 || stillCached[0].Path != "first" {
-		t.Fatalf("within TTL after slow load: cached=%q gitCalls=%d err=%v", stillCached, gitCalls, err)
-	}
-	now = now.Add(30 * time.Second)
+	advance(30 * time.Second)
 
-	refreshed, err := index.Candidates(context.Background(), "/opaque/root", false)
-	if err != nil {
-		t.Fatal(err)
+	// Past the TTL the lookup still answers from the last list; the refresh
+	// it started lands for the next lookup.
+	if got := paths(false); !reflect.DeepEqual(got, []string{"first"}) {
+		t.Fatalf("stale lookup=%q, want the last list", got)
 	}
-	if !reflect.DeepEqual(refreshed, []filecandidate.Candidate{{Path: "second", Kind: filecandidate.KindFile}}) || gitCalls != 2 {
-		t.Fatalf("refreshed=%q gitCalls=%d", refreshed, gitCalls)
+	waitIdle(t, index, "/opaque/root")
+	if got := paths(false); !reflect.DeepEqual(got, []string{"second"}) || gitCalls.Load() != 2 {
+		t.Fatalf("after background refresh=%q gitCalls=%d", got, gitCalls.Load())
 	}
 
-	forced, err := index.Candidates(context.Background(), "/opaque/root", true)
-	if err != nil {
+	if got := paths(true); !reflect.DeepEqual(got, []string{"third"}) || gitCalls.Load() != 3 {
+		t.Fatalf("forced=%q gitCalls=%d", got, gitCalls.Load())
+	}
+}
+
+func TestIndexRunsOneGitPerRootUnderConcurrentLookups(t *testing.T) {
+	var clock sync.Mutex
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	readNow := func() time.Time { clock.Lock(); defer clock.Unlock(); return now }
+	release := make(chan struct{})
+	var gitCalls atomic.Int32
+	index := New(Options{
+		TTL: time.Minute,
+		Now: readNow,
+		Run: func(context.Context, string, string, ...string) (CommandOutput, error) {
+			call := gitCalls.Add(1)
+			<-release
+			return CommandOutput{Stdout: []byte(fmt.Sprintf("load-%d\x00", call))}, nil
+		},
+	})
+	lookups := func(n int) []string {
+		t.Helper()
+		var wg sync.WaitGroup
+		results := make([]string, n)
+		for k := range n {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				candidates, err := index.Candidates(context.Background(), "/opaque/root", false)
+				if err != nil || len(candidates) != 1 {
+					t.Errorf("lookup %d: candidates=%q err=%v", k, candidates, err)
+					return
+				}
+				results[k] = candidates[0].Path
+			}()
+		}
+		wg.Wait()
+		return results
+	}
+
+	// A root never indexed: every concurrent lookup waits on the one load.
+	go func() {
+		for gitCalls.Load() == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond)
+		release <- struct{}{}
+	}()
+	for k, path := range lookups(8) {
+		if path != "load-1" {
+			t.Fatalf("cold lookup %d=%q", k, path)
+		}
+	}
+	if gitCalls.Load() != 1 {
+		t.Fatalf("cold gitCalls=%d, want 1", gitCalls.Load())
+	}
+
+	// A stale root: concurrent lookups answer at once from the last list
+	// while exactly one refresh is held open behind them.
+	clock.Lock()
+	now = now.Add(2 * time.Minute)
+	clock.Unlock()
+	for k, path := range lookups(8) {
+		if path != "load-1" {
+			t.Fatalf("stale lookup %d=%q, want the last list without waiting", k, path)
+		}
+	}
+	for deadline := time.Now().Add(5 * time.Second); gitCalls.Load() < 2 && time.Now().Before(deadline); {
+		time.Sleep(time.Millisecond)
+	}
+	lookups(8)
+	time.Sleep(20 * time.Millisecond)
+	if gitCalls.Load() != 2 {
+		t.Fatalf("stale gitCalls=%d, want exactly one background refresh", gitCalls.Load())
+	}
+	release <- struct{}{}
+	waitIdle(t, index, "/opaque/root")
+	if got := lookups(1); got[0] != "load-2" || gitCalls.Load() != 2 {
+		t.Fatalf("after refresh=%q gitCalls=%d", got, gitCalls.Load())
+	}
+}
+
+func TestIndexDropsListWhenBackgroundRefreshFails(t *testing.T) {
+	var clock sync.Mutex
+	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
+	var gitCalls atomic.Int32
+	index := New(Options{
+		TTL: time.Minute,
+		Now: func() time.Time { clock.Lock(); defer clock.Unlock(); return now },
+		Run: func(context.Context, string, string, ...string) (CommandOutput, error) {
+			if gitCalls.Add(1) == 1 {
+				return CommandOutput{Stdout: []byte("kept\x00")}, nil
+			}
+			return CommandOutput{Stderr: []byte("fatal: not a git repository")}, errors.New("exit status 128")
+		},
+	})
+	if _, err := index.Candidates(context.Background(), "/opaque/root", false); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(forced, []filecandidate.Candidate{{Path: "third", Kind: filecandidate.KindFile}}) || gitCalls != 3 {
-		t.Fatalf("forced=%q gitCalls=%d", forced, gitCalls)
+	clock.Lock()
+	now = now.Add(2 * time.Minute)
+	clock.Unlock()
+	if candidates, err := index.Candidates(context.Background(), "/opaque/root", false); err != nil || candidates[0].Path != "kept" {
+		t.Fatalf("stale lookup candidates=%q err=%v", candidates, err)
+	}
+	waitIdle(t, index, "/opaque/root")
+	if _, err := index.Candidates(context.Background(), "/opaque/root", false); err == nil || !strings.Contains(err.Error(), "not a git repository") {
+		t.Fatalf("after failed refresh err=%v, want the failure reported", err)
+	}
+}
+
+func waitIdle(t *testing.T, index *Index, root string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		index.mu.Lock()
+		running := index.inflight[root] != nil
+		index.mu.Unlock()
+		if !running {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("load for %q still running", root)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

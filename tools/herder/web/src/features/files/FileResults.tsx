@@ -1,6 +1,6 @@
 import type { MouseEvent } from 'react'
 import type { FileCandidate, ResolveResponse } from '../../types'
-import { rootLabel } from './fileResolution'
+import { resultsLimitLine, rootLabel } from './fileResolution'
 import { openInSideLabel } from '../layout/openPlacement'
 
 export function RootOutcomes({ resolution }: { resolution?: ResolveResponse }) {
@@ -11,7 +11,7 @@ export function RootOutcomes({ resolution }: { resolution?: ResolveResponse }) {
   </div>)}</div>
 }
 
-export function FileResults({ resolution, activeIndex = -1, onSelect, empty = 'No current matches.', limit = 100 }: {
+export function FileResults({ resolution, activeIndex = -1, onSelect, empty = 'No current matches.', limit = 10 }: {
   resolution?: ResolveResponse
   activeIndex?: number
   onSelect: (candidate: FileCandidate, event: MouseEvent<HTMLButtonElement>) => void
@@ -20,6 +20,7 @@ export function FileResults({ resolution, activeIndex = -1, onSelect, empty = 'N
 }) {
   if (!resolution) return null
   const visible = resolution.candidates.slice(0, limit)
+  const limitLine = resultsLimitLine(visible.length, Math.max(resolution.total ?? 0, resolution.candidates.length))
   return <><RootOutcomes resolution={resolution} />
     {resolution.candidates.length === 0 ? <p className="file-results-empty">{empty}</p> : <div className="file-results" role="listbox" aria-label="Resolved files and folders">
       {visible.map((candidate, index) => <button type="button" role="option" aria-selected={index === activeIndex} className={index === activeIndex ? 'active' : ''}
@@ -28,7 +29,7 @@ export function FileResults({ resolution, activeIndex = -1, onSelect, empty = 'N
         <span className="root-tag" title={candidate.root}>{rootLabel(candidate.root)}</span>
         <span className={`tier-tag ${candidate.tier}`}>{candidate.kind === 'dir' ? 'folder · ' : ''}{candidate.tier}</span>
       </button>)}
-      {visible.length < resolution.candidates.length && <p className="file-results-limit">Showing {visible.length} of {resolution.candidates.length} ranked matches. Refine the query for more.</p>}
+      {limitLine && <p className="file-results-limit">{limitLine}</p>}
     </div>}
   </>
 }

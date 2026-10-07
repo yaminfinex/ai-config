@@ -68,7 +68,7 @@ func serveState(w http.ResponseWriter, r *http.Request, deps dependencies, names
 		refuse(w, http.StatusNotFound, "unknown state namespace", "state namespace must be a short lowercase dotted identifier")
 		return
 	}
-	roster, err := deps.roster()
+	roster, err := deps.fleet().Roster()
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return

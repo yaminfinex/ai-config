@@ -726,7 +726,7 @@ func TestDelayedOlderRosterNeverOverwritesNewerSnapshot(t *testing.T) {
 			return err
 		},
 		"fleet read": func(deps dependencies) error {
-			_, _, err := readFleetInputs(deps)
+			_, _, err := readFleetInputs(deps, true)
 			return err
 		},
 	}

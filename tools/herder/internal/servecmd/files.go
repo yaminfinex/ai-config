@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,13 +15,35 @@ import (
 	"ai-config/tools/herder/internal/fileapi"
 	"ai-config/tools/herder/internal/fileresolver"
 	"ai-config/tools/herder/internal/fileroots"
-	"ai-config/tools/herder/internal/fleetview"
 	"ai-config/tools/herder/internal/hcomidentity"
 )
 
 type resolveResponse struct {
 	Candidates []fileresolver.Result      `json:"candidates"`
 	Roots      []fileresolver.RootOutcome `json:"roots"`
+	Total      int                        `json:"total"`
+}
+
+const (
+	// DefaultResolveLimit is how many ranked candidates /api/resolve returns
+	// without a limit: more than a handful means the query needs narrowing.
+	DefaultResolveLimit = 10
+	MaxResolveLimit     = 100
+)
+
+func resolveLimit(r *http.Request) (int, error) {
+	raw, err := optionalQuery(r, "limit")
+	if err != nil {
+		return 0, err
+	}
+	if _, present := r.URL.Query()["limit"]; !present {
+		return DefaultResolveLimit, nil
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 1 || limit > MaxResolveLimit {
+		return 0, fmt.Errorf("query parameter \"limit\" must be an integer from 1 to %d", MaxResolveLimit)
+	}
+	return limit, nil
 }
 
 func buildRootSet(ctx context.Context, configured []string, rows []hcomidentity.Row) (fileroots.Set, error) {
@@ -29,21 +52,6 @@ func buildRootSet(ctx context.Context, configured []string, rows []hcomidentity.
 		agents = append(agents, fileroots.Agent{Name: row.Name, CWD: row.Directory})
 	}
 	return fileroots.Build(ctx, configured, agents)
-}
-
-func liveRootSet(ctx context.Context, deps dependencies) (fileroots.Set, []hcomidentity.Row, error) {
-	rows, err := deps.roster()
-	if err != nil {
-		return fileroots.Set{}, nil, sourceError{"hcom", err}
-	}
-	if err := fleetview.ValidateRoster(rows); err != nil {
-		return fileroots.Set{}, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
-	}
-	set, err := deps.roots(ctx, deps.configuredRoots, rows)
-	if err != nil {
-		return fileroots.Set{}, nil, sourceError{"filesystem", err}
-	}
-	return set, rows, nil
 }
 
 func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
@@ -82,7 +90,17 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("query parameter \"path\" must stay relative to root: %q", path))
 		return
 	}
-	set, rows, err := liveRootSet(r.Context(), deps)
+	limit, err := resolveLimit(r)
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	set, rows, err := deps.fleet().RootsAccepting(r.Context(), func(set fileroots.Set, rows []hcomidentity.Row) bool {
+		if rootPresent && !set.Contains(root) {
+			return false
+		}
+		return agent == "" || slices.ContainsFunc(rows, func(row hcomidentity.Row) bool { return row.Name == agent })
+	})
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -111,10 +129,10 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		scoped, ok := set.MostSpecific(normalized)
 		if !ok {
-			writeJSON(w, http.StatusOK, resolveResponse{Candidates: []fileresolver.Result{}, Roots: []fileresolver.RootOutcome{}})
+			writeJSON(w, http.StatusOK, resolveResponse{Candidates: []fileresolver.Result{}, Roots: []fileresolver.RootOutcome{}, Total: 0})
 			return
 		}
-		writeResolution(w, deps, r, query, []string{scoped}, []string{scoped}, nil)
+		writeResolution(w, deps, r, query, []string{scoped}, []string{scoped}, nil, limit)
 		return
 	}
 	var anchor *fileresolver.Anchor
@@ -125,10 +143,10 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		anchor = &fileresolver.Anchor{Root: root, Path: cleanPath}
 	}
-	writeResolution(w, deps, r, query, set.Roots, set.Preference(agent), anchor)
+	writeResolution(w, deps, r, query, set.Roots, set.Preference(agent), anchor, limit)
 }
 
-func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, query string, roots, preference []string, anchor *fileresolver.Anchor) {
+func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, query string, roots, preference []string, anchor *fileresolver.Anchor, limit int) {
 	resolution, err := deps.fileResolver.ResolveDetailed(r.Context(), fileresolver.Request{
 		Query: query, Roots: roots, RootPreference: preference, Anchor: anchor,
 	})
@@ -142,7 +160,13 @@ func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, 
 	if resolution.Roots == nil {
 		resolution.Roots = []fileresolver.RootOutcome{}
 	}
-	writeJSON(w, http.StatusOK, resolveResponse{Candidates: resolution.Results, Roots: resolution.Roots})
+	// The cap applies after the resolver's ranking and dedupe; total is the
+	// match count before it.
+	total := len(resolution.Results)
+	if total > limit {
+		resolution.Results = resolution.Results[:limit]
+	}
+	writeJSON(w, http.StatusOK, resolveResponse{Candidates: resolution.Results, Roots: resolution.Roots, Total: total})
 }
 
 func serveFile(w http.ResponseWriter, r *http.Request, deps dependencies) {
@@ -150,7 +174,7 @@ func serveFile(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if !ok {
 		return
 	}
-	set, _, err := liveRootSet(r.Context(), deps)
+	set, err := deps.fleet().RootsHolding(r.Context(), root, true)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -172,7 +196,7 @@ func serveFileRaw(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if !ok {
 		return
 	}
-	set, _, err := liveRootSet(r.Context(), deps)
+	set, err := deps.fleet().RootsHolding(r.Context(), root, true)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -202,7 +226,7 @@ func serveFileImage(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if !ok {
 		return
 	}
-	set, _, err := liveRootSet(r.Context(), deps)
+	set, err := deps.fleet().RootsHolding(r.Context(), root, true)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -233,7 +257,7 @@ func serveTree(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	if !ok {
 		return
 	}
-	set, _, err := liveRootSet(r.Context(), deps)
+	set, err := deps.fleet().RootsHolding(r.Context(), root, true)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -261,7 +285,7 @@ func serveBacklog(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
-	set, _, err := liveRootSet(r.Context(), deps)
+	set, err := deps.fleet().RootsHolding(r.Context(), root, true)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return

@@ -47,8 +47,18 @@ export function hasPathSignal(mention: string, codeOrQuoted: boolean) {
   return codeOrQuoted || /[/\\]/u.test(value) || /:\d+$/u.test(value) || /(?:^|[^.])\.[\p{L}\p{N}][\p{L}\p{N}._-]*$/u.test(value)
 }
 
+// The quiet line under a capped result list; null when nothing was cut.
+export function resultsLimitLine(shown: number, total: number) {
+  return total > shown ? `${shown} of ${total} — type more to narrow` : null
+}
+
+// The server caps candidates after ranking. Suffix shares a band with prefix,
+// so a cut list proves "exactly one certain hit" only when the cut fell among
+// fuzzy hits, which rank after every other tier and anchor band.
 export function autoOpenCandidate(resolution: ResolveResponse): FileCandidate | null {
   if (resolution.roots.some((root) => root.status !== 'complete')) return null
+  const cut = (resolution.total ?? 0) > resolution.candidates.length
+  if (cut && resolution.candidates.at(-1)?.tier !== 'fuzzy') return null
   const certain = resolution.candidates.filter((candidate) => candidate.tier === 'exact' || candidate.tier === 'suffix')
   return certain.length === 1 ? certain[0] : null
 }

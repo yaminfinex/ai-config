@@ -104,6 +104,7 @@ type dependencies struct {
 	state                webstate.Store
 	stateChanges         *stateChangeBroker
 	rosterCache          *rosterCache
+	rootSets             *rootSetCache // Nil builds the root set per request.
 	// store is the agent store the serve opens once at Run: the life mirror
 	// appends to it and the board folds a read-only projection from it.
 	store *agentstore.Store
@@ -123,6 +124,7 @@ type rosterCache struct {
 	initialized bool
 	now         func() time.Time // Observation clock; nil means time.Now.
 	at          time.Time        // When the cached rows' `hcom list` began.
+	changed     time.Time        // Rows observed before this predate a roster write; not fresh.
 	remembered  map[string]string
 	ambiguous   map[string]bool
 }
@@ -194,10 +196,23 @@ func (c *rosterCache) fresh(bound time.Duration) ([]hcomidentity.Row, bool) {
 	now := c.clock()
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	if !c.initialized || now.Sub(c.at) > bound || now.Before(c.at) {
+	if !c.initialized || now.Sub(c.at) > bound || now.Before(c.at) || c.at.Before(c.changed) {
 		return nil, false
 	}
 	return append([]hcomidentity.Row(nil), c.rows...), true
+}
+
+// expire marks the cached rows as predating a roster change the serve just
+// made (a launch): no read serves them fresh, and the next request asks hcom
+// live. A fetch that began after the change caches as usual.
+func (c *rosterCache) expire() {
+	if c == nil {
+		return
+	}
+	now := c.clock()
+	c.mu.Lock()
+	c.changed = now
+	c.mu.Unlock()
 }
 
 func (c *rosterCache) resolve(raw string) string {
@@ -495,6 +510,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.configuredRoots = configuredRoots
 	runtimeDependencies.stateChanges = newStateChangeBroker()
 	runtimeDependencies.rosterCache = &rosterCache{now: runtimeDependencies.now}
+	runtimeDependencies.rootSets = &rootSetCache{}
 	runtimeDependencies.turnEnds = startTurnEnds(ctx, runtimeDependencies)
 	var socket *herdersock.Server
 	stateDir, stateDirErr := herderstate.Dir()
@@ -1131,7 +1147,7 @@ func newHandler(deps dependencies) http.Handler {
 }
 
 func readBoard(ctx context.Context, deps dependencies) (fleetview.Board, error) {
-	snapshot, roster, err := readFleetInputs(deps)
+	snapshot, roster, err := readFleetInputs(deps, false)
 	if err != nil {
 		return fleetview.Board{}, err
 	}
@@ -1293,7 +1309,10 @@ func readProjection(deps dependencies) *agentstore.Projection {
 	return proj
 }
 
-func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, error) {
+// readFleetInputs reads herdr and the roster. The SSE board poll passes
+// live, being one of the pollers that refresh the roster cache; a GET of the
+// board reads the live-fleet service's cached list.
+func readFleetInputs(deps dependencies, live bool) (herdrcli.Snapshot, []hcomidentity.Row, error) {
 	snapshot, err := deps.snapshot()
 	if err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", err}
@@ -1301,15 +1320,18 @@ func readFleetInputs(deps dependencies) (herdrcli.Snapshot, []hcomidentity.Row, 
 	if err := fleetview.ValidateSnapshot(snapshot); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
 	}
-	observed := deps.rosterCache.clock()
-	roster, err := deps.roster()
+	fleet := deps.fleet()
+	read := fleet.Roster
+	if live {
+		read = fleet.Poll
+	}
+	roster, err := read()
 	if err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", err}
 	}
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
-	deps.rosterCache.setObserved(roster, observed)
 	return snapshot, hcomidentity.WithParents(roster), nil
 }
 
@@ -1424,7 +1446,8 @@ func transcriptParentName(row hcomidentity.Row, roster []hcomidentity.Row) strin
 // a stale or invalid cache, asks hcom live, so a new incarnation's session
 // can be served the previous session's path for at most RosterFreshness.
 func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, bool, []hcomidentity.Row, error) {
-	if cached, ok := deps.rosterCache.fresh(RosterFreshness); ok && fleetview.ValidateRoster(cached) == nil {
+	fleet := deps.fleet()
+	if cached, ok := fleet.Agents(); ok {
 		cached = hcomidentity.WithParents(cached)
 		for _, row := range cached {
 			if row.Name == name {
@@ -1432,17 +1455,13 @@ func resolveAgentEvidence(deps dependencies, name string) (hcomidentity.Row, boo
 			}
 		}
 	}
-	observed := deps.rosterCache.clock()
-	roster, err := deps.roster()
+	roster, err := fleet.Poll()
 	if err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", err}
 	}
 	if err := fleetview.ValidateRoster(roster); err != nil {
 		return hcomidentity.Row{}, false, nil, sourceError{"hcom", fmt.Errorf("invalid roster: %w", err)}
 	}
-	// A newer cached observation keeps the cache; this read still answers
-	// from the rows it fetched.
-	deps.rosterCache.setObserved(roster, observed)
 	roster = hcomidentity.WithParents(roster)
 	for _, row := range roster {
 		if row.Name == name {
@@ -1583,7 +1602,7 @@ func serveAssignment(w http.ResponseWriter, r *http.Request, deps dependencies, 
 }
 
 func resolveLiveAgent(w http.ResponseWriter, deps dependencies, name string) ([]hcomidentity.Row, bool) {
-	roster, err := deps.roster()
+	roster, err := deps.fleet().RosterHolding(name)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return nil, false
@@ -1630,7 +1649,7 @@ func appendWebEvent(w http.ResponseWriter, deps dependencies, event agentstore.E
 }
 
 func serveViewer(w http.ResponseWriter, r *http.Request, deps dependencies) {
-	roster, err := deps.roster()
+	roster, err := deps.fleet().Roster()
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -1711,7 +1730,7 @@ func servePaneInput(w http.ResponseWriter, r *http.Request, deps dependencies, p
 		refuse(w, http.StatusNotFound, "unknown pane", fmt.Sprintf("pane %q is not reported by Herdr", paneID))
 		return
 	}
-	roster, err := deps.roster()
+	roster, err := deps.fleet().Roster()
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -1813,7 +1832,7 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		refuse(w, http.StatusConflict, "launch refused", "workspace is not live: "+workspace)
 		return
 	}
-	roster, err := deps.roster()
+	roster, err := deps.fleet().Roster()
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -1832,6 +1851,9 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	}
 	args = append(args, "--tag", tag, "--workspace", workspace)
 	result, err := deps.spawn(r.Context(), args, launcher)
+	// Even a refused launch may have joined a name; the board must not
+	// answer from a roster cached before it.
+	deps.fleet().Changed()
 	if err != nil {
 		if errors.Is(err, webaction.ErrUnavailable) {
 			refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
@@ -2379,7 +2401,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 	}
 	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, map[string]screenPaneFact, error) {
-		snapshot, roster, readErr := readFleetInputs(deps)
+		snapshot, roster, readErr := readFleetInputs(deps, true)
 		if readErr != nil {
 			return fleetview.Board{}, nil, nil, readErr
 		}

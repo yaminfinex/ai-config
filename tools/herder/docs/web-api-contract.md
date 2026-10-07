@@ -526,8 +526,11 @@ GET `/api/agents/{bus-name}/entries?from={byteOffset}&limit=N&sessionId={id}`
   Per-agent reads (`GET /api/agents/{bus-name}` and its `/entries`) resolve
   the name from the serve's cached hcom roster when the `hcom list` that
   produced it began less than 3 s ago (the observer's 2 s poll plus one
-  second of slack; the observer poll, fleet reads, the life mirror, and every
-  live fallback refresh it). A roster fetch that began before the cached one
+  second of slack; the observer poll, the SSE board poll, the life mirror, and
+  every live fallback refresh it). Since search-speed every request path reads
+  the roster this way (GET `/api/fleet`, `/api/state`, the file and Git reads,
+  pane input, launches), through the serve's one live-fleet service; only the
+  background pollers and the state sweep ask hcom directly. A roster fetch that began before the cached one
   is refused, so a slow answer never replaces a newer snapshot or restarts
   its age. A stale or absent cache, a failed
   roster validation, or a name absent from the cached roster falls back to
@@ -597,17 +600,43 @@ location (the shape a direct open emits), so a directly opened file under
 hard cap, `.git` refusal, escape refusal) is unchanged. The Git read endpoints
 keep the live-set-only refusal.
 
-GET `/api/resolve?q={mention}&agent={optional-live-bus-name}`
-or `/api/resolve?q={mention}&root={opaque-root}&path={viewed-file-relative-path}`
+GET `/api/resolve?q={mention}&agent={optional-live-bus-name}&limit={optional-1..100}`
+or `/api/resolve?q={mention}&root={opaque-root}&path={viewed-file-relative-path}&limit={optional-1..100}`
   Resolves a required, non-empty path-like query against the complete current
   root universe. Success is
-  `{"candidates":[{"root":"/opaque/root","path":"relative/file.md","kind":"file|dir","tier":"exact|prefix|suffix|fuzzy","score":731}],"roots":[{"root":"/opaque/root","status":"complete|degraded|failed","detail":"honest bounded diagnostic when not complete"}]}`.
+  `{"candidates":[{"root":"/opaque/root","path":"relative/file.md","kind":"file|dir","tier":"exact|prefix|suffix|fuzzy","score":731}],"roots":[{"root":"/opaque/root","status":"complete|degraded|failed","detail":"honest bounded diagnostic when not complete"}],"total":13217}`.
   Candidates are already ranked by the resolver and the server never applies
   the client auto-open rule or re-ranks them. The tier is therefore preserved
   exactly: the client may auto-open only when exactly one candidate is
   `exact` or `suffix`; it never auto-opens a fuzzy candidate. No current match,
   including a formerly mentioned path that has vanished, is an honest 200 with
-  `candidates:[]`.
+  `candidates:[]` and `total:0`.
+
+  `limit` (search-speed, owner #405832/#405865, 2026-10-07) caps the
+  candidates returned: default 10, at most 100; anything but one integer in
+  1..100 is 400 `bad request`. The cap applies after ranking and dedupe and
+  keeps the top `limit` in ranked order; `total` is the full match count
+  before the cap, so `total > len(candidates)` means the list was cut. A
+  direct open answers `total:1`. Because suffix shares a band with prefix, a
+  cut list proves "exactly one `exact` or `suffix`" only when the cut fell
+  among fuzzy candidates (the last returned candidate is fuzzy); otherwise the
+  client does not auto-open. A caller that needs the auto-open (a transcript
+  path link) asks for `limit=100`. The palette shows the returned rows and,
+  when `total` exceeds them, the line "N of TOTAL — type more to narrow".
+
+  Request cost (search-speed): the roster and root set come from the serve's
+  live-fleet service, not a per-request `hcom list`. The roster is the cached
+  one within the 3 s freshness of the per-agent reads below, else one live
+  `hcom list` that refreshes the cache; the root set built from it is reused
+  while the roster rows' names and directories are unchanged, for at most
+  30 s. A query naming an agent, or a file-context root, that the cached
+  universe lacks retries once against a live roster before refusing. The
+  candidate index serves a root's last `git ls-files` list at once; a list
+  older than 5 s is still served and starts one background refresh for that
+  root (never two at a time), so a new file is findable from the lookup after
+  that refresh lands, a few seconds at most. Only a root never indexed, or
+  whose last refresh failed, waits on git, and concurrent lookups share that
+  one run.
 
   A file context is the exact current opaque root plus the viewed file's
   root-relative path. It adds hard bands ahead of global ranking: a mention

@@ -11,12 +11,14 @@ import {
   mentionLine,
   pathTokenSpanAt,
   quickOpenAgentPreference,
+  resultsLimitLine,
 } from '../src/features/files/fileResolution.ts'
 import type { ResolveResponse } from '../src/types.ts'
 
 const response = (tier: 'exact' | 'prefix' | 'suffix' | 'fuzzy', score: number): ResolveResponse => ({
   candidates: [{ root: '/repo', path: 'tools/herder/web/src/App.tsx', tier, score }],
   roots: [{ root: '/repo', status: 'complete' }],
+  total: 1,
 })
 
 test('token spans select the occurrence under the pointer', () => {
@@ -93,6 +95,26 @@ test('auto-open is exactly one exact-or-suffix candidate and never fuzzy or pref
     ...response('exact', 100),
     roots: [{ root: '/repo', status: 'complete' }, { root: '/offline', status: 'degraded' }],
   }), null)
+})
+
+test('a capped list shows "N of TOTAL — type more to narrow", and nothing when nothing was cut', () => {
+  assert.equal(resultsLimitLine(10, 13217), '10 of 13217 — type more to narrow')
+  assert.equal(resultsLimitLine(8, 9), '8 of 9 — type more to narrow')
+  assert.equal(resultsLimitLine(10, 10), null)
+  assert.equal(resultsLimitLine(3, 3), null)
+  assert.equal(resultsLimitLine(0, 0), null)
+})
+
+test('auto-open stays certain on a server-capped list: the cut must fall among fuzzy hits', () => {
+  const suffix = { root: '/repo', path: 'tools/herder/web/src/App.tsx', tier: 'suffix' as const, score: 100 }
+  const prefix = { root: '/repo', path: 'tools/herder/web/src/App.tsx.bak', tier: 'prefix' as const, score: 90 }
+  const fuzzy = { root: '/repo', path: 'tools/herder/web/src/Apple.tsx', tier: 'fuzzy' as const, score: 40 }
+  const complete = [{ root: '/repo', status: 'complete' as const }]
+  // A second suffix hit could sit past the cut, behind prefix hits in the same band.
+  assert.equal(autoOpenCandidate({ candidates: [suffix, prefix], roots: complete, total: 5 }), null)
+  // Once the shown list reaches the fuzzy tier, every certain hit is already in it.
+  assert.equal(autoOpenCandidate({ candidates: [suffix, prefix, fuzzy], roots: complete, total: 5 })?.path, suffix.path)
+  assert.equal(autoOpenCandidate({ candidates: [suffix, prefix], roots: complete, total: 2 })?.path, suffix.path)
 })
 
 test('explicit keyboard selection wins over automatic resolution', () => {
