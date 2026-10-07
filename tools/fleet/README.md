@@ -104,6 +104,14 @@ removes a tab with its last pane, and the output reports `tab=gone` or
 `tools/fleet/drift.sh` is a read-only report of placement drift: tabs holding
 more than one agent pane and panes holding only an idle shell, one per line.
 
+`tools/fleet/prune-build-cache.sh` is the only thing that prunes the shared
+Rust build cache (mbx at `/mnt/xfs-nvme/mbx`). mbx never collects on its own
+on this host (`gc.auto = false`), so the cache only grows until a caller runs
+this. With no argument it previews `mbx gc --dry-run`; `--apply` runs `mbx gc`
+against the budgets in `~/.config/mbx/config.toml` (`gc.max_total_size`,
+`gc.min_free_size`). spawn and cull never call it; any cadence is the
+operator's call.
+
 When the seat occupied the only pane in a worktree workspace, managed close
 also removes that workspace. The git checkout remains deliberate state: after
 the cull is verified, remove that exact checkout with `git worktree remove
