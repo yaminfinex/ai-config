@@ -14,7 +14,6 @@ import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 import { useWorkspaceActionsContext, useWorkspaceData } from '../workspace/workspaceContext.tsx'
 import { flattenedBoardRows, quickOpenRows, reassignDescendants, reassignSelection } from '../sidebar/reassignModel.ts'
 
-const QUICK_OPEN_RESULT_LIMIT = 100
 const focusableSelector = 'button:not([disabled]), input, [tabindex]:not([tabindex="-1"])'
 
 function useDebounced(value: string, delay = 120) {
@@ -73,7 +72,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const actions = quickOpenRows(mode, query, rowContext)
   const settled = query.trim() === debounced
   const settledResolution = settled ? resolution.data : undefined
-  const candidates = normalMode ? settledResolution?.candidates.slice(0, QUICK_OPEN_RESULT_LIMIT) ?? [] : []
+  const candidates = normalMode ? settledResolution?.candidates ?? [] : []
   const fileKey = (candidate: FileCandidate) => `${candidate.root}\0${candidate.kind}\0${candidate.path}`
   const fileKeys = candidates.map(fileKey)
   const confident = settledResolution ? autoOpenCandidate(settledResolution) : null
@@ -215,7 +214,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
         {normalMode && settled && resolution.isPending && debounced && <p className="file-results-empty">Searching current roots…</p>}
         {normalMode && settled && resolution.error && <p className="file-results-error" role="alert">{resolution.error.message}</p>}
         {normalMode && settledResolution && <div className="quick-open-section-label">Files and folders</div>}
-        {normalMode && <FileResults resolution={settledResolution} activeIndex={activeIndex - leadingCount} onSelect={(candidate, event) => choose(candidate, placementFromModifiers(event, groupID))} limit={QUICK_OPEN_RESULT_LIMIT} />}
+        {normalMode && <FileResults resolution={settledResolution} activeIndex={activeIndex - leadingCount} onSelect={(candidate, event) => choose(candidate, placementFromModifiers(event, groupID))} />}
         {noteRow && <section className="quick-open-section" aria-label="Notes"><strong>Notes</strong>
           <button type="button" role="option" aria-selected={activeIndex === noteIndex}
             className={activeIndex === noteIndex ? 'active' : ''}

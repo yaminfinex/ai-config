@@ -128,7 +128,7 @@ func gitRoot(w http.ResponseWriter, r *http.Request, deps dependencies) (string,
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return "", false
 	}
-	set, _, err := liveRootSet(r.Context(), deps)
+	set, err := deps.fleet().RootsHolding(r.Context(), root, false)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return "", false

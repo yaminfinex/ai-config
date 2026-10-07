@@ -31,6 +31,7 @@ test('file reads encode opaque roots, paths, queries, and optional agent context
   await resolveFiles('src/App.tsx:14', 'agent one', fetcher)
   await resolveFiles('../README.md', { root: '/repo with space', path: 'docs/guide.md' }, fetcher)
   await resolveFiles('README.md', undefined, fetcher)
+  await resolveFiles('App.tsx', 'agent one', fetcher, undefined, 100)
   await getFile('/repo with space', 'src/App.tsx', fetcher)
   await getFileTree('/repo with space', 'src/components', fetcher)
   await getBacklog('/repo with space', 'backlog', fetcher)
@@ -38,6 +39,7 @@ test('file reads encode opaque roots, paths, queries, and optional agent context
     '/api/resolve?q=src%2FApp.tsx%3A14&agent=agent+one',
     '/api/resolve?q=..%2FREADME.md&root=%2Frepo+with+space&path=docs%2Fguide.md',
     '/api/resolve?q=README.md',
+    '/api/resolve?q=App.tsx&agent=agent+one&limit=100',
     '/api/files?root=%2Frepo+with+space&path=src%2FApp.tsx',
     '/api/files/tree?root=%2Frepo+with+space&path=src%2Fcomponents',
     '/api/backlog?root=%2Frepo+with+space&path=backlog',

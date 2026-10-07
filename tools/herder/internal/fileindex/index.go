@@ -1,5 +1,6 @@
-// Package fileindex builds and briefly caches the file candidates for opaque
-// absolute roots.
+// Package fileindex builds and caches the file candidates for opaque absolute
+// roots. A search never waits on git for a root it has indexed before: a
+// stale root answers from its last list and refreshes in the background.
 package fileindex
 
 import (
@@ -19,6 +20,8 @@ import (
 )
 
 const (
+	// DefaultTTL is the staleness bound: a list older than this is still
+	// served, and the lookup that finds it so starts one background refresh.
 	DefaultTTL     = 5 * time.Second
 	commandTimeout = 10 * time.Second
 	maxErrorDetail = 4 * 1024
@@ -48,13 +51,22 @@ type Index struct {
 	now func() time.Time
 	run RunFunc
 
-	mu    sync.Mutex
-	cache map[string]cacheEntry
+	mu       sync.Mutex
+	cache    map[string]cacheEntry
+	inflight map[string]*load
 }
 
 type cacheEntry struct {
 	refreshed  time.Time
 	candidates []filecandidate.Candidate
+}
+
+// load is one `git ls-files` for a root. At most one runs per root at a time;
+// every lookup that needs it waits on done instead of starting another.
+type load struct {
+	done       chan struct{}
+	candidates []filecandidate.Candidate
+	err        error
 }
 
 // New returns a per-root candidate index.
@@ -72,40 +84,105 @@ func New(options Options) *Index {
 		run = runCommand
 	}
 	return &Index{
-		ttl:   ttl,
-		now:   now,
-		run:   run,
-		cache: make(map[string]cacheEntry),
+		ttl:      ttl,
+		now:      now,
+		run:      run,
+		cache:    make(map[string]cacheEntry),
+		inflight: make(map[string]*load),
 	}
 }
 
 // Candidates returns root-relative files and their unique ancestor
-// directories. A true refresh bypasses an otherwise fresh cache entry.
+// directories. A cached root answers at once; past the TTL it still answers
+// from its last list and starts one background refresh, so a new file is
+// findable from the lookup after that refresh lands. Only a root never
+// indexed (or whose last refresh failed) waits on git, sharing one load with
+// every concurrent lookup. A true refresh bypasses the cached list and waits
+// for a load that began after the call.
 func (i *Index) Candidates(ctx context.Context, root string, refresh bool) ([]filecandidate.Candidate, error) {
 	if !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("file index root must be absolute: %q", root)
 	}
 	root = filepath.Clean(root)
-	now := i.now()
 
-	if !refresh {
-		i.mu.Lock()
-		entry, ok := i.cache[root]
-		i.mu.Unlock()
-		if ok && now.Before(entry.refreshed.Add(i.ttl)) {
-			return slices.Clone(entry.candidates), nil
-		}
+	if refresh {
+		return i.forced(ctx, root)
 	}
-
-	candidates, err := i.load(ctx, root)
-	if err != nil {
-		return nil, err
-	}
-	// Stamp after the load: a load longer than the TTL must not arrive stale.
 	i.mu.Lock()
-	i.cache[root] = cacheEntry{refreshed: i.now(), candidates: slices.Clone(candidates)}
+	if entry, cached := i.cache[root]; cached {
+		if !i.now().Before(entry.refreshed.Add(i.ttl)) && i.inflight[root] == nil {
+			i.startLocked(root)
+		}
+		i.mu.Unlock()
+		return slices.Clone(entry.candidates), nil
+	}
+	current := i.inflight[root]
+	if current == nil {
+		current = i.startLocked(root)
+	}
 	i.mu.Unlock()
-	return slices.Clone(candidates), nil
+	return current.wait(ctx)
+}
+
+// forced waits out any load already running for root (it may have listed
+// the tree before the caller's change), then waits on a load of its own; a
+// forced lookup arriving meanwhile shares that newer load.
+func (i *Index) forced(ctx context.Context, root string) ([]filecandidate.Candidate, error) {
+	i.mu.Lock()
+	if running := i.inflight[root]; running != nil {
+		i.mu.Unlock()
+		select {
+		case <-running.done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		i.mu.Lock()
+	}
+	current := i.inflight[root]
+	if current == nil {
+		current = i.startLocked(root)
+	}
+	i.mu.Unlock()
+	return current.wait(ctx)
+}
+
+// startLocked starts the root's one load. Callers hold i.mu and have seen
+// no load running for root.
+func (i *Index) startLocked(root string) *load {
+	current := &load{done: make(chan struct{})}
+	i.inflight[root] = current
+	go func() {
+		// The load outlives any one request: a cancelled caller must not
+		// cancel the refresh every other caller of this root is waiting on.
+		candidates, err := i.load(context.Background(), root)
+		i.mu.Lock()
+		if err == nil {
+			// Stamp after the load: a load longer than the TTL must not
+			// arrive stale.
+			i.cache[root] = cacheEntry{refreshed: i.now(), candidates: candidates}
+		} else {
+			// A failed refresh drops the list, so the next lookup waits and
+			// reports the failure rather than serving a vanished root.
+			delete(i.cache, root)
+		}
+		delete(i.inflight, root)
+		current.candidates, current.err = candidates, err
+		close(current.done)
+		i.mu.Unlock()
+	}()
+	return current
+}
+
+func (l *load) wait(ctx context.Context) ([]filecandidate.Candidate, error) {
+	select {
+	case <-l.done:
+		if l.err != nil {
+			return nil, l.err
+		}
+		return slices.Clone(l.candidates), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 func (i *Index) load(ctx context.Context, root string) ([]filecandidate.Candidate, error) {

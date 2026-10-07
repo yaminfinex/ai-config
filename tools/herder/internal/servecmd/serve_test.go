@@ -36,8 +36,10 @@ import (
 )
 
 func fixtureDeps() dependencies {
+	// Initialized (the life mirror sees a seeded cache) but never fresh, so
+	// request reads ask the fixture roster unless a test seeds the cache.
 	cache := &rosterCache{}
-	cache.set(nil)
+	cache.setObserved(nil, time.Time{})
 	return dependencies{
 		buildIdentity: "source:fixture731",
 		snapshot: func() (herdrcli.Snapshot, error) {

@@ -10,6 +10,12 @@ import { placementFromModifiers, type OpenPlacement } from '../layout/openPlacem
 import { useDOMEvent } from '../../shared/lifecycle'
 import { noteCaptureGestureEvent } from '../../shared/selectionPopoverEvents'
 
+// A path link auto-opens on its one exact or suffix hit, so it asks for the
+// server's maximum: the decision needs the whole certain tier, not the rows
+// the popover shows.
+const TRANSCRIPT_RESOLVE_LIMIT = 100
+const TRANSCRIPT_RESULT_LIMIT = 8
+
 type PopoverState = { left: number, top: number, mention: string, resolution: ResolveResponse }
 
 function eventShadowRoots(event: React.MouseEvent<HTMLElement>) {
@@ -93,7 +99,7 @@ export function useTranscriptFileResolver(context: ResolveContext, enabled: bool
     const controller = new AbortController()
     request.current = controller
     try {
-      const result = await resolveFiles(mention, context, fetch, controller.signal)
+      const result = await resolveFiles(mention, context, fetch, controller.signal, TRANSCRIPT_RESOLVE_LIMIT)
       if (controller.signal.aborted || !enabled) return
       // Drop weak fuzzy hits so the no-match popover still preserves root outcomes.
       const resolution = isConfidentResolution(result, mention) ? result : { ...result, candidates: [] }
@@ -125,7 +131,7 @@ export function useTranscriptFileResolver(context: ResolveContext, enabled: bool
   }
   const element = popover ? <aside className="selection-file-popover" role="dialog" aria-label={`Files matching ${popover.mention}`} style={{ left: popover.left, top: popover.top }}>
     <header><strong>{popover.mention}</strong><button type="button" aria-label="Close file matches" onClick={close}>×</button></header>
-    <FileResults resolution={popover.resolution} onSelect={choose} limit={8} />
+    <FileResults resolution={popover.resolution} onSelect={choose} limit={TRANSCRIPT_RESULT_LIMIT} />
   </aside> : null
   return { onDoubleClick, element }
 }

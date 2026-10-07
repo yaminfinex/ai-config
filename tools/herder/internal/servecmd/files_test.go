@@ -364,7 +364,7 @@ func TestFileEndpointRootUniverseIsEmptyWithoutGitButDirectOpenRootsStillRead(t 
 		path string
 		want string
 	}{
-		{"/api/resolve?q=readme", `{"candidates":[],"roots":[]}`},
+		{"/api/resolve?q=readme", `{"candidates":[],"roots":[],"total":0}`},
 		{"/api/files?root=" + rootQuery + "&path=readme.md", `"content":"fixture\n"`},
 		{"/api/files/tree?root=" + rootQuery, `"name":"readme.md"`},
 	}
@@ -437,7 +437,7 @@ func TestResolveEndpointOpensExistingAbsolutePathDirectlyWithoutIndex(t *testing
 	} {
 		response := httptest.NewRecorder()
 		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q="+url.QueryEscape(query), nil))
-		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"candidates":[],"roots":[]}` {
+		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"candidates":[],"roots":[],"total":0}` {
 			t.Errorf("%s = %d %s", query, response.Code, response.Body.String())
 		}
 	}
@@ -482,7 +482,7 @@ func TestResolveEndpointScopesMissingAbsolutePathToMostSpecificLiveRoot(t *testi
 
 	response = httptest.NewRecorder()
 	newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q="+url.QueryEscape(filepath.Join(t.TempDir(), "nowhere.md")), nil))
-	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"candidates":[],"roots":[]}` {
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"candidates":[],"roots":[],"total":0}` {
 		t.Fatalf("unrooted missing path = %d %s", response.Code, response.Body.String())
 	}
 }
@@ -548,7 +548,7 @@ func TestDirectOpenChoosesRootFromLexicalPathNotFromFollowedDirectorySymlink(t *
 	for _, query := range refused {
 		response := httptest.NewRecorder()
 		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?q="+url.QueryEscape(query), nil))
-		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"candidates":[],"roots":[]}` {
+		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != `{"candidates":[],"roots":[],"total":0}` {
 			t.Errorf("%s = %d %s", query, response.Code, response.Body.String())
 		}
 	}

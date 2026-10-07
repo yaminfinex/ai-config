@@ -144,6 +144,8 @@ export interface RootOutcome {
 export interface ResolveResponse {
   candidates: FileCandidate[]
   roots: RootOutcome[]
+  /** Matches before the server's cap; candidates holds the top `limit` of them. */
+  total: number
 }
 
 export type FileRead = {
