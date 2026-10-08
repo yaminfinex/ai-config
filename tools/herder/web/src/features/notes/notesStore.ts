@@ -115,10 +115,8 @@ function noteBytes(note: Pick<Note, 'text' | 'quote'>) {
   return new TextEncoder().encode(`${note.quote ?? ''}${note.text}`).byteLength
 }
 
-function storedBytes(records: Iterable<StoredNoteRecord>) {
-  let total = 0
-  for (const record of records) total += new TextEncoder().encode(JSON.stringify(record)).byteLength
-  return total
+function storedBytes(record: StoredNoteRecord) {
+  return new TextEncoder().encode(JSON.stringify(record)).byteLength
 }
 
 // crypto.randomUUID only exists in secure contexts; the owner browses over
@@ -161,6 +159,21 @@ export function createNotesStore(options: Options = {}): NotesStore {
     ? { persistent: true, recovered: false, problem: '' }
     : { persistent: false, recovered: false, problem: 'Notes are kept for this session but are not saved between browser sessions.' }
   const records = new Map<string, StoredNoteRecord>()
+  // The storage budget counts live notes only: tombstones are small, expire,
+  // and must never crowd out new writing. A running total keeps each check
+  // to the one candidate instead of re-serialising every record.
+  const liveBytes = new Map<string, number>()
+  let liveTotal = 0
+  const setRecord = (id: string, stored: StoredNoteRecord) => {
+    if (records.get(id) === stored) return
+    records.set(id, stored)
+    liveTotal -= liveBytes.get(id) ?? 0
+    liveBytes.delete(id)
+    if (!active(stored.record)) return
+    const bytes = storedBytes(stored)
+    liveBytes.set(id, bytes)
+    liveTotal += bytes
+  }
   const dirty = new Set<string>()
   const listeners = new Set<() => void>()
   const mutationListeners = new Set<(records: StoredNoteRecord[]) => void>()
@@ -226,7 +239,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
           continue
         }
         const current = records.get(id)
-        records.set(id, current ? newer(current, stored) : stored)
+        setRecord(id, current ? newer(current, stored) : stored)
       }
     } catch {
       degrade()
@@ -237,10 +250,10 @@ export function createNotesStore(options: Options = {}): NotesStore {
     .flatMap((stored) => active(stored.record) ? [stored.record] : [])
     .sort((left, right) => right.updated - left.updated || left.id.localeCompare(right.id))
 
-  const totalWith = (candidate: StoredNoteRecord) => storedBytes([...records.values()].filter((stored) => stored.record.id !== candidate.record.id).concat(candidate))
+  const totalWith = (candidate: StoredNoteRecord) => liveTotal - (liveBytes.get(candidate.record.id) ?? 0) + (active(candidate.record) ? storedBytes(candidate) : 0)
   const refuseCandidate = (candidate: StoredNoteRecord, adding: boolean): string => {
     if (active(candidate.record) && noteBytes(candidate.record) > maxNoteBytes) return 'This note is too long to save. Shorten it and try again.'
-    if (adding && currentNotes().length >= maxActiveNotes) return `There is no room for another note. The ${maxActiveNotes}-note limit refuses new writing rather than deleting older notes.`
+    if (adding && liveBytes.size >= maxActiveNotes) return `There is no room for another note. The ${maxActiveNotes}-note limit refuses new writing rather than deleting older notes.`
     if (totalWith(candidate) > maxTotalBytes) return 'There is no room for this note in browser storage. Existing notes were left untouched.'
     return ''
   }
@@ -250,7 +263,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
   }
   const putBatch = (values: StoredNoteRecord[]) => {
     for (const stored of values) {
-      records.set(stored.record.id, stored)
+      setRecord(stored.record.id, stored)
       dirty.add(stored.record.id)
     }
     scheduleFlush()
@@ -265,7 +278,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
       const memory = records.get(id)
       if (!persisted) return memory
       const winner = memory ? newer(memory, persisted) : persisted
-      records.set(id, winner)
+      setRecord(id, winner)
       if (winner !== memory) notify()
       return winner
     } catch {
@@ -284,7 +297,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
         const memory = records.get(id)
         if (!memory) { dirty.delete(id); continue }
         const winner = persisted ? newer(memory, persisted) : memory
-        records.set(id, winner)
+        setRecord(id, winner)
         if (winner !== memory) { dirty.delete(id); notify(); continue }
         const nextRaw = JSON.stringify(memory)
         if (!active(memory.record)) storage.removeItem(backupKey(id))
@@ -312,7 +325,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
     const current = records.get(id)
     const winner = current ? newer(current, incoming) : incoming
     if (winner === current) return
-    records.set(id, winner)
+    setRecord(id, winner)
     dirty.delete(id)
     notify()
   }
@@ -379,7 +392,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
       for (const incoming of values) {
         const current = records.get(incoming.record.id)
         if (current && newer(current, incoming) === current) continue
-        records.set(incoming.record.id, incoming)
+        setRecord(incoming.record.id, incoming)
         dirty.add(incoming.record.id)
         changed = true
       }
