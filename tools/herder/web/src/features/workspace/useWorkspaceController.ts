@@ -559,8 +559,9 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       window.requestAnimationFrame(() => target?.isConnected && target.focus())
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
-  // Deliberate switches (rail, ⌥Tab, ⇧⌥←/→) land in the new space's composer.
-  const switchSpaceFocusing = useSwitchSpaceFocusing(apiRef, switchSpace)
+  // Deliberate switches (rail, ⌥Tab, ⇧⌥←/→, ⌘K) land in the new space's composer.
+  const readActiveSpaceID = useCallback(() => activeSpaceIDRef.current, [])
+  const switchSpaceFocusing = useSwitchSpaceFocusing(apiRef, switchSpace, readActiveSpaceID)
   const spaceAttention = useSpaceAttention({ apiRef, revision, board: boardQuery.data, spaces, activeSpaceID, activeAgents: agentNames })
   const { markUnread, markRead, toggleRead } = spaceAttention
   useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace: switchSpaceFocusing, toggleRead })

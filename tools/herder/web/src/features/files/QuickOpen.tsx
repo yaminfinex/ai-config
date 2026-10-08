@@ -39,7 +39,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void
   onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void
   onOpenAgent: (name: string) => void
-  onSwitchSpace: (id: string) => boolean
+  onSwitchSpace: (id: string, from: 'quick-open') => boolean
   onCreateSpace: (name: string) => boolean
 }) {
   const workspaceActions = useWorkspaceActionsContext()
@@ -112,7 +112,11 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const noteIndex = noteRow ? leadingCount + candidates.length : -1
   const chooseAction = async (row: QuickOpenActionRow) => {
     let chosen = true
-    if (row.kind === 'space') chosen = row.id === activeSpaceID || onSwitchSpace(row.id)
+    if (row.kind === 'space') {
+      // The switch focuses the space's composer (the active space's too), so closing must not hand focus back.
+      chosen = onSwitchSpace(row.id, 'quick-open')
+      if (chosen) restoreFocus.current = null
+    }
     else if (row.kind === 'agent') onOpenAgent(row.name)
     else if (row.kind === 'create') chosen = onCreateSpace(row.name)
     else if (row.kind === 'note') {

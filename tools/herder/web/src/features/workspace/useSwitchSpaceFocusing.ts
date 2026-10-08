@@ -5,25 +5,29 @@ import { panelParams } from '../layout/dockLayout'
 import { focusAtEnd, focusOrigin, switchFocusDecision } from '../spaces/index.ts'
 
 // useSwitchSpaceFocusing wraps switchSpace for the deliberate switches (rail
-// click, ⌥Tab switcher, ⇧⌥←/→): after the new layout mounts, the active
-// agent's composer takes focus with the caret after its draft, as decided by
-// switchFocusModel. The restored panels render over the next frames, so the
-// decision is retried until the composer appears.
+// click, ⌥Tab switcher, ⇧⌥←/→, a ⌘K space row): after the new layout mounts,
+// the active agent's composer takes focus with the caret after its draft, as
+// decided by switchFocusModel. The restored panels render over the next
+// frames, so the decision is retried until the composer appears. ⌘K passes
+// from 'quick-open' (its search box is not the owner's text field), and
+// choosing the space already showing there refocuses its composer.
 const composerFrames = 60
 
-export function useSwitchSpaceFocusing(apiRef: MutableRefObject<DockviewApi | undefined>, switchSpace: (id: string) => boolean) {
+export function useSwitchSpaceFocusing(apiRef: MutableRefObject<DockviewApi | undefined>, switchSpace: (id: string) => boolean, activeSpaceID: () => string | null) {
   const cancel = useRef<() => void>(() => undefined)
   useEffect(() => () => cancel.current(), [])
-  return useCallback((spaceID: string) => {
-    const origin = focusOrigin(document.activeElement)
-    if (!switchSpace(spaceID)) return false
+  return useCallback((spaceID: string, from?: 'quick-open') => {
+    const origin = from ?? focusOrigin(document.activeElement)
+    const refocus = from === 'quick-open' && activeSpaceID() === spaceID
+    if (!refocus && !switchSpace(spaceID)) return false
     cancel.current()
     cancel.current = focusComposerWhenReady(() => {
       const api = apiRef.current
       const field = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
       const decision = switchFocusDecision({
-        // A text field focused since the switch began is the owner's too.
-        origin: origin === 'text-field' ? origin : focusOrigin(document.activeElement),
+        // A text field focused since the switch began is the owner's too; the
+        // palette's own search box, still open on the first try, is not.
+        origin: origin === 'text-field' ? origin : focusOrigin(document.activeElement?.closest('.quick-open') ? null : document.activeElement),
         activePanelKind: panelParams(api?.activePanel?.params)?.kind,
         composer: field ? { disabled: field.disabled, visible: Boolean(api?.activeGroup?.api.isVisible) && field.getClientRects().length > 0 } : null,
       })
@@ -31,5 +35,5 @@ export function useSwitchSpaceFocusing(apiRef: MutableRefObject<DockviewApi | un
       return { focus: () => { if (decision === 'focus' && field) focusAtEnd(field) } }
     }, requestAnimationFrame, composerFrames, cancelAnimationFrame)
     return true
-  }, [apiRef, switchSpace])
+  }, [activeSpaceID, apiRef, switchSpace])
 }
