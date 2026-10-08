@@ -183,6 +183,7 @@ type Server struct {
 	// projection while a changed mirror/index stamp rebuilds in the background.
 	piProjectionMu     sync.Mutex
 	piProjections      map[string]*piProjectionEntry
+	piProjectionClock  uint64
 	piProjectionCtx    context.Context
 	cancelPiProjection context.CancelFunc
 	piProjectionWG     sync.WaitGroup
@@ -331,6 +332,9 @@ func mustPage(page string) *template.Template {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			if rec == http.ErrAbortHandler {
+				panic(rec) // a deliberate mid-stream abort (handleRaw), not a renderer fault
+			}
 			// The panic value is arbitrary and may embed page data; only its
 			// type and the route class reach the journal.
 			s.log.Error("surface: panic recovered", "route", logRoute(r.URL.Path), "panic_type", fmt.Sprintf("%T", rec))
@@ -499,12 +503,78 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleRaw streams the session's mirrored bytes as a JSONL download: every
+// file generation in first-ingest order, byte-faithful, no HTML and no display
+// caps. Memory is one copy buffer whatever the session's size; the in-page
+// raw fallback (serveRawFallback) is the bounded HTML view.
+//
+// A file that ends mid-line gets a newline before the next file starts, so
+// the concatenation stays one JSON value per line. A mirror failure before
+// the first byte is an honest 503; after it, the connection is aborted so
+// the client sees a failed transfer rather than a clean but short file.
 func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
 	sum, ok := s.resolveSession(w, r)
 	if !ok {
 		return
 	}
-	s.serveRawFallback(w, r, sum, "raw mirror lines")
+	started := false
+	start := func() {
+		if started {
+			return
+		}
+		started = true
+		h := w.Header()
+		h.Set("Content-Type", "application/x-ndjson")
+		h.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-%s.jsonl"`, sum.Tool, url.PathEscape(sum.LogicalSessionID)))
+		h.Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusOK)
+	}
+	fail := func(msg string, err error) {
+		s.log.Warn(msg, "tool", string(sum.Tool), "error_class", errClass(err))
+		if started {
+			panic(http.ErrAbortHandler)
+		}
+		http.Error(w, "sesh: mirror unreadable for this session; retry or check store logs", http.StatusServiceUnavailable)
+	}
+	buf := make([]byte, 64<<10)
+	last := byte('\n')
+	for _, ref := range sessionFilesFirstIngest(sum) {
+		rc, err := s.store.MirrorFile(r.Context(), sum.Tool, ref.WireSessionID, ref.FileUUID, ref.Generation)
+		if err != nil {
+			fail("surface: raw stream mirror open failed", err)
+			return
+		}
+		first := true
+		for {
+			n, readErr := rc.Read(buf)
+			if n > 0 {
+				start()
+				chunk := buf[:n]
+				if first && last != '\n' {
+					if _, err := w.Write([]byte{'\n'}); err != nil {
+						rc.Close()
+						return // client went away
+					}
+				}
+				first = false
+				if _, err := w.Write(chunk); err != nil {
+					rc.Close()
+					return // client went away
+				}
+				last = chunk[n-1]
+			}
+			if readErr == io.EOF {
+				break
+			}
+			if readErr != nil {
+				rc.Close()
+				fail("surface: raw stream mirror read failed", readErr)
+				return
+			}
+		}
+		rc.Close()
+	}
+	start() // an all-empty mirror is an empty download, not an error
 }
 
 // renderableFromIndex reports whether the index gives the transcript page

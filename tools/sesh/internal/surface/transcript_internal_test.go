@@ -1,6 +1,7 @@
 package surface
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -42,5 +43,26 @@ func TestTruncateTextRuneBoundary(t *testing.T) {
 	}
 	if got, cut := truncateText("short", 100); cut || got != "short" {
 		t.Fatal("under-limit text must pass through")
+	}
+}
+
+// The Pi projection cache is bounded: past maxPiProjections the least
+// recently used idle entry goes, and an entry with a build in flight is never
+// evicted out from under its waiters.
+func TestPiProjectionCacheEvictsLeastRecentlyUsedIdleEntry(t *testing.T) {
+	s := &Server{piProjections: map[string]*piProjectionEntry{}}
+	s.piProjections["building"] = &piProjectionEntry{build: &piProjectionBuild{}, used: 0}
+	for i := 1; i < maxPiProjections; i++ {
+		s.piProjections[fmt.Sprintf("idle-%d", i)] = &piProjectionEntry{used: uint64(i)}
+	}
+	s.evictPiProjectionsLocked()
+	if got := len(s.piProjections); got != maxPiProjections-1 {
+		t.Fatalf("cache holds %d entries after eviction, want %d (room for one more)", got, maxPiProjections-1)
+	}
+	if _, ok := s.piProjections["building"]; !ok {
+		t.Error("an entry with a build in flight must not be evicted")
+	}
+	if _, ok := s.piProjections["idle-1"]; ok {
+		t.Error("the least recently used idle entry must be the one evicted")
 	}
 }

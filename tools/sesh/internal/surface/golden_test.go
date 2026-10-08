@@ -53,7 +53,6 @@ func TestGoldenSnapshots(t *testing.T) {
 		"transcript-codex.html":         "/s/codex/" + uuidCodexMeta,
 		"transcript-grok.html":          "/s/grok/" + uuidGrokChat,
 		"fallback-quarantined-raw.html": "/s/claude/" + uuidPartial,
-		"raw-claude-normal.html":        "/s/claude/" + uuidNormal + "/raw",
 	}
 	for name, path := range pages {
 		t.Run(name, func(t *testing.T) {
