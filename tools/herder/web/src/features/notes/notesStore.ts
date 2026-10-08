@@ -164,9 +164,14 @@ export function createNotesStore(options: Options = {}): NotesStore {
   // to the one candidate instead of re-serialising every record.
   const liveBytes = new Map<string, number>()
   let liveTotal = 0
+  // The sorted live notes, rebuilt only when a record changes: several
+  // signals read list() on every notification, and draft marks read it on
+  // every composer keystroke. Callers share the array and must not mutate it.
+  let liveNotes: Note[] | undefined
   const setRecord = (id: string, stored: StoredNoteRecord) => {
     if (records.get(id) === stored) return
     records.set(id, stored)
+    liveNotes = undefined
     liveTotal -= liveBytes.get(id) ?? 0
     liveBytes.delete(id)
     if (!active(stored.record)) return
@@ -246,7 +251,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
     }
   }
 
-  const currentNotes = () => [...records.values()]
+  const currentNotes = () => liveNotes ??= [...records.values()]
     .flatMap((stored) => active(stored.record) ? [stored.record] : [])
     .sort((left, right) => right.updated - left.updated || left.id.localeCompare(right.id))
 

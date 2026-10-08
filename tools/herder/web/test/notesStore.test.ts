@@ -391,6 +391,22 @@ test('a budget check serialises only the candidate, not every stored record', ()
   assert.ok(calls <= 2, `an edit serialised ${calls} records`)
 })
 
+test('list() is rebuilt only when a record changes, so a keystroke rereading it costs nothing (reddens: re-sorted every call)', () => {
+  const subject = harness({ storage: tombstonedStorage() })
+  const added = subject.store.add({ group: 'kilo', text: 'first' })
+  assert.equal(added.ok, true)
+  const listed = subject.store.list()
+  assert.equal(subject.store.list(), listed, 'an unchanged store must answer list() with the same array')
+  assert.deepEqual(subject.store.listGroup('kilo'), listed)
+  assert.equal(subject.store.add({ group: 'kilo', text: 'second' }).ok, true)
+  const after = subject.store.list()
+  assert.notEqual(after, listed)
+  assert.deepEqual(after.map((note) => note.text).sort(), ['first', 'second'])
+  if (!added.ok) return
+  assert.equal(subject.store.delete([added.value.id]).ok, true)
+  assert.deepEqual(subject.store.list().map((note) => note.text), ['second'])
+})
+
 test('old tombstones purge after 30 days without returning deleted notes', () => {
   const storage = new FakeStorage()
   const original = harness({ storage })
