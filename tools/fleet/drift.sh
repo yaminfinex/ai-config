@@ -2,7 +2,13 @@
 # Read-only fleet placement drift report. One line per finding:
 #   shared-tab tab=ID agents=N panes=ID,ID   a tab holding more than one agent pane
 #   idle-shell pane=ID tab=ID cwd=PATH       a pane holding only its idle shell
-# It never closes, moves or renames anything; cull.sh and the operator act.
+#   orphan-db pid=N port=P data=DIR          a worktree Postgres no live seat or pane is in
+#   orphan-valkey pid=N port=P dir=DIR       the same for a worktree Valkey
+# An orphan's DIR is <linked worktree>/data/postgres or /data/valkey, suffixed
+# " (gone)" once that dir no longer exists (the worktree was removed under a
+# running server). Main checkouts, the shared :5433 Postgres and the trace
+# store are never listed. It never closes, moves, renames or stops anything;
+# cull.sh and the operator act.
 
 set -euo pipefail
 
@@ -37,3 +43,30 @@ jq -r '.result.panes[]? | [.pane_id, (.tab_id // "unknown"), (.foreground_cwd //
       printf 'idle-shell pane=%s tab=%s cwd=%s\n' "$pane_id" "$tab_id" "$pane_cwd"
     fi
   done
+
+# Worktree servers: listed only when the data dir is <linked worktree>/data/
+# <postgres|valkey> (or such a dir is gone) and no live seat or pane is in
+# that worktree. Without a readable seat roster no orphan can be proven.
+if ! roster=$(hcom list --json 2>/dev/null); then
+  printf 'fleet drift: cannot read hcom seats; orphan servers not checked\n' >&2
+  exit 0
+fi
+fleet_db_servers | while IFS=$'\t' read -r kind pid port dir gone; do
+  case $kind:$dir in
+    postgres:*/data/postgres) wt=${dir%/data/postgres} label=orphan-db key=data ;;
+    valkey:*/data/valkey) wt=${dir%/data/valkey} label=orphan-valkey key=dir ;;
+    *) continue ;;
+  esac
+  if [[ -d $wt ]]; then
+    top=$(fleet_linked_worktree "$wt") || continue
+    [[ $(realpath -e -- "$top") == "$(realpath -e -- "$wt")" ]] || continue
+  fi
+  owners=$(fleet_worktree_owners "$wt" "$roster" "$panes") || {
+    printf 'fleet drift: malformed seat or pane list; orphan servers not checked\n' >&2
+    exit 0
+  }
+  [[ -z $owners ]] || continue
+  suffix=
+  ((gone == 0)) || suffix=' (gone)'
+  printf '%s pid=%s port=%s %s=%s%s\n' "$label" "$pid" "$port" "$key" "$dir" "$suffix"
+done
