@@ -219,7 +219,7 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
   case "${1:-} ${2:-}" in
     'list --json')
       if [[ $FLEET_TEST_CULL_MODE == managed ]]; then
-        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{"pane_id":"p-managed"}}]'
+        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","directory":"/srv/seat","launch_context":{"pane_id":"p-managed"}}]'
       elif [[ $FLEET_TEST_CULL_MODE == claimed ]]; then
         printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}},{"name":"gate-kemo","base_name":"kemo","tool":"claude","launch_context":{"pane_id":"p-seat"}}]'
       else
@@ -1019,6 +1019,8 @@ FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-managed.out"
 grep -Fx 'culled name=gate-vava pane=p-managed close=managed tab=gone' "$TEST_ROOT/cull-managed.out" >/dev/null \
   || fail "cull did not verify the managed pane close"
+grep -Fx 'teardown=orchestrator cwd=/srv/seat' "$TEST_ROOT/cull-managed.out" >/dev/null \
+  || fail "cull did not remind the orchestrator to tear down the seat's cwd"
 send_line=$(grep -n 'hcom .* send @gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 kill_line=$(grep -n 'hcom .* kill gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 [[ -n $send_line && -n $kill_line && $send_line -lt $kill_line ]] \

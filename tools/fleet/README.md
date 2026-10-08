@@ -101,6 +101,13 @@ is never closed; the cull fails and names it. cull never closes a tab: herdr
 removes a tab with its last pane, and the output reports `tab=gone` or
 `tab=kept`.
 
+After every verified cull, cull prints one more line, `teardown=orchestrator
+cwd=<seat cwd>` (the hcom record's directory). cull never tears anything down:
+databases, agent browsers, background processes, large files and the worktree
+itself that the seat started are the orchestrator's to remove per its
+playbook. The line is a reminder only; cull detects no tasks, servers or
+project conventions.
+
 `tools/fleet/drift.sh` is a read-only report of placement drift: tabs holding
 more than one agent pane and panes holding only an idle shell, one per line.
 

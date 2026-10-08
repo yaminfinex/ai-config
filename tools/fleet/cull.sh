@@ -114,6 +114,12 @@ guarded_close() {
   fi
 }
 
+# cull culls the agent only; whatever the seat started is the orchestrator's
+# to tear down per its playbook.
+remind_teardown() {
+  printf 'teardown=orchestrator cwd=%s\n' "$seat_cwd"
+}
+
 label_matches() {
   local panes=$1
   jq -c --arg name "$full_name" --arg tool "$tool" '
@@ -140,6 +146,7 @@ record=$(jq -c '.[0]' <<<"$matches")
 full_name=$(jq -r '.name' <<<"$record")
 tool=$(jq -r '.tool' <<<"$record" | tr '[:upper:]' '[:lower:]')
 managed_pane=$(jq -r '.launch_context.pane_id // empty' <<<"$record")
+seat_cwd=$(jq -r '.directory // "unknown"' <<<"$record")
 
 panes_before=$(herdr pane list) || die "cannot read herdr panes"
 label_panes=$(label_matches "$panes_before")
@@ -174,6 +181,7 @@ if [[ -n $candidate ]] && ! herdr pane get "$candidate" >/dev/null 2>&1; then
   ((kill_rc == 0)) || printf 'fleet cull: hcom kill returned %d, but pane closure is verified\n' "$kill_rc" >&2
   register_event culled --name "$full_name" --pane "$candidate" --close managed
   printf 'culled name=%s pane=%s close=managed tab=%s\n' "$full_name" "$candidate" "$(tab_state "$candidate_tab")"
+  remind_teardown
   exit 0
 fi
 
@@ -204,3 +212,4 @@ guarded_close "$target"
 register_event culled --name "$full_name" --pane "$target" --close "$close_kind"
 printf 'culled name=%s pane=%s close=%s tab=%s cwd=%s foreground=%s\n' \
   "$full_name" "$target" "$close_kind" "$(tab_state "$target_tab")" "$closed_cwd" "$closed_cmd"
+remind_teardown
