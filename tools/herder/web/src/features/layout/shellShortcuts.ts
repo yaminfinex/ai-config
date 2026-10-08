@@ -49,7 +49,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     spaceSwitcher: '⌥Tab / ⇧⌥Tab',
     focusFleet: '⌥1',
     toggleNotesRail: '⌥3',
-    focusComposer: '⌥2',
+    focusComposer: '/',
     sendRequest: '⌘Enter',
     leaveComposer: 'Esc',
     goToTop: '⌥↑',
@@ -65,7 +65,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     spaceSwitcher: 'Alt+Tab / Shift+Alt+Tab',
     focusFleet: 'Alt+1',
     toggleNotesRail: 'Alt+3',
-    focusComposer: 'Alt+2',
+    focusComposer: '/',
     sendRequest: 'Ctrl+Enter',
     leaveComposer: 'Esc',
     goToTop: 'Alt+Up',
@@ -106,8 +106,9 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     'Alt+KeyU': claimed(actions.toggleRead, true),
     '$mod+PageUp': claimed(() => actions.switchTab('previous')),
     '$mod+PageDown': claimed(() => actions.switchTab('next')),
+    // A bare slash by key, so ⇧/ stays '?' and ⌘/ stays quick open; typed in a field it is a slash.
+    '/': claimed(actions.focusComposer, true),
     'Alt+Digit1': claimed(actions.focusFleet, true),
-    'Alt+Digit2': claimed(actions.focusComposer, true),
     'Alt+Digit3': claimed(actions.toggleNotesRail, true),
     ...(isMacPlatform(userAgent) ? { 'Meta+Slash': quickOpen } : {}),
   }

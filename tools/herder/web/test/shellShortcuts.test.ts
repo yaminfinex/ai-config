@@ -77,10 +77,9 @@ test('tinykeys dispatches Mac Option character events by physical code', () => {
   try {
     assert.equal(dispatch(target, { key: '∑', code: 'KeyW', altKey: true }).defaultPrevented, true)
     assert.equal(dispatch(target, { key: '¡', code: 'Digit1', altKey: true }).defaultPrevented, true)
-    assert.equal(dispatch(target, { key: '™', code: 'Digit2', altKey: true }).defaultPrevented, true)
     assert.equal(dispatch(target, { key: '£', code: 'Digit3', altKey: true }).defaultPrevented, true)
     assert.equal(dispatch(target, { key: '¢', code: 'Digit4', altKey: true }).defaultPrevented, false)
-    assert.deepEqual(calls, ['close', 'fleet', 'composer', 'notes'])
+    assert.deepEqual(calls, ['close', 'fleet', 'notes'])
   } finally {
     unsubscribe()
   }
@@ -99,7 +98,7 @@ test('editable targets stay dead through the real tinykeys-bound handler', () =>
   try {
     dispatch(target, { key: '∑', code: 'KeyW', altKey: true })
     dispatch(target, { key: '¡', code: 'Digit1', altKey: true })
-    dispatch(target, { key: '™', code: 'Digit2', altKey: true })
+    dispatch(target, { key: '/', code: 'Slash' })
     dispatch(target, { key: '£', code: 'Digit3', altKey: true })
     dispatch(target, { key: '¢', code: 'Digit4', altKey: true })
     dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true })
@@ -113,6 +112,28 @@ test('editable targets stay dead through the real tinykeys-bound handler', () =>
     unsubscribe()
     globalThis.HTMLElement = previousHTMLElement
   }
+})
+
+test('a bare slash focuses the composer; ⌥2 is gone, and ? and ⌘/ keep their own actions', () => {
+  for (const platform of ['Macintosh', 'Linux']) {
+    const target = new EventTarget()
+    const calls: string[] = []
+    const unsubscribe = bindShellShortcuts(target as unknown as Window, actions(calls), platform)
+    try {
+      assert.equal(dispatch(target, { key: '/', code: 'Slash' }).defaultPrevented, true)
+      assert.equal(dispatch(target, { key: platform === 'Macintosh' ? '™' : '2', code: 'Digit2', altKey: true }).defaultPrevented, false)
+      // US layout: Shift+Slash reports key '?', so it opens the reference and never reaches the slash binding.
+      assert.equal(dispatch(target, { key: '?', code: 'Slash', shiftKey: true }).defaultPrevented, true)
+      assert.equal(dispatch(target, { key: '/', code: 'Slash', metaKey: true }).defaultPrevented, platform === 'Macintosh')
+      assert.equal(dispatch(target, { key: '/', code: 'Slash', ctrlKey: true }).defaultPrevented, false)
+      assert.deepEqual(calls, platform === 'Macintosh' ? ['composer', 'reference', 'quick-open'] : ['composer', 'reference'])
+    } finally {
+      unsubscribe()
+    }
+    assert.equal(shortcutLabels(platform).focusComposer, '/')
+  }
+  const source = readFileSync(new URL('../src/features/layout/shellShortcuts.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(source, /Digit2|⌥2|Alt\+2/)
 })
 
 test('Option arrows and legacy Control Page aliases switch tabs', () => {
