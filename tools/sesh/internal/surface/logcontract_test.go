@@ -272,7 +272,7 @@ func TestSurfaceJournalContract(t *testing.T) {
 		{"panic while listing", &failingStore{panicRecent: true}, "/sessions", "surface: panic recovered"},
 		{"session lookup failure", &failingStore{failSession: true}, "/s/claude/" + uuidNormal, "surface: session lookup failed"},
 		{"index rows failure", &failingStore{failRows: true}, "/s/claude/" + uuidNormal, "surface: index rows read failed"},
-		{"raw fallback open failure", &failingStore{failMirrorFile: true}, "/s/claude/" + uuidResumeOrig + "/raw", "surface: raw fallback mirror open failed"},
+		{"raw fallback open failure", &failingStore{failRows: true, failMirrorFile: true}, "/s/claude/" + uuidResumeOrig, "surface: raw fallback mirror open failed"},
 		{"mirror range failure", &failingStore{failMirrorRange: true}, "/s/claude/" + uuidNormal, "surface: mirror range read failed"},
 	}
 	for _, sc := range scenarios {
@@ -337,9 +337,9 @@ func TestSurfaceJournalAggregatesRepeatedFailures(t *testing.T) {
 		t.Errorf("aggregated line reports rows=%d, want %d", gotRows, wantRows)
 	}
 
-	store2 := &failingStore{fakeStore: corpusStore(t), failMirrorFile: true}
+	store2 := &failingStore{fakeStore: corpusStore(t), failRows: true, failMirrorFile: true}
 	srv2, h2 := capturingServer(t, store2)
-	mustGet200(t, srv2, "/s/claude/"+uuidResumeOrig+"/raw") // two-file session
+	mustGet200(t, srv2, "/s/claude/"+uuidResumeOrig) // two-file session, index down → raw fallback
 	var openRecs []capturedRecord
 	for _, r := range h2.records() {
 		if r.msg == "surface: raw fallback mirror open failed" {

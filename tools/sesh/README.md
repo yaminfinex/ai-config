@@ -227,8 +227,8 @@ recency-ordered table. The surface includes `/` — the nodes entry point
 (last-PUT status per node, each row linking that node's sessions) —
 `/sessions` (the flat all-nodes recency list, stable URL; `?node=` filters
 it to one node with identical pagination), `/s/{tool}/{id}` transcript
-pages, and `/s/{tool}/{id}/raw` raw mirror fallback (`/nodes` redirects to
-`/`). The nodes entry point also carries the version census: each row shows
+pages, and `/s/{tool}/{id}/raw`, the session's mirrored JSONL streamed as a
+download (`/nodes` redirects to `/`). The nodes entry point also carries the version census: each row shows
 the version the node's shipper last self-reported via its `User-Agent`
 (informational only, never load-bearing), flagged `out of window` when it
 falls below the current+previous-release support window anchored to the
@@ -237,7 +237,10 @@ reported a parseable one (ops/README "Version-skew policy" has the operator
 playbook: `sesh update` the lagging node). Transcript pages are windowed: one page renders the newest 200 index
 rows (`?page=N` walks older windows, same pager idiom as the sessions
 list), the byte-level display budget stays as the in-window backstop, and
-the raw route still serves the whole file. The sessions list is bounded:
+the raw route streams every mirrored file whole, byte-faithful, in
+first-ingest order (a newline is inserted only where a file ends mid-line).
+When the index cannot render a session, the transcript page itself falls
+back to a bounded HTML view of the mirror lines. The sessions list is bounded:
 request-time work is proportional to the page, not the corpus (fleet
 corpora run to thousands of files per node). `surface.SQLStore` maintains a
 recency projection — the ranked session-key list, each entry carrying the

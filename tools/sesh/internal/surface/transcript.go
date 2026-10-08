@@ -406,6 +406,35 @@ type piProjectionBuild struct {
 type piProjectionEntry struct {
 	current *piBranchProjection
 	build   *piProjectionBuild
+	// used is the projection clock at the entry's last request; the least
+	// recently used idle entry is evicted first.
+	used uint64
+}
+
+// maxPiProjections bounds the projection cache. Every Pi session ever opened
+// would otherwise stay resident for the life of the process; past the cap
+// the least recently viewed idle projection is dropped and rebuilt on its
+// next view.
+const maxPiProjections = 64
+
+// evictPiProjectionsLocked drops least recently used entries until there is
+// room for one more. Entries with a build in flight are skipped: their
+// builder publishes into the entry and the waiting requests hold it. Callers
+// hold piProjectionMu.
+func (s *Server) evictPiProjectionsLocked() {
+	for len(s.piProjections) >= maxPiProjections {
+		victim := ""
+		var oldest uint64
+		for key, entry := range s.piProjections {
+			if entry.build == nil && (victim == "" || entry.used < oldest) {
+				victim, oldest = key, entry.used
+			}
+		}
+		if victim == "" {
+			return // every entry is mid-build; they finish and become evictable
+		}
+		delete(s.piProjections, victim)
+	}
 }
 
 func piStamp(sum SessionSummary) piProjectionStamp {
@@ -437,9 +466,12 @@ func (s *Server) piProjectionSnapshot(ctx context.Context, sum SessionSummary) (
 	}
 	entry := s.piProjections[key]
 	if entry == nil {
+		s.evictPiProjectionsLocked()
 		entry = &piProjectionEntry{}
 		s.piProjections[key] = entry
 	}
+	s.piProjectionClock++
+	entry.used = s.piProjectionClock
 	if entry.current != nil && entry.current.stamp == stamp {
 		current := entry.current
 		s.piProjectionMu.Unlock()

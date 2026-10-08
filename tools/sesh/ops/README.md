@@ -198,6 +198,23 @@ absent from the restored store. That is not loss — shippers hold the source
 bytes and re-converge via recovery GETs + resumed PUTs as soon as the store
 is back.
 
+## Memory ceiling and profiling
+
+`sesh-serve.service` caps the store at `MemoryMax=1800M` (with
+`MemoryHigh=1500M` and `GOMEMLIMIT=1200MiB` under it). Past the cap the
+kernel kills only sesh and `Restart=always` brings it back, instead of a
+global OOM taking down quickd and the VM's networking with it (2026-10-02:
+an uncapped sesh at 3.4 GB left quick-host off the network for six days).
+`journalctl -u sesh-serve | grep -i oom` shows whether the cap has fired.
+
+To see what the heap holds, profile on the VM; pprof listens on loopback
+only, never the tailnet:
+
+```sh
+curl -s localhost:8767/debug/pprof/heap > heap.pb   # on quick-host
+go tool pprof -top heap.pb                          # anywhere with the binary's source
+```
+
 ## Escape triggers (pre-agreed thresholds)
 
 Hosting on quick-host is a threshold decision, not a permanent one

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -47,6 +48,7 @@ func newServe() *cobra.Command {
 	var tsnetHostname string
 	var tsnetDir string
 	var tsnetAuthKey string
+	var debugAddr string
 	cmd := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the central store: byte-range ingest, index, and team surface",
@@ -80,6 +82,13 @@ func newServe() *cobra.Command {
 			// reads shuts down.
 			defer surfaceStore.Close()
 			defer surfaceHandler.Close()
+			if debugAddr != "" {
+				stopDebug, err := startDebugListener(debugAddr)
+				if err != nil {
+					return err
+				}
+				defer stopDebug()
+			}
 			if tsnetMode {
 				err = serveTSNet(serveCtx, st.Handler(), surfaceHandler, dataDir, addr, surfaceAddr, tsnetHostname, tsnetDir, tsnetAuthKey)
 				if consumerErr := consumer.StopAndWait(); consumerErr != nil {
@@ -122,7 +131,28 @@ func newServe() *cobra.Command {
 	cmd.Flags().StringVar(&tsnetHostname, "tsnet-hostname", "sesh", "tsnet node hostname")
 	cmd.Flags().StringVar(&tsnetDir, "tsnet-dir", "", "tsnet state directory; default is <data-dir>/tsnet")
 	cmd.Flags().StringVar(&tsnetAuthKey, "tsnet-auth-key", "", "tsnet auth key; empty lets tsnet use TS_AUTHKEY or stored state")
+	cmd.Flags().StringVar(&debugAddr, "debug-addr", "", "loopback address for net/http/pprof (e.g. 127.0.0.1:6060); empty disables it")
 	return cmd
+}
+
+// startDebugListener serves net/http/pprof on a loopback-only listener, never
+// on tsnet: heap profiles carry corpus bytes, so reaching them takes a shell
+// on the store host (ssh -L or curl there). It is off unless --debug-addr is
+// set, and the returned stop closes it with the rest of serve.
+func startDebugListener(addr string) (func(), error) {
+	l, err := listenLoopback(addr, "debug")
+	if err != nil {
+		return nil, err
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: serveReadHeaderTimeout}
+	go func() { _ = server.Serve(l) }()
+	return func() { _ = server.Close() }, nil
 }
 
 // newSurfaceHandler wires the surface over the store's read-only pool: WAL
@@ -201,6 +231,17 @@ func serveTSNet(ctx context.Context, ingestHandler, surfaceHandler http.Handler,
 }
 
 const serveShutdownTimeout = 10 * time.Second
+
+// Listener timeouts bound what a stalled or idle client can pin: a header
+// that never finishes, or a parked keep-alive connection. There is
+// deliberately no ReadTimeout or WriteTimeout: /raw and /releases/ stream
+// whole files whose transfer time scales with their size, and an expired
+// read deadline cancels the request context mid-response. Ingest bodies are
+// already size-capped, which bounds what a trickling PUT can hold.
+const (
+	serveReadHeaderTimeout = 10 * time.Second
+	serveIdleTimeout       = 2 * time.Minute
+)
 
 type httpEndpoint struct {
 	listener net.Listener
@@ -287,7 +328,11 @@ func serveHTTP(ctx context.Context, endpoints ...httpEndpoint) error {
 	servers := make([]*http.Server, len(endpoints))
 	errCh := make(chan error, len(endpoints))
 	for i, endpoint := range endpoints {
-		servers[i] = &http.Server{Handler: timedHandler(endpoint.handler)}
+		servers[i] = &http.Server{
+			Handler:           timedHandler(endpoint.handler),
+			ReadHeaderTimeout: serveReadHeaderTimeout,
+			IdleTimeout:       serveIdleTimeout,
+		}
 		go func(server *http.Server, listener net.Listener) {
 			errCh <- server.Serve(listener)
 		}(servers[i], endpoint.listener)

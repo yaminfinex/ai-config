@@ -1,6 +1,7 @@
 package surface_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -280,8 +281,8 @@ func TestOversizedLineTruncatesWithRawAvailable(t *testing.T) {
 		t.Error("truncated render must link the raw fallback")
 	}
 	raw := mustGet200(t, srv, "/s/claude/"+uuidNormal+"/raw")
-	if !strings.Contains(raw, "display-truncated") {
-		t.Error("raw view of a multi-MB line must state display truncation with the mirror's true size")
+	if len(raw) < 3<<20 {
+		t.Errorf("raw download is %d bytes; it must carry the multi-MB line whole", len(raw))
 	}
 }
 
@@ -696,4 +697,101 @@ func TestRecencyFragmentAndAsset(t *testing.T) {
 	if rec.Body.Len() < 10<<10 {
 		t.Errorf("htmx asset is %d bytes; embedded file looks wrong", rec.Body.Len())
 	}
+}
+
+// --- raw download: the whole mirror, streamed, no HTML ---
+
+func TestRawStreamsWholeMirrorAsJSONL(t *testing.T) {
+	f := corpusStore(t)
+	srv := newServer(t, f)
+	var want []byte
+	for _, sum := range f.sessions {
+		if sum.LogicalSessionID != uuidResumeOrig {
+			continue
+		}
+		if len(sum.Files) < 2 {
+			t.Fatalf("resume pair has %d files; the scenario needs a multi-file session", len(sum.Files))
+		}
+		for _, ref := range sum.Files {
+			want = append(want, f.mirrors[mirrorKey(sum.Tool, ref.WireSessionID, ref.FileUUID, ref.Generation)]...)
+		}
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/s/claude/"+uuidResumeOrig+"/raw", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET raw = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("Content-Type = %q, want application/x-ndjson", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, uuidResumeOrig+".jsonl") {
+		t.Errorf("Content-Disposition = %q, want an attachment named for the session", cd)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), want) {
+		t.Errorf("raw body is %d bytes, want the %d mirrored bytes of both files in first-ingest order", rec.Body.Len(), len(want))
+	}
+	if strings.Contains(rec.Body.String(), "<html") {
+		t.Error("raw download must carry no HTML")
+	}
+}
+
+func TestRawSeparatesFilesEndingMidLine(t *testing.T) {
+	ingest, _ := time.Parse(time.RFC3339, "2026-07-07T00:00:00Z")
+	srv := newServer(t, buildStore(t, []sessionSpec{{
+		tool: wire.ToolClaude, logicalID: uuidNormal,
+		hostname: "workstation", osUser: "grace", mirroredAt: ingest,
+		quarantineAll: true, quarantineReason: "parser_rejected",
+		files: []fixtureFile{
+			{bytes: []byte(`{"a":1}` + "\n" + `{"partial":`), fileUUID: uuidNormal, firstIngest: ingest},
+			{bytes: []byte(`{"b":2}` + "\n"), fileUUID: uuidResumeOrig, firstIngest: ingest.Add(time.Hour)},
+		},
+	}}))
+	body := mustGet200(t, srv, "/s/claude/"+uuidNormal+"/raw")
+	if want := `{"a":1}` + "\n" + `{"partial":` + "\n" + `{"b":2}` + "\n"; body != want {
+		t.Errorf("raw body = %q, want %q (a file ending mid-line must not glue onto the next file's first line)", body, want)
+	}
+}
+
+func TestRawMirrorFailures(t *testing.T) {
+	t.Run("before the first byte is an honest 503", func(t *testing.T) {
+		srv, h := capturingServer(t, &failingStore{fakeStore: corpusStore(t), failMirrorFile: true})
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/s/claude/"+uuidResumeOrig+"/raw", nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("GET raw with an unreadable mirror = %d, want 503", rec.Code)
+		}
+		logged := false
+		for _, r := range h.records() {
+			logged = logged || r.msg == "surface: raw stream mirror open failed"
+		}
+		if !logged {
+			t.Error("raw open failure must reach the journal")
+		}
+	})
+	t.Run("after the first byte aborts the transfer", func(t *testing.T) {
+		f := corpusStore(t)
+		srv := newServer(t, &secondFileMissingStore{fakeStore: f})
+		defer func() {
+			if rec := recover(); rec != http.ErrAbortHandler {
+				t.Errorf("mid-stream failure recovered %v, want http.ErrAbortHandler so the client sees a failed transfer", rec)
+			}
+		}()
+		srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/s/claude/"+uuidResumeOrig+"/raw", nil))
+		t.Error("a mirror failure after streaming started must not complete as a clean, short download")
+	})
+}
+
+// secondFileMissingStore serves the first MirrorFile call and fails every
+// later one.
+type secondFileMissingStore struct {
+	*fakeStore
+	opened int
+}
+
+func (s *secondFileMissingStore) MirrorFile(ctx context.Context, tool wire.Tool, wireSessionID, fileUUID string, gen int) (io.ReadCloser, error) {
+	s.opened++
+	if s.opened > 1 {
+		return nil, fmt.Errorf("mirror gone")
+	}
+	return s.fakeStore.MirrorFile(ctx, tool, wireSessionID, fileUUID, gen)
 }
