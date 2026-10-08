@@ -101,42 +101,15 @@ is never closed; the cull fails and names it. cull never closes a tab: herdr
 removes a tab with its last pane, and the output reports `tab=gone` or
 `tab=kept`.
 
-Before the kill, cull stops the seat's worktree Postgres and Valkey (boomerang
-keeps one of each per checkout, under `<checkout>/data/postgres` and
-`<checkout>/data/valkey`) and prints a `db=` and a `valkey=` line:
-`stopped`, `not-running`, `skipped(<reason>)` or `failed(<reason>)`. It acts
-only when the seat's cwd is inside a linked git worktree (never a main
-checkout, which many seats share) and no other live hcom seat or herdr pane
-has its cwd inside that worktree; otherwise both lines say `skipped` and why.
-A server counts as running only when a postgres postmaster or valkey-server
-process has its cwd in exactly that data dir. It runs `mise run db-stop` /
-`mise run valkey-stop` in the worktree under a timeout; if the server still
-runs, it falls back to `pg_ctl stop -m fast -D <data>`, or to `valkey-cli
-shutdown nosave` once `config get dir` proves the port serves that data dir,
-with the binary `mise which` names there, else the one on PATH. A failure is
-reported and the cull goes on. The data dir must resolve to exactly
-`<worktree>/data/<postgres|valkey>`; a symlink out of the checkout is refused,
-and the shared :5433 store (`~/.local/share/boomerang/postgres18`) and the
-trace store (`~/.local/state/boomerang-trace-store`) are refused outright.
-Neither exclusion is configurable.
+After every verified cull, cull prints one more line, `teardown=orchestrator
+cwd=<seat cwd>` (the hcom record's directory). cull never tears anything down:
+databases, agent browsers, background processes, large files and the worktree
+itself that the seat started are the orchestrator's to remove per its
+playbook. The line is a reminder only; cull detects no tasks, servers or
+project conventions.
 
-`tools/fleet/drift.sh` is a read-only report of drift, one finding per line:
-tabs holding more than one agent pane, panes holding only an idle shell, and
-worktree servers no one is using:
-
-```text
-orphan-db pid=N port=P data=<linked worktree>/data/postgres
-orphan-valkey pid=N port=P dir=<linked worktree>/data/valkey
-```
-
-A server is an orphan when no live herdr pane and no live hcom seat has its
-cwd inside that worktree. Servers are found by process scan (cwd, else the
-`-D`/`--dir` argument); a dir that no longer exists, usually because the
-worktree was removed under the running server, is suffixed ` (gone)`. Main
-checkouts, other mount namespaces (containers) and the protected stores are
-never listed. drift stops nothing: for a listed worktree that still exists,
-run `mise run db-stop` / `mise run valkey-stop` there; a `(gone)` one can
-only be stopped by its pid.
+`tools/fleet/drift.sh` is a read-only report of placement drift: tabs holding
+more than one agent pane and panes holding only an idle shell, one per line.
 
 `tools/fleet/prune-build-cache.sh` is the only thing that prunes the shared
 Rust build cache (mbx at `/mnt/xfs-nvme/mbx`). mbx never collects on its own

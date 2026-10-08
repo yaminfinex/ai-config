@@ -71,12 +71,7 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
   case "${1:-} ${2:-}" in
     'pane list')
       case "$FLEET_TEST_CULL_MODE" in
-        managed)
-          # FLEET_TEST_OTHER_PANE_DIR adds an unlabelled pane sitting in that dir.
-          jq -c --arg other "${FLEET_TEST_OTHER_PANE_DIR:-}" '
-            if $other == "" then . else .result.panes += [{"pane_id":"p-shell","tab_id":"t-shell","label":null,"cwd":$other}] end
-          ' <<<'{"result":{"panes":[{"pane_id":"p-managed","tab_id":"t-seat","label":"◉ gate-vava [codex]"}]}}'
-          ;;
+        managed) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-managed","tab_id":"t-seat","label":"◉ gate-vava [codex]"}]}}' ;;
         fallback | fallback-busy) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-fallback","tab_id":"t-seat","label":"▶ gate-vava [codex]"}]}}' ;;
         ambiguous) printf '%s\n' '{"result":{"panes":[{"pane_id":"p-one","label":"◉ gate-vava [codex]"},{"pane_id":"p-two","label":"○ gate-vava [codex]"}]}}' ;;
         *)
@@ -224,18 +219,12 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
   case "${1:-} ${2:-}" in
     'list --json')
       if [[ $FLEET_TEST_CULL_MODE == managed ]]; then
-        roster='[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{"pane_id":"p-managed"}}]'
+        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","directory":"/srv/seat","launch_context":{"pane_id":"p-managed"}}]'
       elif [[ $FLEET_TEST_CULL_MODE == claimed ]]; then
-        roster='[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}},{"name":"gate-kemo","base_name":"kemo","tool":"claude","launch_context":{"pane_id":"p-seat"}}]'
+        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}},{"name":"gate-kemo","base_name":"kemo","tool":"claude","launch_context":{"pane_id":"p-seat"}}]'
       else
-        roster='[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}}]'
+        printf '%s\n' '[{"name":"gate-vava","base_name":"vava","tool":"codex","launch_context":{}}]'
       fi
-      # FLEET_TEST_SEAT_DIR gives gate-vava a directory; FLEET_TEST_OTHER_SEAT_DIR
-      # adds a second live seat there.
-      jq -c --arg dir "${FLEET_TEST_SEAT_DIR:-}" --arg other "${FLEET_TEST_OTHER_SEAT_DIR:-}" '
-        map(if .name == "gate-vava" and $dir != "" then .directory = $dir else . end)
-        + (if $other == "" then [] else [{"name":"gate-mura","base_name":"mura","tool":"claude","directory":$other,"launch_context":{}}] end)
-      ' <<<"$roster"
       ;;
     'send @gate-vava') ;;
     'kill gate-vava')
@@ -1030,6 +1019,8 @@ FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/cull.sh" vava >"$TEST_ROOT/cull-managed.out"
 grep -Fx 'culled name=gate-vava pane=p-managed close=managed tab=gone' "$TEST_ROOT/cull-managed.out" >/dev/null \
   || fail "cull did not verify the managed pane close"
+grep -Fx 'teardown=orchestrator cwd=/srv/seat' "$TEST_ROOT/cull-managed.out" >/dev/null \
+  || fail "cull did not remind the orchestrator to tear down the seat's cwd"
 send_line=$(grep -n 'hcom .* send @gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 kill_line=$(grep -n 'hcom .* kill gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 [[ -n $send_line && -n $kill_line && $send_line -lt $kill_line ]] \
@@ -1161,203 +1152,6 @@ done
 [[ $(grep -c 'herdr pane process-info --pane p-seat' "$FLEET_TEST_CALLS") -eq 2 ]] \
   || fail "flip cull did not re-read process info before closing"
 pass "cull keeps labelled busy, moved-label, foreign, claimed, malformed and flipped panes"
-
-# Worktree servers. Fake postmasters and Valkeys are copies of bash (so
-# /proc/<pid>/comm reads postgres / valkey-server) blocked on a fifo, with
-# their cwd in the data dir. The fake mise, pg_ctl and valkey-cli only ever
-# signal pids listed in $db_root/pids, so no real server can be touched.
-db_root=$(realpath -- "$TEST_ROOT")/db
-mkdir -p -- "$db_root/fakebin" "$db_root/bin" "$db_root/tools"
-cp -- "$(command -v bash)" "$db_root/fakebin/postgres"
-cp -- "$(command -v bash)" "$db_root/fakebin/valkey-server"
-mkfifo -- "$db_root/hold"
-: >"$db_root/pids"
-stop_test_servers() {
-  local _kind _dir pid _port
-  [[ -f ${db_root:-}/pids ]] || return 0
-  while read -r _kind _dir pid _port; do kill "$pid" 2>/dev/null || true; done <"$db_root/pids"
-}
-trap 'stop_test_servers; rm -rf -- "$TEST_ROOT"' EXIT
-# start_server KIND DIR PORT [-D ARG]: start a fake server with its cwd in DIR.
-start_server() {
-  local kind=$1 dir=$2 port=$3 darg=${4:-$2} pid i
-  mkdir -p -- "$dir"
-  if [[ $kind == postgres ]]; then
-    # shellcheck disable=SC2016
-    (cd -- "$dir" && exec "$db_root/fakebin/postgres" -c 'exec 3<>"$0"; read -r _ <&3' "$db_root/hold" -D "$darg" -p "$port") </dev/null >/dev/null 2>&1 &
-  else
-    # shellcheck disable=SC2016
-    (cd -- "$dir" && exec "$db_root/fakebin/valkey-server" -c 'exec 3<>"$0"; read -r _ <&3' "$db_root/hold" "127.0.0.1:$port") </dev/null >/dev/null 2>&1 &
-  fi
-  pid=$!
-  for ((i = 0; i < 50; i++)); do
-    [[ $(cat "/proc/$pid/comm" 2>/dev/null) == "${kind/valkey/valkey-server}" ]] && break
-    sleep 0.1
-  done
-  [[ $kind != postgres ]] || printf '%s\n%s\n0\n%s\n' "$pid" "$dir" "$port" >"$dir/postmaster.pid"
-  printf '%s %s %s %s\n' "$kind" "$dir" "$pid" "$port" >>"$db_root/pids"
-  printf '%s\n' "$pid"
-}
-running() { kill -0 "$1" 2>/dev/null; }
-cat >"$db_root/kill-fake" <<'EOF'
-#!/usr/bin/env bash
-# kill-fake KIND FIELD VALUE: signal the listed fake whose dir (field 2) or
-# port (field 4) matches; nothing else.
-awk -v k="$1" -v f="$2" -v v="$3" '$1 == k && $f == v {print $3}' "$FLEET_TEST_DB_PIDS" \
-  | while read -r pid; do kill "$pid" 2>/dev/null || true; done
-EOF
-cat >"$db_root/bin/mise" <<'EOF'
-#!/usr/bin/env bash
-printf 'mise cwd=%s %s\n' "$PWD" "$*" >>"$FLEET_TEST_CALLS"
-case "$*" in
-  'run db-stop' | 'run valkey-stop')
-    kind=postgres; [[ $2 == db-stop ]] || kind=valkey
-    case ${FLEET_TEST_MISE:-ok} in
-      ok) "$FLEET_TEST_DB_ROOT/kill-fake" "$kind" 2 "$PWD/data/$kind" ;;
-      noop) ;;
-      *) exit 1 ;;
-    esac
-    ;;
-  'which pg_ctl' | 'which valkey-cli') printf '%s\n' "$FLEET_TEST_DB_ROOT/tools/$2" ;;
-  *) exit 64 ;;
-esac
-EOF
-cat >"$db_root/tools/pg_ctl" <<'EOF'
-#!/usr/bin/env bash
-printf 'pg_ctl %s\n' "$*" >>"$FLEET_TEST_CALLS"
-[[ ${FLEET_TEST_DB_TOOL:-ok} == ok && $1 == stop && $6 == -D ]] || exit 1
-"$FLEET_TEST_DB_ROOT/kill-fake" postgres 2 "$7"
-EOF
-cat >"$db_root/tools/valkey-cli" <<'EOF'
-#!/usr/bin/env bash
-printf 'valkey-cli %s\n' "$*" >>"$FLEET_TEST_CALLS"
-port=$4
-case "${5:-} ${6:-} ${7:-}" in
-  'config get dir') printf 'dir\n%s\n' "$(awk -v p="$port" '$1 == "valkey" && $4 == p {print $2}' "$FLEET_TEST_DB_PIDS")" ;;
-  'shutdown nosave ') [[ ${FLEET_TEST_DB_TOOL:-ok} != ok ]] || "$FLEET_TEST_DB_ROOT/kill-fake" valkey 4 "$port" ;;
-esac
-EOF
-chmod +x "$db_root/kill-fake" "$db_root/bin/mise" "$db_root/tools/pg_ctl" "$db_root/tools/valkey-cli"
-
-repo=$db_root/repo
-git init -q "$repo"
-git -C "$repo" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
-for wt in solo shared nodb fallback fail p18 orphan gone owned; do
-  git -C "$repo" worktree add -q --detach "$db_root/wt-$wt"
-done
-p18=$(getent passwd "$(id -u)" | cut -d: -f6)/.local/share/boomerang/postgres18
-mkdir -p -- "$db_root/wt-p18/data" "$db_root/elsewhere/valkey"
-ln -s -- "$p18" "$db_root/wt-p18/data/postgres"
-ln -s -- "$db_root/elsewhere/valkey" "$db_root/wt-p18/data/valkey"
-
-# db_cull OUT [ENV...]: cull the managed seat with the fakes on PATH.
-db_cull() {
-  local out=$1
-  shift
-  rm -f -- "${cull_state:?}"/*
-  : >"$FLEET_TEST_CALLS"
-  env FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" FLEET_TEST_DB_ROOT="$db_root" \
-    FLEET_TEST_DB_PIDS="$db_root/pids" "$@" PATH="$db_root/bin:$TEST_ROOT/bin:$PATH" \
-    "$FLEET/cull.sh" vava >"$TEST_ROOT/$out.out" 2>"$TEST_ROOT/$out.err" \
-    || { cat "$TEST_ROOT/$out.err" >&2; fail "cull $out failed"; }
-  grep -Fx 'culled name=gate-vava pane=p-managed close=managed tab=gone' "$TEST_ROOT/$out.out" >/dev/null \
-    || { cat "$TEST_ROOT/$out.out" >&2; fail "cull $out did not complete"; }
-}
-
-solo_pg=$(start_server postgres "$db_root/wt-solo/data/postgres" 15901)
-solo_vk=$(start_server valkey "$db_root/wt-solo/data/valkey" 16901)
-mkdir -p -- "$db_root/wt-solo/app"
-db_cull cull-db-solo FLEET_TEST_SEAT_DIR="$db_root/wt-solo/app"
-grep -Fx 'db=stopped' "$TEST_ROOT/cull-db-solo.out" >/dev/null || fail "cull did not stop the sole-owner worktree Postgres"
-grep -Fx 'valkey=stopped' "$TEST_ROOT/cull-db-solo.out" >/dev/null || fail "cull did not stop the sole-owner worktree Valkey"
-if running "$solo_pg" || running "$solo_vk"; then fail "cull left the sole-owner worktree servers running"; fi
-stop_line=$(grep -n "mise cwd=$db_root/wt-solo run db-stop" "$FLEET_TEST_CALLS" | cut -d: -f1)
-kill_line=$(grep -n 'hcom .* kill gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
-[[ -n $stop_line && -n $kill_line && $stop_line -lt $kill_line ]] || fail "cull did not run db-stop before the pane closed"
-grep -F "mise cwd=$db_root/wt-solo run valkey-stop" "$FLEET_TEST_CALLS" >/dev/null || fail "cull did not run valkey-stop"
-! grep -E '^(pg_ctl|valkey-cli) ' "$FLEET_TEST_CALLS" >/dev/null || fail "cull fell back although mise stopped both servers"
-pass "cull stops a sole-owner linked worktree's Postgres and Valkey through mise before the pane closes"
-
-main_pg=$(start_server postgres "$repo/data/postgres" 15902)
-db_cull cull-db-main FLEET_TEST_SEAT_DIR="$repo"
-grep -Fx "db=skipped(not a linked worktree: $repo)" "$TEST_ROOT/cull-db-main.out" >/dev/null || fail "cull did not skip a main checkout's Postgres"
-grep -Fx "valkey=skipped(not a linked worktree: $repo)" "$TEST_ROOT/cull-db-main.out" >/dev/null || fail "cull did not skip a main checkout's Valkey"
-running "$main_pg" || fail "cull stopped a main checkout's Postgres"
-! grep -E '^(mise|pg_ctl|valkey-cli) ' "$FLEET_TEST_CALLS" >/dev/null || fail "cull ran a stop in a main checkout"
-
-shared_pg=$(start_server postgres "$db_root/wt-shared/data/postgres" 15903)
-db_cull cull-db-seat FLEET_TEST_SEAT_DIR="$db_root/wt-shared" FLEET_TEST_OTHER_SEAT_DIR="$db_root/wt-shared/sub"
-grep -Fx "db=skipped($db_root/wt-shared shared with seat:gate-mura)" "$TEST_ROOT/cull-db-seat.out" >/dev/null \
-  || fail "cull did not skip a worktree another seat is in"
-db_cull cull-db-pane FLEET_TEST_SEAT_DIR="$db_root/wt-shared" FLEET_TEST_OTHER_PANE_DIR="$db_root/wt-shared"
-grep -Fx "db=skipped($db_root/wt-shared shared with pane:p-shell)" "$TEST_ROOT/cull-db-pane.out" >/dev/null \
-  || fail "cull did not skip a worktree another pane is in"
-running "$shared_pg" || fail "cull stopped a shared worktree's Postgres"
-! grep -E '^(mise|pg_ctl|valkey-cli) ' "$FLEET_TEST_CALLS" >/dev/null || fail "cull ran a stop in a shared worktree"
-
-db_cull cull-db-nodb FLEET_TEST_SEAT_DIR="$db_root/wt-nodb"
-grep -Fx 'db=not-running' "$TEST_ROOT/cull-db-nodb.out" >/dev/null || fail "cull did not report a worktree with no Postgres"
-grep -Fx 'valkey=not-running' "$TEST_ROOT/cull-db-nodb.out" >/dev/null || fail "cull did not report a worktree with no Valkey"
-! grep -E '^(mise|pg_ctl|valkey-cli) ' "$FLEET_TEST_CALLS" >/dev/null || fail "cull ran a stop with no server running"
-pass "cull skips a main checkout, a worktree another seat or pane is in, and a worktree with no running server"
-
-fb_pg=$(start_server postgres "$db_root/wt-fallback/data/postgres" 15904)
-fb_vk=$(start_server valkey "$db_root/wt-fallback/data/valkey" 16904)
-db_cull cull-db-fallback FLEET_TEST_SEAT_DIR="$db_root/wt-fallback" FLEET_TEST_MISE=noop
-grep -Fx 'db=stopped' "$TEST_ROOT/cull-db-fallback.out" >/dev/null || fail "cull did not fall back to pg_ctl"
-grep -Fx 'valkey=stopped' "$TEST_ROOT/cull-db-fallback.out" >/dev/null || fail "cull did not fall back to valkey-cli"
-grep -Fx "pg_ctl stop -m fast -t 30 -D $db_root/wt-fallback/data/postgres" "$FLEET_TEST_CALLS" >/dev/null \
-  || fail "cull did not run the mise-resolved pg_ctl stop -m fast on the worktree data dir"
-grep -Fx 'valkey-cli -h 127.0.0.1 -p 16904 config get dir' "$FLEET_TEST_CALLS" >/dev/null \
-  || fail "cull did not prove the Valkey port's data dir before shutting it down"
-grep -Fx 'valkey-cli -h 127.0.0.1 -p 16904 shutdown nosave' "$FLEET_TEST_CALLS" >/dev/null || fail "cull did not shut down the Valkey"
-if running "$fb_pg" || running "$fb_vk"; then fail "fallback left the worktree servers running"; fi
-pass "cull falls back to pg_ctl -m fast and a dir-proven valkey-cli shutdown when mise leaves them running"
-
-fail_pg=$(start_server postgres "$db_root/wt-fail/data/postgres" 15905)
-fail_vk=$(start_server valkey "$db_root/wt-fail/data/valkey" 16905)
-db_cull cull-db-fail FLEET_TEST_SEAT_DIR="$db_root/wt-fail" FLEET_TEST_MISE=fail FLEET_TEST_DB_TOOL=fail
-grep -Fx "db=failed(still running pid=$fail_pg after mise run db-stop and pg_ctl)" "$TEST_ROOT/cull-db-fail.out" >/dev/null \
-  || fail "cull did not report a Postgres it could not stop"
-grep -Fx "valkey=failed(still running pid=$fail_vk after mise run valkey-stop and valkey-cli)" "$TEST_ROOT/cull-db-fail.out" >/dev/null \
-  || fail "cull did not report a Valkey it could not stop"
-grep -F 'register culled --name gate-vava --pane p-managed --close managed' "$FLEET_TEST_CALLS" >/dev/null \
-  || fail "a stop failure blocked the cull"
-pass "a server stop failure is reported as failed and the cull still completes"
-
-db_cull cull-db-p18 FLEET_TEST_SEAT_DIR="$db_root/wt-p18"
-grep -Fx "db=skipped(refused $db_root/wt-p18/data/postgres: not exactly the worktree data dir)" "$TEST_ROOT/cull-db-p18.out" >/dev/null \
-  || fail "cull did not refuse a data/postgres that resolves to the postgres18 store"
-grep -Fx "valkey=skipped(refused $db_root/wt-p18/data/valkey: not exactly the worktree data dir)" "$TEST_ROOT/cull-db-p18.out" >/dev/null \
-  || fail "cull did not refuse a data/valkey that resolves out of the worktree"
-! grep -E '^(mise|pg_ctl|valkey-cli) ' "$FLEET_TEST_CALLS" >/dev/null || fail "cull ran a stop against a refused data dir"
-! grep -F postgres18 "$FLEET_TEST_CALLS" >/dev/null || fail "cull passed the postgres18 store to a tool"
-pass "cull refuses any data dir but exactly <worktree>/data/<name>, so postgres18 is never touched"
-
-orphan_pg=$(start_server postgres "$db_root/wt-orphan/data/postgres" 15906)
-orphan_vk=$(start_server valkey "$db_root/wt-orphan/data/valkey" 16906)
-gone_pg=$(start_server postgres "$db_root/wt-gone/data/postgres" 15907)
-gone_vk=$(start_server valkey "$db_root/wt-gone/data/valkey" 16907)
-owned_pg=$(start_server postgres "$db_root/wt-owned/data/postgres" 15908)
-owned_vk=$(start_server valkey "$db_root/wt-owned/data/valkey" 16908)
-p18_pg=$(start_server postgres "$db_root/wt-nodb/data/postgres" 15909 "$p18")
-rm -rf -- "${db_root:?}/wt-gone"
-FLEET_TEST_CULL_MODE=managed FLEET_TEST_CULL_STATE="$cull_state" FLEET_TEST_OTHER_PANE_DIR="$db_root/wt-owned/app" \
-  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/drift.sh" >"$TEST_ROOT/drift-db.out" 2>"$TEST_ROOT/drift-db.err" \
-  || { cat "$TEST_ROOT/drift-db.err" >&2; fail "drift failed"; }
-for line in \
-  "orphan-db pid=$orphan_pg port=15906 data=$db_root/wt-orphan/data/postgres" \
-  "orphan-valkey pid=$orphan_vk port=16906 dir=$db_root/wt-orphan/data/valkey" \
-  "orphan-db pid=$gone_pg port=15907 data=$db_root/wt-gone/data/postgres (gone)" \
-  "orphan-valkey pid=$gone_vk port=16907 dir=$db_root/wt-gone/data/valkey (gone)"; do
-  grep -Fx -- "$line" "$TEST_ROOT/drift-db.out" >/dev/null || { cat "$TEST_ROOT/drift-db.out" >&2; fail "drift did not list: $line"; }
-done
-for pid in "$owned_pg" "$owned_vk" "$main_pg" "$p18_pg"; do
-  ! grep -E "^orphan-(db|valkey) pid=$pid " "$TEST_ROOT/drift-db.out" >/dev/null || fail "drift listed an owned, main-checkout or protected server: pid $pid"
-done
-! grep -E '^orphan-.*postgres18' "$TEST_ROOT/drift-db.out" >/dev/null || fail "drift listed the postgres18 store"
-if ! running "$orphan_pg" || ! running "$gone_vk"; then fail "drift stopped a server"; fi
-pass "drift lists orphan and gone worktree Postgres and Valkey, and ignores owned, main-checkout and postgres18 servers"
 
 # prune-build-cache proves its mbx settings, then only previews unless the
 # caller passes --apply.

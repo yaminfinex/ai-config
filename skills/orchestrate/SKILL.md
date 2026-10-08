@@ -69,6 +69,12 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 - **Cull.** Use `$AI_CONFIG_ROOT/tools/fleet/cull.sh <exact-hcom-name>`. It sends one courtesy
   release notice, kills the hcom process, and verifies managed pane closure. Remove a disposable
   checkout only after that exact cull is verified.
+- **Teardown.** Cull culls an agent; it never tears anything down, and its
+  `teardown=orchestrator cwd=<path>` line only reminds. Making sure a culled seat's resources are
+  gone is yours: tell the seat to clean up before the cull, or do it yourself. Common leftovers:
+  running databases, agent browsers, background processes, large filesystem artifacts, the worktree
+  itself. The run's playbook carries this project's specific teardown instructions; keep them
+  current as you learn what gets left behind.
 - **Supervision.** The wrapper records you as manager of every seat you spawn. Spawn with `--group <unit>` (or rely on inheritance) so the groups view shows the unit together. To fix a group later, run `herder assign <seat> --group <unit>`. To fix or take over a seat, run `herder assign <seat> --manager <your-name>`; use `--manager human` to hand it to the operator. `herder assign --help` explains the event. Titles (`--title` at spawn, `herder register annotate --title` later) are short kebab-case and never repeat the seat's name; the name is already shown beside the title.
 - **Resume / fork.** Create a verified idle target pane, then place the operation with
   `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom r <name-or-uuid>` or the same form with `hcom f`.
