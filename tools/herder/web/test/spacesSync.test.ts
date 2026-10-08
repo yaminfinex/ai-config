@@ -15,11 +15,11 @@ import {
 
 class MemoryPersistence implements SpacesSyncPersistence {
   cursor = 0
-  queue: GenericStateRow[] = []
+  queue: string[] = []
   readCursor() { return this.cursor }
   writeCursor(cursor: number) { this.cursor = cursor }
-  readQueue() { return structuredClone(this.queue) }
-  writeQueue(rows: GenericStateRow[]) { this.queue = structuredClone(rows) }
+  readQueue() { return [...this.queue] }
+  writeQueue(keys: string[]) { this.queue = [...keys] }
 }
 
 class MemoryStore implements SpacesSyncStore {
@@ -68,7 +68,7 @@ test('boot offline keeps local paint available, persists one outbound row, and p
   const boot = sync.start()
   assert.deepEqual(store.liveIDs(), ['main'], 'local state is available before the first network await settles')
   await boot
-  assert.deepEqual(persistence.queue.map((row) => row.key), ['main'])
+  assert.deepEqual(persistence.queue, ['main'])
 
   sync.dispose()
   online = true
@@ -81,11 +81,14 @@ test('boot offline keeps local paint available, persists one outbound row, and p
   assert.equal(posts.length, 1, 'an accepted idempotent row is not posted twice')
 })
 
-test('the outbound queue is persisted before the first network attempt', async () => {
+// start learns what the server holds before it queues anything; a crash
+// before the queue is written loses nothing, because the rows are in the
+// store and the next start computes the same difference.
+test('start pulls first, then persists the outbound difference before posting it', async () => {
   const calls: string[] = []
   const persistence = new MemoryPersistence()
   const originalWrite = persistence.writeQueue.bind(persistence)
-  persistence.writeQueue = (rows) => { calls.push(`persist:${rows.map((row) => row.key).join(',')}`); originalWrite(rows) }
+  persistence.writeQueue = (keys) => { calls.push(`persist:${keys.join(',')}`); originalWrite(keys) }
   const sync = createSpacesSync({
     store: new MemoryStore([definition('main', 1, 'local')]),
     persistence,
@@ -96,8 +99,7 @@ test('the outbound queue is persisted before the first network attempt', async (
     retry: () => undefined,
   })
   await sync.start()
-  assert.ok(calls.indexOf('persist:main') < calls.indexOf('get'))
-  assert.ok(calls.indexOf('persist:main') < calls.indexOf('post:main'))
+  assert.deepEqual(calls.slice(0, 3), ['get', 'persist:main', 'post:main'])
 })
 
 test('a local mutation persists first and then posts without waiting for reconnect', async () => {
@@ -105,7 +107,7 @@ test('a local mutation persists first and then posts without waiting for reconne
   const store = new MemoryStore()
   const persistence = new MemoryPersistence()
   const originalWrite = persistence.writeQueue.bind(persistence)
-  persistence.writeQueue = (rows) => { calls.push(`persist:${rows.map((row) => row.key).join(',')}`); originalWrite(rows) }
+  persistence.writeQueue = (keys) => { calls.push(`persist:${keys.join(',')}`); originalWrite(keys) }
   const sync = createSpacesSync({
     store,
     persistence,
@@ -126,10 +128,11 @@ test('a server tombstone older than local retention still deletes through the si
   const store = new MemoryStore([definition('closed-elsewhere', 10, 'stale-live')])
   const persistence = new MemoryPersistence()
   persistence.cursor = 40
+  const pulls: number[] = []
   const transport: StateTransport = {
     since: async (rev) => {
-      assert.equal(rev, 40)
-      return { rows: [definition('closed-elsewhere', 20, 'server-close', true)], rev: 41 }
+      pulls.push(rev)
+      return { rows: rev < 41 ? [definition('closed-elsewhere', 20, 'server-close', true)] : [], rev: 41 }
     },
     upsert: async () => ({ accepted: [], rev: 41 }),
   }
@@ -137,6 +140,9 @@ test('a server tombstone older than local retention still deletes through the si
   await sync.start()
   assert.deepEqual(store.liveIDs(), [])
   assert.equal(persistence.cursor, 41)
+  assert.deepEqual(persistence.queue, [], 'the server copy is newer, so nothing is sent')
+  await sync.stateChanged('spaces', 42)
+  assert.deepEqual(pulls, [0, 41], 'start catches up in full; later pulls resume from the cursor')
 })
 
 test('a URL naming a server-only space stays pending through first pull, then shows it', () => {
@@ -190,7 +196,7 @@ test('attribution-required state access stays local-only without scheduling futi
     onProblem: (problem) => problems.push(problem),
   })
   await sync.start()
-  assert.deepEqual(persistence.queue.map((row) => row.key), ['main'])
+  assert.deepEqual(persistence.queue, ['main'])
   assert.equal(retries, 0)
   assert.equal(requests, 1)
   assert.match(problems.at(-1) ?? '', /saved in this browser only/i)
@@ -248,7 +254,7 @@ test('413 retains the queue and reason without retrying until the next local mut
   store.mutate([definition('review', 2, 'local-edit')])
   await new Promise((resolve) => setTimeout(resolve, 0))
   assert.equal(posts, 2)
-  assert.deepEqual(persistence.queue.map((row) => row.key).sort(), ['main', 'review'])
+  assert.deepEqual([...persistence.queue].sort(), ['main', 'review'])
 })
 
 for (const [label, refusal] of [
@@ -271,7 +277,7 @@ for (const [label, refusal] of [
     })
     await sync.start()
     assert.equal(retries, 1)
-    assert.deepEqual(persistence.queue.map(({ key }) => key), ['main'])
+    assert.deepEqual(persistence.queue, ['main'])
     assert.match(problems.at(-1) ?? '', /will retry automatically/i)
   })
 }

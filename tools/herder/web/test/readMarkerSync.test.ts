@@ -193,10 +193,10 @@ test('two devices sharing a server converge: a read on one clears the unread on 
   const device = (clock: () => number, prefix: string) => {
     let n = 0
     const store = createReadMarkerStore({ storage: memoryStorage(), randomID: () => `${prefix}${++n}`, now: clock })
-    const queue: { cursor: number, rows: GenericStateRow[] } = { cursor: 0, rows: [] }
+    const queue: { cursor: number, keys: string[] } = { cursor: 0, keys: [] }
     const sync = createReadMarkersSync({
       store: readMarkerStoreSyncAdapter(store),
-      persistence: { readCursor: () => queue.cursor, writeCursor: (cursor) => { queue.cursor = cursor }, readQueue: () => queue.rows, writeQueue: (rows) => { queue.rows = rows } },
+      persistence: { readCursor: () => queue.cursor, writeCursor: (cursor) => { queue.cursor = cursor }, readQueue: () => queue.keys, writeQueue: (keys) => { queue.keys = keys } },
       transport,
     })
     return { store, sync }

@@ -254,9 +254,9 @@ test('the store keeps the last write per space and ignores malformed rows', () =
 
 test('spaces.members rides the shared state sync: backfill posts, remote rows merge, and an unchanged pull posts nothing', async () => {
   const store = createSpaceMembersStore({ storage: null, now: () => 100, randomID: () => 'local-1' })
-  const persistence: StateSyncPersistence & { queue: GenericStateRow[] } = {
+  const persistence: StateSyncPersistence & { queue: string[] } = {
     queue: [], readCursor: () => 0, writeCursor: () => undefined,
-    readQueue() { return this.queue }, writeQueue(rows) { this.queue = rows },
+    readQueue() { return this.queue }, writeQueue(keys) { this.queue = keys },
   }
   const posts: GenericStateRow[][] = []
   const remote: GenericStateRow = { key: 's1', value: { members: [a('lora')], updated: 50 }, updated: 50, writeID: 'native', deleted: false }

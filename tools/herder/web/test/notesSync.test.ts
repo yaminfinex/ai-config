@@ -21,11 +21,12 @@ class MemoryStorage {
 
 class MemoryPersistence implements StateSyncPersistence {
   cursor = 0
-  queue: GenericStateRow[] = []
+  queue: string[] = []
+  writes = 0
   readCursor() { return this.cursor }
   writeCursor(cursor: number) { this.cursor = cursor }
-  readQueue() { return structuredClone(this.queue) }
-  writeQueue(rows: GenericStateRow[]) { this.queue = structuredClone(rows) }
+  readQueue() { return [...this.queue] }
+  writeQueue(keys: string[]) { this.writes++; this.queue = [...keys] }
 }
 
 class MemoryStore implements StateSyncStore {
@@ -87,7 +88,7 @@ test('notes cursor and queue keys are disjoint from the byte-identical spaces ke
   const notes = createNotesSyncPersistence(storage)
   const spaces = createSpacesSyncPersistence(storage)
   notes.writeCursor(3)
-  notes.writeQueue([storedNoteToStateRow(fixtures[1])])
+  notes.writeQueue([fixtures[1].record.id])
   spaces.writeCursor(4)
   spaces.writeQueue([])
   assert.deepEqual([...storage.values.keys()].sort(), [
