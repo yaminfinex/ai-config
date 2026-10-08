@@ -109,7 +109,9 @@ Rust build cache (mbx at `/mnt/xfs-nvme/mbx`). mbx never collects on its own
 on this host (`gc.auto = false`), so the cache only grows until a caller runs
 this. With no argument it previews `mbx gc --dry-run`; `--apply` runs `mbx gc`
 against the budgets in `~/.config/mbx/config.toml` (`gc.max_total_size`,
-`gc.min_free_size`). spawn and cull never call it; any cadence is the
+`gc.min_free_size`). It runs the mbx that `mise which mbx` names (the
+mr-boxington tool in the global mise config), else `mbx` on PATH;
+`MBX_BIN` overrides both. spawn and cull never call it; any cadence is the
 operator's call.
 
 When the seat occupied the only pane in a worktree workspace, managed close

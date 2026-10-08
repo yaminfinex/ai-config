@@ -1212,6 +1212,29 @@ for refusal in \
     [[ ! -s $FLEET_TEST_CALLS ]] || fail "prune ran mbx gc with $setting"
   done
 done
-pass "prune-build-cache proves its settings, previews by default, prunes only with --apply, and refuses bad arguments or an unmounted drive"
+# Without MBX_BIN it asks mise for mbx, then falls back to PATH.
+mkdir -p -- "$TEST_ROOT/mbx-mise" "$TEST_ROOT/mbx-path"
+cat >"$TEST_ROOT/mbx-mise/mise" <<EOF
+#!/usr/bin/env bash
+[[ \$* == 'which mbx' && -z \${FAKE_MISE_NO_MBX:-} ]] || exit 1
+printf '%s\n' "$TEST_ROOT/mbx/mbx"
+EOF
+chmod +x "$TEST_ROOT/mbx-mise/mise"
+ln -sf -- "$TEST_ROOT/mbx/mbx" "$TEST_ROOT/mbx-path/mbx"
+: >"$FLEET_TEST_CALLS"
+env -u MBX_BIN PATH="$TEST_ROOT/mbx-mise:$PATH" CACHE_MOUNT=/ "$FLEET/prune-build-cache.sh" >/dev/null
+[[ $(cat "$FLEET_TEST_CALLS") == 'mbx gc --dry-run' ]] || fail "prune did not find mbx through mise"
+: >"$FLEET_TEST_CALLS"
+env -u MBX_BIN FAKE_MISE_NO_MBX=1 PATH="$TEST_ROOT/mbx-mise:$TEST_ROOT/mbx-path:$PATH" CACHE_MOUNT=/ \
+  "$FLEET/prune-build-cache.sh" >/dev/null
+[[ $(cat "$FLEET_TEST_CALLS") == 'mbx gc --dry-run' ]] || fail "prune did not fall back to mbx on PATH"
+: >"$FLEET_TEST_CALLS"
+if env -u MBX_BIN FAKE_MISE_NO_MBX=1 PATH="$TEST_ROOT/mbx-mise:/usr/bin:/bin" CACHE_MOUNT=/ \
+  "$FLEET/prune-build-cache.sh" >/dev/null 2>"$TEST_ROOT/prune.err"; then
+  fail "prune ran without any mbx"
+fi
+grep -F 'mbx not found' "$TEST_ROOT/prune.err" >/dev/null || fail "prune did not explain a missing mbx"
+[[ ! -s $FLEET_TEST_CALLS ]] || fail "prune ran mbx without finding one"
+pass "prune-build-cache finds mbx through mise or PATH, proves its settings, previews by default, prunes only with --apply, and refuses bad arguments or an unmounted drive"
 
 printf 'ALL GREEN - fleet wrapper contract holds.\n'

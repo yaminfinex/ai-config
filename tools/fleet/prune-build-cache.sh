@@ -11,7 +11,6 @@
 
 set -euo pipefail
 
-MBX_BIN=${MBX_BIN:-/home/ubuntu/.local/opt/mbx/shim/mbx}
 CACHE_MOUNT=${CACHE_MOUNT:-/mnt/xfs-nvme}
 
 die() {
@@ -30,6 +29,13 @@ case $# in
   *) die "usage: prune-build-cache.sh [--apply]" ;;
 esac
 
+# mbx is the mr-boxington tool in the global mise config, asked for from ~ so
+# that an untrusted or unrelated project config in the cwd cannot shadow it;
+# MBX_BIN overrides.
+if [[ -z ${MBX_BIN:-} ]]; then
+  MBX_BIN=$(cd ~ && mise which mbx 2>/dev/null) || MBX_BIN=$(command -v mbx) \
+    || die "mbx not found: neither \`mise which mbx\` nor PATH has it"
+fi
 [[ -x $MBX_BIN ]] || die "mbx not found at $MBX_BIN"
 mountpoint -q -- "$CACHE_MOUNT" || die "$CACHE_MOUNT is not mounted"
 
