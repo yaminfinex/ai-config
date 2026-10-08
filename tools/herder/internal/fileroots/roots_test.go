@@ -54,6 +54,23 @@ func TestBuildNeverFoldsLinkedWorktreeCWD(t *testing.T) {
 	if !reflect.DeepEqual(set.Roots, []string{repo, worktree}) || set.AgentRoot["worktree"] != worktree || set.AgentRoot["repo"] != repo {
 		t.Fatalf("set = %#v", set)
 	}
+	// Both checkouts share one repository; only the main one is Main.
+	main, linked := set.Repos[repo], set.Repos[worktree]
+	if main.CommonDir == "" || main.CommonDir != linked.CommonDir || !main.Main || linked.Main {
+		t.Fatalf("repos = %#v", set.Repos)
+	}
+}
+
+func TestBuildGivesSeparateRepositoriesSeparateGroups(t *testing.T) {
+	configured, agent := newRepo(t), newRepo(t)
+	set, err := Build(context.Background(), []string{configured}, []Agent{{Name: "a", CWD: agent}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := set.Repos[configured], set.Repos[agent]
+	if a.CommonDir == "" || b.CommonDir == "" || a.CommonDir == b.CommonDir || !a.Main || !b.Main {
+		t.Fatalf("repos = %#v", set.Repos)
+	}
 }
 
 func TestBuildKeepsNestedRepoAsItsOwnRoot(t *testing.T) {

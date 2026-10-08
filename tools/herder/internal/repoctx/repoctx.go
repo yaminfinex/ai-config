@@ -85,6 +85,38 @@ func TopLevel(ctx context.Context, cwd string) (string, bool) {
 	return filepath.Clean(paths[0]), true
 }
 
+// Repository is the git identity of one top level: the shared common git
+// directory that every linked worktree of the repository points at, and
+// whether this top level is the main checkout (its git dir is the common dir).
+type Repository struct {
+	TopLevel  string
+	CommonDir string
+	Main      bool
+}
+
+// Identify reports the repository containing cwd from the same single
+// `git rev-parse` TopLevel runs. ok is false exactly when TopLevel's is.
+func Identify(ctx context.Context, cwd string) (Repository, bool) {
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	defer cancel()
+	paths, err := repositoryPaths(ctx, cwd)
+	if err != nil {
+		return Repository{}, false
+	}
+	gitDir, commonDir := cleanReal(paths[1]), cleanReal(paths[2])
+	return Repository{TopLevel: filepath.Clean(paths[0]), CommonDir: commonDir, Main: gitDir == commonDir}, true
+}
+
+// cleanReal follows symlinks where it can so two spellings of one common dir
+// compare equal; an unreadable path keeps its cleaned spelling.
+func cleanReal(path string) string {
+	path = filepath.Clean(path)
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	return path
+}
+
 func repositoryPaths(ctx context.Context, cwd string) ([]string, error) {
 	output, err := gitOutput(ctx, cwd, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir")
 	if err != nil {

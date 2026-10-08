@@ -423,6 +423,7 @@ h2, h3, p { margin-top: 0; }
 .file-result-path { display: flex; min-width: 0; align-items: center; gap: 7px; overflow: hidden; font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .file-result-path.dir { color: var(--accent-text); font-weight: 600; }
 .root-tag, .tier-tag { padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; color: var(--dim); font: 9px var(--mono); }
+.root-also { color: var(--dimmer); }
 .tier-tag.exact, .tier-tag.suffix { border-color: var(--success-border); background: var(--success-bg); color: var(--green); }
 .tier-tag.fuzzy { border-color: var(--warning-border); background: var(--warning-bg); color: var(--warning-text); }
 .file-results-empty, .file-results-error { margin: 0; padding: 12px; color: var(--dim); font-size: 11px; }

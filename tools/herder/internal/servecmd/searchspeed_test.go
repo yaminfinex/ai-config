@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -171,7 +173,7 @@ func TestResolveCapsRankedCandidatesAndReportsTotal(t *testing.T) {
 	}
 	// The cap keeps the top of the unchanged ranking.
 	for k, candidate := range capped.Candidates {
-		if candidate != all.Candidates[k] {
+		if !reflect.DeepEqual(candidate, all.Candidates[k]) {
 			t.Fatalf("capped[%d]=%#v, want %#v", k, candidate, all.Candidates[k])
 		}
 	}
@@ -188,5 +190,68 @@ func TestResolveCapsRankedCandidatesAndReportsTotal(t *testing.T) {
 	}
 	if code, _, raw := resolve("q=needle&limit=2&limit=3"); code != http.StatusBadRequest {
 		t.Fatalf("repeated limit = %d %s", code, raw)
+	}
+}
+
+// One repository checked out three times shows each file once: the main
+// checkout's copy with no agent, the agent's own worktree copy with one, and
+// total counts after the fold. Another repository's same path stays apart.
+func TestResolveFoldsWorktreeCopiesIntoOneCandidate(t *testing.T) {
+	repo := newFileAPIGitRepo(t)
+	writeFileAPIFixture(t, repo, "notes/alpha.md", "a\n")
+	fileAPIGit(t, repo, "add", ".")
+	fileAPIGit(t, repo, "commit", "-q", "-m", "fixture")
+	worktrees := t.TempDir()
+	one, two := filepath.Join(worktrees, "one"), filepath.Join(worktrees, "two")
+	fileAPIGit(t, repo, "worktree", "add", "-q", "-b", "one", one)
+	fileAPIGit(t, repo, "worktree", "add", "-q", "-b", "two", two)
+	other := newFileAPIGitRepo(t)
+	writeFileAPIFixture(t, other, "notes/alpha.md", "b\n")
+	fileAPIGit(t, other, "add", ".")
+	fileAPIGit(t, other, "commit", "-q", "-m", "fixture")
+	// The main checkout joins last, so only the explicit tie-break puts it first.
+	deps := fileAPIDeps(t, nil, []hcomidentity.Row{
+		{Name: "wone", Tool: "codex", Status: "active", Directory: one},
+		{Name: "wtwo", Tool: "codex", Status: "active", Directory: two},
+		{Name: "oter", Tool: "codex", Status: "active", Directory: other},
+		{Name: "mane", Tool: "codex", Status: "active", Directory: repo},
+	})
+	resolve := func(query string) resolveResponse {
+		t.Helper()
+		response := httptest.NewRecorder()
+		newHandler(deps).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/resolve?"+query, nil))
+		var body resolveResponse
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s", query, response.Code, response.Body.String())
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body
+	}
+	real := func(path string) string {
+		t.Helper()
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resolved
+	}
+	repo, one, two, other = real(repo), real(one), real(two), real(other)
+
+	plain := resolve("q=notes/alpha.md")
+	if plain.Total != 2 || len(plain.Candidates) != 2 {
+		t.Fatalf("no agent: %#v", plain)
+	}
+	if top := plain.Candidates[0]; top.Root != repo || top.Also != 2 || !reflect.DeepEqual(top.AlsoRoots, []string{one, two}) {
+		t.Fatalf("no agent top = %#v, want the main checkout with both worktrees folded", top)
+	}
+	if rest := plain.Candidates[1]; rest.Root != other || rest.Also != 0 {
+		t.Fatalf("other repo = %#v", rest)
+	}
+
+	agent := resolve("q=notes/alpha.md&agent=wtwo")
+	if agent.Total != 2 || agent.Candidates[0].Root != two || agent.Candidates[0].Also != 2 || !reflect.DeepEqual(agent.Candidates[0].AlsoRoots, []string{one, repo}) {
+		t.Fatalf("agent wtwo = %#v", agent)
 	}
 }

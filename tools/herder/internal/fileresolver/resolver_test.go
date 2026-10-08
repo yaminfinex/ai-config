@@ -3,6 +3,7 @@ package fileresolver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -501,6 +502,106 @@ func fileCandidates(paths ...string) []filecandidate.Candidate {
 		candidates = append(candidates, filecandidate.Candidate{Path: path, Kind: filecandidate.KindFile})
 	}
 	return candidates
+}
+
+// worktreeFixture is one repository checked out at /repo (main) and two
+// linked worktrees, plus an unrelated repository and a root Git never proved.
+func worktreeFixture() (staticSource, map[string]RootRepo) {
+	source := staticSource{
+		"/wt-one": fileCandidates("docs/notes.md", "docs/other.md"),
+		"/repo":   fileCandidates("docs/notes.md", "docs/other.md"),
+		"/wt-two": fileCandidates("docs/notes.md"),
+		"/else":   fileCandidates("docs/notes.md"),
+		"/loose":  fileCandidates("docs/notes.md"),
+	}
+	repos := map[string]RootRepo{
+		"/repo":   {Group: "/repo/.git", Main: true},
+		"/wt-one": {Group: "/repo/.git"},
+		"/wt-two": {Group: "/repo/.git"},
+		"/else":   {Group: "/else/.git", Main: true},
+	}
+	return source, repos
+}
+
+func TestResolveFoldsWorktreeCopiesIntoTheMainCheckoutWithoutContext(t *testing.T) {
+	source, repos := worktreeFixture()
+	roots := []string{"/wt-one", "/repo", "/wt-two", "/else", "/loose"}
+	results, err := New(source).Resolve(context.Background(), Request{Query: "docs/notes.md", Roots: roots, RootPreference: roots, Repos: repos})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Result{
+		{Root: "/repo", Path: "docs/notes.md", Kind: filecandidate.KindFile, Tier: TierExact, Also: 2, AlsoRoots: []string{"/wt-one", "/wt-two"}},
+		// Another repository's same path, and a root with no repository, stand alone.
+		{Root: "/else", Path: "docs/notes.md", Kind: filecandidate.KindFile, Tier: TierExact},
+		{Root: "/loose", Path: "docs/notes.md", Kind: filecandidate.KindFile, Tier: TierExact},
+	}
+	for k := range results {
+		results[k].Score = 0
+	}
+	if !reflect.DeepEqual(results, want) {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestResolveFoldKeepsTheContextCheckoutAndNeverReordersOthers(t *testing.T) {
+	source, repos := worktreeFixture()
+	roots := []string{"/wt-one", "/repo", "/wt-two", "/else", "/loose"}
+	results, err := New(source).Resolve(context.Background(), Request{
+		Query: "docs", Roots: roots, RootPreference: []string{"/wt-two", "/else"}, Repos: repos, ContextRoot: "/wt-two",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(results))
+	for _, result := range results {
+		got = append(got, fmt.Sprintf("%s:%s+%d%v", result.Root, result.Path, result.Also, result.AlsoRoots))
+	}
+	want := []string{
+		"/wt-two:docs/notes.md+2[/wt-one /repo]",
+		"/else:docs/notes.md+0[]",
+		// wt-two lacks other.md: wt-one ranks ahead of the main checkout here,
+		// yet the main checkout still wins the group for a caller outside it.
+		"/repo:docs/other.md+1[/wt-one]",
+		"/loose:docs/notes.md+0[]",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("results = %q", got)
+	}
+}
+
+func TestResolveFoldNeverFoldsAnAnchorHitAway(t *testing.T) {
+	source, repos := worktreeFixture()
+	roots := []string{"/repo", "/wt-one", "/wt-two"}
+	results, err := New(source).Resolve(context.Background(), Request{
+		Query: "notes.md", Roots: roots, RootPreference: roots, Repos: repos,
+		Anchor: &Anchor{Root: "/wt-one", Path: "docs/other.md"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Root != "/wt-one" || results[0].Also != 2 || !reflect.DeepEqual(results[0].AlsoRoots, []string{"/repo", "/wt-two"}) {
+		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestResolveFoldBoundsAlsoRoots(t *testing.T) {
+	source := staticSource{}
+	repos := map[string]RootRepo{}
+	roots := make([]string, 0, MaxAlsoRoots+6)
+	for k := range MaxAlsoRoots + 6 {
+		root := fmt.Sprintf("/wt-%02d", k)
+		roots = append(roots, root)
+		source[root] = fileCandidates("a.md")
+		repos[root] = RootRepo{Group: "/g"}
+	}
+	results, err := New(source).Resolve(context.Background(), Request{Query: "a.md", Roots: roots, Repos: repos})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Root != "/wt-00" || results[0].Also != MaxAlsoRoots+5 || len(results[0].AlsoRoots) != MaxAlsoRoots || results[0].AlsoRoots[0] != "/wt-01" {
+		t.Fatalf("results = %#v", results)
+	}
 }
 
 func TestNormalizeQuery(t *testing.T) {

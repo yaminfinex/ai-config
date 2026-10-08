@@ -89,6 +89,14 @@ test('double-click on a path link resolves the decoded href rather than its labe
   assert.deepEqual(f.selected, [f.target, f.range])
 })
 
+test('a path link to a file folded from four worktrees auto-opens the preferred copy, not a popover', async () => {
+  const f = fixture({ ...empty, total: 1, candidates: [{ root: '/home/u/repo', path: 'docs/x.md', tier: 'suffix', score: 100, also: 3, also_roots: ['/wt/a', '/wt/b', '/wt/c'] }] })
+  f.target.href = 'docs/x.md'
+  await f.doubleClick()
+  assert.equal(JSON.stringify(f.opened), JSON.stringify([{ root: '/home/u/repo', path: 'docs/x.md' }]))
+  assert.equal(f.states.at(-1), null)
+})
+
 test('double-click selects both text nodes of a wrapped path before resolving', async () => {
   const f = fixture(empty)
   const first = f.caret.offsetNode

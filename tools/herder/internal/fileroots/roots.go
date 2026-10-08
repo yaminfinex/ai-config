@@ -24,6 +24,10 @@ type Set struct {
 	Roots      []string
 	Configured []string
 	AgentRoot  map[string]string
+	// Repos holds each git-proven root's repository identity, read by the same
+	// rev-parse that found the root. A root absent here (Git could not prove
+	// it) belongs to no repository group and stands alone.
+	Repos map[string]repoctx.Repository
 }
 
 // CanonicalConfigured canonicalises --root flags and refuses any that is not
@@ -54,12 +58,15 @@ func CanonicalConfigured(ctx context.Context, paths []string) ([]string, error) 
 // repository become one root by construction; a repository nested inside
 // another stays its own root; a linked worktree's top level is the worktree.
 func Build(ctx context.Context, configured []string, agents []Agent) (Set, error) {
-	set := Set{Configured: append([]string(nil), configured...), AgentRoot: make(map[string]string)}
+	set := Set{Configured: append([]string(nil), configured...), AgentRoot: make(map[string]string), Repos: make(map[string]repoctx.Repository)}
 	seen := make(map[string]bool)
 	for _, root := range configured {
 		if !seen[root] {
 			seen[root] = true
 			set.Roots = append(set.Roots, root)
+			if repo, isRepo := repoctx.Identify(ctx, root); isRepo && repo.TopLevel == root {
+				set.Repos[root] = repo
+			}
 		}
 	}
 	for _, agent := range agents {
@@ -70,14 +77,16 @@ func Build(ctx context.Context, configured []string, agents []Agent) (Set, error
 		if err != nil || !ok {
 			continue
 		}
-		top, isRepo := repoctx.TopLevel(ctx, path)
+		repo, isRepo := repoctx.Identify(ctx, path)
 		if !isRepo {
 			continue
 		}
+		top := repo.TopLevel
 		set.AgentRoot[agent.Name] = top
 		if !seen[top] {
 			seen[top] = true
 			set.Roots = append(set.Roots, top)
+			set.Repos[top] = repo
 		}
 	}
 	return set, nil
