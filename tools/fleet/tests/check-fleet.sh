@@ -1270,7 +1270,7 @@ mkdir -p -- "$db_root/wt-solo/app"
 db_cull cull-db-solo FLEET_TEST_SEAT_DIR="$db_root/wt-solo/app"
 grep -Fx 'db=stopped' "$TEST_ROOT/cull-db-solo.out" >/dev/null || fail "cull did not stop the sole-owner worktree Postgres"
 grep -Fx 'valkey=stopped' "$TEST_ROOT/cull-db-solo.out" >/dev/null || fail "cull did not stop the sole-owner worktree Valkey"
-! running "$solo_pg" && ! running "$solo_vk" || fail "cull left the sole-owner worktree servers running"
+if running "$solo_pg" || running "$solo_vk"; then fail "cull left the sole-owner worktree servers running"; fi
 stop_line=$(grep -n "mise cwd=$db_root/wt-solo run db-stop" "$FLEET_TEST_CALLS" | cut -d: -f1)
 kill_line=$(grep -n 'hcom .* kill gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 [[ -n $stop_line && -n $kill_line && $stop_line -lt $kill_line ]] || fail "cull did not run db-stop before the pane closed"
@@ -1311,7 +1311,7 @@ grep -Fx "pg_ctl stop -m fast -t 30 -D $db_root/wt-fallback/data/postgres" "$FLE
 grep -Fx 'valkey-cli -h 127.0.0.1 -p 16904 config get dir' "$FLEET_TEST_CALLS" >/dev/null \
   || fail "cull did not prove the Valkey port's data dir before shutting it down"
 grep -Fx 'valkey-cli -h 127.0.0.1 -p 16904 shutdown nosave' "$FLEET_TEST_CALLS" >/dev/null || fail "cull did not shut down the Valkey"
-! running "$fb_pg" && ! running "$fb_vk" || fail "fallback left the worktree servers running"
+if running "$fb_pg" || running "$fb_vk"; then fail "fallback left the worktree servers running"; fi
 pass "cull falls back to pg_ctl -m fast and a dir-proven valkey-cli shutdown when mise leaves them running"
 
 fail_pg=$(start_server postgres "$db_root/wt-fail/data/postgres" 15905)
@@ -1356,7 +1356,7 @@ for pid in "$owned_pg" "$owned_vk" "$main_pg" "$p18_pg"; do
   ! grep -E "^orphan-(db|valkey) pid=$pid " "$TEST_ROOT/drift-db.out" >/dev/null || fail "drift listed an owned, main-checkout or protected server: pid $pid"
 done
 ! grep -E '^orphan-.*postgres18' "$TEST_ROOT/drift-db.out" >/dev/null || fail "drift listed the postgres18 store"
-running "$orphan_pg" && running "$gone_vk" || fail "drift stopped a server"
+if ! running "$orphan_pg" || ! running "$gone_vk"; then fail "drift stopped a server"; fi
 pass "drift lists orphan and gone worktree Postgres and Valkey, and ignores owned, main-checkout and postgres18 servers"
 
 # prune-build-cache proves its mbx settings, then only previews unless the
