@@ -3,8 +3,8 @@ import test from 'node:test'
 
 import { fixtureAPI, startBrowser } from './browserFixture.ts'
 
-// A browser shaped like the owner's: 360 tombstones and 40 live notes, with
-// sync refused by the 64 KiB write cap. Every value here is synthetic.
+// A browser shaped like the owner's: 360 tombstones and 40 live notes, more
+// than the server's 64 KiB write cap in one go. Every value here is synthetic.
 const seed = `(() => {
   localStorage.clear()
   const prefix = 'herder.web.notes.v1:record:'
@@ -53,7 +53,7 @@ const typeInto = (selector: string, text: string) => `(() => {
 
 type Cost = { setItem: number, setBytes: number, getItem: number, key: number, stringify: number, stringifyBytes: number, keys: Record<string, number> }
 
-test('a keystroke in the composer or a note edit does no storage scan, notes serialisation or queue write', { timeout: 180_000 }, async (context) => {
+test('a keystroke in the composer or a note edit does no storage scan, notes serialisation or queue write, and a commit sends one row', { timeout: 180_000 }, async (context) => {
   const api = fixtureAPI(['alpha', 'bravo'], { maxWriteBytes: 64 * 1024 })
   const { url, browser, evaluate, waitFor } = await startBrowser(context, 'typing-cost', api.plugin)
   const composer = `document.querySelector('textarea[data-composer][aria-label="Message alpha"]')`
@@ -63,7 +63,7 @@ test('a keystroke in the composer or a note edit does no storage scan, notes ser
   await evaluate(seed)
   await browser(['reload'])
   await waitFor(`Boolean(${composer}) && document.querySelectorAll('.note-card').length > 0`)
-  // Let start-up sync settle (it is refused by the cap on the old code).
+  // Let start-up sync settle (the old code sent it as one refused POST).
   await browser(['wait', '1500'])
 
   const keys = 'the quick brown fox jumps'
@@ -111,4 +111,11 @@ test('a keystroke in the composer or a note edit does no storage scan, notes ser
   assert.equal(editCost.setItem, 0, 'a note-edit keystroke must not write storage')
   assert.equal(editCost.key, 0, 'a note-edit keystroke must not scan localStorage keys')
   assert.ok(editCost.stringifyBytes < 50 * keys.length, `note-edit keystrokes serialised ${editCost.stringifyBytes} bytes`)
+  // Start-up catches up in chunks the server accepts.
+  const startNotes = api.posts.slice(0, postsBefore).filter((post) => post.namespace === 'notes')
+  assert.ok(startNotes.length > 1, 'the catch-up is over the write cap, so it goes in chunks')
+  for (const post of startNotes) assert.ok(post.status === 200 && post.bytes <= 48 * 1_024, `a start-up chunk: ${JSON.stringify(sent([post]))}`)
+  // Committing the edit sends that one note and writes no large queue.
+  assert.deepEqual(sent(commitPosts.filter((post) => post.namespace === 'notes')).map(({ rows, status }) => ({ rows, status })), [{ rows: 1, status: 200 }])
+  assert.ok(commitCost.setBytes < 8 * 1_024, `the commit wrote ${commitCost.setBytes} bytes to storage`)
 })

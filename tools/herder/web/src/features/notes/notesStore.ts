@@ -48,6 +48,7 @@ export type NotesStore = {
   edit: (id: string, changes: { text?: string, group?: string }, fallback?: Note) => NotesResult<Note>
   delete: (ids: string[]) => NotesResult<number>
   records: () => StoredNoteRecord[]
+  record: (id: string) => StoredNoteRecord | undefined
   merge: (records: StoredNoteRecord[]) => void
   subscribeMutations: (listener: (records: StoredNoteRecord[]) => void) => () => void
   subscribe: (listener: () => void) => () => void
@@ -392,6 +393,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
       return { ok: true, value: tombstones.length }
     }),
     records: () => [...records.values()],
+    record: (id) => records.get(id),
     merge: (values) => {
       let changed = false
       for (const incoming of values) {
