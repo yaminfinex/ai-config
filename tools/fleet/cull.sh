@@ -6,9 +6,7 @@
 # label, no other seat claiming it) and must hold only its idle shell, proven
 # twice. A pane running anything else is kept and named. cull never closes a
 # tab: herdr removes a tab with its last pane, and the output reports tab=gone
-# or tab=kept. Before the kill it stops the seat's worktree Postgres and
-# Valkey when the seat is the worktree's sole live occupant (db= and valkey=
-# lines); that step reports failures and never blocks the cull.
+# or tab=kept.
 
 set -euo pipefail
 
@@ -116,115 +114,6 @@ guarded_close() {
   fi
 }
 
-# Find the running server of kind whose dir is data: sets server_pid and
-# server_port, or fails.
-find_server() {
-  local kind=$1 data=$2 row_kind pid port dir gone
-  while IFS=$'\t' read -r row_kind pid port dir gone; do
-    if [[ $row_kind == "$kind" && $dir == "$data" && $gone == 0 ]]; then
-      server_pid=$pid
-      server_port=$port
-      return 0
-    fi
-  done < <(fleet_db_servers)
-  return 1
-}
-
-# Wait up to secs for the server of kind at data to exit.
-server_gone() {
-  local kind=$1 data=$2 secs=$3 i server_pid server_port
-  for ((i = 0; i < secs * 10; i++)); do
-    find_server "$kind" "$data" || return 0
-    sleep 0.1
-  done
-  return 1
-}
-
-# Run a worktree's mise task with the caller's own boomerang env removed, so
-# only the worktree's mise.toml can point it at a server.
-worktree_mise() {
-  local wt=$1
-  shift
-  (cd -- "$wt" && env -u BOOMERANG_PGDATA -u BOOMERANG_PG_PORT -u BOOMERANG_VALKEY_DATA -u BOOMERANG_VALKEY_PORT -u PGDATA \
-    timeout -k 5s "$@" </dev/null)
-}
-
-# Print the binary mise resolves in the worktree, else the one on PATH.
-worktree_tool() {
-  local wt=$1 tool=$2 path
-  path=$(worktree_mise "$wt" 10s mise which "$tool" 2>/dev/null) && [[ -x $path ]] && { printf '%s\n' "$path"; return 0; }
-  command -v "$tool"
-}
-
-# Stop the worktree's server of one kind; print the outcome word for its
-# db= or valkey= line. Diagnostics go to stderr. Never fails.
-stop_worktree_server() {
-  local wt=$1 kind=$2 name task tool bin data rc pid serving server_pid server_port
-  case $kind in
-    postgres) name=postgres task=db-stop tool=pg_ctl ;;
-    valkey) name=valkey task=valkey-stop tool=valkey-cli ;;
-  esac
-  rc=0
-  data=$(fleet_worktree_data_dir "$wt" "$name") || rc=$?
-  case $rc in
-    0) ;;
-    1) printf 'not-running\n'; return 0 ;;
-    *) printf 'skipped(refused %s/data/%s: not exactly the worktree data dir)\n' "$wt" "$name"; return 0 ;;
-  esac
-  find_server "$kind" "$data" || { printf 'not-running\n'; return 0; }
-  pid=$server_pid
-
-  worktree_mise "$wt" 60s mise run "$task" >&2 2>&1 || printf 'fleet cull: mise run %s failed in %s\n' "$task" "$wt" >&2
-  if server_gone "$kind" "$data" 5; then
-    printf 'stopped\n'
-    return 0
-  fi
-  printf 'fleet cull: %s pid %s still runs after mise run %s; falling back to %s\n' "$kind" "$pid" "$task" "$tool" >&2
-  bin=$(worktree_tool "$wt" "$tool") || { printf 'failed(still running pid=%s; %s not found)\n' "$pid" "$tool"; return 0; }
-  if [[ $kind == postgres ]]; then
-    timeout -k 5s 60s "$bin" stop -m fast -t 30 -D "$data" >&2 2>&1 </dev/null || true
-  else
-    # Shut down only the server proven to serve this data dir on its port.
-    serving=$(timeout -k 2s 5s "$bin" -h 127.0.0.1 -p "$server_port" config get dir 2>/dev/null </dev/null | tr -d '\r' | sed -n 2p) || serving=
-    if [[ $serving != "$data" ]]; then
-      printf 'failed(still running pid=%s; port %s serves %s)\n' "$pid" "$server_port" "${serving:-nothing}"
-      return 0
-    fi
-    timeout -k 2s 5s "$bin" -h 127.0.0.1 -p "$server_port" shutdown nosave >/dev/null 2>&1 </dev/null || true
-  fi
-  if server_gone "$kind" "$data" 5; then
-    printf 'stopped\n'
-  else
-    printf 'failed(still running pid=%s after mise run %s and %s)\n' "$pid" "$task" "$tool"
-  fi
-}
-
-# Stop the seat's worktree Postgres and Valkey before its pane closes, but
-# only for a linked worktree no other live seat or pane is in. Prints one
-# db= and one valkey= line; a failure is reported, never fatal.
-stop_worktree_servers() {
-  local seat_dir wt owners skip=
-  seat_dir=$(jq -r '.directory // empty' <<<"$record")
-  if [[ -z $seat_dir && -n $candidate ]]; then
-    seat_dir=$(jq -r --arg pane "$candidate" '[.result.panes[]? | select(.pane_id == $pane) | .cwd // .foreground_cwd // empty][0] // empty' <<<"$panes_before")
-  fi
-  if [[ -z $seat_dir ]]; then
-    skip="seat cwd unknown"
-  elif ! wt=$(fleet_linked_worktree "$seat_dir"); then
-    skip="not a linked worktree: $seat_dir"
-  elif ! owners=$(fleet_worktree_owners "$wt" "$agents" "$panes_before" "$full_name" "$candidate"); then
-    skip="cannot read live seats and panes for $wt"
-  elif [[ -n $owners ]]; then
-    skip="$wt shared with $owners"
-  fi
-  if [[ -n $skip ]]; then
-    printf 'db=skipped(%s)\nvalkey=skipped(%s)\n' "$skip" "$skip"
-    return 0
-  fi
-  printf 'db=%s\n' "$(stop_worktree_server "$wt" postgres)"
-  printf 'valkey=%s\n' "$(stop_worktree_server "$wt" valkey)"
-}
-
 label_matches() {
   local panes=$1
   jq -c --arg name "$full_name" --arg tool "$tool" '
@@ -274,8 +163,6 @@ register_event cull-requested "${requested_args[@]}"
 if ! hcom send "@$full_name" --intent inform -- "your seat is closing"; then
   printf 'fleet cull: courtesy notice failed; continuing with requested cull\n' >&2
 fi
-
-stop_worktree_servers
 
 set +e
 kill_output=$(hcom kill "$full_name" 2>&1)
