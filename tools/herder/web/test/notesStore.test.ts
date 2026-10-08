@@ -337,6 +337,60 @@ test('bounds refuse new writing and never evict older notes', () => {
   assert.match(quoteRefusal.reason, /long/i)
 })
 
+// 360 tombstones as the owner's browser holds them: 111 KB of history that once filled the 100 KiB budget.
+function tombstonedStorage(count = 360) {
+  const storage = new FakeStorage()
+  for (let index = 0; index < count; index++) {
+    const id = `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`
+    storage.values.set(`${notesStoragePrefix}record:${id}`, JSON.stringify({ version: 1, writeID: `write-${'w'.repeat(200)}-${index}`, record: { id, deleted: true, updated: 900 } }))
+  }
+  return storage
+}
+
+test('hundreds of tombstones never refuse a new note or an edit (reddens: tombstones counted toward the budget)', () => {
+  const storage = tombstonedStorage()
+  const tombstoneBytes = [...storage.values.values()].reduce((total, raw) => total + new TextEncoder().encode(raw).byteLength, 0)
+  assert.ok(tombstoneBytes > 100 * 1_024, `the fixture must exceed the budget on tombstones alone (${tombstoneBytes} bytes)`)
+  const subject = harness({ storage })
+  assert.equal(subject.store.records().length, 360)
+  const added = subject.store.add({ group: 'kilo', text: 'still saves' })
+  assert.equal(added.ok, true, added.ok ? '' : added.reason)
+  if (!added.ok) return
+  const edited = subject.store.edit(added.value.id, { text: 'still edits' })
+  assert.equal(edited.ok, true, edited.ok ? '' : edited.reason)
+  assert.equal(subject.store.add({ group: 'kilo', text: 'and another' }).ok, true)
+  assert.deepEqual(subject.store.list().map((note) => note.text).sort(), ['and another', 'still edits'])
+})
+
+test('the byte budget counts live notes, frees a deleted note and still refuses past the cap', () => {
+  const subject = harness({ storage: tombstonedStorage(), maxTotalBytes: 600, maxNoteBytes: 300 })
+  const first = subject.store.add({ group: 'kilo', text: 'a'.repeat(250) })
+  assert.equal(first.ok, true, first.ok ? '' : first.reason)
+  if (!first.ok) return
+  const second = subject.store.add({ group: 'kilo', text: 'b'.repeat(250) })
+  assert.equal(second.ok, false, 'two 250-byte notes plus their record envelopes exceed 600 bytes')
+  if (!second.ok) assert.match(second.reason, /no room for this note in browser storage/i)
+  const grown = subject.store.edit(first.value.id, { text: 'a'.repeat(300) })
+  assert.equal(grown.ok, true, 'an edit replaces its own bytes rather than adding to them')
+  assert.equal(subject.store.delete([first.value.id]).ok, true)
+  assert.equal(subject.store.add({ group: 'kilo', text: 'b'.repeat(250) }).ok, true, 'a deleted note gives its bytes back')
+})
+
+test('a budget check serialises only the candidate, not every stored record', () => {
+  const subject = harness({ storage: tombstonedStorage() })
+  for (let index = 0; index < 40; index++) assert.equal(subject.store.add({ group: 'kilo', text: `live note ${index}` }).ok, true)
+  const [note] = subject.store.list()
+  const stringify = JSON.stringify
+  let calls = 0
+  JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => { calls += 1; return stringify(...args) }) as typeof JSON.stringify
+  try {
+    assert.equal(subject.store.edit(note.id, { text: 'one keystroke later' }).ok, true)
+  } finally {
+    JSON.stringify = stringify
+  }
+  assert.ok(calls <= 2, `an edit serialised ${calls} records`)
+})
+
 test('old tombstones purge after 30 days without returning deleted notes', () => {
   const storage = new FakeStorage()
   const original = harness({ storage })
