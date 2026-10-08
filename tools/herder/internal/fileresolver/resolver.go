@@ -18,6 +18,9 @@ const (
 	matchSlab16Size = 100 * 1024
 	matchSlab32Size = 2048
 	maxRootDetail   = 4 * 1024
+	// MaxAlsoRoots bounds the folded roots one candidate lists; Also still
+	// counts every folded copy.
+	MaxAlsoRoots = 20
 )
 
 func init() {
@@ -45,6 +48,19 @@ type Result struct {
 	Kind  filecandidate.Kind `json:"kind"`
 	Tier  Tier               `json:"tier"`
 	Score int                `json:"score"`
+	// Also counts the copies of this file in other checkouts of the same
+	// repository that were folded into it; AlsoRoots names them best first,
+	// at most MaxAlsoRoots.
+	Also      int      `json:"also,omitempty"`
+	AlsoRoots []string `json:"also_roots,omitempty"`
+}
+
+// RootRepo places a root in its repository: Group is shared by every
+// checkout of one repository (its common git dir) and Main marks the main
+// checkout. A root with no RootRepo is its own group.
+type RootRepo struct {
+	Group string
+	Main  bool
 }
 
 type RootStatus string
@@ -84,6 +100,13 @@ type Request struct {
 	RootPreference []string
 	Anchor         *Anchor
 	Refresh        bool
+	// Repos lets the resolver show a file once per repository rather than
+	// once per worktree.
+	Repos map[string]RootRepo
+	// ContextRoot is the checkout the caller works in (the agent's root). Its
+	// copy of a folded file keeps winning; otherwise the main checkout does.
+	// An anchor's root is always the context root.
+	ContextRoot string
 }
 
 // CandidateSource supplies root-relative candidates without exposing the
@@ -138,10 +161,6 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 	// Windows-style backslashes are intentionally not interpreted on Unix.
 	absoluteQuery := filepath.IsAbs(query)
 	slab := util.MakeSlab(matchSlab16Size, matchSlab32Size)
-	type rankedResult struct {
-		result     Result
-		anchorBand int
-	}
 	ranked := make([]rankedResult, 0)
 	outcomes := make([]RootOutcome, 0, len(roots))
 	for _, root := range roots {
@@ -218,16 +237,76 @@ func (r *resolver) ResolveDetailed(ctx context.Context, request Request) (Resolu
 	// same absolute path twice would force a pointless disambiguation popup,
 	// so only the best-ranked occurrence survives.
 	seenAbsolute := make(map[string]bool, len(ranked))
-	results := make([]Result, 0, len(ranked))
+	unique := make([]rankedResult, 0, len(ranked))
 	for _, result := range ranked {
 		absolute := filepath.Join(result.result.Root, result.result.Path) + "\x00" + string(result.result.Kind)
 		if seenAbsolute[absolute] {
 			continue
 		}
 		seenAbsolute[absolute] = true
-		results = append(results, result.result)
+		unique = append(unique, result)
 	}
+	contextRoot := filepath.Clean(request.ContextRoot)
+	if request.Anchor != nil {
+		contextRoot = filepath.Clean(request.Anchor.Root)
+	}
+	results := foldCheckouts(unique, globalBand, request.Repos, contextRoot)
 	return Resolution{Results: results, Roots: outcomes}, nil
+}
+
+// foldCheckouts shows each repository file once. Copies of one root-relative
+// path and kind in checkouts of the same repository fold into the first in
+// ranked order, which stays where it ranked. When that first copy is neither
+// the context root's nor anchored, the group's main checkout takes its place
+// so a caller with no checkout of its own reads the main one. An anchored hit
+// is never folded away; its twins fold into it.
+func foldCheckouts(ranked []rankedResult, globalBand int, repos map[string]RootRepo, contextRoot string) []Result {
+	type foldKey struct {
+		group string
+		path  string
+		kind  filecandidate.Kind
+	}
+	results := make([]Result, 0, len(ranked))
+	folded := make(map[int][]string)
+	anchored := make(map[int]bool)
+	index := make(map[foldKey]int, len(ranked))
+	for _, item := range ranked {
+		repo, grouped := repos[item.result.Root]
+		key := foldKey{group: repo.Group, path: item.result.Path, kind: item.result.Kind}
+		isAnchored := item.anchorBand < globalBand
+		if grouped && repo.Group != "" && !isAnchored {
+			if at, found := index[key]; found {
+				folded[at] = append(folded[at], item.result.Root)
+				continue
+			}
+		}
+		at := len(results)
+		results = append(results, item.result)
+		anchored[at] = isAnchored
+		if grouped && repo.Group != "" {
+			if _, found := index[key]; !found {
+				index[key] = at
+			}
+		}
+	}
+	for at, roots := range folded {
+		winner := &results[at]
+		if !anchored[at] && winner.Root != contextRoot && !repos[winner.Root].Main {
+			for i, root := range roots {
+				if repos[root].Main {
+					roots = append([]string{winner.Root}, append(roots[:i:i], roots[i+1:]...)...)
+					winner.Root = root
+					break
+				}
+			}
+		}
+		winner.Also = len(roots)
+		if len(roots) > MaxAlsoRoots {
+			roots = roots[:MaxAlsoRoots]
+		}
+		winner.AlsoRoots = roots
+	}
+	return results
 }
 
 func lessResult(a, b Result, rootRanks map[string]int) bool {
@@ -363,6 +442,11 @@ func rankRoots(roots, preference []string) map[string]int {
 		}
 	}
 	return ranks
+}
+
+type rankedResult struct {
+	result     Result
+	anchorBand int
 }
 
 // ResolveWithinRoot resolves candidate through symlinks and returns it only

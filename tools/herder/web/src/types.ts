@@ -133,6 +133,10 @@ export interface FileCandidate {
   kind: 'file' | 'dir'
   tier: MatchTier
   score: number
+  /** Copies in other checkouts of the same repository folded into this one. */
+  also?: number
+  /** The folded checkouts' roots, best first, at most 20. */
+  also_roots?: string[]
 }
 
 export interface RootOutcome {

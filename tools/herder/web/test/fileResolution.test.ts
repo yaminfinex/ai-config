@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   FUZZY_POPOVER_SCORE_PER_RUNE,
+  alsoLabel,
   autoOpenCandidate,
+  rootTitle,
   hasPathSignal,
   isRenderedInlineCode,
   isConfidentResolution,
@@ -115,6 +117,22 @@ test('auto-open stays certain on a server-capped list: the cut must fall among f
   // Once the shown list reaches the fuzzy tier, every certain hit is already in it.
   assert.equal(autoOpenCandidate({ candidates: [suffix, prefix, fuzzy], roots: complete, total: 5 })?.path, suffix.path)
   assert.equal(autoOpenCandidate({ candidates: [suffix, prefix], roots: complete, total: 2 })?.path, suffix.path)
+})
+
+test('a file folded from several worktrees reads "+N worktrees" and lists them on hover', () => {
+  assert.equal(alsoLabel({}), null)
+  assert.equal(alsoLabel({ also: 0 }), null)
+  assert.equal(alsoLabel({ also: 1 }), '+1 worktree')
+  assert.equal(alsoLabel({ also: 3 }), '+3 worktrees')
+  assert.equal(rootTitle({ root: '/repo' }), '/repo')
+  assert.equal(rootTitle({ root: '/repo', also: 2, also_roots: ['/wt/a', '/wt/b'] }), '/repo\nalso in:\n/wt/a\n/wt/b')
+  assert.equal(rootTitle({ root: '/repo', also: 25, also_roots: ['/wt/a'] }), '/repo\nalso in:\n/wt/a\nand 24 more')
+})
+
+test('a file present in four worktrees with one certain match is one hit and auto-opens the preferred copy', () => {
+  const folded = { root: '/repo', path: 'tools/herder/web/src/App.tsx', tier: 'suffix' as const, score: 100, also: 3, also_roots: ['/wt/a', '/wt/b', '/wt/c'] }
+  const fuzzy = { root: '/repo', path: 'tools/herder/web/src/Apple.tsx', tier: 'fuzzy' as const, score: 40 }
+  assert.equal(autoOpenCandidate({ candidates: [folded, fuzzy], roots: [{ root: '/repo', status: 'complete' }], total: 2 }), folded)
 })
 
 test('explicit keyboard selection wins over automatic resolution', () => {

@@ -624,6 +624,24 @@ or `/api/resolve?q={mention}&root={opaque-root}&path={viewed-file-relative-path}
   path link) asks for `limit=100`. The palette shows the returned rows and,
   when `total` exceeds them, the line "N of TOTAL — type more to narrow".
 
+  Worktree fold (search-dedupe, owner #412970, 2026-10-08): each repository
+  file is shown once, not once per checkout. Two roots are one repository
+  when `git rev-parse --git-common-dir` names the same directory; the server
+  reads this with the same rev-parse that found each root, cached with the
+  root set, never per request. A root Git cannot place stands alone. After
+  ranking and the nested-root dedupe, and before the cap, candidates sharing
+  (repository, root-relative `path`, `kind`) fold into the first in ranked
+  order, which keeps its place. That first copy is the requesting agent's
+  checkout when it has one (and the viewed file's root with `root`/`path`);
+  otherwise the main checkout (whose git dir is the common dir) takes the
+  place of a linked worktree. Nothing else is reordered. An anchored candidate
+  is never folded away; its twins in other checkouts fold into it. The
+  survivor carries `"also":N`, the count of folded copies (omitted when 0),
+  and `"also_roots":[...]`, those roots best first, at most 20. `total` counts
+  candidates after the fold, so a file in four worktrees is one candidate
+  and, when certain, auto-opens. Each result row shows a quiet "+N worktrees"
+  after its root label, whose hover lists `also_roots`.
+
   Request cost (search-speed): the roster and root set come from the serve's
   live-fleet service, not a per-request `hcom list`. The roster is the cached
   one within the 3 s freshness of the per-agent reads below, else one live

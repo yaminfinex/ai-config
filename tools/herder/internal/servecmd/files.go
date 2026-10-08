@@ -132,7 +132,7 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			writeJSON(w, http.StatusOK, resolveResponse{Candidates: []fileresolver.Result{}, Roots: []fileresolver.RootOutcome{}, Total: 0})
 			return
 		}
-		writeResolution(w, deps, r, query, []string{scoped}, []string{scoped}, nil, limit)
+		writeResolution(w, deps, r, fileresolver.Request{Query: query, Roots: []string{scoped}, RootPreference: []string{scoped}}, limit)
 		return
 	}
 	var anchor *fileresolver.Anchor
@@ -143,13 +143,24 @@ func serveResolve(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 		anchor = &fileresolver.Anchor{Root: root, Path: cleanPath}
 	}
-	writeResolution(w, deps, r, query, set.Roots, set.Preference(agent), anchor, limit)
+	writeResolution(w, deps, r, fileresolver.Request{
+		Query: query, Roots: set.Roots, RootPreference: set.Preference(agent), Anchor: anchor,
+		Repos: rootRepos(set), ContextRoot: set.AgentRoot[agent],
+	}, limit)
 }
 
-func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, query string, roots, preference []string, anchor *fileresolver.Anchor, limit int) {
-	resolution, err := deps.fileResolver.ResolveDetailed(r.Context(), fileresolver.Request{
-		Query: query, Roots: roots, RootPreference: preference, Anchor: anchor,
-	})
+// rootRepos groups the live roots by repository for the resolver's
+// one-copy-per-repository fold.
+func rootRepos(set fileroots.Set) map[string]fileresolver.RootRepo {
+	repos := make(map[string]fileresolver.RootRepo, len(set.Repos))
+	for root, repo := range set.Repos {
+		repos[root] = fileresolver.RootRepo{Group: repo.CommonDir, Main: repo.Main}
+	}
+	return repos
+}
+
+func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, request fileresolver.Request, limit int) {
+	resolution, err := deps.fileResolver.ResolveDetailed(r.Context(), request)
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
 		return
@@ -160,8 +171,8 @@ func writeResolution(w http.ResponseWriter, deps dependencies, r *http.Request, 
 	if resolution.Roots == nil {
 		resolution.Roots = []fileresolver.RootOutcome{}
 	}
-	// The cap applies after the resolver's ranking and dedupe; total is the
-	// match count before it.
+	// The cap applies after the resolver's ranking, dedupe and worktree fold;
+	// total is the match count after the fold and before the cap.
 	total := len(resolution.Results)
 	if total > limit {
 		resolution.Results = resolution.Results[:limit]

@@ -85,6 +85,20 @@ export function isConfidentResolution(resolution: ResolveResponse, query: string
   return top.score >= FUZZY_POPOVER_SCORE_PER_RUNE * [...scoredQuery].length
 }
 
+// The quiet "+N worktrees" after a root label: the server showed this file
+// once for its repository and folded N other checkouts' copies into it.
+export function alsoLabel(candidate: Pick<FileCandidate, 'also'>) {
+  const also = candidate.also ?? 0
+  return also > 0 ? `+${also} ${also === 1 ? 'worktree' : 'worktrees'}` : null
+}
+
+export function rootTitle(candidate: Pick<FileCandidate, 'root' | 'also' | 'also_roots'>) {
+  const others = candidate.also_roots ?? []
+  if (others.length === 0) return candidate.root
+  const unlisted = (candidate.also ?? 0) - others.length
+  return [candidate.root, 'also in:', ...others, ...(unlisted > 0 ? [`and ${unlisted} more`] : [])].join('\n')
+}
+
 export function rootLabel(root: string) {
   const parts = root.split('/').filter(Boolean)
   return parts.at(-1) || root
