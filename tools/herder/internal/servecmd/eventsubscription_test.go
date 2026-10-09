@@ -200,3 +200,39 @@ func TestSubscriptionUpdateAfterTheStreamClosesIsUnknown(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A new stream's first board reads the poll-fresh cached roster when it holds
+// every subscribed agent; one that lacks a subscribed agent asks hcom live.
+func TestFirstBoardReadsTheFreshRosterHoldingItsAgents(t *testing.T) {
+	deps := fixtureDeps()
+	deps.poll = time.Hour
+	base := deps.roster
+	var mu sync.Mutex
+	asks := 0
+	deps.roster = func() ([]hcomidentity.Row, error) {
+		mu.Lock()
+		asks++
+		mu.Unlock()
+		return base()
+	}
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return asks
+	}
+	rows, _ := base()
+	deps.rosterCache.set(rows)
+	server := httptest.NewServer(newHandler(deps))
+	t.Cleanup(server.Close)
+
+	reader, _ := openSubscribedStream(t, server, "agents=dore")
+	readUntil(t, reader, "fleet")
+	if count() != 0 {
+		t.Fatalf("first board holding dore asked hcom %d times", count())
+	}
+	reader, _ = openSubscribedStream(t, server, "agents=dore,kumo")
+	readUntil(t, reader, "fleet")
+	if count() != 1 {
+		t.Fatalf("first board lacking kumo asked hcom %d times, want 1", count())
+	}
+}

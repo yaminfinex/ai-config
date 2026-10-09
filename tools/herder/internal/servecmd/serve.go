@@ -1197,20 +1197,40 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace
 	}
+	// Each checkout costs three git processes; read them a few at a time
+	// rather than one after another (58 checkouts: ~350 ms serial).
+	errs := make([]error, len(board.Workspaces))
+	var wait sync.WaitGroup
+	slots := make(chan struct{}, repoContextReads)
 	for index := range board.Workspaces {
 		source := workspaces[board.Workspaces[index].WorkspaceID]
 		if source.Worktree == nil || source.Worktree.CheckoutPath == "" {
 			continue
 		}
-		repository, contextErr := deps.repoContext(ctx, source.Worktree.CheckoutPath)
+		wait.Add(1)
+		slots <- struct{}{}
+		go func(index int, checkout string) {
+			defer func() { <-slots; wait.Done() }()
+			repository, contextErr := deps.repoContext(ctx, checkout)
+			if contextErr != nil {
+				errs[index] = contextErr
+				return
+			}
+			board.Workspaces[index].CWD = repository.CWD
+			board.Workspaces[index].Git = repository.Git
+		}(index, source.Worktree.CheckoutPath)
+	}
+	wait.Wait()
+	for _, contextErr := range errs {
 		if contextErr != nil {
 			return fleetview.Board{}, sourceError{"git", contextErr}
 		}
-		board.Workspaces[index].CWD = repository.CWD
-		board.Workspaces[index].Git = repository.Git
 	}
 	return board, nil
 }
+
+// repoContextReads bounds a board's concurrent checkout reads.
+const repoContextReads = 8
 
 func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup sessionvitals.Lookup) {
 	if lookup == nil {
@@ -1327,8 +1347,9 @@ func readProjection(deps dependencies) *agentstore.Projection {
 
 // readFleetInputs reads herdr and the roster. The SSE board poll passes
 // live, being one of the pollers that refresh the roster cache; a GET of the
-// board reads the live-fleet service's cached list.
-func readFleetInputs(deps dependencies, live bool) (herdrcli.Snapshot, []hcomidentity.Row, error) {
+// board, and a stream's first board, read the live-fleet service's cached
+// list when it is fresh and holds every name in holding.
+func readFleetInputs(deps dependencies, live bool, holding ...string) (herdrcli.Snapshot, []hcomidentity.Row, error) {
 	snapshot, err := deps.snapshot()
 	if err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", err}
@@ -1337,7 +1358,7 @@ func readFleetInputs(deps dependencies, live bool) (herdrcli.Snapshot, []hcomide
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
 	}
 	fleet := deps.fleet()
-	read := fleet.Roster
+	read := func() ([]hcomidentity.Row, error) { return fleet.RosterHolding(holding...) }
 	if live {
 		read = fleet.Poll
 	}
@@ -2389,8 +2410,11 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			closeTranscriptWatches()
 		}
 	}
-	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, map[string]screenPaneFact, error) {
-		snapshot, roster, readErr := readFleetInputs(deps, true)
+	// readEventBoard reads the board live for a poll. A stream's first board
+	// takes the poll-fresh cached roster when it holds every subscribed agent:
+	// an `hcom list` is most of a new stream's wait.
+	readEventBoard := func(live bool, holding ...string) (fleetview.Board, []hcomidentity.Row, map[string]screenPaneFact, error) {
+		snapshot, roster, readErr := readFleetInputs(deps, live, holding...)
 		if readErr != nil {
 			return fleetview.Board{}, nil, nil, readErr
 		}
@@ -2400,7 +2424,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	// rosterRead is false until a board read succeeds: transcripts added
 	// before then start uninitialized and announce a rewindow later.
 	rosterRead := false
-	board, roster, panes, err := readEventBoard()
+	board, roster, panes, err := readEventBoard(false, agents...)
 	if err != nil {
 		var sourced sourceError
 		if errors.As(err, &sourced) && sourced.source == "hcom" {
@@ -2431,7 +2455,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	// emit fleet only when the encoded board changed, then sync transcripts
 	// and screens. False means the client is gone.
 	refreshBoard := func() bool {
-		nextBoard, nextRoster, nextPanes, boardErr := readEventBoard()
+		nextBoard, nextRoster, nextPanes, boardErr := readEventBoard(true)
 		if boardErr != nil {
 			var sourced sourceError
 			source := "unknown"
