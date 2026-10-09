@@ -339,9 +339,12 @@ export function subscribeToFleet(queryClient: QueryClient, initial: FleetTargets
       touch()
       const { agent } = JSON.parse(event.data) as { agent: string }
       if (!names.has(agent)) return
-      // A reset refetches only shown transcripts; a warm one not shown refetches too.
-      void queryClient.resetQueries({ queryKey: queryKeys.entries(agent), exact: true })
-        .then(() => queryClient.refetchQueries({ queryKey: queryKeys.entries(agent), exact: true, type: 'inactive' }))
+      // A reset refetches only shown transcripts, and refetchQueries skips a reset one no panel
+      // observes (it counts as disabled), so a warm one not shown is fetched directly.
+      const warm = queryClient.getQueryCache().find({ queryKey: queryKeys.entries(agent), exact: true })
+      void queryClient.resetQueries({ queryKey: queryKeys.entries(agent), exact: true }).then(() => {
+        if (warm && warm.getObserversCount() === 0) return warm.fetch().then(() => undefined, () => undefined)
+      })
       void queryClient.invalidateQueries({ queryKey: queryKeys.agent(agent), exact: true })
     })
     events.addEventListener('file-change', (event) => {
