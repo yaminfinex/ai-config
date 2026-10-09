@@ -14,7 +14,9 @@ export type FixturePost = { namespace: string, bytes: number, keys: string[], st
 // Just enough of the serve API for live idle agents with enabled composers.
 // Posted state rows are accepted under a rising rev, and a write body over
 // maxWriteBytes is refused with 413 like the serve's decodeWriteBody.
-export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number } = {}) {
+// entries gives each agent's transcript; send pushes an event to every open
+// stream, and board can be changed before a fleet event is sent.
+export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number, entries?: (agent: string) => unknown[] } = {}) {
   const streams = new Set<ServerResponse>()
   const state = new Map<string, Map<string, { rev: number, row: StoredRow }>>()
   const posts: FixturePost[] = []
@@ -73,14 +75,15 @@ export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number }
         }
         const agent = url.pathname.match(/^\/api\/agents\/([^/]+)(\/entries)?$/)
         if (agent && agents.includes(agent[1])) {
-          if (agent[2]) return json({ sessionId: `session-${agent[1]}`, window: { mode: 'tail', from: 0, limit: 50 }, entries: [], nextOffset: 0 })
+          if (agent[2]) return json({ sessionId: `session-${agent[1]}`, window: { mode: 'tail', from: 0, limit: 50 }, entries: options.entries?.(agent[1]) ?? [], nextOffset: 0 })
           return json({ name: agent[1], tool: 'claude', herdr_status: 'idle', bus_status: 'listening', gap: '', pane: null, launch_context: {} })
         }
         json({ error: 'not found', detail: url.pathname }, 404)
       })
     },
   }
-  return { plugin, state, posts }
+  const send = (event: string, data: unknown) => { for (const stream of streams) stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }
+  return { plugin, state, posts, board, send }
 }
 
 // startBrowser serves the app on Vite with the given fixture API and drives one agent-browser session.

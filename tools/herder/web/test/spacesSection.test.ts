@@ -145,5 +145,9 @@ test('a space row opens "Mark all read" from its context menu only while it has 
   assert.match(source, /const spaceMenu = usePositionedMenu\(\)/)
   assert.match(controller, /markAllRead: spaceAttention\.markSpaceRead,/)
   assert.match(attentionHook, /const markSpaceRead = useCallback\(\(spaceID: string\) => markRead\(attention\[spaceID\]\?\.unread \?\? \[\]\)/)
-  assert.match(attentionHook, /if \(agentUnread\(findAgentRow\(board, name\), store\.markers\(\)\[name\]\)\) markRead\(\[name\]\)\n\s+else markUnread\(name\)/, '⌥U toggles')
+  assert.match(attentionHook, /if \(agentUnread\(findAgentRow\(queryClient\.getQueryData<Board>\(queryKeys\.fleet\), name\), store\.markers\(\)\[name\]\)\) markRead\(\[name\]\)\n\s+else markUnread\(name\)/, '⌥U toggles')
+  // markRead and toggleRead read the board from the cache, so a fleet refresh
+  // leaves them, and every panel callback built on them, unchanged.
+  assert.match(attentionHook, /\}, \[queryClient, store\]\)\n\n\s+\/\/ toggleRead/)
+  assert.match(attentionHook, /\}, \[markRead, markUnread, queryClient, store\]\)/)
 })

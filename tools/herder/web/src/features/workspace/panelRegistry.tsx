@@ -1,18 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type FunctionComponent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FunctionComponent } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import type { IDockviewPanelHeaderProps, IDockviewPanelProps } from 'dockview-react'
 import { queryKeys } from '../../api/client'
 import { AgentStatusDot, ToolBadge } from '../../shared/presentation'
 import { agentBoardTool, agentBusStatus } from '../../shared/agentStatus'
 import { PanelState } from '../../shared/PanelState'
-import type { Board } from '../../types'
+import type { Board, FileTarget, FolderTarget } from '../../types'
 import { AgentPanel } from '../transcript/AgentPanel'
 import { ScreenPanel } from '../screen/ScreenPanel'
 import { FilePanel } from '../files/FilePanel'
 import { FolderPanel } from '../folders/FolderPanel'
 import { ChangesPanel } from '../git/ChangesPanel'
 import { initialGitFileState } from '../git/gitViewModel'
-import { placementInGroup } from '../layout/openPlacement'
+import { placementInGroup, type OpenPlacement } from '../layout/openPlacement'
 import { screenIdentityState, type AgentPanelParams, type ChangesPanelParams, type DockPanelParams, type FilePanelParams, type FolderPanelParams, type ScreenPanelParams } from '../layout/dockLayout'
 import { useAgentUnread, useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext'
 import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace, type PanelKind } from './panelRegistryModel'
@@ -33,8 +33,11 @@ function usePanelVisibility(api: IDockviewPanelProps['api']) {
   return visible
 }
 
+// The roster keeps its identity while its names are unchanged, so a fleet
+// refresh that changes only statuses does not re-render memoised panels.
 function useLiveRosterNames(board: Board | undefined) {
-  return useMemo(() => liveRosterNames(board), [board])
+  const key = useMemo(() => liveRosterNames(board).join('\n'), [board])
+  return useMemo(() => key ? key.split('\n') : [], [key])
 }
 
 function visiblePane(board: Board | undefined, params: ScreenPanelParams) {
@@ -53,14 +56,25 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const visible = usePanelVisibility(api)
   const agents = useLiveRosterNames(data.board)
   const unread = useAgentUnread(params.name)
-  return <AgentPanel name={params.name} agents={agents} active={visible} liveStatus={agentBusStatus(data.board, params.name)} screenPaneID={data.agentScreenPanes[params.name]}
-    mentionMatcher={data.mentionMatcher} onOpenAgent={(name, placement) => workspace.openAgent(name, true, placementInGroup(placement, api.group.id), true)}
-    onScreenPane={(paneID) => workspace.setAgentScreenPane(params.name, paneID)} onTailPane={(paneID) => workspace.setAgentTailPane(params.name, paneID)} onOpenFile={(target, placement) => workspace.openFile(target, placementInGroup(placement, api.group.id))}
-    onOpenFolder={(target, placement) => workspace.openFolder(target, placementInGroup(placement, api.group.id))}
-    onOpenChanges={(root, placement) => workspace.openChanges(root, placementInGroup(placement, api.group.id))}
-    identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={() => workspace.pinPanel(api.id)} onStatus={workspace.onAgentStatus}
-    onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={(index) => workspace.markUnread(params.name, index)}
-    unread={unread} onMarkRead={() => workspace.markRead([params.name])} />
+  const name = params.name
+  // Stable callbacks let the memoised AgentPanel skip renders its own data did not cause.
+  const onOpenAgent = useCallback((agent: string, placement?: OpenPlacement) => workspace.openAgent(agent, true, placementInGroup(placement, api.group.id), true), [api, workspace])
+  const onScreenPane = useCallback((paneID?: string) => workspace.setAgentScreenPane(name, paneID), [name, workspace])
+  const onTailPane = useCallback((paneID?: string) => workspace.setAgentTailPane(name, paneID), [name, workspace])
+  const onOpenFile = useCallback((target: FileTarget, placement?: OpenPlacement) => workspace.openFile(target, placementInGroup(placement, api.group.id)), [api, workspace])
+  const onOpenFolder = useCallback((target: FolderTarget, placement?: OpenPlacement) => workspace.openFolder(target, placementInGroup(placement, api.group.id)), [api, workspace])
+  const onOpenChanges = useCallback((root: string, placement?: OpenPlacement) => workspace.openChanges(root, placementInGroup(placement, api.group.id)), [api, workspace])
+  const onSend = useCallback(() => workspace.pinPanel(api.id), [api, workspace])
+  const onMarkUnread = useCallback((index?: number) => workspace.markUnread(name, index), [name, workspace])
+  const onMarkRead = useCallback(() => workspace.markRead([name]), [name, workspace])
+  return <AgentPanel name={name} agents={agents} active={visible} liveStatus={agentBusStatus(data.board, name)} screenPaneID={data.agentScreenPanes[name]}
+    mentionMatcher={data.mentionMatcher} onOpenAgent={onOpenAgent}
+    onScreenPane={onScreenPane} onTailPane={onTailPane} onOpenFile={onOpenFile}
+    onOpenFolder={onOpenFolder}
+    onOpenChanges={onOpenChanges}
+    identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={onSend} onStatus={workspace.onAgentStatus}
+    onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={onMarkUnread}
+    unread={unread} onMarkRead={onMarkRead} />
 }
 
 function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>) {
