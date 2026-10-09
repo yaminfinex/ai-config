@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { Markdown, agentMarkdownOptions, fileMarkdownComponents } from '../src/shared/Markdown.ts'
+import { Markdown, agentMarkdownOptions, fileMarkdownComponents, markdownRenderOptions, renderMarkdown } from '../src/shared/Markdown.ts'
 import { agentMentionMatcher } from '../src/shared/agentMentions.ts'
 import type { Board } from '../src/types.ts'
 
@@ -109,4 +109,47 @@ test('agent markdown treats malformed and non-roster internal links as inert tex
   assert.match(html, /<span>bad<\/span>/)
   assert.match(html, /<span>retired<\/span>/)
   assert.match(html, /<button[^>]*>live<\/button>/)
+})
+
+test('rendered markdown is reused by text and options, so a remounted transcript does not parse again', () => {
+  const matcher = agentMentionMatcher({ workspaces: [], unplaced: [] })
+  const options = markdownRenderOptions(matcher, undefined, true)
+  assert.equal(markdownRenderOptions(matcher, undefined, true), options)
+  assert.notEqual(markdownRenderOptions(matcher, undefined, false), options)
+  assert.notEqual(markdownRenderOptions(undefined, fileMarkdownComponents, false), markdownRenderOptions(undefined, undefined, false))
+
+  const text = '## Reused\n\nfixture prose'
+  const rendered = renderMarkdown(options, text)
+  assert.equal(renderMarkdown(options, text), rendered)
+  assert.notEqual(renderMarkdown(markdownRenderOptions(matcher, undefined, false), text), rendered)
+})
+
+test('the rendered markdown cache is bounded by source length, least recently used first', () => {
+  const options = markdownRenderOptions(undefined, undefined, false)
+  const oldest = renderMarkdown(options, `oldest ${'a'.repeat(900_000)}`)
+  const kept = renderMarkdown(options, `kept ${'b'.repeat(900_000)}`)
+  renderMarkdown(options, `newest ${'c'.repeat(900_000)}`)
+  assert.equal(renderMarkdown(options, `kept ${'b'.repeat(900_000)}`), kept)
+  assert.notEqual(renderMarkdown(options, `oldest ${'a'.repeat(900_000)}`), oldest)
+})
+
+test('agent mention handlers reach cached markdown through context', () => {
+  const board: Board = {
+    workspaces: [{
+      workspace_id: 'w1', number: 1, label: 'fixture', focused: true, pane_count: 1, tab_count: 1,
+      active_tab_id: 't1', agent_status: 'active', tabs: [{
+        tab_id: 't1', number: 1, label: 'agents', focused: true, pane_count: 1, agent_status: 'active',
+        panes: [{ pane_id: 'p1', agent: 'grill-kila', tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '-' }],
+      }],
+    }],
+    unplaced: [],
+  }
+  const matcher = agentMentionMatcher(board)
+  const text = 'Ask grill-kila about it.'
+  const first = renderToStaticMarkup(createElement(Markdown, agentMarkdownOptions(matcher, () => undefined, '⌥-click opens beside'), text))
+  const second = renderToStaticMarkup(createElement(Markdown, agentMarkdownOptions(matcher, () => undefined), text))
+  assert.match(first, /title="Open grill-kila · ⌥-click opens beside"/)
+  assert.match(second, /title="Open grill-kila"/)
+  const source = readFileSync(new URL('../src/shared/Markdown.ts', import.meta.url), 'utf8')
+  assert.match(source, /const mentions = useContext\(MentionHandlers\)/)
 })

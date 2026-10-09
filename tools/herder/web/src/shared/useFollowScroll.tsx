@@ -1,20 +1,26 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { UIEventHandler } from 'react'
-import { createFollowScrollState, recordFollowScroll, resizeFollowScroll, restoreFollowScroll } from './followScroll'
+import { createFollowScrollState, recordFollowScroll, rememberedFollowScroll, resizeFollowScroll, restoredFollowScroll, restoreFollowScroll } from './followScroll'
 import { useDOMEvent, useSizeObserver } from './lifecycle'
 
 export const followScrollCommandEvent = 'herder:follow-scroll-command'
 export type FollowScrollCommand = 'top' | 'bottom'
 
-export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, presentationVersion?: unknown, active = true) {
+// memoryKey keeps the follow state across a remount; without one it starts
+// following the bottom.
+export function useFollowScroll<T extends HTMLElement>(contentVersion: unknown, presentationVersion?: unknown, active = true, memoryKey?: string) {
   const viewportRef = useRef<T>(null)
-  const followingRef = useRef(createFollowScrollState())
-  const [following, setFollowing] = useState(true)
+  const [initial] = useState(() => memoryKey === undefined ? createFollowScrollState() : rememberedFollowScroll(memoryKey))
+  const followingRef = useRef(initial)
+  const restorePendingRef = useRef(!initial.following)
+  const [following, setFollowing] = useState(initial.following)
 
   useLayoutEffect(() => {
-    if (!active || !followingRef.current.following) return
+    if (!active) return
     const viewport = viewportRef.current
-    if (viewport) resizeFollowScroll(followingRef.current, viewport)
+    if (!viewport) return
+    if (followingRef.current.following) resizeFollowScroll(followingRef.current, viewport)
+    else if (restorePendingRef.current) restorePendingRef.current = !restoredFollowScroll(followingRef.current, viewport)
   }, [active, contentVersion, presentationVersion])
 
   useLayoutEffect(() => {

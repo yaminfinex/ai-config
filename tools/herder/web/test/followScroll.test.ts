@@ -4,9 +4,12 @@ import test from 'node:test'
 
 import {
   createFollowScrollState,
+  forgetFollowScroll,
   isAtScrollBottom,
   recordFollowScroll,
+  rememberedFollowScroll,
   resizeFollowScroll,
+  restoredFollowScroll,
   restoreFollowScroll,
 } from '../src/shared/followScroll.ts'
 
@@ -43,6 +46,44 @@ test('viewport resize re-pins only while following', () => {
   viewport.scrollTop = 275
   resizeFollowScroll(reading, viewport)
   assert.equal(viewport.scrollTop, 275)
+})
+
+test('a remounted transcript takes up its remembered position until the panel closes', () => {
+  const held = rememberedFollowScroll('agent:fixture-held')
+  assert.deepEqual(held, createFollowScrollState())
+  recordFollowScroll(held, { scrollHeight: 1_000, scrollTop: 320, clientHeight: 400 })
+  // A space switch remounts the panel: the same state comes back.
+  assert.equal(rememberedFollowScroll('agent:fixture-held'), held)
+  assert.deepEqual(rememberedFollowScroll('agent:fixture-other'), createFollowScrollState())
+
+  forgetFollowScroll('agent:fixture-held')
+  assert.deepEqual(rememberedFollowScroll('agent:fixture-held'), createFollowScrollState())
+})
+
+test('remembered positions are bounded, least recently used first', () => {
+  const first = rememberedFollowScroll('agent:fixture-bound-0')
+  first.following = false
+  for (let index = 1; index <= 200; index++) rememberedFollowScroll(`agent:fixture-bound-${index}`)
+  assert.notEqual(rememberedFollowScroll('agent:fixture-bound-0'), first)
+  assert.equal(rememberedFollowScroll('agent:fixture-bound-200').following, true)
+})
+
+test('a held position restores only once the transcript can scroll to it', () => {
+  const state = { following: false, scrollTop: 320 }
+  const empty = { scrollHeight: 400, scrollTop: 0, clientHeight: 400 }
+  assert.equal(restoredFollowScroll(state, empty), false)
+  const loaded = { ...empty, scrollHeight: 1_000 }
+  assert.equal(restoredFollowScroll(state, loaded), true)
+  assert.equal(loaded.scrollTop, 320)
+})
+
+test('a transcript remembers its scroll by panel and a close forgets it', () => {
+  const agentPanel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
+  const registry = readFileSync(new URL('../src/features/workspace/panelRegistry.tsx', import.meta.url), 'utf8')
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  assert.match(agentPanel, /useFollowScroll<HTMLElement>\(entries, viewMode, active && !screenMode, panelID\)/)
+  assert.match(registry, /<AgentPanel name=\{name\} panelID=\{api\.id\}/)
+  assert.match(controller, /if \(!historySuppressor\.active\(\)\) forgetFollowScroll\(panel\.id\)/)
 })
 
 test('transcript and screen use the centered jump-to-bottom control (top is shortcut-only)', () => {

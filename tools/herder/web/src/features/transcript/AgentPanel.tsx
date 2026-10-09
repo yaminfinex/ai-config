@@ -43,7 +43,7 @@ export function AgentHeaderIdentity({ name }: { name: string }) {
 
 // Memoised: the dock re-renders every panel on a draft flip or a fleet
 // refresh; a panel whose own props are unchanged skips the render.
-export const AgentPanel = memo(function AgentPanel({ name, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus, onMarkUnread, unread, onMarkRead }: { name: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void, onMarkUnread: (index?: number) => void, unread: boolean, onMarkRead: () => void }) {
+export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus, onMarkUnread, unread, onMarkRead }: { name: string, panelID: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void, onMarkUnread: (index?: number) => void, unread: boolean, onMarkRead: () => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -59,7 +59,11 @@ export const AgentPanel = memo(function AgentPanel({ name, agents, active, liveS
   const screenChoice = agentScreenChoice(agentQuery.data, screenPaneID)
   const screenMode = screenChoice.active
   const liveTailPaneID = liveTailShown({ visible: active, status: liveStatus, screenMode }) ? screenChoice.paneID : undefined
-  const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode, active && !screenMode)
+  const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode, active && !screenMode, panelID)
+  // A tab hidden behind another mounts its entries when first shown: a space
+  // switch rebuilds every tab, and a hidden one is out of the DOM anyway.
+  const [shown, setShown] = useState(active)
+  if (active && !shown) setShown(true)
   const cleanView = viewMode === 'compact'
   const showSystem = viewMode === 'full'
   const sideHint = openInSideLabel(navigator.userAgent)
@@ -160,7 +164,7 @@ export const AgentPanel = memo(function AgentPanel({ name, agents, active, liveS
         </PanelState> : <>
           <div className="window-note">Showing the latest {entries.length} classified entries · live from byte {entriesQuery.data?.nextOffset ?? '…'}</div>
           {entries.length === 0 && agent && <p className="empty">No renderable entries in this window.</p>}
-          <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} dividerAt={dividerAt} />
+          {shown && <TranscriptEntries entries={entries} agentName={name} now={now} showSystem={showSystem} cleanView={cleanView} mentionMatcher={mentionMatcher} onOpenAgent={openMention} sideHint={sideHint} dividerAt={dividerAt} />}
           {entries.length > 0 && <footer className="transcript-read-footer">
             <span>{marker?.at ? `viewed at ${viewedAtLabel(marker.at, now)}` : 'not viewed yet'}</span>
             <span aria-hidden="true">·</span>
