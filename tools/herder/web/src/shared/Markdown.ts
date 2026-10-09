@@ -1,5 +1,5 @@
-import { createElement, memo, useMemo, type ReactNode } from 'react'
-import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
+import { createContext, createElement, memo, useContext, type ComponentPropsWithoutRef, type MouseEvent, type ReactNode } from 'react'
+import ReactMarkdown, { defaultUrlTransform, type Components, type Options } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AgentMentionMatcher, AgentMentionOpen } from './agentMentions.ts'
 import { isLocalHref } from './pathHref.ts'
@@ -113,44 +113,93 @@ export function agentMarkdownOptions(matcher: AgentMentionMatcher, onOpen: Agent
   return { agentMentions: { matcher, onOpen, sideHint } }
 }
 
+// The open handler and side hint reach mention buttons through context, so a
+// rendered tree depends only on its text, matcher, components and line breaks
+// and can be reused by every panel that shows it.
+const MentionHandlers = createContext<AgentMarkdown | null>(null)
+
+function MentionLink({ href, className, children, ...props }: ComponentPropsWithoutRef<'a'> & { href: string }) {
+  const mentions = useContext(MentionHandlers)
+  if (!mentions || !href.startsWith(agentScheme)) {
+    if (isLocalHref(href)) return createElement('span', { className: 'path-link', title: href }, children)
+    return createElement('a', {
+      ...props, className: inlineLinkClass(className), href,
+      ...(externalHTTP.test(href) ? { target: '_blank', rel: 'noopener noreferrer' } : {}),
+    }, children)
+  }
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(href.slice(agentScheme.length))
+  } catch {
+    return createElement('span', props, children)
+  }
+  const name = mentions.matcher.resolve(decoded)
+  if (!name) return createElement('span', props, children)
+  return createElement('button', {
+    ...props,
+    type: 'button',
+    className: 'inline-link agent-mention',
+    title: `Open ${name}${mentions.sideHint ? ` · ${mentions.sideHint}` : ''}`,
+    onClick: (event: MouseEvent<HTMLButtonElement>) => mentions.onOpen(name, event),
+  }, children)
+}
+
+const mentionLink: Components['a'] = ({ node, href = '', ...props }) => {
+  void node
+  return createElement(MentionLink, { ...props, href })
+}
+const mentionURLTransform = (url: string) => url.startsWith(agentScheme) || isLocalHref(url) ? url : defaultUrlTransform(url)
+
+type RenderOptions = Pick<Options, 'remarkPlugins' | 'components' | 'urlTransform'>
+
+// One options object per matcher, components and line-break setting, so the
+// rendered-tree cache below can key on its identity.
+const noMatcher = {}
+const noComponents = {}
+const renderOptions = new WeakMap<object, WeakMap<object, [RenderOptions | undefined, RenderOptions | undefined]>>()
+
+export function markdownRenderOptions(matcher: AgentMentionMatcher | undefined, components: Components | undefined, lineBreaks: boolean): RenderOptions {
+  let byComponents = renderOptions.get(matcher ?? noMatcher)
+  if (!byComponents) renderOptions.set(matcher ?? noMatcher, byComponents = new WeakMap())
+  let pair = byComponents.get(components ?? noComponents)
+  if (!pair) byComponents.set(components ?? noComponents, pair = [undefined, undefined])
+  const slot = lineBreaks ? 1 : 0
+  const cached = pair[slot]
+  if (cached) return cached
+  const breaks = lineBreaks ? [lineBreaksPlugin] : []
+  const options: RenderOptions = matcher
+    ? { remarkPlugins: [remarkGfm, mentionPlugin(matcher), ...breaks], components: { ...blockComponents, ...components, a: mentionLink }, urlTransform: mentionURLTransform }
+    : { remarkPlugins: [remarkGfm, ...breaks], components: { ...blockComponents, ...components } }
+  pair[slot] = options
+  return options
+}
+
+// A bounded cache of rendered markdown, most recently used last. A remounted
+// transcript (a space switch, a reopened tab) reuses the parse instead of
+// running remark again for every entry. Bounded by source length.
+const renderCacheChars = 2_000_000
+const rendered = new Map<string, WeakMap<RenderOptions, ReactNode>>()
+let renderedChars = 0
+
+export function renderMarkdown(options: RenderOptions, text: string): ReactNode {
+  let byOptions = rendered.get(text)
+  if (byOptions) rendered.delete(text)
+  else {
+    byOptions = new WeakMap()
+    renderedChars += text.length
+  }
+  rendered.set(text, byOptions)
+  for (const oldest of rendered.keys()) {
+    if (renderedChars <= renderCacheChars || oldest === text) break
+    rendered.delete(oldest)
+    renderedChars -= oldest.length
+  }
+  let node = byOptions.get(options)
+  if (node === undefined) byOptions.set(options, node = ReactMarkdown({ ...options, children: text }))
+  return node
+}
+
 export const Markdown = memo(function Markdown({ children, components, agentMentions, lineBreaks = false }: { children: string, components?: Components, agentMentions?: AgentMarkdown, lineBreaks?: boolean }): ReactNode {
-  const options = useMemo(() => {
-    const breaks = lineBreaks ? [lineBreaksPlugin] : []
-    if (!agentMentions) return { remarkPlugins: [remarkGfm, ...breaks], components: { ...blockComponents, ...components } }
-    const mentionComponents: Components = {
-      ...blockComponents,
-      ...components,
-      a: ({ node, href = '', children: linkChildren, className, ...props }) => {
-        void node
-        if (!href.startsWith(agentScheme)) {
-          if (isLocalHref(href)) return createElement('span', { className: 'path-link', title: href }, linkChildren)
-          return createElement('a', {
-            ...props, className: inlineLinkClass(className), href,
-            ...(externalHTTP.test(href) ? { target: '_blank', rel: 'noopener noreferrer' } : {}),
-          }, linkChildren)
-        }
-        let decoded: string
-        try {
-          decoded = decodeURIComponent(href.slice(agentScheme.length))
-        } catch {
-          return createElement('span', props, linkChildren)
-        }
-        const name = agentMentions.matcher.resolve(decoded)
-        if (!name) return createElement('span', props, linkChildren)
-        return createElement('button', {
-          ...props,
-          type: 'button',
-          className: 'inline-link agent-mention',
-          title: `Open ${name}${agentMentions.sideHint ? ` · ${agentMentions.sideHint}` : ''}`,
-          onClick: (event) => agentMentions.onOpen(name, event),
-        }, linkChildren)
-      },
-    }
-    return {
-      remarkPlugins: [remarkGfm, mentionPlugin(agentMentions.matcher), ...breaks],
-      components: mentionComponents,
-      urlTransform: (url: string) => url.startsWith(agentScheme) || isLocalHref(url) ? url : defaultUrlTransform(url),
-    }
-  }, [agentMentions, components, lineBreaks])
-  return createElement(ReactMarkdown, { ...options, children })
+  const node = renderMarkdown(markdownRenderOptions(agentMentions?.matcher, components, lineBreaks), children)
+  return agentMentions ? createElement(MentionHandlers.Provider, { value: agentMentions }, node) : node
 })

@@ -24,6 +24,34 @@ export function restoreFollowScroll(state: FollowScrollState, viewport: ScrollVi
   viewport.scrollTop = state.following ? viewport.scrollHeight : state.scrollTop
 }
 
+// A remounted transcript restores a held position once it has something to
+// scroll; before its entries arrive there is nothing to restore into.
+export function restoredFollowScroll(state: FollowScrollState, viewport: ScrollViewport) {
+  restoreFollowScroll(state, viewport)
+  return viewport.scrollHeight > viewport.clientHeight
+}
+
+// Follow state outlives a remount: a space switch rebuilds every panel, and a
+// transcript comes back where it was left. Closing the panel forgets it.
+// Bounded, least recently used first.
+const rememberedLimit = 200
+const remembered = new Map<string, FollowScrollState>()
+
+export function rememberedFollowScroll(key: string): FollowScrollState {
+  const state = remembered.get(key) ?? createFollowScrollState()
+  remembered.delete(key)
+  remembered.set(key, state)
+  for (const oldest of remembered.keys()) {
+    if (remembered.size <= rememberedLimit) break
+    remembered.delete(oldest)
+  }
+  return state
+}
+
+export function forgetFollowScroll(key: string) {
+  remembered.delete(key)
+}
+
 export function resizeFollowScroll(state: FollowScrollState, viewport: ScrollViewport) {
   if (state.following) viewport.scrollTop = viewport.scrollHeight
 }

@@ -74,7 +74,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const onSend = useCallback(() => workspace.pinPanel(api.id), [api, workspace])
   const onMarkUnread = useCallback((index?: number) => workspace.markUnread(name, index), [name, workspace])
   const onMarkRead = useCallback(() => workspace.markRead([name]), [name, workspace])
-  return <AgentPanel name={name} agents={agents} active={visible} liveStatus={liveStatus} screenPaneID={data.agentScreenPanes[name]}
+  return <AgentPanel name={name} panelID={api.id} agents={agents} active={visible} liveStatus={liveStatus} screenPaneID={data.agentScreenPanes[name]}
     mentionMatcher={data.mentionMatcher} onOpenAgent={onOpenAgent}
     onScreenPane={onScreenPane} onTailPane={onTailPane} onOpenFile={onOpenFile}
     onOpenFolder={onOpenFolder}

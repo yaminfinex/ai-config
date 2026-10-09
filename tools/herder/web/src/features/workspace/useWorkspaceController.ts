@@ -6,6 +6,7 @@ import { fleetQueryOptions, viewerQueryOptions } from '../../api/queries'
 import type { FileTarget } from '../../types'
 import { agentBusStatus } from '../../shared/agentStatus'
 import { agentMentionMatcher } from '../../shared/agentMentions'
+import { forgetFollowScroll } from '../../shared/followScroll'
 import { useDOMEvent } from '../../shared/lifecycle'
 import { type Route } from '../../shared/navigation'
 import { createFileWatchRegistry, type FileWatchTarget } from '../../stream/fileWatchRegistry'
@@ -341,6 +342,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         if (params?.kind === 'file') pruneFileGitState(panel.id)
         if (params?.kind === 'folder') pruneFolderSelectionHint(panel.id)
         if (params?.kind !== 'agent') return
+        // A space switch removes panels under suppressed history and keeps their scroll; a close forgets it.
+        if (!historySuppressor.active()) forgetFollowScroll(panel.id)
         pruneAgentStatus(params.name)
         pruneAgentScreenPane(params.name)
         pruneAgentTailPane(params.name)
