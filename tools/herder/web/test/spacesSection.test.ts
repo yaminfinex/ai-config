@@ -7,6 +7,7 @@ const switcher = readFileSync(new URL('../src/features/spaces/SpaceSwitcher.tsx'
 const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
 const attentionHook = readFileSync(new URL('../src/features/workspace/useSpaceAttention.ts', import.meta.url), 'utf8')
+const spaceAgentsHook = readFileSync(new URL('../src/features/workspace/useSpaceAgents.ts', import.meta.url), 'utf8')
 const switcherHook = readFileSync(new URL('../src/features/workspace/useSpaceSwitcher.ts', import.meta.url), 'utf8')
 const styles = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
 
@@ -90,7 +91,8 @@ test('the app mounts the switcher with the controller state and attention', () =
 })
 
 test('the controller derives attention and the MRU switcher from the live workspace', () => {
-  assert.match(controller, /useSpaceAttention\(\{ apiRef, revision, board: boardQuery\.data, spaces, activeSpaceID, activeAgents: agentNames \}\)/)
+  assert.match(controller, /const openBySpace = useSpaceAgents\(\{ revision, spaces, activeSpaceID, activeAgents: agentNames \}\)/)
+  assert.match(controller, /useSpaceAttention\(\{ apiRef, board: boardQuery\.data, openBySpace \}\)/)
   assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), spaces, activeSpaceID, switchSpace: switchSpaceFocusing \}\)/)
   assert.match(controller, /attention: spaceAttention\.attention/)
   assert.match(controller, /spaceSwitcher,/)
@@ -106,7 +108,9 @@ test('the attention hook prunes, seeds weakly after the first pull, and reads af
   assert.doesNotMatch(attentionHook, /localStorage\.setItem|writeReadMarkers/, 'markers persist only through the read-markers store')
   assert.match(attentionHook, /group\.api\.isVisible/)
   assert.match(attentionHook, /useDOMEvent\(document, 'visibilitychange'/)
-  assert.match(attentionHook, /storedSpaceAgents\(localStorage, space\.id\)/)
+  assert.match(spaceAgentsHook, /storedSpaceAgents\(localStorage, space\.id\)/)
+  assert.match(spaceAgentsHook, /event\.key\?\.startsWith\('herder\.web\.layout\.v4'\)/)
+  assert.match(controller, /useFleetStream\(\{ agents: spaceStreamAgents\(agentNames, openBySpace\)/, 'the stream follows every space so a switch never reconnects')
 })
 
 test('every switch, whatever started it, touches the MRU order, which lives beside the switcher', () => {

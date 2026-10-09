@@ -17,7 +17,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -103,6 +105,7 @@ type dependencies struct {
 	inputSerial          *paneInputSerial
 	state                webstate.Store
 	stateChanges         *stateChangeBroker
+	eventStreams         *eventStreams // Live SSE connections a subscription update can retarget.
 	rosterCache          *rosterCache
 	rootSets             *rootSetCache // Nil builds the root set per request.
 	// store is the agent store the serve opens once at Run: the life mirror
@@ -290,6 +293,13 @@ type substrate struct {
 
 type streamHello struct {
 	BuildIdentity string `json:"buildIdentity"`
+	Stream        string `json:"stream"`
+}
+
+// streamSubscribed names the agents whose transcript offsets the connection
+// has just captured: entries a client fetched before then may be behind.
+type streamSubscribed struct {
+	Agents []string `json:"agents"`
 }
 
 type sourceError struct {
@@ -952,6 +962,9 @@ func newHandler(deps dependencies) http.Handler {
 	if deps.stateChanges == nil {
 		deps.stateChanges = newStateChangeBroker()
 	}
+	if deps.eventStreams == nil {
+		deps.eventStreams = newEventStreams()
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/fleet", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -971,6 +984,9 @@ func newHandler(deps dependencies) http.Handler {
 			return
 		}
 		serveEvents(w, r, deps)
+	})
+	mux.HandleFunc("/api/events/subscription", func(w http.ResponseWriter, r *http.Request) {
+		serveEventSubscription(w, r, deps.eventStreams)
 	})
 	mux.HandleFunc("/api/state/", func(w http.ResponseWriter, r *http.Request) {
 		namespace := strings.TrimPrefix(r.URL.Path, "/api/state/")
@@ -1181,20 +1197,40 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace
 	}
+	// Each checkout costs three git processes; read them a few at a time
+	// rather than one after another (58 checkouts: ~350 ms serial).
+	errs := make([]error, len(board.Workspaces))
+	var wait sync.WaitGroup
+	slots := make(chan struct{}, repoContextReads)
 	for index := range board.Workspaces {
 		source := workspaces[board.Workspaces[index].WorkspaceID]
 		if source.Worktree == nil || source.Worktree.CheckoutPath == "" {
 			continue
 		}
-		repository, contextErr := deps.repoContext(ctx, source.Worktree.CheckoutPath)
+		wait.Add(1)
+		slots <- struct{}{}
+		go func(index int, checkout string) {
+			defer func() { <-slots; wait.Done() }()
+			repository, contextErr := deps.repoContext(ctx, checkout)
+			if contextErr != nil {
+				errs[index] = contextErr
+				return
+			}
+			board.Workspaces[index].CWD = repository.CWD
+			board.Workspaces[index].Git = repository.Git
+		}(index, source.Worktree.CheckoutPath)
+	}
+	wait.Wait()
+	for _, contextErr := range errs {
 		if contextErr != nil {
 			return fleetview.Board{}, sourceError{"git", contextErr}
 		}
-		board.Workspaces[index].CWD = repository.CWD
-		board.Workspaces[index].Git = repository.Git
 	}
 	return board, nil
 }
+
+// repoContextReads bounds a board's concurrent checkout reads.
+const repoContextReads = 8
 
 func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup sessionvitals.Lookup) {
 	if lookup == nil {
@@ -1311,8 +1347,9 @@ func readProjection(deps dependencies) *agentstore.Projection {
 
 // readFleetInputs reads herdr and the roster. The SSE board poll passes
 // live, being one of the pollers that refresh the roster cache; a GET of the
-// board reads the live-fleet service's cached list.
-func readFleetInputs(deps dependencies, live bool) (herdrcli.Snapshot, []hcomidentity.Row, error) {
+// board, and a stream's first board, read the live-fleet service's cached
+// list when it is fresh and holds every name in holding.
+func readFleetInputs(deps dependencies, live bool, holding ...string) (herdrcli.Snapshot, []hcomidentity.Row, error) {
 	snapshot, err := deps.snapshot()
 	if err != nil {
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", err}
@@ -1321,7 +1358,7 @@ func readFleetInputs(deps dependencies, live bool) (herdrcli.Snapshot, []hcomide
 		return herdrcli.Snapshot{}, nil, sourceError{"herdr", fmt.Errorf("invalid session hierarchy: %w", err)}
 	}
 	fleet := deps.fleet()
-	read := fleet.Roster
+	read := func() ([]hcomidentity.Row, error) { return fleet.RosterHolding(holding...) }
 	if live {
 		read = fleet.Poll
 	}
@@ -1963,44 +2000,12 @@ func eventSet(raw, parameter string) ([]string, error) {
 }
 
 func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
-	agents, err := eventAgents(r.URL.Query().Get("agents"))
+	subscription, err := parseEventSubscription(r.URL.Query())
 	if err != nil {
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
-	screens, err := eventSet(r.URL.Query().Get("screens"), "screens")
-	if err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", err.Error())
-		return
-	}
-	focusedScreen, err := optionalQuery(r, "focused_screen")
-	if err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", err.Error())
-		return
-	}
-	if focusedScreen != "" {
-		found := false
-		for _, paneID := range screens {
-			if paneID == focusedScreen {
-				found = true
-				break
-			}
-		}
-		if !found {
-			refuse(w, http.StatusBadRequest, "bad request", "focused_screen must name one of the requested screens")
-			return
-		}
-	}
-	watchesRaw, err := optionalQuery(r, "watches")
-	if err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", err.Error())
-		return
-	}
-	watches, err := parseFileWatchRequests(watchesRaw)
-	if err != nil {
-		refuse(w, http.StatusBadRequest, "bad request", err.Error())
-		return
-	}
+	agents, screens, focusedScreen, watches := subscription.agents, subscription.screens, subscription.focusedScreen, subscription.watches
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		refuse(w, http.StatusInternalServerError, "stream unavailable", "response writer does not support flushing")
@@ -2026,14 +2031,19 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	defer cancel()
 	stateChangeCh, unsubscribeStateChanges := deps.stateChanges.subscribe()
 	defer unsubscribeStateChanges()
-	fileWatches := startFileWatches(ctx, deps, watches)
-	if fileWatches != nil {
-		defer fileWatches.Close()
-	}
+	var fileWatches *fileWatchSubscription
 	var fileChangeCh <-chan fileChangeFact
-	if fileWatches != nil {
-		fileChangeCh = fileWatches.Facts
+	startWatches := func() {
+		fileWatches = startFileWatches(ctx, deps, watches)
+		fileChangeCh = nil
+		if fileWatches != nil {
+			fileChangeCh = fileWatches.Facts
+		}
 	}
+	startWatches()
+	defer func() { fileWatches.Close() }()
+	streamID, subscriptionCh, unregister := deps.eventStreams.register()
+	defer unregister()
 	// Store changes arrive from the process-level watch (observe.go); a
 	// connection never folds the journal itself.
 	var storeChangeCh <-chan struct{}
@@ -2093,7 +2103,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		flusher.Flush()
 		return true
 	}
-	if !emit("hello", streamHello{BuildIdentity: deps.buildIdentity}) {
+	if !emit("hello", streamHello{BuildIdentity: deps.buildIdentity, Stream: streamID}) {
 		return
 	}
 	if len(screens) > 0 {
@@ -2216,14 +2226,14 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		return emit("substrate", substrate{Source: source, Status: "unreachable", Detail: err.Error()})
 	}
 	var reconcileTranscriptWatches func(bool)
-	syncTranscripts := func(roster []hcomidentity.Row, initial bool, requested map[string]bool) (bool, bool) {
+	syncTranscripts := func(names []string, roster []hcomidentity.Row, initial bool, requested map[string]bool) (bool, bool) {
 		pathsChanged := false
 		pendingFailures := make([]substrate, 0)
 		rows := make(map[string]hcomidentity.Row, len(roster))
 		for _, row := range roster {
 			rows[row.Name] = row
 		}
-		for _, name := range agents {
+		for _, name := range names {
 			state := transcripts[name]
 			row, exists := rows[name]
 			if !exists {
@@ -2400,15 +2410,21 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			closeTranscriptWatches()
 		}
 	}
-	readEventBoard := func() (fleetview.Board, []hcomidentity.Row, map[string]screenPaneFact, error) {
-		snapshot, roster, readErr := readFleetInputs(deps, true)
+	// readEventBoard reads the board live for a poll. A stream's first board
+	// takes the poll-fresh cached roster when it holds every subscribed agent:
+	// an `hcom list` is most of a new stream's wait.
+	readEventBoard := func(live bool, holding ...string) (fleetview.Board, []hcomidentity.Row, map[string]screenPaneFact, error) {
+		snapshot, roster, readErr := readFleetInputs(deps, live, holding...)
 		if readErr != nil {
 			return fleetview.Board{}, nil, nil, readErr
 		}
 		board, readErr := buildBoard(r.Context(), deps, snapshot, roster)
 		return board, roster, paneScreenFacts(snapshot), readErr
 	}
-	board, roster, panes, err := readEventBoard()
+	// rosterRead is false until a board read succeeds: transcripts added
+	// before then start uninitialized and announce a rewindow later.
+	rosterRead := false
+	board, roster, panes, err := readEventBoard(false, agents...)
 	if err != nil {
 		var sourced sourceError
 		if errors.As(err, &sourced) && sourced.source == "hcom" {
@@ -2419,11 +2435,15 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		}
 	} else {
 		previous, _ = json.Marshal(board)
-		if ok, _ := syncTranscripts(roster, true, map[string]bool{}); !ok {
+		if ok, _ := syncTranscripts(agents, roster, true, map[string]bool{}); !ok {
 			return
 		}
+		rosterRead = true
 		reconcileTranscriptWatches(true)
 		if !emit("fleet", board) {
+			return
+		}
+		if len(agents) > 0 && !emit("subscribed", streamSubscribed{Agents: agents}) {
 			return
 		}
 		if !syncScreenRequests(panes, true) || !flushScreens(time.Now(), false) || (focusedScreen != "" && !flushScreens(time.Now(), true)) {
@@ -2435,7 +2455,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	// emit fleet only when the encoded board changed, then sync transcripts
 	// and screens. False means the client is gone.
 	refreshBoard := func() bool {
-		nextBoard, nextRoster, nextPanes, boardErr := readEventBoard()
+		nextBoard, nextRoster, nextPanes, boardErr := readEventBoard(true)
 		if boardErr != nil {
 			var sourced sourceError
 			source := "unknown"
@@ -2473,8 +2493,9 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			}
 		}
 		roster = nextRoster
+		rosterRead = true
 		panes = nextPanes
-		ok, pathsChanged := syncTranscripts(roster, false, map[string]bool{})
+		ok, pathsChanged := syncTranscripts(agents, roster, false, map[string]bool{})
 		if !ok {
 			return false
 		}
@@ -2501,20 +2522,88 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	var backgroundScreenTicker *time.Ticker
 	var focusedScreenTick <-chan time.Time
 	var focusedScreenTicker *time.Ticker
-	if len(screens) > 0 {
-		backgroundScreenTicker = time.NewTicker(backgroundScreenCadence)
-		backgroundScreenTick = backgroundScreenTicker.C
-		defer backgroundScreenTicker.Stop()
+	startScreenTickers := func() {
+		if len(screens) > 0 && backgroundScreenTicker == nil {
+			backgroundScreenTicker = time.NewTicker(backgroundScreenCadence)
+			backgroundScreenTick = backgroundScreenTicker.C
+		}
+		if focusedScreen != "" && focusedScreenTicker == nil {
+			focusedScreenTicker = time.NewTicker(focusedScreenCadence)
+			focusedScreenTick = focusedScreenTicker.C
+		}
 	}
-	if focusedScreen != "" {
-		focusedScreenTicker = time.NewTicker(focusedScreenCadence)
-		focusedScreenTick = focusedScreenTicker.C
-		defer focusedScreenTicker.Stop()
+	startScreenTickers()
+	defer func() {
+		if backgroundScreenTicker != nil {
+			backgroundScreenTicker.Stop()
+		}
+		if focusedScreenTicker != nil {
+			focusedScreenTicker.Stop()
+		}
+	}()
+	// applySubscription retargets the connection in place. Added agents get
+	// their offsets captured and are announced as subscribed; removed ones
+	// stop being followed. False means the client is gone.
+	applySubscription := func(next eventSubscription) bool {
+		added := make([]string, 0)
+		for _, name := range next.agents {
+			if transcripts[name] == nil {
+				transcripts[name] = &eventTranscript{}
+				added = append(added, name)
+			}
+		}
+		removed := false
+		for _, name := range agents {
+			if !slices.Contains(next.agents, name) {
+				delete(transcripts, name)
+				delete(unreachable, "transcript:"+name)
+				removed = true
+			}
+		}
+		agents = next.agents
+		if len(added) > 0 && rosterRead {
+			if ok, _ := syncTranscripts(added, roster, true, map[string]bool{}); !ok {
+				return false
+			}
+		}
+		if len(added) > 0 || removed {
+			reconcileTranscriptWatches(true)
+		}
+		if len(added) > 0 && rosterRead && !emit("subscribed", streamSubscribed{Agents: added}) {
+			return false
+		}
+		for paneID := range screenStates {
+			if !slices.Contains(next.screens, paneID) {
+				delete(screenStates, paneID)
+			}
+		}
+		screens, focusedScreen = next.screens, next.focusedScreen
+		if screenReader == nil && len(screens) > 0 {
+			if source, sourceErr := deps.screens(); sourceErr == nil {
+				screenReader = source
+			}
+		}
+		startScreenTickers()
+		if rosterRead && !syncScreenRequests(panes, false) || !flushScreens(time.Now(), false) || (focusedScreen != "" && !flushScreens(time.Now(), true)) {
+			return false
+		}
+		if !reflect.DeepEqual(watches, next.watches) {
+			fileWatches.Close()
+			watches = next.watches
+			startWatches()
+		}
+		return true
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case update := <-subscriptionCh:
+			ok := applySubscription(update.subscription)
+			close(update.applied)
+			if !ok {
+				return
+			}
 		case message := <-messageCh:
 			if !emit("message", message) {
 				return
@@ -2532,7 +2621,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			for _, name := range names {
 				requested[name] = true
 			}
-			if ok, _ := syncTranscripts(roster, false, requested); !ok {
+			if ok, _ := syncTranscripts(agents, roster, false, requested); !ok {
 				return
 			}
 		case watchErr := <-transcriptWatchErrorCh:
@@ -2578,7 +2667,7 @@ func serveEvents(w http.ResponseWriter, r *http.Request, deps dependencies) {
 			}
 			flusher.Flush()
 		case <-transcriptSafety.C:
-			if ok, _ := syncTranscripts(roster, false, nil); !ok {
+			if ok, _ := syncTranscripts(agents, roster, false, nil); !ok {
 				return
 			}
 			reconcileTranscriptWatches(true)

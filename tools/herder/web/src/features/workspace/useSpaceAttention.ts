@@ -20,13 +20,11 @@ import {
   readUpdates,
   seedUpdates,
   spaceAttention,
-  storedSpaceAgents,
   useReadMarkers,
   useReadMarkersContext,
   viewedAgents,
   type ReadPosition,
   type SpaceAttention,
-  type SpaceDefinition,
   type ViewingState,
 } from '../spaces/index.ts'
 import { useDraftMarks } from '../drafts/useDraftMarks.ts'
@@ -44,42 +42,25 @@ function transcriptEnd(queryClient: QueryClient, name: string): ReadPosition | n
   return queryClient.getQueryState(queryKeys.entries(name))?.status === 'error' ? null : undefined
 }
 
-// useSpaceAttention derives each space's waiting/blocked/draft agents from the
-// live dock (active space), the stored layouts (other spaces), the fleet
-// board and the shared read markers, and records reading for the dwell.
-export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpaceID, activeAgents }: {
+// useSpaceAttention derives each space's waiting/blocked/draft agents from
+// its open agents (useSpaceAgents), the fleet board and the shared read
+// markers, and records reading for the dwell.
+export function useSpaceAttention({ apiRef, board, openBySpace }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
-  revision: number
   board: Board | undefined
-  spaces: SpaceDefinition[]
-  activeSpaceID: string | null
-  activeAgents: string[]
+  openBySpace: Record<string, string[]>
 }) {
   const queryClient = useQueryClient()
   const { store, pulled } = useReadMarkersContext()
   const markers = useReadMarkers()
   const drafts = useDraftMarks()
   const [visible, setVisible] = useState(documentVisible)
-  const [storageTick, setStorageTick] = useState(0)
   const [viewing, setViewing] = useState<ViewingState>({})
   const [dwellTick, setDwellTick] = useState(0)
   const [entriesTick, setEntriesTick] = useState(0)
   const [armed, setArmed] = useState<ReadonlySet<string>>(() => new Set())
 
   useDOMEvent(document, 'visibilitychange', () => setVisible(documentVisible()))
-  useDOMEvent<StorageEvent>(window, 'storage', (event) => {
-    if (event.key?.startsWith('herder.web.layout.v4')) setStorageTick((tick) => tick + 1)
-  })
-
-  const activeKey = activeAgents.join('\n')
-  const openBySpace = useMemo(() => {
-    const result: Record<string, string[]> = {}
-    for (const space of spaces) {
-      result[space.id] = space.id === activeSpaceID ? activeKey.split('\n').filter(Boolean) : storedSpaceAgents(localStorage, space.id)
-    }
-    return result
-    // revision covers stored layouts rewritten by a switch or a send-to-space.
-  }, [activeKey, activeSpaceID, revision, spaces, storageTick])
 
   const api = apiRef.current
   const groups = api?.groups ?? []

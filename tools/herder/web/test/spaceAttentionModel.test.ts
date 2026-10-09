@@ -12,7 +12,9 @@ import {
   seedUpdates,
   spaceAttention,
   spaceMenuItems,
+  spaceStreamAgents,
   storedSpaceAgents,
+  streamAgentLimit,
   totalAttention,
   turnEnd,
 } from '../src/features/spaces/spaceAttentionModel.ts'
@@ -77,6 +79,15 @@ test('another space is read from its stored v4 layout without any storage write'
   assert.deepEqual(storedSpaceAgents(storage, 'missing'), [])
   assert.deepEqual(writes, [], 'a corrupt layout is left for the space restore to recover')
   assert.deepEqual(storedSpaceAgents({ getItem: () => { throw new Error('blocked') } }, 'alpha'), [])
+})
+
+test('the stream follows each space\'s open agents once, the active ones first, up to the serve limit', () => {
+  assert.deepEqual(spaceStreamAgents(['kumo', 'dore'], { one: ['kumo', 'dore'], two: ['mavu', 'dore'], three: [] }), ['kumo', 'dore', 'mavu'])
+  assert.deepEqual(spaceStreamAgents([], {}), [])
+  const many = Array.from({ length: 150 }, (_, index) => `agent-${index}`)
+  const followed = spaceStreamAgents(['active'], { other: many })
+  assert.equal(followed.length, streamAgentLimit)
+  assert.equal(followed[0], 'active')
 })
 
 test('the turn end is the serve-stamped id, placed or not; nothing without one, never for retired or stopped', () => {

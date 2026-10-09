@@ -32,6 +32,17 @@ export function storedSpaceAgents(storage: Pick<Storage, 'getItem'>, spaceID: st
   }
 }
 
+// streamAgentLimit is the most agents one event stream follows (the serve
+// refuses more).
+export const streamAgentLimit = 100
+
+// spaceStreamAgents names the agents the event stream follows: the active
+// space's first, then every other space's open agents, so a hidden
+// transcript stays current and a switch shows it without a fetch.
+export function spaceStreamAgents(activeAgents: readonly string[], openBySpace: Record<string, readonly string[]>): string[] {
+  return [...new Set([...activeAgents, ...Object.values(openBySpace).flat()])].slice(0, streamAgentLimit)
+}
+
 // turnEnd is the turn-end signal: the id of the agent's latest completed
 // turn, stamped by the serve on placed panes and unplaced rows alike. No id
 // means nothing can be unread; a retired or stopped agent never counts.

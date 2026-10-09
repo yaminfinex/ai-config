@@ -68,15 +68,17 @@ func (f liveFleet) Roster() ([]hcomidentity.Row, error) {
 	return f.Poll()
 }
 
-// RosterHolding is Roster for a handler about to look up name: a fresh cache
-// that lacks name asks hcom live, so an agent that joined since the last poll
-// is never refused.
-func (f liveFleet) RosterHolding(name string) ([]hcomidentity.Row, error) {
+// RosterHolding is Roster for a handler about to look up names: a fresh
+// cache that lacks any of them asks hcom live, so an agent that joined since
+// the last poll is never refused.
+func (f liveFleet) RosterHolding(names ...string) ([]hcomidentity.Row, error) {
 	if cached, ok := f.Agents(); ok {
+		held := make(map[string]bool, len(cached))
 		for _, row := range cached {
-			if row.Name == name {
-				return cached, nil
-			}
+			held[row.Name] = true
+		}
+		if !slices.ContainsFunc(names, func(name string) bool { return !held[name] }) {
+			return cached, nil
 		}
 	}
 	return f.Poll()

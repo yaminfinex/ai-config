@@ -31,6 +31,7 @@ import { usePanelRecords } from './usePanelRecords'
 import { screenSubscriptionPaneIDs } from './screenSubscriptions'
 import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
+import { useSpaceAgents } from './useSpaceAgents'
 import { useSpaceAttention } from './useSpaceAttention'
 import { useSpaceSwitcher } from './useSpaceSwitcher'
 import { useSpaceMembers } from './useSpaceMembers'
@@ -59,6 +60,7 @@ import {
   resetSpacesSyncCursor,
   restoreSpaceDock,
   serverSpaceLookupMessage,
+  spaceStreamAgents,
   spacesStoreSyncAdapter,
   writeActiveSpace,
   type SpaceDefinition,
@@ -398,7 +400,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     onNotesStateChanged(namespace, rev)
     onReadMarkersStateChanged(namespace, rev)
   }, [onMembersStateChanged, onNotesStateChanged, onReadMarkersStateChanged])
-  useFleetStream(agentNames, screenPaneIDs, fileWatchTargets, focusedPane, onStateChanged)
+  const openBySpace = useSpaceAgents({ revision, spaces, activeSpaceID, activeAgents: agentNames })
+  useFleetStream({ agents: spaceStreamAgents(agentNames, openBySpace), screens: screenPaneIDs, watches: fileWatchTargets, focusedScreen: focusedPane }, onStateChanged)
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
   const viewer = viewerQuery.data?.viewer ?? 'unresolved'
@@ -565,7 +568,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   // Deliberate switches (rail, ⌥Tab, ⇧⌥←/→, ⌘K) land in the new space's composer.
   const readActiveSpaceID = useCallback(() => activeSpaceIDRef.current, [])
   const switchSpaceFocusing = useSwitchSpaceFocusing(apiRef, switchSpace, readActiveSpaceID)
-  const spaceAttention = useSpaceAttention({ apiRef, revision, board: boardQuery.data, spaces, activeSpaceID, activeAgents: agentNames })
+  const spaceAttention = useSpaceAttention({ apiRef, board: boardQuery.data, openBySpace })
   const { markUnread, markRead, toggleRead } = spaceAttention
   useWorkspaceShortcuts({ apiRef, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, spaces, activeSpaceID, switchSpace: switchSpaceFocusing, toggleRead })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceFocusing })

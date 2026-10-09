@@ -33,6 +33,9 @@ export function entriesQueryOptions(queryClient: QueryClient, name: string, fetc
     queryKey: queryKeys.entries(name),
     queryFn: () => loadEntries(queryClient, name, fetcher),
     staleTime: Infinity,
+    // A transcript stays warm while any space holds it: the event stream
+    // refreshes it in the background and prunes it once no space does.
+    gcTime: Infinity,
     retry: false,
   })
 }

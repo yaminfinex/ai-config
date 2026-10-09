@@ -1591,7 +1591,7 @@ func TestEventsAnnouncesInitialHcomHealthOnceThenMessage(t *testing.T) {
 	defer response.Body.Close()
 	reader := bufio.NewReader(response.Body)
 	event, data := readEvent(t, reader)
-	if event != "hello" || data != `{"buildIdentity":"source:fixture731"}` {
+	if event != "hello" || !strings.HasPrefix(data, `{"buildIdentity":"source:fixture731","stream":"`) {
 		t.Fatalf("handshake event = %q %s", event, data)
 	}
 	event, data = readEvent(t, reader)
@@ -1865,6 +1865,9 @@ func TestTranscriptWatcherSetupFailureFallsBackToSafetySweep(t *testing.T) {
 	if event, _ := readEvent(t, reader); event != "fleet" {
 		t.Fatalf("fleet=%q", event)
 	}
+	if event, data := readEvent(t, reader); event != "subscribed" || data != `{"agents":["dore"]}` {
+		t.Fatalf("subscribed=%q %s", event, data)
+	}
 	if event, data := readEvent(t, reader); event != "entry:dore" || !strings.Contains(data, `"uuid":"safety"`) {
 		t.Fatalf("fallback event=%q data=%s", event, data)
 	}
@@ -2086,4 +2089,59 @@ func readSSELine(t *testing.T, reader *bufio.Reader, want string) string {
 // read asks the swapped roster live instead of the cached one.
 func expireRosterCache(deps *dependencies) {
 	deps.rosterCache = &rosterCache{}
+}
+
+// A board reads its checkouts' git context a few at a time, each landing on
+// its own workspace, and a failed read still fails the board.
+func TestBuildBoardReadsCheckoutsConcurrentlyWithinTheBound(t *testing.T) {
+	deps := fixtureDeps()
+	snapshot := herdrcli.Snapshot{}
+	for index := range 2 * repoContextReads {
+		id := fmt.Sprintf("w%d", index)
+		snapshot.Workspaces = append(snapshot.Workspaces, herdrcli.Workspace{WorkspaceID: id, Label: id, Worktree: &herdrcli.WorkspaceWorktree{CheckoutPath: "/invented/" + id}})
+	}
+	var inFlight, most atomic.Int32
+	overlapped := make(chan struct{})
+	var once atomic.Bool
+	deps.repoContext = func(_ context.Context, cwd string) (repoctx.Context, error) {
+		now := inFlight.Add(1)
+		defer inFlight.Add(-1)
+		for {
+			seen := most.Load()
+			if now <= seen || most.CompareAndSwap(seen, now) {
+				break
+			}
+		}
+		if now > 1 && once.CompareAndSwap(false, true) {
+			close(overlapped)
+		}
+		select {
+		case <-overlapped:
+		case <-time.After(2 * time.Second):
+		}
+		return repoctx.Context{CWD: cwd, Git: &repoctx.Git{Branch: filepath.Base(cwd)}}, nil
+	}
+	board, err := buildBoard(context.Background(), deps, snapshot, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := most.Load(); got < 2 || got > repoContextReads {
+		t.Fatalf("concurrent checkout reads = %d, want 2..%d", got, repoContextReads)
+	}
+	for _, workspace := range board.Workspaces {
+		if workspace.CWD != "/invented/"+workspace.WorkspaceID || workspace.Git == nil || workspace.Git.Branch != workspace.WorkspaceID {
+			t.Fatalf("workspace %s got %q %#v", workspace.WorkspaceID, workspace.CWD, workspace.Git)
+		}
+	}
+
+	deps.repoContext = func(_ context.Context, cwd string) (repoctx.Context, error) {
+		if cwd == "/invented/w3" {
+			return repoctx.Context{}, errors.New("invented git failure")
+		}
+		return repoctx.Context{CWD: cwd}, nil
+	}
+	var sourced sourceError
+	if _, err := buildBoard(context.Background(), deps, snapshot, nil); !errors.As(err, &sourced) || sourced.source != "git" {
+		t.Fatalf("failed checkout read: %v", err)
+	}
 }
