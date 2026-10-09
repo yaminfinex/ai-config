@@ -5,6 +5,8 @@ import test from 'node:test'
 
 import { createServer } from 'vite'
 
+import { viteCacheDir } from './browserFixture.ts'
+
 const execFileAsync = promisify(execFile)
 
 type RailState = {
@@ -16,7 +18,9 @@ type RailState = {
 }
 
 test('collapsed rails leave computed layout and reopen with status state in sync', { timeout: 30_000 }, async (context) => {
+  const cache = await viteCacheDir('utility-rail')
   const server = await createServer({
+    cacheDir: cache.cacheDir,
     root: new URL('..', import.meta.url).pathname,
     logLevel: 'silent',
     server: { host: '127.0.0.1', port: 0 },
@@ -30,7 +34,7 @@ test('collapsed rails leave computed layout and reopen with status state in sync
     return stdout.trim()
   }
   context.after(async () => {
-    try { await browser(['close']) } finally { await server.close() }
+    try { await browser(['close']) } finally { await server.close(); await cache.remove() }
   })
   await browser(['open', url])
   await browser(['wait', '--fn', "document.querySelectorAll('.utility-rail').length === 2"])

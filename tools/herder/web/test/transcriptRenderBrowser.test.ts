@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import type { Plugin } from 'vite'
 
-import { fixtureAPI, startBrowser } from './browserFixture.ts'
+import { fixtureAPI, renderCounter, startBrowser } from './browserFixture.ts'
 
 // Synthetic transcripts with markdown, so a re-render of an open transcript
 // shows up as TranscriptEntries and Markdown work.
@@ -15,40 +15,6 @@ function entries(agent: string) {
       : { ...base, kind: 'human_prompt', payload: { message: { content: `fixture prompt ${index}` } } }
   })
 }
-
-// A minimal React devtools hook, installed before React loads, that counts
-// each component that rendered in a commit: mounted, or updated with work
-// performed. Subtrees React bailed out of are skipped.
-const renderCounter = `(() => {
-  window.__renders = {}
-  window.__commits = 0
-  window.__track = false
-  const label = (fiber) => {
-    const type = fiber.type
-    if (typeof type === 'function') return type.displayName || type.name || null
-    if (type && typeof type === 'object') { const inner = type.render || type.type; return type.displayName || inner?.displayName || inner?.name || null }
-    return null
-  }
-  const count = (name) => { window.__renders[name] = (window.__renders[name] ?? 0) + 1 }
-  const walk = (root) => {
-    const stack = root ? [root] : []
-    while (stack.length) {
-      const fiber = stack.pop()
-      const name = [0, 1, 11, 14, 15].includes(fiber.tag) ? label(fiber) : null
-      const mounted = fiber.alternate === null
-      if (name && mounted) count('mount:' + name)
-      else if (name && (fiber.flags & 1)) count(name)
-      if (fiber.sibling) stack.push(fiber.sibling)
-      if (fiber.child && (mounted || fiber.child !== fiber.alternate.child)) stack.push(fiber.child)
-    }
-  }
-  window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
-    supportsFiber: true, renderers: new Map(), isDisabled: false,
-    inject(renderer) { const id = this.renderers.size + 1; this.renderers.set(id, renderer); return id },
-    onCommitFiberRoot(_id, root) { if (!window.__track) return; window.__commits++; walk(root.current.child) },
-    onCommitFiberUnmount() {}, onPostCommitFiberRoot() {}, checkDCE() {}, on() {}, off() {}, emit() {}, sub() { return () => {} },
-  }
-})()`
 
 // setDraft sets the composer's value through React's input path.
 const setDraft = (selector: string, text: string) => `(() => {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DockviewApi, DockviewReadyEvent } from 'dockview-react'
-import { apiProblem, getFleet, queryKeys, viewerReadOnlyMessage } from '../../api/client'
-import { viewerQueryOptions } from '../../api/queries'
+import { apiProblem, queryKeys, viewerReadOnlyMessage } from '../../api/client'
+import { fleetQueryOptions, viewerQueryOptions } from '../../api/queries'
 import type { FileTarget } from '../../types'
 import { agentBusStatus } from '../../shared/agentStatus'
 import { agentMentionMatcher } from '../../shared/agentMentions'
@@ -158,7 +158,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const notesFocusReturn = useRef<HTMLElement | null>(null)
   const disposeDock = useRef<() => void>(() => undefined)
   const queryClient = useQueryClient()
-  const boardQuery = useQuery({ queryKey: queryKeys.fleet, queryFn: () => getFleet(), staleTime: Infinity, retry: false })
+  const boardQuery = useQuery(fleetQueryOptions())
   const viewerQuery = useQuery(viewerQueryOptions())
   const mentionMatcher = useMemo(() => agentMentionMatcher(boardQuery.data), [boardQuery.data])
   const fileWatchRegistry = useMemo(() => createFileWatchRegistry(setFileWatchTargets), [])
@@ -581,10 +581,14 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setAgentScreenPane, setAgentTailPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
     resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread, markRead,
   }), [closePanel, markRead, markUnread, onViewer, openAgent, openChanges, openFile, openFileInDiff, openFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
+  // Panel params are read afresh from Dockview each render; the key keeps
+  // the active panel's identity, and so the data context's, while it is unchanged.
+  const activePanelKey = activeParams ? JSON.stringify(activeParams) : ''
+  const activePanel = useMemo(() => activePanelKey ? { id: activePanelID, params: JSON.parse(activePanelKey) as DockPanelParams } : null, [activePanelID, activePanelKey])
   const data = useMemo<WorkspaceDataValue>(() => ({
-    board: boardQuery.data, mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
-    spaces, activeSpaceID, activePanel: activeParams ? { id: activePanelID, params: activeParams } : null,
-  }), [activePanelID, activeParams, activeSpaceID, agentScreenPanes, agentStatuses, boardQuery.data, fileGitStates, folderSelectionHints, mentionMatcher, spaces, viewerReadOnly])
+    mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
+    spaces, activeSpaceID, activePanel,
+  }), [activePanel, activeSpaceID, agentScreenPanes, agentStatuses, fileGitStates, folderSelectionHints, mentionMatcher, spaces, viewerReadOnly])
 
   return {
     actions, data, fileWatchRegister: fileWatchRegistry.register,

@@ -1,6 +1,6 @@
 import { queryOptions, type QueryClient } from '@tanstack/react-query'
-import { getEntries, getViewer, queryKeys, type Fetcher } from './client.ts'
-import type { EntriesPage, TranscriptEntry } from '../types'
+import { getEntries, getFleet, getViewer, queryKeys, type Fetcher } from './client.ts'
+import type { Board, EntriesPage, TranscriptEntry } from '../types'
 
 const entryWindowLimit = 500
 
@@ -32,6 +32,16 @@ export function entriesQueryOptions(queryClient: QueryClient, name: string, fetc
   return queryOptions({
     queryKey: queryKeys.entries(name),
     queryFn: () => loadEntries(queryClient, name, fetcher),
+    staleTime: Infinity,
+    retry: false,
+  })
+}
+
+// The fleet query is filled by useFleetStream; its fetch only seeds the first board.
+export function fleetQueryOptions(fetcher?: Fetcher) {
+  return queryOptions<Board>({
+    queryKey: queryKeys.fleet,
+    queryFn: () => getFleet(fetcher),
     staleTime: Infinity,
     retry: false,
   })

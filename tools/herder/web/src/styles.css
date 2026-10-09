@@ -624,7 +624,8 @@ h2, h3, p { margin-top: 0; }
 .agent-view-toggle { flex: 0 0 auto; }
 .view-reason { color: var(--dimmer); font-size: 9px; white-space: nowrap; }
 .transcript-viewport { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.transcript { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; }
+/* The viewport sizes the transcript, so contain: strict makes it a layout boundary: a composer keystroke no longer lays out every entry. */
+.transcript { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; contain: strict; }
 .transcript > * { min-width: 0; }
 .window-note { margin: 2px 0 10px; color: var(--dimmer); font: 9px var(--mono); text-align: center; }
 .transcript-block { display: contents; }

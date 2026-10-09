@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { DockviewReact, type DockviewTheme } from 'dockview-react'
 import { FleetSidebar } from './features/sidebar/FleetSidebar'
 import { FleetViewToggle } from './features/sidebar/FleetViewToggle'
@@ -25,6 +25,8 @@ import { browserOnlySpacesMessage, serverSpaceLookupMessage, SpacesSection, Spac
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
 import { preserveDockTabBrowserHistory } from './features/workspace/dockTabHistoryModel.ts'
 import { ErrorBoundary } from './shared/ErrorBoundary'
+import type { OpenPlacement } from './features/layout/openPlacement'
+import type { Pane } from './types'
 
 const herderTheme: DockviewTheme = {
   name: 'herder', className: 'dockview-theme-herder', gap: 0,
@@ -101,6 +103,11 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
     knownManagerItems, setKnownManagerItems, fleetView, setFleetView, pendingGroups, setPendingGroups,
   } = workspace
+  // Stable handlers let the memoised sidebar and notes rail skip Shell renders their props did not cause.
+  const previewAgent = useCallback((name: string, placement?: OpenPlacement) => openAgent(name, true, placement, true), [openAgent])
+  const pinAgent = useCallback((name: string, placement?: OpenPlacement) => openAgent(name, false, placement, true), [openAgent])
+  const previewPane = useCallback((pane: Pane, placement?: OpenPlacement) => openScreen(pane, true, placement), [openScreen])
+  const pinPane = useCallback((pane: Pane, placement?: OpenPlacement) => openScreen(pane, false, placement), [openScreen])
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell"><div className="shell-body">
     <QuickOpen open={workspace.quickOpen} mode={workspace.quickOpenMode} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} board={workspace.board}
       spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)}
@@ -117,7 +124,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       width={fleetRail.width} collapsed={fleetRail.collapsed}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
       <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
-        onPreviewAgent={(name, placement) => openAgent(name, true, placement, true)} onPinAgent={(name, placement) => openAgent(name, false, placement, true)} onPreviewPane={(pane, placement) => openScreen(pane, true, placement)} onPinPane={(pane, placement) => openScreen(pane, false, placement)}
+        onPreviewAgent={previewAgent} onPinAgent={pinAgent} onPreviewPane={previewPane} onPinPane={pinPane}
         onOpenGroupAsSpace={workspace.spaces.openGroup} pendingGroups={pendingGroups} onPendingGroups={setPendingGroups}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems}
         knownManagerItems={knownManagerItems} onKnownManagerItems={setKnownManagerItems} />
@@ -132,7 +139,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     </section>
     <UtilityRail side="right" label="Notes" headingAction={<NoteQuickAdd group="general" label="unassigned" />} width={notesRail.width} collapsed={notesRail.collapsed}
       onWidth={(width) => setNotesRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleNotesRail}>
-      <NotesRail board={workspace.board} onOpenAgent={(name, placement) => openAgent(name, true, placement, true)} />
+      <NotesRail board={workspace.board} onOpenAgent={previewAgent} />
     </UtilityRail>
   </div>
     <StreamStatusBar fleetProblem={workspace.fleetProblem} viewer={workspace.viewer} viewerPending={workspace.viewerPending}

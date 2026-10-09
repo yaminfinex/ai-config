@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom'
 import type { DockPanelParams } from '../layout/dockLayout.ts'
 import { usePositionedMenu } from '../../shared/usePositionedMenu.tsx'
 import { findAgentRow } from '../../shared/agentStatus.ts'
+import type { Board } from '../../types.ts'
 import { agentUnread, useReadMarkers } from '../spaces/index.ts'
 import { dockTabMenuItems, isDockTabMenuKey, readMenuItem } from './dockTabMenuModel.ts'
-import { useAgentUnread, useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext.tsx'
+import { useAgentUnread, useFleetSelect, useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext.tsx'
 
 export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceID: string, params: DockPanelParams) {
   const actions = useWorkspaceActionsContext()
@@ -59,9 +60,9 @@ export function useDockTabMenu(tabRef: RefObject<HTMLDivElement | null>, sourceI
 
 export function useAgentRowMenu() {
   const actions = useWorkspaceActionsContext()
-  const data = useWorkspaceData()
   const markers = useReadMarkers()
   const [subject, setSubject] = useState('')
+  const row = useFleetSelect(useCallback((board: Board | undefined) => findAgentRow(board, subject), [subject]))
   const positioned = usePositionedMenu()
   const open = useCallback((event: MouseEvent<HTMLElement>, nextSubject: string) => {
     event.preventDefault()
@@ -70,7 +71,7 @@ export function useAgentRowMenu() {
     positioned.open({ x: event.clientX, y: event.clientY }, event.currentTarget)
   }, [positioned.open])
 
-  const readItem = readMenuItem(subject, agentUnread(findAgentRow(data.board, subject), markers[subject]))
+  const readItem = readMenuItem(subject, agentUnread(row, markers[subject]))
   const menu = positioned.position ? createPortal(<div ref={positioned.menuRef} className="dock-tab-menu" role="menu" aria-label={`Actions for ${subject}`}
     style={{ left: positioned.position.x, top: positioned.position.y }}>
     <button type="button" role="menuitem" onClick={() => {

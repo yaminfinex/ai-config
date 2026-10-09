@@ -6,6 +6,8 @@ import test from 'node:test'
 
 import { createServer, type Plugin } from 'vite'
 
+import { viteCacheDir } from './browserFixture.ts'
+
 const execFileAsync = promisify(execFile)
 
 // Just enough of the serve API for two live agents with enabled composers.
@@ -76,7 +78,9 @@ function fixtureAPI(): Plugin {
 }
 
 test('⌘K, a space name and Enter land the next keystrokes in that space\'s composer', { timeout: 120_000 }, async (context) => {
+  const cache = await viteCacheDir('quick-open-focus')
   const server = await createServer({
+    cacheDir: cache.cacheDir,
     root: new URL('..', import.meta.url).pathname,
     logLevel: 'silent',
     plugins: [fixtureAPI()],
@@ -93,7 +97,7 @@ test('⌘K, a space name and Enter land the next keystrokes in that space\'s com
   const evaluate = async (expression: string) => JSON.parse(await browser(['eval', '-b', Buffer.from(expression).toString('base64')]))
   const waitFor = (expression: string) => browser(['wait', '--fn', expression])
   context.after(async () => {
-    try { await browser(['close']) } finally { await server.close() }
+    try { await browser(['close']) } finally { await server.close(); await cache.remove() }
   })
   const composer = (agent: string) => `document.querySelector('.dv-active-group textarea[data-composer][aria-label="Message ${agent}"]')`
   const activeComposer = `document.activeElement?.matches?.('textarea[data-composer]') ? document.activeElement.getAttribute('aria-label') : null`
