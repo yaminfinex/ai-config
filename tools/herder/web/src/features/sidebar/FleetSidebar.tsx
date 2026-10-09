@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { AgentStatusDot, gapLabel } from '../../shared/presentation'
@@ -23,7 +23,8 @@ import { useDraftMarks } from '../drafts/useDraftMarks.ts'
 
 const emptyExpandedItems: string[] = []
 
-export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, onOpenGroupAsSpace, pendingGroups, onPendingGroups, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
+// Memoised: Shell renders for dock and quick-open state the tree does not show.
+export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, onOpenGroupAsSpace, pendingGroups, onPendingGroups, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
   board: Board | undefined
   view: FleetView
   activeAgent?: string
@@ -310,4 +311,4 @@ export function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAg
       })}
     </div>}
   </div>
-}
+})

@@ -38,3 +38,9 @@ test('transcript prose keeps its measure while containers and wide content stay 
   assert.doesNotMatch(ruleFor('.assistant-fenced-content'), /max-width:/)
   assert.match(ruleFor('.human-entry'), /max-width:\s*790px\s*;/)
 })
+
+// The composer sits below the transcript in the same panel; strict containment
+// keeps each keystroke's layout from walking every entry.
+test('the transcript is a layout boundary', () => {
+  assert.match(ruleFor('.transcript'), /contain:\s*strict\s*;/)
+})

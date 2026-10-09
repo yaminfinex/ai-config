@@ -26,7 +26,8 @@ test('an unread agent offers Mark read in place of Mark unread, a read one Mark 
   assert.deepEqual(dockTabMenuItems(spaces, 'main', 'nota', false).at(-1), { id: 'unread', label: 'Mark unread', kind: 'unread', subject: 'nota' })
   assert.equal(dockTabMenuItems(spaces, 'main', undefined, true).some((item) => item.kind === 'read'), false)
   assert.deepEqual(readMenuItem('nota', true), { id: 'read', label: 'Mark read', kind: 'read', subject: 'nota' })
-  assert.match(menuSource, /readMenuItem\(subject, agentUnread\(findAgentRow\(data\.board, subject\), markers\[subject\]\)\)/, 'the tree row menu toggles the same way')
+  assert.match(menuSource, /const row = useFleetSelect\(useCallback\(\(board: Board \| undefined\) => findAgentRow\(board, subject\), \[subject\]\)\)/)
+  assert.match(menuSource, /readMenuItem\(subject, agentUnread\(row, markers\[subject\]\)\)/, 'the tree row menu toggles the same way')
 })
 
 test('dock tab menu recognizes the platform context-menu keys only', () => {

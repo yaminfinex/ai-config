@@ -1,4 +1,6 @@
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { fleetQueryOptions } from '../../api/queries'
 import { findAgentRow } from '../../shared/agentStatus'
 import { agentUnread, useReadMarker } from '../spaces/index.ts'
 import type { Board, FileTarget, FolderTarget } from '../../types'
@@ -37,8 +39,10 @@ export type WorkspaceActionsValue = {
   markRead: (names: readonly string[]) => void
 }
 
+// WorkspaceDataValue holds no fleet board: a fleet event changes the board,
+// and a changed context value re-renders every dock panel and tab under it.
+// Read the board through useFleetSelect instead.
 export type WorkspaceDataValue = {
-  board?: Board
   mentionMatcher: AgentMentionMatcher
   identityReadOnly: string
   fileGitStates: Record<string, GitFileState>
@@ -75,5 +79,15 @@ export function WorkspaceProviders({ actions, data, children }: { actions: Works
 // useAgentUnread is whether an agent can be marked read: the menus and the
 // footer offer "Mark read" in place of "Mark unread" while it is.
 export function useAgentUnread(name: string): boolean {
-  return agentUnread(findAgentRow(useWorkspaceData().board, name), useReadMarker(name))
+  const row = useFleetSelect(useCallback((board: Board | undefined) => findAgentRow(board, name), [name]))
+  return agentUnread(row, useReadMarker(name))
+}
+
+// useFleetSelect reads one slice of the fleet board and re-renders only when
+// that slice changes, so a status change on one agent leaves the rest alone.
+// The query's structural sharing keeps an unchanged slice's identity. Pass a
+// stable select; it also answers for the board not yet loaded.
+export function useFleetSelect<T>(select: (board: Board | undefined) => T): T {
+  const query = useQuery({ ...fleetQueryOptions(), select })
+  return query.isSuccess ? query.data : select(undefined)
 }

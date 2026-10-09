@@ -14,7 +14,7 @@ import { ChangesPanel } from '../git/ChangesPanel'
 import { initialGitFileState } from '../git/gitViewModel'
 import { placementInGroup, type OpenPlacement } from '../layout/openPlacement'
 import { screenIdentityState, type AgentPanelParams, type ChangesPanelParams, type DockPanelParams, type FilePanelParams, type FolderPanelParams, type ScreenPanelParams } from '../layout/dockLayout'
-import { useAgentUnread, useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext'
+import { useAgentUnread, useFleetSelect, useWorkspaceActionsContext, useWorkspaceData } from './workspaceContext'
 import { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace, type PanelKind } from './panelRegistryModel'
 import { liveRosterNames } from '../notes/notesPresentation'
 import { useDockTabMenu } from './DockTabMenu'
@@ -33,11 +33,17 @@ function usePanelVisibility(api: IDockviewPanelProps['api']) {
   return visible
 }
 
-// The roster keeps its identity while its names are unchanged, so a fleet
-// refresh that changes only statuses does not re-render memoised panels.
-function useLiveRosterNames(board: Board | undefined) {
-  const key = useMemo(() => liveRosterNames(board).join('\n'), [board])
+const rosterKey = (board: Board | undefined) => liveRosterNames(board).join('\n')
+
+// The roster keeps its identity while its names are unchanged, and a fleet
+// refresh that changes only statuses does not re-render the panel.
+function useLiveRosterNames() {
+  const key = useFleetSelect(rosterKey)
   return useMemo(() => key ? key.split('\n') : [], [key])
+}
+
+function useAgentBoardStatus(name: string) {
+  return useFleetSelect(useCallback((board: Board | undefined) => agentBusStatus(board, name), [name]))
 }
 
 function visiblePane(board: Board | undefined, params: ScreenPanelParams) {
@@ -54,9 +60,10 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const workspace = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  const agents = useLiveRosterNames(data.board)
+  const agents = useLiveRosterNames()
   const unread = useAgentUnread(params.name)
   const name = params.name
+  const liveStatus = useAgentBoardStatus(name)
   // Stable callbacks let the memoised AgentPanel skip renders its own data did not cause.
   const onOpenAgent = useCallback((agent: string, placement?: OpenPlacement) => workspace.openAgent(agent, true, placementInGroup(placement, api.group.id), true), [api, workspace])
   const onScreenPane = useCallback((paneID?: string) => workspace.setAgentScreenPane(name, paneID), [name, workspace])
@@ -67,7 +74,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const onSend = useCallback(() => workspace.pinPanel(api.id), [api, workspace])
   const onMarkUnread = useCallback((index?: number) => workspace.markUnread(name, index), [name, workspace])
   const onMarkRead = useCallback(() => workspace.markRead([name]), [name, workspace])
-  return <AgentPanel name={name} agents={agents} active={visible} liveStatus={agentBusStatus(data.board, name)} screenPaneID={data.agentScreenPanes[name]}
+  return <AgentPanel name={name} agents={agents} active={visible} liveStatus={liveStatus} screenPaneID={data.agentScreenPanes[name]}
     mentionMatcher={data.mentionMatcher} onOpenAgent={onOpenAgent}
     onScreenPane={onScreenPane} onTailPane={onTailPane} onOpenFile={onOpenFile}
     onOpenFolder={onOpenFolder}
@@ -79,11 +86,10 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
 
 function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>) {
   const actions = useWorkspaceActionsContext()
-  const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  const identity = screenIdentityState(params, data.board)
+  const identity = useFleetSelect(useCallback((board: Board | undefined) => screenIdentityState(params, board), [params]))
+  const pane = useFleetSelect(useCallback((board: Board | undefined) => visiblePane(board, params), [params]))
   if (identity === 'checking') return <PanelState as="main" className="panel-unavailable" title="Verifying screen identity…" detail="The live fleet must confirm this saved pane before it can be subscribed." />
-  const pane = visiblePane(data.board, params)
   if (!pane) return <PanelState as="main" className="panel-unavailable tombstone" title="Screen no longer matches" detail="The saved pane identity is gone or now belongs to different live evidence. No replacement pane was opened." />
   return <ScreenPanel pane={pane} active={visible} onFocus={actions.onTerminalFocus} onBlur={() => actions.onTerminalFocus(undefined)} />
 }
@@ -92,7 +98,7 @@ function FileDockPanel({ params, api }: IDockviewPanelProps<FilePanelParams>) {
   const actions = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  const agents = useLiveRosterNames(data.board)
+  const agents = useLiveRosterNames()
   return <FilePanel target={{ root: params.root, path: params.path, ...(params.line ? { line: params.line } : {}) }} agents={agents} viewMode={params.viewMode}
     gitState={data.fileGitStates[api.id] ?? initialGitFileState()} active={visible}
     onViewMode={(mode) => actions.setFileViewMode(api.id, mode)} onGitState={(state) => actions.setFileGitState(api.id, state)}
@@ -104,7 +110,7 @@ function FolderDockPanel({ params, api }: IDockviewPanelProps<FolderPanelParams>
   const actions = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const visible = usePanelVisibility(api)
-  const agents = useLiveRosterNames(data.board)
+  const agents = useLiveRosterNames()
   return <FolderPanel target={{ root: params.root, path: params.path }} agents={agents} active={visible} selectionHint={data.folderSelectionHints[api.id]}
     onSelectionHintConsumed={() => actions.consumeFolderSelectionHint(api.id)}
     onOpenFile={(target, placement) => actions.openFile(target, placementInGroup(placement, api.group.id))}
@@ -163,8 +169,14 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
   const actions = useWorkspaceActionsContext()
   const data = useWorkspaceData()
   const presentation = panelPresentation(params)
-  const title = params.kind === 'agent' ? agentBoardTitle(data.board, params.name) : presentation.title
-  const boardStatus = params.kind === 'agent' ? agentBusStatus(data.board, params.name) : '-'
+  const agent = params.kind === 'agent' ? params.name : undefined
+  const board = useFleetSelect(useCallback((current: Board | undefined) => agent === undefined ? undefined : {
+    title: agentBoardTitle(current, agent),
+    status: agentBusStatus(current, agent),
+    tool: agentBoardTool(current, agent),
+  }, [agent]))
+  const title = board?.title ?? presentation.title
+  const boardStatus = board?.status ?? '-'
   const status = params.kind === 'agent' && boardStatus === '-' ? data.agentStatuses[params.name] ?? '-' : boardStatus
   // Agent tabs stay terse: a status dot plus a tool badge, no status prose (owner ruling 2026-08-30).
   const meta = params.kind === 'agent' ? '' : presentation.meta
@@ -176,7 +188,7 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
     onDoubleClick={(event) => { if (params.preview) actions.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) actions.closePanel(api.id) }}>
     <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{presentation.icon}{title}</span>
-    {params.kind === 'agent' && <span className="dock-tab-meta"><DraftMark drafts={drafts[params.name]} /><AgentStatusDot status={status} /><ToolBadge tool={agentBoardTool(data.board, params.name)} /></span>}
+    {params.kind === 'agent' && <span className="dock-tab-meta"><DraftMark drafts={drafts[params.name]} /><AgentStatusDot status={status} /><ToolBadge tool={board?.tool} /></span>}
     {params.kind !== 'agent' && meta && <span className="dock-tab-meta">{meta}</span>}
     <button type="button" className="dock-tab-close" aria-label={`Close ${title}`} onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closePanel(api.id)}>×</button>
   </div>{tabMenu.menu}</>

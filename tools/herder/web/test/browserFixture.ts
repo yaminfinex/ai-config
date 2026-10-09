@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
 import type { ServerResponse } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { TestContext } from 'node:test'
 
@@ -86,10 +89,54 @@ export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number, 
   return { plugin, state, posts, board, send }
 }
 
+// A minimal React devtools hook, installed before React loads, that counts
+// each component that rendered in a commit: mounted, or updated with work
+// performed. Subtrees React bailed out of are skipped.
+export const renderCounter = `(() => {
+  window.__renders = {}
+  window.__commits = 0
+  window.__track = false
+  const label = (fiber) => {
+    const type = fiber.type
+    if (typeof type === 'function') return type.displayName || type.name || null
+    if (type && typeof type === 'object') { const inner = type.render || type.type; return type.displayName || inner?.displayName || inner?.name || null }
+    return null
+  }
+  const count = (name) => { window.__renders[name] = (window.__renders[name] ?? 0) + 1 }
+  const walk = (root) => {
+    const stack = root ? [root] : []
+    while (stack.length) {
+      const fiber = stack.pop()
+      const name = [0, 1, 11, 14, 15].includes(fiber.tag) ? label(fiber) : null
+      const mounted = fiber.alternate === null
+      if (name && mounted) count('mount:' + name)
+      else if (name && (fiber.flags & 1)) count(name)
+      if (fiber.sibling) stack.push(fiber.sibling)
+      if (fiber.child && (mounted || fiber.child !== fiber.alternate.child)) stack.push(fiber.child)
+    }
+  }
+  window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+    supportsFiber: true, renderers: new Map(), isDisabled: false,
+    inject(renderer) { const id = this.renderers.size + 1; this.renderers.set(id, renderer); return id },
+    onCommitFiberRoot(_id, root) { if (!window.__track) return; window.__commits++; walk(root.current.child) },
+    onCommitFiberUnmount() {}, onPostCommitFiberRoot() {}, checkDCE() {}, on() {}, off() {}, emit() {}, sub() { return () => {} },
+  }
+})()`
+
+// viteCacheDir gives a test's Vite server its own dep cache: browser tests run
+// in parallel, and a shared node_modules/.vite let one server's re-optimization
+// stall another page's module loads. Remove it once the server has closed.
+export async function viteCacheDir(name: string) {
+  const cacheDir = await mkdtemp(join(tmpdir(), `herder-vite-${name}-`))
+  return { cacheDir, remove: () => rm(cacheDir, { recursive: true, force: true }) }
+}
+
 // startBrowser serves the app on Vite with the given fixture API and drives one agent-browser session.
 export async function startBrowser(context: TestContext, name: string, plugin: Plugin) {
+  const cache = await viteCacheDir(name)
   const server = await createServer({
     root: new URL('..', import.meta.url).pathname,
+    cacheDir: cache.cacheDir,
     logLevel: 'silent',
     plugins: [plugin],
     server: { host: '127.0.0.1', port: 0 },
@@ -105,7 +152,7 @@ export async function startBrowser(context: TestContext, name: string, plugin: P
   const evaluate = async (expression: string): Promise<unknown> => JSON.parse(await browser(['eval', '-b', Buffer.from(expression).toString('base64')]))
   const waitFor = (expression: string) => browser(['wait', '--fn', expression])
   context.after(async () => {
-    try { await browser(['close']) } finally { await server.close() }
+    try { await browser(['close']) } finally { await server.close(); await cache.remove() }
   })
   return { url, browser, evaluate, waitFor }
 }
