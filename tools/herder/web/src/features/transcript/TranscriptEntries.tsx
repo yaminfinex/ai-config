@@ -1,4 +1,4 @@
-import { createContext, useContext, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { createContext, memo, useContext, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { duplicateHcomDeliveryIndices } from '../../messagePolish'
 import { agentMarkdownOptions, Markdown } from '../../shared/Markdown'
 import { AgentMentionText, type AgentMentionMatcher } from '../../shared/agentMentions'
@@ -309,7 +309,9 @@ function Block({ index, divider, children }: { index: number, divider: boolean, 
   return <div className="transcript-block" data-entry-index={index}>{divider && <NewDivider />}{children}</div>
 }
 
-export function TranscriptEntries({ entries, agentName, now, showSystem, cleanView, mentionMatcher, onOpenAgent, sideHint, dividerAt = -1 }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void, sideHint: string, dividerAt?: number }) {
+// Memoised: a panel re-rendered by a draft, a status or a fleet refresh
+// leaves its transcript alone unless its entries, view or clock changed.
+export const TranscriptEntries = memo(function TranscriptEntries({ entries, agentName, now, showSystem, cleanView, mentionMatcher, onOpenAgent, sideHint, dividerAt = -1 }: { entries: TranscriptEntry[], agentName: string, now: number, showSystem: boolean, cleanView: boolean, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, event: MouseEvent<HTMLElement>) => void, sideHint: string, dividerAt?: number }) {
   const relationships = useMemo(() => relateEntries(entries), [entries])
   const rows = useMemo(() => cleanView ? cleanRows(entries, relationships) : [], [cleanView, entries, relationships])
   const mentionContext = useMemo(() => ({ matcher: mentionMatcher, onOpenAgent, sideHint }), [mentionMatcher, onOpenAgent, sideHint])
@@ -330,4 +332,4 @@ export function TranscriptEntries({ entries, agentName, now, showSystem, cleanVi
   return <MentionContext.Provider value={mentionContext}>{entries.map((entry, index) => <Block index={index} divider={index === dividerAt} key={entry.uuid || `${entry.byteOffset}:${entry.line}`}>
     <EntryView entry={entry} index={index} entries={entries} relationships={relationships} agentName={agentName} now={now} showSystem={showSystem} cleanView={cleanView} />
   </Block>)}</MentionContext.Provider>
-}
+})

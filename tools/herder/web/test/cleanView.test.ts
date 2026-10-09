@@ -284,8 +284,8 @@ test('the live activity reuses the Normal entry renderer and resets only when su
 })
 
 test('live detail shares the strip showSystem policy without changing Normal', () => {
-  const entryView = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function EntryView'), transcriptEntriesSource.indexOf('export function TranscriptEntries'))
-  const transcriptEntries = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('export function TranscriptEntries'))
+  const entryView = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('function EntryView'), transcriptEntriesSource.indexOf('export const TranscriptEntries'))
+  const transcriptEntries = transcriptEntriesSource.slice(transcriptEntriesSource.indexOf('export const TranscriptEntries'))
   const activityEntries = transcriptEntriesSource.match(/<ActivityEntry\b[^>]*\/>/g) ?? []
 
   assert.equal(activityEntries.length, 2)

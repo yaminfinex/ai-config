@@ -142,17 +142,18 @@ export function useSpaceAttention({ apiRef, revision, board, spaces, activeSpace
 
   // markRead marks agents read now, as a dwell read would (a space's "Mark
   // all read" passes every agent counted in its badge); one already read is
-  // left alone.
+  // left alone. It reads the board from the cache so a fleet refresh does not
+  // change it, and with it every panel's callbacks.
   const markRead = useCallback((names: readonly string[]) => {
     const positions = Object.fromEntries(names.map((name) => [name, transcriptEnd(queryClient, name)]))
-    store.apply(markReadUpdates({ markers: store.markers(), board, names, positions, now: Date.now() }))
-  }, [board, queryClient, store])
+    store.apply(markReadUpdates({ markers: store.markers(), board: queryClient.getQueryData<Board>(queryKeys.fleet), names, positions, now: Date.now() }))
+  }, [queryClient, store])
 
   // toggleRead is ⌥U: an unread agent is marked read, a read one unread.
   const toggleRead = useCallback((name: string) => {
-    if (agentUnread(findAgentRow(board, name), store.markers()[name])) markRead([name])
+    if (agentUnread(findAgentRow(queryClient.getQueryData<Board>(queryKeys.fleet), name), store.markers()[name])) markRead([name])
     else markUnread(name)
-  }, [board, markRead, markUnread, store])
+  }, [markRead, markUnread, queryClient, store])
 
   const attention = useMemo(() => Object.fromEntries(Object.entries(openBySpace)
     .map(([id, agents]) => [id, spaceAttention(board, agents, markers, drafts)])) as Record<string, SpaceAttention>, [board, drafts, markers, openBySpace])

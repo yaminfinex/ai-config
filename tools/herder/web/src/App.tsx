@@ -31,6 +31,11 @@ const herderTheme: DockviewTheme = {
   dndOverlayMounting: 'absolute', dndPanelOverlay: 'group', dndTabIndicator: 'line',
   dndOverlayBorder: '2px solid var(--accent)', tabGroupIndicator: 'none', tabAnimation: 'smooth',
 }
+// Dockview pushes every option whose identity changes into updateOptions and
+// relays out, so object options stay fixed across Shell renders.
+const dockTabComponents = { 'herder-tab': DockTab }
+const dockPinnedTabs = { enabled: false }
+const dockLayoutHistory = { enabled: false }
 
 function StatusTick({ tick }: { tick: HealthTick }) {
   return <span className="health-tick" title={tick.title} aria-label={tick.title}><span className={`health-dot ${tick.healthy ? 'healthy' : 'fault'}`} aria-hidden="true" />{tick.label}{tick.note && <span className="health-note">{tick.note}</span>}</span>
@@ -120,9 +125,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     <section className="shell-main">
       <StreamBanners fleetProblem={workspace.fleetProblem} viewerProblem={workspace.viewerProblem} spaceProblem={workspace.spaces.enabled ? workspace.spaceProblem : ''} flushLayout={workspace.flushLayout} />
       <div className="dock-host" onKeyDownCapture={preserveDockTabBrowserHistory}>
-        <DockviewReact components={dockComponents} tabComponents={{ 'herder-tab': DockTab }} rightHeaderActionsComponent={DockHeaderActions} watermarkComponent={DockWatermark}
+        <DockviewReact components={dockComponents} tabComponents={dockTabComponents} rightHeaderActionsComponent={DockHeaderActions} watermarkComponent={DockWatermark}
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
-          pinnedTabs={{ enabled: false }} layoutHistory={{ enabled: false }} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
+          pinnedTabs={dockPinnedTabs} layoutHistory={dockLayoutHistory} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
       </div>
     </section>
     <UtilityRail side="right" label="Notes" headingAction={<NoteQuickAdd group="general" label="unassigned" />} width={notesRail.width} collapsed={notesRail.collapsed}
