@@ -58,8 +58,8 @@ func TestReorderBatchCompetesAsOneWholeBatch(t *testing.T) {
 		row("b", 1, "seed", map[string]any{"order": 1}, false),
 		row("c", 1, "seed", map[string]any{"order": 2}, false),
 	}
-	if accepted, _, err := store.Upsert("web-alice", "spaces", seed); err != nil || len(accepted) != 3 {
-		t.Fatalf("seed accepted=%v err=%v", accepted, err)
+	if result, err := store.Upsert("web-alice", "spaces", seed); err != nil || len(result.Accepted) != 3 {
+		t.Fatalf("seed accepted=%v err=%v", result.Accepted, err)
 	}
 
 	winning := []Row{
@@ -72,13 +72,13 @@ func TestReorderBatchCompetesAsOneWholeBatch(t *testing.T) {
 		row("b", 10, "a-batch", map[string]any{"order": 2}, false),
 		row("c", 10, "a-batch", map[string]any{"order": 0}, false),
 	}
-	if accepted, _, err := store.Upsert("web-alice", "spaces", winning); err != nil || !reflect.DeepEqual(accepted, []string{"a", "b", "c"}) {
-		t.Fatalf("winning accepted=%v err=%v", accepted, err)
+	if result, err := store.Upsert("web-alice", "spaces", winning); err != nil || !reflect.DeepEqual(result.Accepted, []string{"a", "b", "c"}) {
+		t.Fatalf("winning accepted=%v err=%v", result.Accepted, err)
 	}
-	if accepted, _, err := store.Upsert("web-alice", "spaces", losing); err != nil || len(accepted) != 0 {
-		t.Fatalf("losing accepted=%v err=%v", accepted, err)
+	if result, err := store.Upsert("web-alice", "spaces", losing); err != nil || len(result.Accepted) != 0 {
+		t.Fatalf("losing accepted=%v err=%v", result.Accepted, err)
 	}
-	rows, _, err := store.Since("web-alice", "spaces", 0)
+	rows, _, err := since(store, "web-alice", "spaces", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,18 +113,18 @@ func TestThreeReplicasConvergeAcrossRandomSpaceInterleavings(t *testing.T) {
 			value := map[string]any{"name": key, "order": random.Intn(4), "operation": operation}
 			candidate := row(key, clock, writeID, value, operation == 3)
 			clients[client][key] = candidate
-			if _, _, err := store.Upsert("web-alice", "spaces", []Row{candidate}); err != nil {
+			if _, err := store.Upsert("web-alice", "spaces", []Row{candidate}); err != nil {
 				t.Fatal(err)
 			}
 			if random.Intn(3) == 0 {
-				remote, _, err := store.Since("web-alice", "spaces", 0)
+				remote, _, err := since(store, "web-alice", "spaces", 0)
 				if err != nil {
 					t.Fatal(err)
 				}
 				mergeRows(clients[1-client], remote)
 			}
 		}
-		answer, _, err := store.Since("web-alice", "spaces", 0)
+		answer, _, err := since(store, "web-alice", "spaces", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,6 +134,12 @@ func TestThreeReplicasConvergeAcrossRandomSpaceInterleavings(t *testing.T) {
 			t.Fatalf("seed %d did not converge\nclient0=%v\nclient1=%v\nserver=%v", seed, clients[0], clients[1], rowsByKey(answer))
 		}
 	}
+}
+
+// since reads a snapshot in the (rows, rev, err) shape most tests compare.
+func since(store *FileStore, user, namespace string, rev uint64) ([]Row, uint64, error) {
+	snapshot, err := store.Since(user, namespace, rev)
+	return snapshot.Rows, snapshot.Rev, err
 }
 
 func mergeRows(target map[string]Row, incoming []Row) {
@@ -158,13 +164,13 @@ func TestFreshDevicesMergeTheDeterministicMainIDWithoutDuplicatingIt(t *testing.
 	}
 	first := row("main", 100, "device-a", map[string]any{"name": "main"}, false)
 	second := row("main", 101, "device-b", map[string]any{"name": "primary"}, false)
-	if _, _, err := store.Upsert("web-alice", "spaces", []Row{first}); err != nil {
+	if _, err := store.Upsert("web-alice", "spaces", []Row{first}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Upsert("web-alice", "spaces", []Row{second}); err != nil {
+	if _, err := store.Upsert("web-alice", "spaces", []Row{second}); err != nil {
 		t.Fatal(err)
 	}
-	rows, _, err := store.Since("web-alice", "spaces", 0)
+	rows, _, err := since(store, "web-alice", "spaces", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,22 +184,22 @@ func TestSinceCursorRetainsTombstonesAndSecondNamespaceNeedsNoChanges(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, firstRev, err := store.Upsert("web-alice", "spaces", []Row{row("retained", 1, "live", map[string]any{"name": "retained"}, false)})
+	first, err := store.Upsert("web-alice", "spaces", []Row{row("retained", 1, "live", map[string]any{"name": "retained"}, false)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, tombstoneRev, err := store.Upsert("web-alice", "spaces", []Row{row("retained", 2, "closed", nil, true)})
+	tombstone, err := store.Upsert("web-alice", "spaces", []Row{row("retained", 2, "closed", nil, true)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, gotRev, err := store.Since("web-alice", "spaces", firstRev)
-	if err != nil || gotRev != tombstoneRev || len(rows) != 1 || !rows[0].Deleted {
+	rows, gotRev, err := since(store, "web-alice", "spaces", first.Rev)
+	if err != nil || gotRev != tombstone.Rev || len(rows) != 1 || !rows[0].Deleted {
 		t.Fatalf("rows=%+v rev=%d err=%v", rows, gotRev, err)
 	}
-	if _, _, err := store.Upsert("web-alice", "notes", []Row{row("n1", 3, "note", map[string]any{"body": "hello"}, false)}); err != nil {
+	if _, err := store.Upsert("web-alice", "notes", []Row{row("n1", 3, "note", map[string]any{"body": "hello"}, false)}); err != nil {
 		t.Fatal(err)
 	}
-	notes, _, err := store.Since("web-alice", "notes", 0)
+	notes, _, err := since(store, "web-alice", "notes", 0)
 	if err != nil || len(notes) != 1 || notes[0].Key != "n1" {
 		t.Fatalf("notes=%+v err=%v", notes, err)
 	}
@@ -205,16 +211,16 @@ func TestFileStorePersistsAtomicallyAndEnforcesNamedBoundsWithoutEviction(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Upsert("web-alice", "spaces", []Row{row("too-large", 1, "a", "123456789", false)}); !errors.Is(err, ErrValueTooLarge) || !strings.Contains(err.Error(), "too-large") || !strings.Contains(err.Error(), "8") {
+	if _, err := store.Upsert("web-alice", "spaces", []Row{row("too-large", 1, "a", "123456789", false)}); !errors.Is(err, ErrValueTooLarge) || !strings.Contains(err.Error(), "too-large") || !strings.Contains(err.Error(), "8") {
 		t.Fatalf("value bound error=%v", err)
 	}
-	if _, _, err := store.Upsert("web-alice", "spaces", []Row{row("a", 1, "a", 1, false), row("b", 1, "b", 2, true)}); err != nil {
+	if _, err := store.Upsert("web-alice", "spaces", []Row{row("a", 1, "a", 1, false), row("b", 1, "b", 2, true)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Upsert("web-alice", "spaces", []Row{row("c", 2, "c", 3, false)}); !errors.Is(err, ErrRowLimit) || !strings.Contains(err.Error(), "2") {
+	if _, err := store.Upsert("web-alice", "spaces", []Row{row("c", 2, "c", 3, false)}); !errors.Is(err, ErrRowLimit) || !strings.Contains(err.Error(), "2") {
 		t.Fatalf("row bound error=%v", err)
 	}
-	rows, _, err := store.Since("web-alice", "spaces", 0)
+	rows, _, err := since(store, "web-alice", "spaces", 0)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("rows=%+v err=%v", rows, err)
 	}

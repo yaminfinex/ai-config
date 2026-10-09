@@ -5,8 +5,11 @@ export type Fetcher = typeof fetch
 export type ResolveContext = string | { root: string, path: string }
 
 export type StateRow = { key: string, value: unknown, updated: number, writeID: string, deleted: boolean }
-export type StateSinceResponse = { rows: StateRow[], rev: number }
-export type StateUpsertResponse = { accepted: string[], rev: number }
+// horizon is the namespace's purge horizon: a row the server lacks at or
+// below it was deleted and its tombstone purged. stale names posted rows
+// the server refused for that reason.
+export type StateSinceResponse = { rows: StateRow[], rev: number, horizon?: number }
+export type StateUpsertResponse = { accepted: string[], rev: number, stale?: string[] }
 
 export const queryKeys = {
   fleet: ['fleet'] as const,

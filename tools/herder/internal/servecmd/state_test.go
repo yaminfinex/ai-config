@@ -179,3 +179,44 @@ func TestUnavailableStateStoreDoesNotTakeDownFleetAndReturns503(t *testing.T) {
 		t.Fatalf("state status=%d body=%s", state.Code, state.Body.String())
 	}
 }
+
+// After a sweep purges a note's tombstone, a stale browser replaying its
+// cached live copy is answered stale, and every read carries the horizon
+// the browser uses to drop such rows itself.
+func TestStateEndpointAnswersAStaleReplayAndExposesTheHorizon(t *testing.T) {
+	store, err := webstate.NewFileStore(t.TempDir(), webstate.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	deps := fixtureDeps()
+	deps.state = store
+	deps.stateChanges = newStateChangeBroker()
+	handler := newHandler(deps)
+	post := func(body string) (int, map[string]any) {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/state/notes", strings.NewReader(body)))
+		var decoded map[string]any
+		_ = json.Unmarshal(recorder.Body.Bytes(), &decoded)
+		return recorder.Code, decoded
+	}
+	if code, _ := post(`{"rows":[{"key":"n1","value":{"id":"n1"},"updated":200,"writeID":"a","deleted":true},{"key":"n2","value":{"id":"n2"},"updated":50,"writeID":"a","deleted":false}]}`); code != http.StatusOK {
+		t.Fatalf("seed status=%d", code)
+	}
+	if _, err := store.Sweep(webstate.SweepPolicy{Namespaces: ownerContentNamespaces, Horizon: ownerContentNamespaces, TombstonesBefore: 500}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, answer := post(`{"rows":[{"key":"n1","value":{"id":"n1","text":"cached"},"updated":100,"writeID":"stale","deleted":false},{"key":"n2","value":{"id":"n2","text":"edited"},"updated":60,"writeID":"b","deleted":false}]}`)
+	if code != http.StatusOK || fmt.Sprint(answer["stale"]) != "[n1]" || fmt.Sprint(answer["accepted"]) != "[n2]" {
+		t.Fatalf("stale replay status=%d answer=%v; want n1 stale and the held n2 edit accepted", code, answer)
+	}
+	get := httptest.NewRecorder()
+	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/api/state/notes?since=0", nil))
+	var snapshot struct {
+		Rows    []webstate.Row `json:"rows"`
+		Horizon int64          `json:"horizon"`
+	}
+	if err := json.Unmarshal(get.Body.Bytes(), &snapshot); err != nil || snapshot.Horizon != 200 || len(snapshot.Rows) != 1 || snapshot.Rows[0].Key != "n2" {
+		t.Fatalf("GET after sweep = %s (%v); want only n2 and horizon 200", get.Body.String(), err)
+	}
+}

@@ -16,15 +16,19 @@ export const spaceMembersLocalKey = 'herder.web.space-members.v1:local'
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>
 
+const defaultTombstoneRetention = 30 * 24 * 60 * 60 * 1_000
+
 type Options = {
   storage?: StorageLike | null
   now?: () => number
   randomID?: () => string
+  tombstoneRetentionMs?: number
 }
 
 export type SpaceMembersStore = SpaceMembersReconcileStore & {
   rows: () => GenericStateRow[]
   merge: (rows: GenericStateRow[]) => void
+  forget: (keys: string[]) => void
   subscribeMutations: (listener: (rows: GenericStateRow[]) => void) => () => void
 }
 
@@ -63,12 +67,18 @@ export function createSpaceMembersStore(options: Options = {}): SpaceMembersStor
   const rows = new Map<string, SpaceMembersRow>()
   const locals = new Map<string, SpaceMembersLocal>()
   const mutationListeners = new Set<(rows: GenericStateRow[]) => void>()
+  const tombstoneRetentionMs = options.tombstoneRetentionMs ?? defaultTombstoneRetention
+  // Like notes and spaces, a tombstone past the retention is dropped on load
+  // and never stored from a pull.
+  const expired = (row: SpaceMembersRow) => row.deleted && now() - row.updated > tombstoneRetentionMs
 
+  let pruned = false
   const storedRows = readJSON(storage, spaceMembersRowsKey)
   if (Array.isArray(storedRows)) {
     for (const raw of storedRows) {
       const row = parseMembersRow(raw)
-      if (row) rows.set(row.key, row)
+      if (row && expired(row)) pruned = true
+      else if (row) rows.set(row.key, row)
     }
   }
   const storedLocals = readJSON(storage, spaceMembersLocalKey)
@@ -82,6 +92,7 @@ export function createSpaceMembersStore(options: Options = {}): SpaceMembersStor
   const persistLocals = () => {
     try { storage?.setItem(spaceMembersLocalKey, JSON.stringify(Object.fromEntries(locals))) } catch { /* next load republishes */ }
   }
+  if (pruned) persistRows()
   const write = (row: SpaceMembersRow) => {
     rows.set(row.key, row)
     persistRows()
@@ -101,9 +112,18 @@ export function createSpaceMembersStore(options: Options = {}): SpaceMembersStor
         if (!row) continue
         const current = rows.get(row.key)
         if (current && compareStateVersions(row.updated, row.writeID, current.updated, current.writeID) <= 0) continue
+        if (expired(row)) {
+          changed = rows.delete(row.key) || changed
+          continue
+        }
         rows.set(row.key, row)
         changed = true
       }
+      if (changed) persistRows()
+    },
+    forget(keys) {
+      let changed = false
+      for (const key of keys) changed = rows.delete(key) || changed
       if (changed) persistRows()
     },
     local: (spaceID) => locals.get(spaceID) ?? {},
