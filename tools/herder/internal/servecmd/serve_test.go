@@ -1591,7 +1591,7 @@ func TestEventsAnnouncesInitialHcomHealthOnceThenMessage(t *testing.T) {
 	defer response.Body.Close()
 	reader := bufio.NewReader(response.Body)
 	event, data := readEvent(t, reader)
-	if event != "hello" || data != `{"buildIdentity":"source:fixture731"}` {
+	if event != "hello" || !strings.HasPrefix(data, `{"buildIdentity":"source:fixture731","stream":"`) {
 		t.Fatalf("handshake event = %q %s", event, data)
 	}
 	event, data = readEvent(t, reader)
@@ -1864,6 +1864,9 @@ func TestTranscriptWatcherSetupFailureFallsBackToSafetySweep(t *testing.T) {
 	}
 	if event, _ := readEvent(t, reader); event != "fleet" {
 		t.Fatalf("fleet=%q", event)
+	}
+	if event, data := readEvent(t, reader); event != "subscribed" || data != `{"agents":["dore"]}` {
+		t.Fatalf("subscribed=%q %s", event, data)
 	}
 	if event, data := readEvent(t, reader); event != "entry:dore" || !strings.Contains(data, `"uuid":"safety"`) {
 		t.Fatalf("fallback event=%q data=%s", event, data)
