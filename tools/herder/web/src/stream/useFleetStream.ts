@@ -55,15 +55,46 @@ export function withoutUnsubscribedTranscripts(problems: Record<string, string>,
   return Object.fromEntries(Object.entries(problems).filter(([source]) => !source.startsWith('transcript:') || subscribed.has(source)))
 }
 
-export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string) {
-  const agents = [...new Set(agentNames)].sort().join(',')
-  const screens = [...new Set(screenPaneIDs)].sort().join(',')
+// FleetTargets is what the one event stream follows: transcripts by agent,
+// screen frames by pane, file watches, and the focused screen.
+export type FleetTargets = {
+  agents: string[]
+  screens?: string[]
+  watches?: FileWatchTarget[]
+  focusedScreen?: string
+}
+
+function eventQuery({ agents, screens = [], watches = [], focusedScreen }: FleetTargets) {
   const query = new URLSearchParams()
-  if (agents) query.set('agents', agents)
-  if (screens) query.set('screens', screens)
-  if (fileWatches.length > 0) query.set('watches', JSON.stringify(fileWatches))
-  if (focusedScreenPaneID) query.set('focused_screen', focusedScreenPaneID)
+  const agentList = [...new Set(agents)].sort().join(',')
+  const screenList = [...new Set(screens)].sort().join(',')
+  if (agentList) query.set('agents', agentList)
+  if (screenList) query.set('screens', screenList)
+  if (watches.length > 0) query.set('watches', JSON.stringify(watches))
+  if (focusedScreen) query.set('focused_screen', focusedScreen)
+  return query
+}
+
+// fleetTargetsKey is one string per distinct subscription; targetsFromKey reads it back.
+export function fleetTargetsKey(targets: FleetTargets) {
+  return eventQuery(targets).toString()
+}
+
+function targetsFromKey(key: string): FleetTargets {
+  const query = new URLSearchParams(key)
+  const list = (name: string) => (query.get(name) ?? '').split(',').filter(Boolean)
+  return { agents: list('agents'), screens: list('screens'), watches: JSON.parse(query.get('watches') ?? '[]') as FileWatchTarget[], focusedScreen: query.get('focused_screen') ?? undefined }
+}
+
+export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string) {
+  const query = eventQuery({ agents: agentNames, screens: screenPaneIDs, watches: fileWatches, focusedScreen: focusedScreenPaneID })
   return query.size ? `/api/events?${query}` : '/api/events'
+}
+
+export function subscriptionUpdateURL(stream: string, targets: FleetTargets) {
+  const query = eventQuery(targets)
+  query.set('stream', stream)
+  return `/api/events/subscription?${query}`
 }
 
 export function unsubscribedScreenPaneIDs(previous: string[], current: string[]) {
@@ -71,29 +102,67 @@ export function unsubscribedScreenPaneIDs(previous: string[], current: string[])
   return [...new Set(previous)].filter((paneID) => !subscribed.has(paneID))
 }
 
-const connectingBannerGrace = 150
+// pruneUnsubscribedTranscripts drops cached transcripts the stream no longer
+// keeps live and no panel shows. Transcripts never expire on their own, so
+// the subscription is what bounds the cache.
+export function pruneUnsubscribedTranscripts(queryClient: QueryClient, agentNames: ReadonlySet<string>) {
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: ['entries'] })) {
+    const name = query.queryKey[1]
+    if (typeof name === 'string' && !agentNames.has(name) && query.getObserversCount() === 0) queryClient.removeQueries({ queryKey: query.queryKey, exact: true })
+  }
+}
 
-export function subscribeToFleet(
-  queryClient: QueryClient,
-  agentNames: string[],
-  screenPaneIDs: string[] = [],
-  fileWatches: FileWatchTarget[] = [],
-  focusedScreenPaneID?: string,
-  createEventSource: (url: string) => EventSourceLike = (url) => new EventSource(url),
-  timers: TimerHost = window,
-  onStateChanged?: (namespace: string, rev: number) => void,
-) {
+const connectingBannerGrace = 150
+// A space switch rebuilds the dock in steps; a subscription change waits
+// for them to settle so a passing subset neither retargets nor prunes.
+const subscriptionSettle = 100
+
+export type FleetStream = {
+  update(targets: FleetTargets): void
+  close(): void
+}
+
+type FleetStreamOptions = {
+  createEventSource?: (url: string) => EventSourceLike
+  // postSubscription asks the live stream to follow new targets; false means it could not, so the stream reconnects.
+  postSubscription?: (url: string) => Promise<boolean>
+  timers?: TimerHost
+  onStateChanged?: (namespace: string, rev: number) => void
+}
+
+async function postSubscriptionUpdate(url: string) {
+  const response = await fetch(url, { method: 'POST' })
+  return response.status === 204
+}
+
+// subscribeToFleet keeps one event stream for the page. A changed
+// subscription retargets the live connection with a POST; only a stream
+// that cannot take it reconnects. Transcripts refresh only on their own
+// entry, message and subscribed events, warm or not shown.
+export function subscribeToFleet(queryClient: QueryClient, initial: FleetTargets, {
+  createEventSource = (url) => new EventSource(url),
+  postSubscription = postSubscriptionUpdate,
+  timers = window,
+  onStateChanged,
+}: FleetStreamOptions = {}): FleetStream {
   let active = true
   let events: EventSourceLike | null = null
   let reconnectTimer: number | null = null
   let watchdog: number | null = null
   let connectingTimer: number | null = null
+  let settleTimer: number | null = null
   const transcriptRefreshTimers = new Map<string, number>()
   let backoff = 500
   let hasOpened = false
   let lastActivity = Date.now()
-  const names = [...new Set(agentNames)].sort()
-  const panes = [...new Set(screenPaneIDs)].sort()
+  let targets = targetsFromKey(fleetTargetsKey(initial))
+  let names = new Set(targets.agents)
+  let panes = new Set(targets.screens)
+  // following is the subscription the live connection serves; streamID names it for an update.
+  let following = ''
+  let streamID: string | null = null
+  let posting = false
+  let listening = new Set<string>()
   const invalidateFileWatch = (fact: FileWatchTarget) => {
     if (fact.kind === 'file') {
       void queryClient.invalidateQueries({ queryKey: queryKeys.file(fact.root, fact.path), exact: true })
@@ -103,19 +172,24 @@ export function subscribeToFleet(
     void queryClient.invalidateQueries({ queryKey: queryKeys.fileTree(fact.root, fact.path), exact: true })
     void queryClient.invalidateQueries({ queryKey: queryKeys.backlog(fact.root, fact.path), exact: true })
   }
+  // A transcript refreshes in the background even with no panel showing
+  // it, so a space switch renders it without a fetch.
+  const refreshTranscript = (name: string) => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true, refetchType: 'all' })
+    void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+  }
   const scheduleTranscriptRefresh = (name: string) => {
     if (transcriptRefreshTimers.has(name)) return
     const timer = timers.setTimeout(() => {
       transcriptRefreshTimers.delete(name)
-      void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
-      void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
+      if (names.has(name)) refreshTranscript(name)
     }, transcriptBurstDebounce)
     transcriptRefreshTimers.set(name, timer)
   }
   const update = (change: (current: StreamState) => StreamState) => {
     queryClient.setQueryData<StreamState>(queryKeys.stream, (current) => change(current ?? initialStreamState))
   }
-  update((current) => ({ ...current, problems: withoutUnsubscribedTranscripts(current.problems, names) }))
+  update((current) => ({ ...current, problems: withoutUnsubscribedTranscripts(current.problems, targets.agents) }))
   const touch = (visible = true) => {
     lastActivity = Date.now()
     if (visible) update((current) => ({ ...current, lastEvent: lastActivity }))
@@ -136,6 +210,49 @@ export function subscribeToFleet(
     }, backoff)
     backoff = Math.min(backoff * 2, 10_000)
   }
+  // listen adds the per-agent and per-pane listeners the connection lacks;
+  // a listener left from a dropped target ignores its events.
+  const listen = () => {
+    const source = events
+    if (!source) return
+    for (const name of names) {
+      if (listening.has(`entry:${name}`)) continue
+      listening.add(`entry:${name}`)
+      source.addEventListener(`entry:${name}`, () => {
+        touch()
+        scheduleTranscriptRefresh(name)
+      })
+    }
+    for (const paneID of panes) {
+      if (listening.has(`screen:${paneID}`)) continue
+      listening.add(`screen:${paneID}`)
+      source.addEventListener(`screen:${paneID}`, (event) => {
+        touch()
+        if (panes.has(paneID)) queryClient.setQueryData<ScreenFrame>(queryKeys.screen(paneID), JSON.parse(event.data) as ScreenFrame)
+      })
+    }
+  }
+  // retarget sends the live connection the latest subscription, one update at a time.
+  const retarget = () => {
+    const connection = events
+    if (!active || !connection || !streamID || posting) return
+    const wanted = fleetTargetsKey(targets)
+    if (wanted === following) return
+    posting = true
+    void postSubscription(subscriptionUpdateURL(streamID, targets)).catch(() => false).then((taken) => {
+      posting = false
+      if (!active || events !== connection) return
+      if (!taken) {
+        cancelConnecting()
+        events.close()
+        events = null
+        connect()
+        return
+      }
+      following = wanted
+      retarget()
+    })
+  }
   const connect = () => {
     if (!active) return
     lastActivity = Date.now()
@@ -145,32 +262,32 @@ export function subscribeToFleet(
       connectingTimer = null
       update((current) => ({ ...current, problems: { ...current.problems, stream: 'Connecting to live fleet…' } }))
     }, connectingBannerGrace)
+    streamID = null
+    listening = new Set()
+    following = fleetTargetsKey(targets)
     try {
-      events = createEventSource(eventStreamURL(names, panes, fileWatches, focusedScreenPaneID))
+      events = createEventSource(eventStreamURL(targets.agents, targets.screens, targets.watches, targets.focusedScreen))
     } catch {
       scheduleReconnect('Live stream disconnected; reconnecting…')
       return
     }
+    const watches = targets.watches ?? []
     events.onopen = () => {
       touch()
       cancelConnecting()
       backoff = 500
       update((current) => ({ ...current, problems: without(current.problems, 'stream') }))
-      const catchUp = hasOpened
+      // Transcripts catch up on the subscribed event, once their offsets are held.
+      if (hasOpened) watches.forEach(invalidateFileWatch)
       hasOpened = true
-      if (catchUp) {
-        names.forEach((name) => {
-          void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
-          void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
-        })
-        fileWatches.forEach(invalidateFileWatch)
-      }
     }
     events.onerror = () => scheduleReconnect('Live stream disconnected; reconnecting…')
     events.addEventListener('hello', (event) => {
       touch()
-      const { buildIdentity } = JSON.parse(event.data) as { buildIdentity: string }
+      const { buildIdentity, stream } = JSON.parse(event.data) as { buildIdentity: string, stream?: string }
       update((current) => recordBuildIdentity(current, buildIdentity))
+      streamID = stream ?? null
+      if (settleTimer === null) retarget()
     })
     events.addEventListener('ping', () => touch(false))
     events.addEventListener('state-changed', (event) => {
@@ -178,12 +295,18 @@ export function subscribeToFleet(
       const change = JSON.parse(event.data) as { namespace: string, rev: number }
       onStateChanged?.(change.namespace, change.rev)
     })
+    // The server holds these agents' transcript offsets from here: anything
+    // written since a cached page was read is fetched now.
+    events.addEventListener('subscribed', (event) => {
+      touch()
+      const { agents } = JSON.parse(event.data) as { agents: string[] }
+      agents.forEach(scheduleTranscriptRefresh)
+    })
     events.addEventListener('fleet', (event) => {
       touch()
       queryClient.setQueryData<Board>(queryKeys.fleet, JSON.parse(event.data) as Board)
       names.forEach((name) => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
-        void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
       })
       update((current) => ({
         ...current,
@@ -207,32 +330,26 @@ export function subscribeToFleet(
     events.addEventListener('message', (event) => {
       touch()
       const { to } = JSON.parse(event.data) as { to?: string[] }
-      to?.filter((name) => names.includes(name)).forEach((name) => {
+      to?.filter((name) => names.has(name)).forEach((name) => {
         if (deferMessageRefresh(queryClient, name)) return
-        void queryClient.invalidateQueries({ queryKey: queryKeys.agent(name), exact: true })
-        void queryClient.invalidateQueries({ queryKey: queryKeys.entries(name), exact: true })
+        refreshTranscript(name)
       })
     })
     events.addEventListener('rewindow', (event) => {
       touch()
       const { agent } = JSON.parse(event.data) as { agent: string }
-      if (!names.includes(agent)) return
+      if (!names.has(agent)) return
+      // A reset refetches only shown transcripts; a warm one not shown refetches too.
       void queryClient.resetQueries({ queryKey: queryKeys.entries(agent), exact: true })
+        .then(() => queryClient.refetchQueries({ queryKey: queryKeys.entries(agent), exact: true, type: 'inactive' }))
       void queryClient.invalidateQueries({ queryKey: queryKeys.agent(agent), exact: true })
     })
-    names.forEach((name) => events?.addEventListener(`entry:${name}`, () => {
-      touch()
-      scheduleTranscriptRefresh(name)
-    }))
-    panes.forEach((paneID) => events?.addEventListener(`screen:${paneID}`, (event) => {
-      touch()
-      queryClient.setQueryData<ScreenFrame>(queryKeys.screen(paneID), JSON.parse(event.data) as ScreenFrame)
-    }))
     events.addEventListener('file-change', (event) => {
       touch()
       const fact = JSON.parse(event.data) as FileWatchTarget
       if (fact.kind === 'file' || fact.kind === 'folder') invalidateFileWatch(fact)
     })
+    listen()
   }
 
   connect()
@@ -240,14 +357,31 @@ export function subscribeToFleet(
     if (Date.now() - lastActivity > 45_000) scheduleReconnect('Live stream timed out; reconnecting…')
   }, 5_000)
 
-  return () => {
-    active = false
-    events?.close()
-    cancelConnecting()
-    if (reconnectTimer !== null) timers.clearTimeout(reconnectTimer)
-    if (watchdog !== null) timers.clearInterval(watchdog)
-    transcriptRefreshTimers.forEach((timer) => timers.clearTimeout(timer))
-    transcriptRefreshTimers.clear()
+  return {
+    update(next) {
+      if (!active) return
+      targets = targetsFromKey(fleetTargetsKey(next))
+      names = new Set(targets.agents)
+      panes = new Set(targets.screens)
+      listen()
+      if (settleTimer !== null) timers.clearTimeout(settleTimer)
+      settleTimer = timers.setTimeout(() => {
+        settleTimer = null
+        update((current) => ({ ...current, problems: withoutUnsubscribedTranscripts(current.problems, targets.agents) }))
+        pruneUnsubscribedTranscripts(queryClient, names)
+        retarget()
+      }, subscriptionSettle)
+    },
+    close() {
+      active = false
+      events?.close()
+      cancelConnecting()
+      if (reconnectTimer !== null) timers.clearTimeout(reconnectTimer)
+      if (settleTimer !== null) timers.clearTimeout(settleTimer)
+      if (watchdog !== null) timers.clearInterval(watchdog)
+      transcriptRefreshTimers.forEach((timer) => timers.clearTimeout(timer))
+      transcriptRefreshTimers.clear()
+    },
   }
 }
 
@@ -276,12 +410,16 @@ export function deferFleetSubscription(
   }
 }
 
-export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string, onStateChanged?: (namespace: string, rev: number) => void) {
+// useFleetStream opens the page's one event stream once and retargets it
+// as the subscription changes.
+export function useFleetStream(targets: FleetTargets, onStateChanged?: (namespace: string, rev: number) => void) {
   const queryClient = useQueryClient()
   const previousScreenSubscription = useRef('')
-  const subscription = [...new Set(agentNames)].sort().join(',')
-  const screenSubscription = [...new Set(screenPaneIDs)].sort().join(',')
-  const fileWatchSubscription = JSON.stringify(fileWatches)
+  const stream = useRef<FleetStream | null>(null)
+  const latestKey = useRef('')
+  const latestStateChanged = useRef(onStateChanged)
+  const key = fleetTargetsKey(targets)
+  const screenSubscription = [...new Set(targets.screens ?? [])].sort().join(',')
   useEffect(() => {
     const current = screenSubscription ? screenSubscription.split(',') : []
     if (previousScreenSubscription.current) {
@@ -291,13 +429,23 @@ export function useFleetStream(agentNames: string[], screenPaneIDs: string[] = [
     }
     previousScreenSubscription.current = screenSubscription
   }, [queryClient, screenSubscription])
-  useEffect(() => deferFleetSubscription(() => subscribeToFleet(
-    queryClient,
-    subscription ? subscription.split(',') : [],
-    screenSubscription ? screenSubscription.split(',') : [],
-    JSON.parse(fileWatchSubscription) as FileWatchTarget[],
-    focusedScreenPaneID, undefined, window, onStateChanged,
-  )), [fileWatchSubscription, focusedScreenPaneID, onStateChanged, queryClient, subscription, screenSubscription])
+  useEffect(() => {
+    latestStateChanged.current = onStateChanged
+  }, [onStateChanged])
+  useEffect(() => {
+    latestKey.current = key
+    stream.current?.update(targetsFromKey(key))
+  }, [key])
+  useEffect(() => deferFleetSubscription(() => {
+    const subscription = subscribeToFleet(queryClient, targetsFromKey(latestKey.current), {
+      onStateChanged: (namespace, rev) => latestStateChanged.current?.(namespace, rev),
+    })
+    stream.current = subscription
+    return () => {
+      stream.current = null
+      subscription.close()
+    }
+  }), [queryClient])
 }
 
 export function useStreamStatus() {

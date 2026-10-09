@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
-import { deferFleetSubscription, eventStreamURL, recordBuildIdentity, streamAlerts, subscribeToFleet, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
+import { deferFleetSubscription, eventStreamURL, fleetTargetsKey, pruneUnsubscribedTranscripts, recordBuildIdentity, streamAlerts, subscribeToFleet, subscriptionUpdateURL, unsubscribedScreenPaneIDs, withoutUnsubscribedTranscripts, type EventSourceLike, type StreamState } from '../src/stream/useFleetStream.ts'
 import { queryKeys } from '../src/api/client.ts'
+import { entriesQueryOptions } from '../src/api/queries.ts'
 import { beginSendRefresh, settleSendRefresh } from '../src/sendRefresh.ts'
 
 class FakeEventSource implements EventSourceLike {
@@ -29,6 +30,16 @@ test('one stream URL de-duplicates and sorts every open agent', () => {
   const focused = new URL(eventStreamURL([], ['w1:p1'], watches, 'w1:p1'), 'http://fixture')
   assert.equal(focused.searchParams.get('focused_screen'), 'w1:p1')
   assert.deepEqual(JSON.parse(focused.searchParams.get('watches') ?? ''), watches)
+})
+
+test('a subscription update names the live stream and the same targets a connection would', () => {
+  const targets = { agents: ['zeta', 'alpha'], screens: ['w1:p1'], focusedScreen: 'w1:p1' }
+  const url = new URL(subscriptionUpdateURL('stream-1', targets), 'http://fixture')
+  assert.equal(url.pathname, '/api/events/subscription')
+  assert.equal(url.searchParams.get('stream'), 'stream-1')
+  assert.equal(url.searchParams.get('agents'), 'alpha,zeta')
+  assert.equal(url.searchParams.get('focused_screen'), 'w1:p1')
+  assert.equal(fleetTargetsKey({ agents: ['alpha', 'zeta', 'alpha'] }), fleetTargetsKey({ agents: ['zeta', 'alpha'], screens: [], watches: [] }))
 })
 
 test('closing the last screen consumer identifies only stale screen caches', () => {
@@ -99,54 +110,205 @@ test('switch-settling cancels the stale subscription before it opens', () => {
   settled()
 })
 
-test('first open skips catch-up invalidations but an established reconnect keeps them', async () => {
-  const queryClient = new QueryClient()
-  const sources: FakeEventSource[] = []
-  const timeouts = new Map<number, () => void>()
+// fakeTimers holds every timeout until a test runs it; run(delay) runs the ones scheduled with that delay.
+function fakeTimers() {
+  const timeouts = new Map<number, { callback: () => void, delay: number }>()
   let timerID = 0
   const timers = {
-    setTimeout: ((callback: () => void) => { const id = ++timerID; timeouts.set(id, callback); return id }) as typeof window.setTimeout,
+    setTimeout: ((callback: () => void, delay: number) => { const id = ++timerID; timeouts.set(id, { callback, delay }); return id }) as typeof window.setTimeout,
     clearTimeout: ((id: number) => timeouts.delete(id)) as typeof window.clearTimeout,
     setInterval: (() => 99) as typeof window.setInterval,
     clearInterval: (() => undefined) as typeof window.clearInterval,
   }
-  const clean = async () => {
-    await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
-    await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
-    await queryClient.fetchQuery({ queryKey: queryKeys.file('/repo', 'README.md'), queryFn: async () => ({ content: 'old' }) })
+  const run = (delay: number) => {
+    for (const [id, entry] of [...timeouts]) {
+      if (entry.delay !== delay) continue
+      timeouts.delete(id)
+      entry.callback()
+    }
   }
-  await clean()
-  const stop = subscribeToFleet(queryClient, ['vile'], [], [{ kind: 'file', root: '/repo', path: 'README.md' }], undefined, () => {
-    const source = new FakeEventSource(); sources.push(source); return source
-  }, timers)
-  sources[0].onopen?.(new Event('open'))
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, false)
+  return { timers, timeouts, run }
+}
+
+const realTimers = {
+  setTimeout: globalThis.setTimeout as typeof window.setTimeout,
+  clearTimeout: globalThis.clearTimeout as typeof window.clearTimeout,
+  setInterval: globalThis.setInterval as typeof window.setInterval,
+  clearInterval: globalThis.clearInterval as typeof window.clearInterval,
+}
+
+const settled = () => new Promise((resolve) => setTimeout(resolve, 0))
+// reads counts a query's fetched results: a transcript refresh refetches at once, shown or not.
+const reads = (queryClient: QueryClient, key: readonly unknown[]) => queryClient.getQueryState(key)?.dataUpdateCount ?? 0
+const transcriptDebounce = 25
+const subscriptionSettle = 100
+
+// countedEntries serves a transcript whose first read is the tail and every later one a delta.
+function countedEntries(queryClient: QueryClient, name: string) {
+  const calls: string[] = []
+  const fetcher = (async (input: RequestInfo | URL) => {
+    calls.push(String(input))
+    const from = new URL(String(input), 'http://fixture').searchParams.get('from')
+    const offset = from === null ? 0 : Number(from)
+    return new Response(JSON.stringify({
+      sessionId: `session-${name}`, window: { mode: from === null ? 'tail' : 'from', from: offset, limit: 500 },
+      entries: [{ uuid: `${name}-${calls.length}`, line: calls.length, byteOffset: offset, kind: 'assistant_text', payload: {} }], nextOffset: offset + 10,
+    }), { status: 200 })
+  }) as typeof fetch
+  return { calls, options: entriesQueryOptions(queryClient, name, fetcher) }
+}
+
+test('a fleet board refreshes agent rows but fetches no transcript', async () => {
+  const queryClient = new QueryClient()
+  const vile = countedEntries(queryClient, 'vile')
+  const observer = new QueryObserver(queryClient, vile.options)
+  const unsubscribe = observer.subscribe(() => undefined)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
+  const source = new FakeEventSource()
+  const stream = subscribeToFleet(queryClient, { agents: ['vile'] }, { createEventSource: () => source, timers: realTimers })
+  source.onopen?.(new Event('open'))
+  source.emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))
+  source.emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.deepEqual(vile.calls, ['/api/agents/vile/entries?limit=500'], 'a board is no reason to read a transcript')
   assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false)
-  assert.equal(queryClient.getQueryState(queryKeys.file('/repo', 'README.md'))?.isInvalidated, false)
+  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  stream.close()
+  unsubscribe()
+})
+
+test('an entry for a transcript no panel shows fetches only its delta, in the background', async () => {
+  const queryClient = new QueryClient()
+  const kumo = countedEntries(queryClient, 'kumo')
+  // Read once by a panel that has since gone to another space.
+  const observer = new QueryObserver(queryClient, kumo.options)
+  const unsubscribe = observer.subscribe(() => undefined)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  unsubscribe()
+  assert.equal(queryClient.getQueryCache().find({ queryKey: queryKeys.entries('kumo') })?.getObserversCount(), 0)
+  const source = new FakeEventSource()
+  const stream = subscribeToFleet(queryClient, { agents: ['kumo'] }, { createEventSource: () => source, timers: realTimers })
+  source.emit('entry:kumo', '{}')
+  source.emit('entry:kumo', '{}')
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.deepEqual(kumo.calls, ['/api/agents/kumo/entries?limit=500', '/api/agents/kumo/entries?limit=500&from=10&sessionId=session-kumo'])
+  assert.deepEqual(queryClient.getQueryData<{ entries: { uuid: string }[] }>(queryKeys.entries('kumo'))?.entries.map((entry) => entry.uuid), ['kumo-1', 'kumo-2'])
+  stream.close()
+})
+
+test('subscribed catches up every agent it names, shown or not, and a reconnect waits for it', async () => {
+  const queryClient = new QueryClient()
+  const { timers, run } = fakeTimers()
+  const sources: FakeEventSource[] = []
+  for (const name of ['vile', 'kumo']) {
+    await queryClient.fetchQuery({ queryKey: queryKeys.entries(name), queryFn: async () => ({ entries: [] }) })
+    await queryClient.fetchQuery({ queryKey: queryKeys.agent(name), queryFn: async () => ({ name }) })
+  }
+  await queryClient.fetchQuery({ queryKey: queryKeys.file('/repo', 'README.md'), queryFn: async () => ({ content: 'old' }) })
+  const stream = subscribeToFleet(queryClient, { agents: ['vile', 'kumo'], watches: [{ kind: 'file', root: '/repo', path: 'README.md' }] }, {
+    createEventSource: () => { const source = new FakeEventSource(); sources.push(source); return source },
+    timers,
+  })
+  const invalidated = (key: readonly unknown[]) => queryClient.getQueryState(key)?.isInvalidated
+  const vile = () => reads(queryClient, queryKeys.entries('vile'))
+  const kumo = () => reads(queryClient, queryKeys.entries('kumo'))
+  sources[0].onopen?.(new Event('open'))
+  sources[0].emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))
+  run(transcriptDebounce)
+  await settled()
+  assert.deepEqual([vile(), kumo()], [1, 1], 'nothing catches up before the server holds the offsets')
+  assert.equal(invalidated(queryKeys.file('/repo', 'README.md')), false, 'a first open has nothing to catch up')
+  sources[0].emit('subscribed', JSON.stringify({ agents: ['vile', 'kumo'] }))
+  run(transcriptDebounce)
+  await settled()
+  assert.deepEqual([vile(), kumo()], [2, 2], 'both transcripts catch up, neither one shown')
 
   sources[0].onerror?.(new Event('error'))
-  const reconnect = [...timeouts.values()][0]
-  assert.ok(reconnect)
-  reconnect()
+  run(500)
   assert.equal(sources.length, 2)
   sources[1].onopen?.(new Event('open'))
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
-  assert.equal(queryClient.getQueryState(queryKeys.file('/repo', 'README.md'))?.isInvalidated, true)
-  stop()
+  await settled()
+  assert.equal(invalidated(queryKeys.file('/repo', 'README.md')), true, 'a reconnect catches up file watches on open')
+  assert.deepEqual([vile(), kumo()], [2, 2], 'a reconnect waits for the server to hold the offsets')
+  sources[1].emit('subscribed', JSON.stringify({ agents: ['vile', 'kumo'] }))
+  run(transcriptDebounce)
+  await settled()
+  assert.deepEqual([vile(), kumo()], [3, 3], 'a reconnect catches up every subscribed transcript')
+  stream.close()
+})
+
+test('a subscription change retargets the live stream once it settles, and reconnects only when the stream refuses', async () => {
+  const queryClient = new QueryClient()
+  const { timers, run } = fakeTimers()
+  const sources: FakeEventSource[] = []
+  const urls: string[] = []
+  const posts: string[] = []
+  let accept = true
+  const stream = subscribeToFleet(queryClient, { agents: ['vile'] }, {
+    createEventSource: (url) => { urls.push(url); const source = new FakeEventSource(); sources.push(source); return source },
+    postSubscription: async (url) => { posts.push(url); return accept },
+    timers,
+  })
+  sources[0].onopen?.(new Event('open'))
+  sources[0].emit('hello', JSON.stringify({ buildIdentity: 'source:a', stream: 'stream-1' }))
+  assert.deepEqual(posts, [], 'an unchanged subscription posts nothing')
+
+  // A switch passes through intermediate docks; only the settled one is sent.
+  stream.update({ agents: ['vile', 'mavu'] })
+  stream.update({ agents: ['vile', 'kumo'] })
+  assert.deepEqual(posts, [])
+  run(subscriptionSettle)
+  await settled()
+  assert.deepEqual(posts, [subscriptionUpdateURL('stream-1', { agents: ['kumo', 'vile'] })])
+  assert.equal(sources.length, 1, 'a switch opens no event stream')
+  await queryClient.fetchQuery({ queryKey: queryKeys.entries('kumo'), queryFn: async () => ({ entries: [] }) })
+  sources[0].emit('entry:kumo', '{}')
+  run(transcriptDebounce)
+  await settled()
+  assert.equal(reads(queryClient, queryKeys.entries('kumo')), 2, 'the added agent is heard on the same connection')
+
+  accept = false
+  stream.update({ agents: ['kumo'] })
+  run(subscriptionSettle)
+  await settled()
+  assert.equal(posts.length, 2)
+  assert.equal(sources.length, 2, 'a refused update reconnects')
+  assert.equal(sources[0].closed, true)
+  assert.equal(urls[1], eventStreamURL(['kumo']))
+  stream.close()
+})
+
+test('the transcript cache keeps what a space holds or a panel shows, and drops the rest', async () => {
+  assert.equal(entriesQueryOptions(new QueryClient(), 'vile').gcTime, Infinity, 'a hidden transcript stays warm for the switch back')
+  const queryClient = new QueryClient()
+  for (const name of ['vile', 'kumo', 'mavu', 'dore']) await queryClient.fetchQuery({ queryKey: queryKeys.entries(name), queryFn: async () => ({ entries: [] }), gcTime: Infinity })
+  const shown = new QueryObserver(queryClient, { queryKey: queryKeys.entries('mavu'), queryFn: async () => ({ entries: [] }), staleTime: Infinity })
+  const unsubscribe = shown.subscribe(() => undefined)
+  pruneUnsubscribedTranscripts(queryClient, new Set(['vile', 'kumo']))
+  const cached = queryClient.getQueryCache().findAll({ queryKey: ['entries'] }).map((query) => query.queryKey[1]).sort()
+  assert.deepEqual(cached, ['kumo', 'mavu', 'vile'])
+  unsubscribe()
+
+  const { timers, run } = fakeTimers()
+  const source = new FakeEventSource()
+  const stream = subscribeToFleet(queryClient, { agents: ['vile', 'kumo'] }, { createEventSource: () => source, postSubscription: async () => true, timers })
+  stream.update({ agents: ['vile'] })
+  assert.equal(queryClient.getQueryData(queryKeys.entries('kumo')) !== undefined, true, 'nothing is dropped mid-switch')
+  run(subscriptionSettle)
+  const kept = queryClient.getQueryCache().findAll({ queryKey: ['entries'] }).map((query) => query.queryKey[1]).sort()
+  assert.deepEqual(kept, ['vile'])
+  source.emit('entry:kumo', '{}')
+  run(transcriptDebounce)
+  await settled()
+  assert.equal(queryClient.getQueryCache().find({ queryKey: queryKeys.entries('kumo') }), undefined, 'a dropped agent fetches nothing')
+  stream.close()
 })
 
 test('multiplexed frames update and invalidate the shared query cache', async () => {
   const queryClient = new QueryClient()
   const sources: FakeEventSource[] = []
-  const timers = {
-    setTimeout: (() => 1) as typeof window.setTimeout,
-    clearTimeout: (() => undefined) as typeof window.clearTimeout,
-    setInterval: (() => 2) as typeof window.setInterval,
-    clearInterval: (() => undefined) as typeof window.clearInterval,
-  }
+  const { timers, run } = fakeTimers()
   await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ sessionId: 's', window: { mode: 'tail', from: 0, limit: 500 } }) })
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
   await queryClient.fetchQuery({ queryKey: queryKeys.file('/repo', 'README.md'), queryFn: async () => ({ content: 'old' }) })
@@ -154,14 +316,17 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   await queryClient.fetchQuery({ queryKey: queryKeys.backlog('/repo', 'docs'), queryFn: async () => ({ tasks: [] }) })
   queryClient.setQueryData(queryKeys.screen('w1:p1'), { pane_id: 'w1:p1', status: 'available', text: 'stable previous frame', truncated: false })
   queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, substrateProof: { herdr: true, hcom: true }, lastEvent: null, loadedBuild: 'source:previous', serverUpdated: false })
-  const stop = subscribeToFleet(queryClient, ['vile', 'vile'], ['w1:p1'], [
+  const stream = subscribeToFleet(queryClient, { agents: ['vile', 'vile'], screens: ['w1:p1'], watches: [
     { kind: 'file', root: '/repo', path: 'README.md' },
     { kind: 'folder', root: '/repo', path: 'docs' },
-  ], undefined, () => {
-    const source = new FakeEventSource()
-    sources.push(source)
-    return source
-  }, timers)
+  ] }, {
+    createEventSource: () => {
+      const source = new FakeEventSource()
+      sources.push(source)
+      return source
+    },
+    timers,
+  })
 
   assert.equal(sources.length, 1)
   assert.equal(queryClient.getQueryData<{ text: string }>(queryKeys.screen('w1:p1'))?.text, 'stable previous frame')
@@ -176,33 +341,34 @@ test('multiplexed frames update and invalidate the shared query cache', async ()
   assert.deepEqual(queryClient.getQueryData<StreamState>(queryKeys.stream)?.substrateProof, { herdr: true, hcom: false })
   sources[0].emit('substrate', JSON.stringify({ source: 'hcom', status: 'recovered' }))
   assert.deepEqual(queryClient.getQueryData<StreamState>(queryKeys.stream)?.substrateProof, { herdr: true, hcom: true })
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  await settled()
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false, 'a board leaves transcripts alone')
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
+  assert.equal(reads(queryClient, queryKeys.entries('vile')), 1)
   sources[0].emit('entry:vile')
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  run(transcriptDebounce)
+  await settled()
+  assert.equal(reads(queryClient, queryKeys.entries('vile')), 2)
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
 
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
-  await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ sessionId: 's', window: { mode: 'tail', from: 0, limit: 500 } }) })
   sources[0].emit('message', JSON.stringify({ id: 731, from: 'web-owner', to: ['vile'], text: 'operator question' }))
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settled()
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
   // A bus message to an open agent refreshes its transcript immediately,
   // independently of the session-file watcher.
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  assert.equal(reads(queryClient, queryKeys.entries('vile')), 3)
   sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false }))
   assert.deepEqual(queryClient.getQueryData(queryKeys.screen('w1:p1')), { pane_id: 'w1:p1', status: 'available', text: 'real shell', truncated: false })
   sources[0].emit('screen:w1:p1', JSON.stringify({ pane_id: 'w1:p1', status: 'unavailable', text: '', truncated: false, detail: 'pane closed' }))
   assert.equal(queryClient.getQueryData<{ text: string }>(queryKeys.screen('w1:p1'))?.text, '')
   sources[0].emit('file-change', JSON.stringify({ kind: 'file', root: '/repo', path: 'README.md' }))
   sources[0].emit('file-change', JSON.stringify({ kind: 'folder', root: '/repo', path: 'docs' }))
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settled()
   assert.equal(queryClient.getQueryState(queryKeys.file('/repo', 'README.md'))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(queryKeys.fileTree('/repo', 'docs'))?.isInvalidated, true)
   assert.equal(queryClient.getQueryState(queryKeys.backlog('/repo', 'docs'))?.isInvalidated, true)
-  stop()
+  stream.close()
   assert.equal(sources[0].closed, true)
 })
 
@@ -210,22 +376,20 @@ test('state changes dispatch from the existing EventSource without opening anoth
   const queryClient = new QueryClient()
   const sources: FakeEventSource[] = []
   const changes: Array<[string, number]> = []
-  const timers = {
-    setTimeout: (() => 1) as typeof window.setTimeout,
-    clearTimeout: (() => undefined) as typeof window.clearTimeout,
-    setInterval: (() => 2) as typeof window.setInterval,
-    clearInterval: (() => undefined) as typeof window.clearInterval,
-  }
-  const stop = subscribeToFleet(queryClient, [], [], [], undefined, () => {
-    const source = new FakeEventSource()
-    sources.push(source)
-    return source
-  }, timers, (namespace, rev) => changes.push([namespace, rev]))
+  const stream = subscribeToFleet(queryClient, { agents: [] }, {
+    createEventSource: () => {
+      const source = new FakeEventSource()
+      sources.push(source)
+      return source
+    },
+    timers: fakeTimers().timers,
+    onStateChanged: (namespace, rev) => changes.push([namespace, rev]),
+  })
   assert.equal(sources.length, 1)
   sources[0].emit('state-changed', JSON.stringify({ namespace: 'spaces', rev: 9 }))
   assert.deepEqual(changes, [['spaces', 9]])
   assert.equal(sources.length, 1)
-  stop()
+  stream.close()
 })
 
 test('one multi-entry SSE burst causes one active transcript cursor fetch', async () => {
@@ -240,23 +404,17 @@ test('one multi-entry SSE burst causes one active transcript cursor fetch', asyn
     },
   })
   const unsubscribeObserver = observer.subscribe(() => undefined)
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settled()
   assert.equal(cursorFetches, 1)
 
-  const timers = {
-    setTimeout: globalThis.setTimeout as typeof window.setTimeout,
-    clearTimeout: globalThis.clearTimeout as typeof window.clearTimeout,
-    setInterval: globalThis.setInterval as typeof window.setInterval,
-    clearInterval: globalThis.clearInterval as typeof window.clearInterval,
-  }
-  const stop = subscribeToFleet(queryClient, ['vile'], [], [], undefined, () => source, timers)
+  const stream = subscribeToFleet(queryClient, { agents: ['vile'] }, { createEventSource: () => source, timers: realTimers })
   source.emit('entry:vile', JSON.stringify({ uuid: 'one' }))
   source.emit('entry:vile', JSON.stringify({ uuid: 'two' }))
   source.emit('entry:vile', JSON.stringify({ uuid: 'three' }))
   await new Promise((resolve) => setTimeout(resolve, 50))
 
   assert.equal(cursorFetches, 2)
-  stop()
+  stream.close()
   unsubscribeObserver()
 })
 
@@ -266,38 +424,30 @@ test('an own-send marker suppresses only the duplicate message invalidation', as
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
   await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
   const token = beginSendRefresh(queryClient, 'vile')
-  const timers = {
-    setTimeout: globalThis.setTimeout as typeof window.setTimeout,
-    clearTimeout: globalThis.clearTimeout as typeof window.clearTimeout,
-    setInterval: globalThis.setInterval as typeof window.setInterval,
-    clearInterval: globalThis.clearInterval as typeof window.clearInterval,
-  }
-  const stop = subscribeToFleet(queryClient, ['vile'], [], [], undefined, () => source, timers)
+  const stream = subscribeToFleet(queryClient, { agents: ['vile'] }, { createEventSource: () => source, timers: realTimers })
 
   source.onopen?.(new Event('open'))
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settled()
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, false)
   assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false)
-  await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
-  await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
   source.emit('fleet', JSON.stringify({ workspaces: [], unplaced: [] }))
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settled()
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
+  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false)
   await queryClient.fetchQuery({ queryKey: queryKeys.agent('vile'), queryFn: async () => ({ name: 'vile' }) })
-  await queryClient.fetchQuery({ queryKey: queryKeys.entries('vile'), queryFn: async () => ({ entries: [] }) })
 
   source.emit('message', JSON.stringify({ id: 731, from: 'web-owner', to: ['vile'] }))
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settled()
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, false)
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, false)
+  assert.equal(reads(queryClient, queryKeys.entries('vile')), 1)
 
   await settleSendRefresh(token, true, () => undefined)
+  const settledReads = reads(queryClient, queryKeys.entries('vile'))
   source.emit('message', JSON.stringify({ id: 732, from: 'someone-else', to: ['vile'] }))
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  await settled()
   assert.equal(queryClient.getQueryState(queryKeys.agent('vile'))?.isInvalidated, true)
-  assert.equal(queryClient.getQueryState(queryKeys.entries('vile'))?.isInvalidated, true)
-  stop()
+  assert.equal(reads(queryClient, queryKeys.entries('vile')), settledReads + 1)
+  stream.close()
 })
 
 function graceHarness() {
@@ -305,15 +455,9 @@ function graceHarness() {
   const queryClient = new QueryClient()
   queryClient.setQueryData<StreamState>(queryKeys.stream, { problems: {}, substrateProof: { herdr: false, hcom: false }, serverUpdated: false, lastEvent: null, loadedBuild: null })
   const sources: FakeEventSource[] = []
-  const timeouts = new Map<number, { callback: () => void, delay: number }>()
-  let timerID = 0
-  const timers = {
-    setTimeout: ((callback: () => void, delay: number) => { const id = ++timerID; timeouts.set(id, { callback, delay }); return id }) as typeof window.setTimeout,
-    clearTimeout: ((id: number) => timeouts.delete(id)) as typeof window.clearTimeout,
-    setInterval: (() => 99) as typeof window.setInterval,
-    clearInterval: (() => undefined) as typeof window.clearInterval,
-  }
-  const stop = subscribeToFleet(queryClient, ['vile'], [], [], undefined, () => { const source = new FakeEventSource(); sources.push(source); return source }, timers)
+  const { timers, timeouts } = fakeTimers()
+  const stream = subscribeToFleet(queryClient, { agents: ['vile'] }, { createEventSource: () => { const source = new FakeEventSource(); sources.push(source); return source }, timers })
+  const stop = () => stream.close()
   const graceTimers = () => [...timeouts.values()].filter((entry) => entry.delay === 150)
   const streamProblem = () => queryClient.getQueryData<StreamState>(queryKeys.stream)?.problems.stream
   return { sources, stop, graceTimers, streamProblem }

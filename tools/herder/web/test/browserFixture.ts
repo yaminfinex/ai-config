@@ -17,12 +17,27 @@ export type FixturePost = { namespace: string, bytes: number, keys: string[], st
 // Just enough of the serve API for live idle agents with enabled composers.
 // Posted state rows are accepted under a rising rev, and a write body over
 // maxWriteBytes is refused with 413 like the serve's decodeWriteBody.
-// entries gives each agent's transcript; send pushes an event to every open
-// stream, and board can be changed before a fleet event is sent.
-export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number, entries?: (agent: string) => unknown[] } = {}) {
+// entries gives each agent's transcript; an entries request with `from`
+// answers only the entries at or past that byte offset, as a delta. send
+// pushes an event to every open stream, and board can be changed before a
+// fleet event is sent. Every stream's hello names it; a subscription update
+// retargets it. With live set, a stream behaves like the serve's: after
+// firstBoardDelayMs it sends the board and announces its agents subscribed,
+// and an update announces the agents it adds.
+export function fixtureAPI(agents: string[], options: {
+  maxWriteBytes?: number
+  entries?: (agent: string) => unknown[]
+  live?: { firstBoardDelayMs?: number }
+} = {}) {
   const streams = new Set<ServerResponse>()
+  const streamIDs = new Map<string, { response: ServerResponse, agents: string[] }>()
   const state = new Map<string, Map<string, { rev: number, row: StoredRow }>>()
   const posts: FixturePost[] = []
+  const entryRequests: { agent: string, from: number | null, bytes: number }[] = []
+  const subscriptionUpdates: string[][] = []
+  const held: (() => void)[] = []
+  let holding = false
+  let opens = 0
   let rev = 0
   const row = (agent: string, index: number) => ({
     pane_id: `w1:p${index + 1}`, agent, tool: 'claude', herdr_status: 'idle', bus_status: 'listening', gap: '',
@@ -34,6 +49,8 @@ export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number, 
     }],
     unplaced: [],
   }
+  const write = (response: ServerResponse, event: string, data: unknown) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+  const subscribedAgents = (value: string | null) => (value ?? '').split(',').filter(Boolean)
   const plugin: Plugin = {
     name: 'herder-fixture-api',
     configureServer(server) {
@@ -47,10 +64,35 @@ export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number, 
           response.end(JSON.stringify(body))
         }
         if (url.pathname === '/api/events') {
+          opens++
+          const id = `stream-${opens}`
+          const subscribed = subscribedAgents(url.searchParams.get('agents'))
           response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
           response.write(': fixture\n\n')
+          write(response, 'hello', { buildIdentity: 'fixture', stream: id })
           streams.add(response)
-          request.on('close', () => streams.delete(response))
+          streamIDs.set(id, { response, agents: subscribed })
+          const firstBoard = options.live && setTimeout(() => {
+            write(response, 'fleet', board)
+            if (subscribed.length > 0) write(response, 'subscribed', { agents: subscribed })
+          }, options.live.firstBoardDelayMs ?? 0)
+          request.on('close', () => {
+            if (firstBoard) clearTimeout(firstBoard)
+            streams.delete(response)
+            streamIDs.delete(id)
+          })
+          return
+        }
+        if (url.pathname === '/api/events/subscription') {
+          const stream = streamIDs.get(url.searchParams.get('stream') ?? '')
+          if (request.method !== 'POST' || !stream) return json({ error: 'unknown stream', detail: 'reconnect' }, stream ? 400 : 404)
+          const next = subscribedAgents(url.searchParams.get('agents'))
+          const added = next.filter((agent) => !stream.agents.includes(agent))
+          subscriptionUpdates.push(next)
+          stream.agents = next
+          if (options.live && added.length > 0) write(stream.response, 'subscribed', { agents: added })
+          response.statusCode = 204
+          response.end()
           return
         }
         if (url.pathname === '/api/fleet') return json(board)
@@ -78,15 +120,36 @@ export function fixtureAPI(agents: string[], options: { maxWriteBytes?: number, 
         }
         const agent = url.pathname.match(/^\/api\/agents\/([^/]+)(\/entries)?$/)
         if (agent && agents.includes(agent[1])) {
-          if (agent[2]) return json({ sessionId: `session-${agent[1]}`, window: { mode: 'tail', from: 0, limit: 50 }, entries: options.entries?.(agent[1]) ?? [], nextOffset: 0 })
+          if (agent[2]) {
+            const from = url.searchParams.has('from') ? Number(url.searchParams.get('from')) : null
+            const all = (options.entries?.(agent[1]) ?? []) as { byteOffset?: number }[]
+            const entries = from === null ? all : all.filter((entry) => (entry.byteOffset ?? 0) >= from)
+            const end = all.reduce((latest, entry) => Math.max(latest, (entry.byteOffset ?? 0) + 1), 0)
+            const body = JSON.stringify({ sessionId: `session-${agent[1]}`, window: { mode: 'tail', from: 0, limit: 50 }, entries, nextOffset: end })
+            const answer = () => {
+              entryRequests.push({ agent: agent[1], from, bytes: Buffer.byteLength(body) })
+              response.setHeader('Content-Type', 'application/json')
+              response.end(body)
+            }
+            if (holding) held.push(answer)
+            else answer()
+            return
+          }
           return json({ name: agent[1], tool: 'claude', herdr_status: 'idle', bus_status: 'listening', gap: '', pane: null, launch_context: {} })
         }
         json({ error: 'not found', detail: url.pathname }, 404)
       })
     },
   }
-  const send = (event: string, data: unknown) => { for (const stream of streams) stream.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }
-  return { plugin, state, posts, board, send }
+  const send = (event: string, data: unknown) => { for (const stream of streams) write(stream, event, data) }
+  // holdEntries(true) leaves entries requests unanswered (and unrecorded)
+  // until holdEntries(false), so a page that renders meanwhile proves it
+  // did not wait on the network.
+  const holdEntries = (on: boolean) => {
+    holding = on
+    if (!on) held.splice(0).forEach((answer) => answer())
+  }
+  return { plugin, state, posts, board, send, entryRequests, subscriptionUpdates, holdEntries, opens: () => opens, heldEntries: () => held.length }
 }
 
 // A minimal React devtools hook, installed before React loads, that counts

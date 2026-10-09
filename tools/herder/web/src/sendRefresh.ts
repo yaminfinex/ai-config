@@ -72,7 +72,7 @@ export async function sendWithRefresh(queryClient: QueryClient, agent: string, t
   const token = beginSendRefresh(queryClient, agent)
   const refresh = () => Promise.all([
     queryClient.invalidateQueries({ queryKey: queryKeys.agent(agent), exact: true }),
-    queryClient.invalidateQueries({ queryKey: queryKeys.entries(agent), exact: true }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.entries(agent), exact: true, refetchType: 'all' }),
   ])
   try {
     const result = await sendMessage(agent, text)
