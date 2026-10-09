@@ -53,14 +53,20 @@ type stateUpsertRequest struct {
 	Rows []webstate.Row `json:"rows"`
 }
 
+// Stale names rows the server will not store because they fall at or below
+// the namespace's purge horizon; the client drops them and does not retry.
 type stateUpsertResponse struct {
 	Accepted []string `json:"accepted"`
+	Stale    []string `json:"stale,omitempty"`
 	Rev      uint64   `json:"rev"`
 }
 
+// Horizon is the namespace's purge horizon (ms, zero for none): a local row
+// at or below it that the server lacks was deleted and purged, not unsent.
 type stateSinceResponse struct {
-	Rows []webstate.Row `json:"rows"`
-	Rev  uint64         `json:"rev"`
+	Rows    []webstate.Row `json:"rows"`
+	Rev     uint64         `json:"rev"`
+	Horizon int64          `json:"horizon,omitempty"`
 }
 
 func serveState(w http.ResponseWriter, r *http.Request, deps dependencies, namespace string) {
@@ -89,12 +95,12 @@ func serveState(w http.ResponseWriter, r *http.Request, deps dependencies, names
 			}
 			since = parsed
 		}
-		rows, rev, stateErr := deps.state.Since(user, namespace, since)
+		snapshot, stateErr := deps.state.Since(user, namespace, since)
 		if stateErr != nil {
 			serveStateError(w, stateErr)
 			return
 		}
-		writeJSON(w, http.StatusOK, stateSinceResponse{Rows: rows, Rev: rev})
+		writeJSON(w, http.StatusOK, stateSinceResponse{Rows: snapshot.Rows, Rev: snapshot.Rev, Horizon: snapshot.Horizon})
 	case http.MethodPost:
 		var request stateUpsertRequest
 		if err := decodeWriteBody(w, r, &request, false); err != nil {
@@ -105,15 +111,15 @@ func serveState(w http.ResponseWriter, r *http.Request, deps dependencies, names
 			}
 			return
 		}
-		accepted, rev, stateErr := deps.state.Upsert(user, namespace, request.Rows)
+		result, stateErr := deps.state.Upsert(user, namespace, request.Rows)
 		if stateErr != nil {
 			serveStateError(w, stateErr)
 			return
 		}
-		if len(accepted) > 0 {
-			deps.stateChanges.publish(stateChange{Namespace: namespace, Rev: rev})
+		if len(result.Accepted) > 0 {
+			deps.stateChanges.publish(stateChange{Namespace: namespace, Rev: result.Rev})
 		}
-		writeJSON(w, http.StatusOK, stateUpsertResponse{Accepted: accepted, Rev: rev})
+		writeJSON(w, http.StatusOK, stateUpsertResponse{Accepted: result.Accepted, Stale: result.Stale, Rev: result.Rev})
 	default:
 		refuse(w, http.StatusBadRequest, "bad request", "GET or POST required")
 	}

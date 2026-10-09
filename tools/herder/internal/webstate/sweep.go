@@ -14,12 +14,15 @@ import (
 // tombstones whose Updated (ms) is older; zero keeps every tombstone. Absent
 // reports a live row whose agent is gone; nil removes no live row.
 //
-// Only list namespaces whose rows may come back harmlessly. Clients replay
-// their cached rows and merge additively, so a purged tombstone lets a stale
-// client re-add the deleted row; owner content (notes, spaces) must keep its
-// tombstones forever.
+// Clients replay their cached rows and merge additively, so a purged
+// tombstone lets a stale client re-add the deleted row. Horizon lists the
+// namespaces where that must not happen (owner content: notes, spaces):
+// purging there raises the namespace's horizon to the newest purged
+// tombstone, and Upsert answers a create at or below it as stale. Elsewhere
+// a re-added row is harmless and the next sweep removes it again.
 type SweepPolicy struct {
 	Namespaces       map[string]bool
+	Horizon          map[string]bool
 	TombstonesBefore int64
 	Absent           func(namespace string, row Row) bool
 }
@@ -37,7 +40,9 @@ type SweepResult struct {
 // namespace that loses rows takes one new revision, which also becomes its
 // Floor: a client whose cursor is older is answered with every current row
 // on its next pull. A row removed here simply stops appearing; the client
-// keeps its own copy until its own pruning drops it.
+// keeps its own copy until its own pruning drops it, or, in a Horizon
+// namespace, until a full pull shows the server lacks a row at or below the
+// horizon.
 func (s *FileStore) Sweep(policy SweepPolicy) ([]SweepResult, error) {
 	users, err := os.ReadDir(s.root)
 	if err != nil {
@@ -84,12 +89,15 @@ func (s *FileStore) sweepNamespace(user, namespace string, policy SweepPolicy) (
 		}
 		return result, err
 	}
-	next := namespaceData{Revision: state.data.Revision, Floor: state.data.Floor, Rows: make(map[string]storedRow, len(state.data.Rows))}
+	next := namespaceData{Revision: state.data.Revision, Floor: state.data.Floor, Horizon: state.data.Horizon, Rows: make(map[string]storedRow, len(state.data.Rows))}
 	for key, row := range state.data.Rows {
 		purge := row.Deleted && row.Updated < policy.TombstonesBefore
 		absent := !row.Deleted && policy.Absent != nil && policy.Absent(namespace, row.Row)
 		if purge || absent {
 			result.Removed++
+			if purge && policy.Horizon[namespace] && row.Updated > next.Horizon {
+				next.Horizon = row.Updated
+			}
 			continue
 		}
 		next.Rows[key] = row

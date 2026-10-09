@@ -50,6 +50,7 @@ export type NotesStore = {
   records: () => StoredNoteRecord[]
   record: (id: string) => StoredNoteRecord | undefined
   merge: (records: StoredNoteRecord[]) => void
+  forget: (ids: string[]) => void
   subscribeMutations: (listener: (records: StoredNoteRecord[]) => void) => () => void
   subscribe: (listener: () => void) => () => void
   status: () => NotesStatus
@@ -185,6 +186,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
   const mutationListeners = new Set<(records: StoredNoteRecord[]) => void>()
   let timer: unknown
   let eventsAttached = false
+  const expired = (record: NoteRecord) => !active(record) && now() - record.updated > tombstoneRetentionMs
 
   const notify = () => { for (const listener of listeners) listener() }
   // A thrown exception here would vanish inside a click handler and the owner
@@ -239,7 +241,7 @@ export function createNotesStore(options: Options = {}): NotesStore {
         if (id === null) continue
         const stored = recoverRecord(id, storage.getItem(key))
         if (!stored) continue
-        if (!active(stored.record) && now() - stored.record.updated > tombstoneRetentionMs) {
+        if (expired(stored.record)) {
           storage.removeItem(key)
           storage.removeItem(backupKey(id))
           continue
@@ -247,6 +249,24 @@ export function createNotesStore(options: Options = {}): NotesStore {
         const current = records.get(id)
         setRecord(id, current ? newer(current, stored) : stored)
       }
+    } catch {
+      degrade()
+    }
+  }
+
+  // drop removes a note outright, leaving nothing to sync or prune: a
+  // tombstone past the retention, or a note the server deleted and purged.
+  const drop = (id: string) => {
+    if (records.delete(id)) {
+      liveNotes = undefined
+      liveTotal -= liveBytes.get(id) ?? 0
+      liveBytes.delete(id)
+    }
+    dirty.delete(id)
+    if (!storage) return
+    try {
+      storage.removeItem(recordKey(id))
+      storage.removeItem(backupKey(id))
     } catch {
       degrade()
     }
@@ -394,11 +414,17 @@ export function createNotesStore(options: Options = {}): NotesStore {
     }),
     records: () => [...records.values()],
     record: (id) => records.get(id),
+    // A tombstone past the retention is never stored: load would only prune
+    // it again. It still deletes an older note this browser holds.
     merge: (values) => {
       let changed = false
       for (const incoming of values) {
         const current = records.get(incoming.record.id)
         if (current && newer(current, incoming) === current) continue
+        if (expired(incoming.record)) {
+          if (current) { drop(incoming.record.id); changed = true }
+          continue
+        }
         setRecord(incoming.record.id, incoming)
         dirty.add(incoming.record.id)
         changed = true
@@ -406,6 +432,11 @@ export function createNotesStore(options: Options = {}): NotesStore {
       if (!changed) return
       scheduleFlush()
       notify()
+    },
+    forget: (ids) => {
+      const known = ids.filter((id) => records.has(id))
+      for (const id of known) drop(id)
+      if (known.length > 0) notify()
     },
     subscribeMutations: (listener) => {
       mutationListeners.add(listener)

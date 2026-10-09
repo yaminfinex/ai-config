@@ -18,19 +18,26 @@ const (
 	// AbsentAgentRetention is how long an agent must have been gone from
 	// the roster and the store's history before its agent-keyed rows go.
 	AbsentAgentRetention = 7 * 24 * time.Hour
-	// TombstoneRetention is how long an agent-keyed namespace keeps a delete.
+	// TombstoneRetention is how long the server keeps a delete; browsers
+	// prune theirs at the same age.
 	TombstoneRetention = 30 * 24 * time.Hour
 )
 
 // agentKeyedNamespaces are keyed by agent name and mean nothing once the
-// agent is gone; they are the only namespaces the sweep touches. notes
-// (note ids), spaces and spaces.members (space ids) are owner content: the
-// sweep never removes their rows or purges their tombstones, since clients
-// replay their caches additively and a purged tombstone would let a stale
-// browser bring a deleted note or space back. Inside read.markers a stale
-// client re-adding a swept row is acceptable: last-write-wins lets any newer
-// write beat it, and the next sweep removes it again.
+// agent is gone; only their live rows are ever removed for absence. Inside
+// read.markers a stale client re-adding a swept row is acceptable:
+// last-write-wins lets any newer write beat it, and the next sweep removes
+// it again.
 var agentKeyedNamespaces = map[string]bool{"read.markers": true}
+
+// ownerContentNamespaces are keyed by note or space id. The sweep purges
+// their old tombstones but never a live row, and each purge raises the
+// namespace's horizon so a stale browser replaying its cache cannot bring
+// a deleted note or space back once the tombstone is gone.
+var ownerContentNamespaces = map[string]bool{"notes": true, "spaces": true, "spaces.members": true}
+
+// sweptNamespaces are every namespace the sweep touches.
+var sweptNamespaces = map[string]bool{"read.markers": true, "notes": true, "spaces": true, "spaces.members": true}
 
 type stateSweeper interface {
 	Sweep(webstate.SweepPolicy) ([]webstate.SweepResult, error)
@@ -50,7 +57,8 @@ func stateSweepPolicy(now time.Time, roster []hcomidentity.Row, projection *agen
 	}
 	cutoff := now.Add(-AbsentAgentRetention)
 	return webstate.SweepPolicy{
-		Namespaces:       agentKeyedNamespaces,
+		Namespaces:       sweptNamespaces,
+		Horizon:          ownerContentNamespaces,
 		TombstonesBefore: now.Add(-TombstoneRetention).UnixMilli(),
 		Absent: func(namespace string, row webstate.Row) bool {
 			if !agentKeyedNamespaces[namespace] || present[row.Key] || row.Updated >= cutoff.UnixMilli() {
@@ -75,8 +83,7 @@ func stateSweepPolicy(now time.Time, roster []hcomidentity.Row, projection *agen
 // sweepStateOnce sweeps with a fresh roster and the projection of the
 // latest successful fold; without either it skips the absence rule (an
 // unreadable roster, or a store read that failed after an earlier one
-// succeeded, is not evidence of absence) and still purges old tombstones
-// in agent-keyed namespaces.
+// succeeded, is not evidence of absence) and still purges old tombstones.
 func sweepStateOnce(deps dependencies, store stateSweeper, publish func(stateChange), stderr io.Writer) {
 	now := time.Now()
 	if deps.now != nil {

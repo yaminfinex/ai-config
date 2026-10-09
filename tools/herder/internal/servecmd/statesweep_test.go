@@ -2,6 +2,7 @@ package servecmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -13,6 +14,12 @@ import (
 
 func markerRow(key string, updated time.Time) webstate.Row {
 	return webstate.Row{Key: key, Value: json.RawMessage(`{"turn":1}`), Updated: updated.UnixMilli(), WriteID: "w"}
+}
+
+// since reads a snapshot in the (rows, rev, err) shape most tests compare.
+func since(store *webstate.FileStore, user, namespace string, rev uint64) ([]webstate.Row, uint64, error) {
+	snapshot, err := store.Since(user, namespace, rev)
+	return snapshot.Rows, snapshot.Rev, err
 }
 
 func TestStateSweepPolicyDropsOnlyLongAbsentAgentsReadMarkers(t *testing.T) {
@@ -64,7 +71,7 @@ func TestSweepStateOncePublishesEachChangedNamespaceAndNeedsARosterForAbsence(t 
 	tombstone := func(key string) webstate.Row {
 		return webstate.Row{Key: key, Value: json.RawMessage(`null`), Updated: old.UnixMilli(), WriteID: "w", Deleted: true}
 	}
-	if _, _, err := store.Upsert("web-owner", "read.markers", []webstate.Row{markerRow("gone", old), tombstone("culled")}); err != nil {
+	if _, err := store.Upsert("web-owner", "read.markers", []webstate.Row{markerRow("gone", old), tombstone("culled")}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -78,7 +85,7 @@ func TestSweepStateOncePublishesEachChangedNamespaceAndNeedsARosterForAbsence(t 
 	publish := func(change stateChange) { published = append(published, change) }
 
 	sweepStateOnce(deps, store, publish, nil)
-	rows, _, _ := store.Since("web-owner", "read.markers", 0)
+	rows, _, _ := since(store, "web-owner", "read.markers", 0)
 	if len(published) != 1 || published[0].Namespace != "read.markers" || len(rows) != 1 || rows[0].Key != "gone" {
 		t.Fatalf("without a roster only the old tombstone goes; an unreadable roster is not evidence of absence: published=%+v rows=%v", published, rows)
 	}
@@ -86,28 +93,40 @@ func TestSweepStateOncePublishesEachChangedNamespaceAndNeedsARosterForAbsence(t 
 	rosterErr = nil
 	published = nil
 	sweepStateOnce(deps, store, publish, nil)
-	rows, rev, _ := store.Since("web-owner", "read.markers", 0)
+	rows, rev, _ := since(store, "web-owner", "read.markers", 0)
 	if len(rows) != 0 || len(published) != 1 || published[0].Namespace != "read.markers" || published[0].Rev != rev {
 		t.Fatalf("with a roster the absent agent's row goes and is published: rows=%v published=%+v rev=%d", rows, published, rev)
 	}
 }
 
-// Owner content keeps its tombstones: clients replay their caches
-// additively, so a purged note or space tombstone would let a stale browser
-// re-add the deleted row. Only agent-keyed namespaces are swept.
-func TestSweepNeverPurgesOwnerContentTombstones(t *testing.T) {
+// Owner content loses tombstones past the retention and keeps live rows of
+// any age and newer tombstones. The fixture is ~700 tombstones spread over
+// 60 days per namespace, like the owner's notes file; after one sweep only
+// the ones younger than the retention remain, and each purge raises that
+// namespace's horizon so a stale replay of a purged note is refused.
+func TestSweepPurgesOwnerContentTombstonesPastRetention(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	old := now.Add(-31 * 24 * time.Hour)
 	store, err := webstate.NewFileStore(t.TempDir(), webstate.DefaultLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, namespace := range []string{"notes", "spaces", "spaces.members"} {
-		rows := []webstate.Row{
-			{Key: "deleted", Value: json.RawMessage(`null`), Updated: old.UnixMilli(), WriteID: "w", Deleted: true},
-			{Key: "gone", Value: json.RawMessage(`{"x":1}`), Updated: old.UnixMilli(), WriteID: "w"},
+	const tombstones = 700
+	step := 60 * 24 * time.Hour / tombstones
+	wantKept := 0
+	var newestPurged int64
+	var rows []webstate.Row
+	for index := range tombstones {
+		updated := now.Add(-time.Duration(index) * step)
+		rows = append(rows, webstate.Row{Key: fmt.Sprintf("deleted-%03d", index), Value: json.RawMessage(`null`), Updated: updated.UnixMilli(), WriteID: "w", Deleted: true})
+		if now.Sub(updated) <= TombstoneRetention {
+			wantKept++
+		} else if updated.UnixMilli() > newestPurged {
+			newestPurged = updated.UnixMilli()
 		}
-		if _, _, err := store.Upsert("web-owner", namespace, rows); err != nil {
+	}
+	rows = append(rows, webstate.Row{Key: "live-ancient", Value: json.RawMessage(`{"x":1}`), Updated: now.Add(-90 * 24 * time.Hour).UnixMilli(), WriteID: "w"})
+	for _, namespace := range []string{"notes", "spaces", "spaces.members"} {
+		if _, err := store.Upsert("web-owner", namespace, rows); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -118,14 +137,32 @@ func TestSweepNeverPurgesOwnerContentTombstones(t *testing.T) {
 	deps.roster = func() ([]hcomidentity.Row, error) { return nil, nil }
 	var published []stateChange
 	sweepStateOnce(deps, store, func(change stateChange) { published = append(published, change) }, nil)
-	if len(published) != 0 {
-		t.Fatalf("owner content namespaces changed: %+v", published)
+	if len(published) != 3 {
+		t.Fatalf("published = %+v; want one change per owner content namespace", published)
 	}
 	for _, namespace := range []string{"notes", "spaces", "spaces.members"} {
-		rows, _, err := store.Since("web-owner", namespace, 0)
-		if err != nil || len(rows) != 2 {
-			t.Fatalf("%s after sweep = %v (%v); want the 31-day tombstone and the old row kept", namespace, rows, err)
+		snapshot, err := store.Since("web-owner", namespace, 0)
+		if err != nil {
+			t.Fatal(err)
 		}
+		live, kept := 0, 0
+		for _, row := range snapshot.Rows {
+			if row.Deleted {
+				kept++
+				if now.Sub(time.UnixMilli(row.Updated)) > TombstoneRetention {
+					t.Fatalf("%s kept a tombstone older than the retention: %+v", namespace, row)
+				}
+			} else {
+				live++
+			}
+		}
+		if live != 1 || kept != wantKept {
+			t.Fatalf("%s after sweep: %d live, %d tombstones; want 1 live (an old live row is never swept) and %d tombstones", namespace, live, kept, wantKept)
+		}
+		if snapshot.Horizon != newestPurged {
+			t.Fatalf("%s horizon = %d; want the newest purged tombstone %d", namespace, snapshot.Horizon, newestPurged)
+		}
+		t.Logf("%s: %d tombstones -> %d after one sweep", namespace, tombstones, kept)
 	}
 }
 
@@ -158,11 +195,11 @@ func TestSweepSkipsAbsenceAfterAFailedProjectionRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.Upsert("web-owner", "read.markers", []webstate.Row{markerRow("gone", old)}); err != nil {
+	if _, err := store.Upsert("web-owner", "read.markers", []webstate.Row{markerRow("gone", old)}); err != nil {
 		t.Fatal(err)
 	}
 	sweepStateOnce(deps, store, func(stateChange) {}, nil)
-	if rows, _, _ := store.Since("web-owner", "read.markers", 0); len(rows) != 1 {
+	if rows, _, _ := since(store, "web-owner", "read.markers", 0); len(rows) != 1 {
 		t.Fatalf("marker removed on a stale projection: %v", rows)
 	}
 
@@ -175,7 +212,7 @@ func TestSweepSkipsAbsenceAfterAFailedProjectionRefresh(t *testing.T) {
 		t.Fatal("a successful refresh clears the failure")
 	}
 	sweepStateOnce(deps, store, func(stateChange) {}, nil)
-	if rows, _, _ := store.Since("web-owner", "read.markers", 0); len(rows) != 0 {
+	if rows, _, _ := since(store, "web-owner", "read.markers", 0); len(rows) != 0 {
 		t.Fatalf("after a good read the absent marker goes: %v", rows)
 	}
 }

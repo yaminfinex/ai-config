@@ -34,9 +34,28 @@ type Row struct {
 	Deleted bool            `json:"deleted"`
 }
 
+// UpsertResult names the keys a write stored and the keys it answered as
+// stale: rows the store does not hold whose Updated is at or below the
+// namespace's purge horizon. A stale row was deleted and its tombstone
+// purged, or is older than any tombstone that was; the writer should drop
+// it rather than retry.
+type UpsertResult struct {
+	Accepted []string
+	Stale    []string
+	Rev      uint64
+}
+
+// Snapshot is a Since answer. Horizon is the namespace's purge horizon: the
+// Updated (ms) of the newest tombstone a sweep has purged, zero for none.
+type Snapshot struct {
+	Rows    []Row
+	Rev     uint64
+	Horizon int64
+}
+
 type Store interface {
-	Upsert(user, namespace string, rows []Row) (accepted []string, rev uint64, err error)
-	Since(user, namespace string, rev uint64) (rows []Row, currentRev uint64, err error)
+	Upsert(user, namespace string, rows []Row) (UpsertResult, error)
+	Since(user, namespace string, rev uint64) (Snapshot, error)
 }
 
 type Limits struct {
@@ -78,8 +97,14 @@ type namespaceData struct {
 	// Floor is the revision of the last sweep that removed rows. A cursor
 	// below it may have missed a removal, so Since answers it with every
 	// current row, as for a cursor of zero.
-	Floor uint64               `json:"floor,omitempty"`
-	Rows  map[string]storedRow `json:"rows"`
+	Floor uint64 `json:"floor,omitempty"`
+	// Horizon is the Updated (ms) of the newest tombstone a sweep purged
+	// here. It lives in the namespace file so it is saved atomically with
+	// the purge it records and survives a restart. A write creating a row
+	// the store does not hold at or below it is stale: a cached copy of
+	// something deleted before the purge, which must not come back.
+	Horizon int64                `json:"horizon,omitempty"`
+	Rows    map[string]storedRow `json:"rows"`
 }
 
 type namespaceState struct {
@@ -154,28 +179,29 @@ func (s *FileStore) load(state *namespaceState, path string, create bool) error 
 	return nil
 }
 
-func (s *FileStore) Upsert(user, namespace string, rows []Row) ([]string, uint64, error) {
+func (s *FileStore) Upsert(user, namespace string, rows []Row) (UpsertResult, error) {
 	state, path, err := s.state(user, namespace)
 	if err != nil {
-		return nil, 0, err
+		return UpsertResult{}, err
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if err := s.load(state, path, true); err != nil {
-		return nil, 0, err
+		return UpsertResult{}, err
 	}
+	refused := UpsertResult{Rev: state.data.Revision}
 
 	keys := make([]string, 0, len(rows))
 	candidates := map[string]Row{}
 	for _, candidate := range rows {
 		if candidate.Key == "" || candidate.WriteID == "" {
-			return nil, state.data.Revision, errors.New("state row key and writeID are required")
+			return refused, errors.New("state row key and writeID are required")
 		}
 		if len(candidate.Value) > s.limits.MaxValueBytes {
-			return nil, state.data.Revision, fmt.Errorf("%w: key %q has %d bytes; limit is %d", ErrValueTooLarge, candidate.Key, len(candidate.Value), s.limits.MaxValueBytes)
+			return refused, fmt.Errorf("%w: key %q has %d bytes; limit is %d", ErrValueTooLarge, candidate.Key, len(candidate.Value), s.limits.MaxValueBytes)
 		}
 		if !json.Valid(candidate.Value) {
-			return nil, state.data.Revision, fmt.Errorf("state row %q value must be valid JSON", candidate.Key)
+			return refused, fmt.Errorf("state row %q value must be valid JSON", candidate.Key)
 		}
 		current, exists := candidates[candidate.Key]
 		if !exists {
@@ -185,50 +211,61 @@ func (s *FileStore) Upsert(user, namespace string, rows []Row) ([]string, uint64
 			candidates[candidate.Key] = candidate
 		}
 	}
+	result := UpsertResult{Accepted: make([]string, 0, len(candidates)), Rev: state.data.Revision}
 	newRows := 0
-	for key := range candidates {
-		if _, exists := state.data.Rows[key]; !exists {
-			newRows++
+	for _, key := range keys {
+		if _, exists := state.data.Rows[key]; exists {
+			continue
 		}
+		// No horizon, no purge: a seeded row written at updated 0 is new.
+		if state.data.Horizon > 0 && candidates[key].Updated <= state.data.Horizon {
+			result.Stale = append(result.Stale, key)
+			delete(candidates, key)
+			continue
+		}
+		newRows++
 	}
 	if len(state.data.Rows)+newRows > s.limits.MaxRows {
-		return nil, state.data.Revision, fmt.Errorf("%w: namespace would contain %d rows including tombstones; limit is %d", ErrRowLimit, len(state.data.Rows)+newRows, s.limits.MaxRows)
+		return refused, fmt.Errorf("%w: namespace would contain %d rows including tombstones; limit is %d", ErrRowLimit, len(state.data.Rows)+newRows, s.limits.MaxRows)
 	}
 
-	next := namespaceData{Revision: state.data.Revision, Floor: state.data.Floor, Rows: make(map[string]storedRow, len(state.data.Rows)+newRows)}
+	next := namespaceData{Revision: state.data.Revision, Floor: state.data.Floor, Horizon: state.data.Horizon, Rows: make(map[string]storedRow, len(state.data.Rows)+newRows)}
 	for key, value := range state.data.Rows {
 		next.Rows[key] = value
 	}
-	accepted := make([]string, 0, len(candidates))
 	for _, key := range keys {
-		candidate := candidates[key]
+		candidate, ok := candidates[key]
+		if !ok {
+			continue
+		}
 		current, exists := next.Rows[key]
 		if exists && Compare(candidate.Updated, candidate.WriteID, current.Updated, current.WriteID) <= 0 {
 			continue
 		}
 		next.Revision++
 		next.Rows[key] = storedRow{Row: candidate, Revision: next.Revision}
-		accepted = append(accepted, key)
+		result.Accepted = append(result.Accepted, key)
 	}
-	if len(accepted) == 0 {
-		return accepted, state.data.Revision, nil
+	if len(result.Accepted) == 0 {
+		return result, nil
 	}
 	if err := save(path, next); err != nil {
-		return nil, state.data.Revision, fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return refused, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	state.data = next
-	return accepted, next.Revision, nil
+	result.Rev = next.Revision
+	return result, nil
 }
 
-func (s *FileStore) Since(user, namespace string, revision uint64) ([]Row, uint64, error) {
+func (s *FileStore) Since(user, namespace string, revision uint64) (Snapshot, error) {
 	state, path, err := s.state(user, namespace)
 	if err != nil {
-		return nil, 0, err
+		return Snapshot{}, err
 	}
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if err := s.load(state, path, false); err != nil {
-		return nil, 0, err
+		return Snapshot{}, err
 	}
 	changed := make([]storedRow, 0)
 	for _, candidate := range state.data.Rows {
@@ -246,7 +283,7 @@ func (s *FileStore) Since(user, namespace string, revision uint64) ([]Row, uint6
 	for index, candidate := range changed {
 		rows[index] = candidate.Row
 	}
-	return rows, state.data.Revision, nil
+	return Snapshot{Rows: rows, Rev: state.data.Revision, Horizon: state.data.Horizon}, nil
 }
 
 func save(path string, data namespaceData) error {
@@ -306,10 +343,10 @@ func Unavailable(err error) Store {
 	return unavailableStore{err: err}
 }
 
-func (s unavailableStore) Upsert(string, string, []Row) ([]string, uint64, error) {
-	return nil, 0, fmt.Errorf("%w: %v", ErrUnavailable, s.err)
+func (s unavailableStore) Upsert(string, string, []Row) (UpsertResult, error) {
+	return UpsertResult{}, fmt.Errorf("%w: %v", ErrUnavailable, s.err)
 }
 
-func (s unavailableStore) Since(string, string, uint64) ([]Row, uint64, error) {
-	return nil, 0, fmt.Errorf("%w: %v", ErrUnavailable, s.err)
+func (s unavailableStore) Since(string, string, uint64) (Snapshot, error) {
+	return Snapshot{}, fmt.Errorf("%w: %v", ErrUnavailable, s.err)
 }

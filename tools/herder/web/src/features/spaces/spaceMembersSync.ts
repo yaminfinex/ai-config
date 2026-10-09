@@ -40,6 +40,7 @@ export function spaceMembersStoreSyncAdapter(store: SpaceMembersStore): StateSyn
   return {
     all: store.rows,
     merge: store.merge,
+    forget: store.forget,
     liveIDs: () => store.rows().flatMap((row) => row.deleted ? [] : [row.key]),
     subscribeMutations: store.subscribeMutations,
   }

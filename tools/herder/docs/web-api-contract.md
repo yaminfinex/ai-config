@@ -385,15 +385,17 @@ GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
   10,000 rows including tombstones.
 
   GET defaults `since` to zero and returns
-  `{"rows":[<row>],"rev":<current-namespace-revision>}`. Revision zero returns
-  every current row; a later cursor returns rows changed after that namespace
-  revision. A namespace that has never been written returns 404
+  `{"rows":[<row>],"rev":<current-namespace-revision>,"horizon":<ms>}`.
+  Revision zero returns every current row; a later cursor returns rows
+  changed after that namespace revision. `horizon` is present once a sweep
+  has purged a tombstone in the namespace (see below). A namespace that has never been written returns 404
   `state namespace not found`.
 
   POST accepts `{"rows":[<row>]}` and resolves every key independently by the
   same `(updated, writeID)` comparator. Success returns
-  `{"accepted":["<winning-key>"],"rev":<current-namespace-revision>}`;
-  idempotent or losing rows are omitted from `accepted`. A successful write
+  `{"accepted":["<winning-key>"],"stale":["<key>"],"rev":<current-namespace-revision>}`;
+  idempotent or losing rows are omitted from `accepted`, and `stale` (omitted
+  when empty) names rows refused below the purge horizon. A successful write
   with at least one accepted key publishes one `state-changed` event on the
   existing `/api/events` EventSource with
   `{"namespace":"<namespace>","rev":<current-namespace-revision>}`. The event
@@ -427,13 +429,22 @@ GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
   wins over them. Clients prune their local copy only; they never write a
   delete into this namespace.
 
-  The serve sweeps stored state at start and then hourly, and only in
-  agent-keyed namespaces (today `read.markers`). `notes`, `spaces` and
-  `spaces.members` are owner content: the sweep never removes their rows
-  or purges their tombstones, because clients replay their cached rows
-  and merge additively, so a purged tombstone would let a stale browser
-  bring a deleted note or space back just by opening the app. In
-  `read.markers` the sweep removes tombstones older than 30 days, and
+  The serve sweeps stored state at start and then hourly. In `notes`,
+  `spaces`, `spaces.members` and `read.markers` it removes tombstones older
+  than 30 days; it never removes a live row of owner content. Each owner
+  content namespace (`notes`, `spaces`, `spaces.members`) keeps a purge
+  `horizon`, stored in the namespace file: the `updated` of the newest
+  tombstone a sweep removed. It survives a restart. A POST row that would
+  create a key the server does not hold with `updated` at or below the
+  horizon is not stored and is answered in `stale`: it is a cached copy of
+  something deleted and purged, and storing it would bring it back. An
+  edit of a row the server holds is ordinary last-write-wins at any time.
+  A client drops a `stale` row it has not changed since sending, and on a
+  full pull drops, rather than sends, a local row the server lacks at or
+  below the horizon. Clients also never store an incoming tombstone older
+  than the retention. One edge remains: a row created offline and never
+  sent, whose `updated` is at or below the horizon, is dropped as stale.
+  `read.markers` never gains a horizon; in it the sweep also
   removes rows outright (no tombstone) when the agent is off the hcom
   roster, the agent store last saw or closed it more than 7 days ago (or
   never), and the row itself is more than 7 days old. Without a readable

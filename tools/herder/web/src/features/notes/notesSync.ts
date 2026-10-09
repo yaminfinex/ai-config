@@ -99,10 +99,11 @@ export function notesStoreSyncAdapter(store: {
   records: () => StoredNoteRecord[]
   record?: (id: string) => StoredNoteRecord | undefined
   merge: (records: StoredNoteRecord[]) => void
+  forget?: (ids: string[]) => void
   subscribeMutations: (listener: (records: StoredNoteRecord[]) => void) => () => void
   list: () => Array<{ id: string }>
 }): StateSyncStore {
-  const { record } = store
+  const { record, forget } = store
   return {
     all: () => store.records().map(storedNoteToStateRow),
     ...record && { row: (key: string) => {
@@ -113,6 +114,7 @@ export function notesStoreSyncAdapter(store: {
       const stored = stateRowToStoredNote(row)
       return stored ? [stored] : []
     })),
+    ...forget && { forget },
     liveIDs: () => store.list().map(({ id }) => id),
     subscribeMutations: (listener) => store.subscribeMutations((records) => listener(records.map(storedNoteToStateRow))),
   }

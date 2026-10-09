@@ -8,6 +8,9 @@ export type StateSyncStore = {
   // per send or pull, which suits only small stores.
   row?: (key: string) => GenericStateRow | undefined
   merge: (rows: GenericStateRow[]) => void
+  // forget drops rows the server has purged, without a mutation event; a
+  // store without it keeps them but never sends them again.
+  forget?: (keys: string[]) => void
   liveIDs: () => string[]
   subscribeMutations?: (listener: (rows: GenericStateRow[]) => void) => () => void
 }
@@ -22,8 +25,8 @@ export type StateSyncPersistence = {
 }
 
 export type StateTransport = {
-  since: (rev: number) => Promise<{ rows: GenericStateRow[], rev: number }>
-  upsert: (rows: GenericStateRow[]) => Promise<{ accepted: string[], rev: number }>
+  since: (rev: number) => Promise<{ rows: GenericStateRow[], rev: number, horizon?: number }>
+  upsert: (rows: GenericStateRow[]) => Promise<{ accepted: string[], rev: number, stale?: string[] }>
 }
 
 export type StateSyncMessages = {
@@ -123,6 +126,11 @@ export function createStateSync(options: StateSyncOptions) {
     for (const key of keys) changed = queue.delete(key) || changed
     if (changed) writeQueue()
   }
+  const forget = (keys: string[]) => {
+    if (keys.length === 0) return
+    options.store.forget?.(keys)
+    dequeueKeys(keys)
+  }
   const waiting = () => [...queue].filter((key) => !held.has(key))
   const settled = () => {
     if (waiting().length > 0) return
@@ -176,12 +184,22 @@ export function createStateSync(options: StateSyncOptions) {
       }))
     }
     if (full) {
-      // A full pull lists every server row: queue only what it lacks or holds older.
+      // A full pull lists every server row: queue only what it lacks or holds
+      // older. A row it lacks at or below the purge horizon was deleted and
+      // purged while this browser was away; sending it would bring it back.
+      // With no horizon nothing was purged, so a seeded row at updated 0 is sent.
       catchUp = false
+      const horizon = result.horizon ?? 0
+      const purged: string[] = []
       enqueueKeys(options.store.all().flatMap((row) => {
         const remote = pulled.get(row.key)
+        if (!remote && horizon > 0 && row.updated <= horizon) {
+          purged.push(row.key)
+          return []
+        }
         return !remote || options.compare(row, remote) > 0 ? [row.key] : []
       }))
+      forget(purged)
     }
     if (queue.size === 0) options.onProblem?.('')
   }
@@ -202,8 +220,9 @@ export function createStateSync(options: StateSyncOptions) {
   // post sends one chunk. A refused multi-row chunk is retried row by row,
   // so one oversized row is held back alone and the others still sync.
   const post = async (rows: GenericStateRow[]): Promise<boolean> => {
+    let stale: string[] = []
     try {
-      await options.transport.upsert(rows)
+      stale = (await options.transport.upsert(rows)).stale ?? []
     } catch (error) {
       if (!tooLarge(error)) {
         handleFailure(error)
@@ -219,9 +238,17 @@ export function createStateSync(options: StateSyncOptions) {
       return true
     }
     const current = reader()
-    dequeueKeys(rows.flatMap((sent) => {
-      const local = current(sent.key)
-      return !local || options.compare(local, sent) <= 0 ? [sent.key] : []
+    const sent = new Map(rows.map((row) => [row.key, row]))
+    // A stale row is one the server purged; it is dropped here unless it
+    // changed since it was sent.
+    forget(stale.filter((key) => {
+      const local = current(key)
+      const row = sent.get(key)
+      return local && row && options.compare(local, row) <= 0
+    }))
+    dequeueKeys(rows.flatMap((row) => {
+      const local = current(row.key)
+      return !local || options.compare(local, row) <= 0 ? [row.key] : []
     }))
     return true
   }

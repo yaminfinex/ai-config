@@ -68,9 +68,11 @@ export function stateRowToStoredSpace(row: GenericStateRow): StoredSpaceRecord |
 export function spacesStoreSyncAdapter(store: {
   records: () => StoredSpaceRecord[]
   merge: (records: StoredSpaceRecord[]) => void
+  forget?: (ids: string[]) => void
   subscribeMutations: (listener: (records: StoredSpaceRecord[]) => void) => () => void
   list: () => Array<{ id: string }>
 }): SpacesSyncStore {
+  const { forget } = store
   // Only definitions cross this boundary. Layouts and pane transfers remain
   // device-local, so a newly synced space honestly starts empty here.
   return {
@@ -79,6 +81,7 @@ export function spacesStoreSyncAdapter(store: {
       const stored = stateRowToStoredSpace(row)
       return stored ? [stored] : []
     })),
+    ...forget && { forget },
     liveIDs: () => store.list().map(({ id }) => id),
     subscribeMutations: (listener) => store.subscribeMutations((records) => listener(records.map(storedSpaceToStateRow))),
   }

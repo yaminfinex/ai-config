@@ -29,6 +29,7 @@ export type SpacesStore = {
   rollbackCreate: (id: string) => boolean
   records: () => StoredSpaceRecord[]
   merge: (records: StoredSpaceRecord[]) => void
+  forget: (ids: string[]) => void
   subscribeMutations: (listener: (records: StoredSpaceRecord[]) => void) => () => void
   subscribe: (listener: () => void) => () => void
   status: () => SpacesStatus
@@ -104,6 +105,7 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
   const mutationListeners = new Set<(records: StoredSpaceRecord[]) => void>()
   let timer: unknown
   let attached = false
+  const expired = (record: SpaceDefinition) => record.deleted === true && now() - record.updated > tombstoneRetentionMs
 
   const notify = () => { for (const listener of listeners) listener() }
   const degrade = () => {
@@ -143,7 +145,7 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
         if (id === null) continue
         const stored = recoverRecord(id, storage.getItem(key))
         if (!stored) continue
-        if (stored.record.deleted && now() - stored.record.updated > tombstoneRetentionMs) {
+        if (expired(stored.record)) {
           storage.removeItem(key)
           storage.removeItem(spaceBackupKey(id))
           options.onPurge?.(id)
@@ -153,6 +155,19 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
         records.set(id, current ? newer(current, stored) : stored)
       }
     } catch { degrade() }
+  }
+  // drop removes a space outright, leaving nothing to sync or prune: a
+  // tombstone past the retention, or a space the server deleted and purged.
+  const drop = (id: string) => {
+    records.delete(id)
+    dirty.delete(id)
+    if (storage) {
+      try {
+        storage.removeItem(spaceRecordKey(id))
+        storage.removeItem(spaceBackupKey(id))
+      } catch { degrade() }
+    }
+    options.onPurge?.(id)
   }
   const live = () => [...records.values()].flatMap(({ record }) => record.deleted ? [] : [record])
     .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
@@ -325,11 +340,17 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       return true
     },
     records: () => [...records.values()],
+    // A tombstone past the retention is never stored: load would only prune
+    // it again. It still closes an older copy this browser holds.
     merge: (values) => {
       let changed = false
       for (const incoming of values) {
         const current = records.get(incoming.record.id)
         if (current && compareStoredSpaceRecords(incoming, current) <= 0) continue
+        if (expired(incoming.record)) {
+          if (current) { drop(incoming.record.id); changed = true }
+          continue
+        }
         records.set(incoming.record.id, incoming)
         dirty.add(incoming.record.id)
         changed = true
@@ -337,6 +358,11 @@ export function createSpacesStore(options: Options = {}): SpacesStore {
       if (!changed) return
       scheduleFlush()
       notify()
+    },
+    forget: (ids) => {
+      const known = ids.filter((id) => records.has(id))
+      for (const id of known) drop(id)
+      if (known.length > 0) notify()
     },
     subscribeMutations: (listener) => {
       mutationListeners.add(listener)
