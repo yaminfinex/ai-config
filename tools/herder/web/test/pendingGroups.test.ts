@@ -77,6 +77,7 @@ test('the sidebar owns the new-group row: hover-reveal button, inline input, Ent
   assert.match(sidebar, /buildGroupNodes\(board, pendingGroups\)/)
   // The input carries no maxLength: 81 characters reach the validator and are refused, never silently truncated (maxLength counts UTF-16 units).
   assert.doesNotMatch(sidebar.slice(sidebar.indexOf('group-create-input'), sidebar.indexOf('group-create-input') + 400), /maxLength/)
-  // A placeholder shows its zero count explicitly.
-  assert.match(sidebar, /\(folder \|\| node\.placeholder\) && !folded && <span className="count-badge">/)
+  // A placeholder shows its zero count explicitly, as "<label> (0)" like every header.
+  assert.match(sidebar, /const summary = treeSummary\(node, folded\)/)
+  assert.match(sidebar, /\{summary && <span className="tree-summary"> \{summary\}<\/span>\}/)
 })

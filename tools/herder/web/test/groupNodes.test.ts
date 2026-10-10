@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import { buildGroupNodes, buildSupervisionNodes, collapsedLabel, groupMembers, ungroupedID } from '../src/features/sidebar/sidebarNodes.ts'
+import { buildGroupNodes, buildSupervisionNodes, collapsedLabel, groupMembers, treeSummary, ungroupedID } from '../src/features/sidebar/sidebarNodes.ts'
 import { managerItems, reconcileExpansion } from '../src/features/sidebar/sidebarView.ts'
 import type { Board, Row } from '../src/types.ts'
 
@@ -63,11 +63,13 @@ test('groups view: one header per label alphabetical, Ungrouped last, membership
   for (const leaf of ['ziru', 'vara', 'grill-tume', 'impl-hine', 'impl-geni', 'impl-bomi', 'impl-pono', 'design-doza', 'grill-lubo', 'tume_general_purpose_1']) assert.equal(count(leaf), 1, leaf)
   assert.equal(count('-'), 0)
   assert.equal(leaves.includes('lima'), false)
-  // Header summary reads like a folded manager: (total · active) and the badge count.
+  // A header reads its member count alone, folded or open: no active count.
   const header = nodes.get('group:fleet-refit')!
   assert.deepEqual(header.summary, { total: 2, active: 1 })
   assert.equal(header.count, 2)
-  assert.equal(collapsedLabel(header), 'fleet-refit (2 · 1 active)')
+  assert.equal(collapsedLabel(header), 'fleet-refit (2)')
+  assert.equal(treeSummary(header, false), '(2)')
+  assert.equal(collapsedLabel(nodes.get(ungroupedID)!), 'Ungrouped (6)')
   assert.equal(header.group, 'fleet-refit')
   assert.equal(nodes.get(ungroupedID)?.group, '')
   // Rows render like supervision rows: title over bus name, context and pane carried.
@@ -202,4 +204,24 @@ test('a manager with no label and one labelled report gives a header with exactl
   assert.equal(nodes.has('group:build/agent:chief'), false)
   assert.deepEqual(nodes.get(ungroupedID)?.children, ['group:/agent:chief'])
   assert.deepEqual(nodes.get('group:/agent:chief')?.children, [], 'the grouped report does not hang under its manager in Ungrouped')
+})
+
+test('every group header reads "<label> (N)" in either state, while folded supervision rows keep their summaries', () => {
+  const nodes = buildGroupNodes(board(), ['unit-x'])
+  for (const id of ['group:audit', 'group:fleet-refit', 'group:unit-x', ungroupedID]) {
+    const node = nodes.get(id)!
+    const text = `${node.name} ${treeSummary(node, false)}`
+    assert.equal(text, collapsedLabel(node), id)
+    assert.match(text, /^\S.* \(\d+\)$/, id)
+    assert.doesNotMatch(text, /active/, id)
+  }
+  assert.equal(collapsedLabel(nodes.get('group:unit-x')!), 'unit-x (0)', 'a placeholder header reads its zero count')
+  // Open agent rows read nothing; supervision's folded rows are unchanged.
+  assert.equal(treeSummary(nodes.get('group:/agent:ziru')!, false), '')
+  const supervision = buildSupervisionNodes(board())
+  assert.equal(collapsedLabel(supervision.get('agent:ziru')!), 'ziru (4)')
+  const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
+  assert.match(sidebar, /const summary = treeSummary\(node, folded\)/)
+  assert.match(sidebar, /\{summary && <span className="tree-summary"> \{summary\}<\/span>\}/)
+  assert.match(sidebar, /folder && !folded && !groupHeader && <span className="count-badge">/, 'a header carries no second count')
 })
