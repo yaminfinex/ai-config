@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { AgentStatusDot, gapLabel } from '../../shared/presentation'
-import { agentNodeID, buildGroupNodes, buildSidebarNodes, buildSupervisionNodes, collapsedLabel, expandedLabel, groupMembers } from './sidebarNodes'
+import { agentNodeID, buildGroupNodes, buildSidebarNodes, buildSupervisionNodes, expandedLabel, groupMembers, treeSummary } from './sidebarNodes'
 import type { SidebarNode } from './sidebarNodes'
 import { agentKinds, reconcileExpansion } from './sidebarView'
 import type { FleetView } from '../layout/shellPreferences'
@@ -211,6 +211,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
         const memberCount = groupHeader ? node.summary?.total ?? 0 : 0
         const groupChip = view !== 'groups' && pane?.group ? <span className="group-chip" title={`group: ${pane.group}`}>{pane.group}</span> : null
         const folded = folder && !item.isExpanded() && node.summary !== undefined
+        const summary = treeSummary(node, folded)
         const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
           : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
             : node.kind === 'tombstone' ? <span className="tombstone-glyph">⊘</span>
@@ -284,7 +285,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
                 if (event.key === 'Enter') event.currentTarget.blur()
                 if (event.key === 'Escape') { cancelOnBlur.current = true; event.currentTarget.blur() }
               }} /></span>
-            : <>{groupChip}<span className="tree-label" title={folded ? collapsedLabel(node) : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{folded && node.summary && node.summary.total > 0 && <span className="tree-summary"> ({node.summary.total}{agentRow ? '' : ` · ${node.summary.active} active`})</span>}</span></>}
+            : <>{groupChip}<span className="tree-label" title={summary ? `${expandedLabel(node)} ${summary}` : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{summary && <span className="tree-summary"> {summary}</span>}</span></>}
           trailing={<>{node.marker === 'unknown-manager' && <span className="unknown-manager-marker" title="manager unknown · adopt to take it on">?</span>}
             {node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
             {groupHeader && !node.placeholder && <button type="button" className="group-space-button" aria-label={openGroupTooltip(node.name, memberCount)} title={openGroupTooltip(node.name, memberCount)}
@@ -296,7 +297,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
               onClick={(event) => { event.stopPropagation(); startRename(pane.agent, node.id, pane.title) }}>✎</button>}
             {view === 'supervision' && node.marker === 'unknown-manager' && pane?.agent && pane.agent !== '-' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
               onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
-            {(folder || node.placeholder) && !folded && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
+            {folder && !folded && !groupHeader && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {pane?.agent && pane.agent !== '-' && <DraftMark drafts={drafts[pane.agent]} />}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}

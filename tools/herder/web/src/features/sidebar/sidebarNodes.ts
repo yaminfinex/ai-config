@@ -386,14 +386,24 @@ export function expandedLabel(node: SidebarNode) {
   return node.secondary ? `${node.name} · ${node.secondary}` : node.name
 }
 
+// treeSummary is the parenthetical a row reads after its name. A group
+// header always reads its member count alone, `fleet-refit (3)`, folded or
+// open; a folded agent reads its descendant count, `ziru (4)`; any other
+// folded subtree adds its active count, `fimu · ended (3 · 1 active)`. An
+// open row other than a header reads nothing.
+export function treeSummary(node: SidebarNode, folded: boolean) {
+  if (node.kind === 'group' || node.kind === 'ungrouped') return `(${node.summary?.total ?? 0})`
+  if (!folded || !node.summary || node.summary.total === 0) return ''
+  if (node.kind === 'agent' || node.kind === 'subagent') return `(${node.summary.total})`
+  return `(${node.summary.total} · ${node.summary.active} active)`
+}
+
 // collapsedLabel is what a folded subtree reads: the same identity and state
-// text plus the descendant summary, `ziru (4)` or
-// `fimu · ended (3 · 1 active)`. Nothing is dropped when folding.
+// text plus its summary. Nothing is dropped when folding.
 export function collapsedLabel(node: SidebarNode) {
   const label = expandedLabel(node)
-  if (!node.summary || node.summary.total === 0) return label
-  if (node.kind === 'agent' || node.kind === 'subagent') return `${label} (${node.summary.total})`
-  return `${label} (${node.summary.total} · ${node.summary.active} active)`
+  const summary = treeSummary(node, true)
+  return summary ? `${label} ${summary}` : label
 }
 
 function push<T>(map: Map<string, T[]>, key: string, value: T) {
