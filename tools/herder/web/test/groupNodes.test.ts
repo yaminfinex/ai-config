@@ -38,46 +38,50 @@ function board(): Board {
   }
 }
 
-test('groups view: one header per label alphabetical, Ungrouped last, membership derived upward so a manager appears under every group it has reports in', () => {
+test('groups view: one header per label alphabetical, Ungrouped last, membership is the agent\'s own label so a manager never joins its reports\' groups', () => {
   const nodes = buildGroupNodes(board())
-  assert.deepEqual(nodes.get('tree-root')?.children, ['group:audit', 'group:fleet-refit', 'group:probe', ungroupedID])
-  // ziru has reports in audit and fleet-refit: it heads both, holding only the matching reports.
-  assert.deepEqual(nodes.get('group:fleet-refit')?.children, ['group:fleet-refit/agent:ziru'])
-  assert.deepEqual(nodes.get('group:fleet-refit/agent:ziru')?.children, ['group:fleet-refit/agent:impl-hine', 'group:fleet-refit/agent:impl-geni'])
-  assert.deepEqual(nodes.get('group:audit')?.children, ['group:audit/agent:ziru', 'group:audit/agent:vara'])
-  assert.deepEqual(nodes.get('group:audit/agent:ziru')?.children, ['group:audit/agent:impl-bomi'])
-  assert.deepEqual(nodes.get('group:audit/agent:vara')?.children, ['group:audit/agent:impl-pono'])
-  // A Task subagent's label pulls its parent in; the parent shows only that child there.
-  assert.deepEqual(nodes.get('group:probe')?.children, ['group:probe/agent:grill-tume'])
-  assert.deepEqual(nodes.get('group:probe/agent:grill-tume')?.children, ['group:probe/agent:tume_general_purpose_1'])
-  assert.equal(nodes.get('group:probe/agent:tume_general_purpose_1')?.kind, 'subagent')
-  // Ungrouped: rows with no label anywhere below them; ziru (labels below) is absent, its unlabelled report doza roots here.
-  assert.deepEqual(nodes.get(ungroupedID)?.children, ['group:/agent:design-doza', 'group:/agent:grill-lubo'])
-  assert.deepEqual(groupMembers(nodes, ungroupedID).sort(), ['design-doza', 'grill-lubo'])
-  // Each leaf exactly once across the whole map; ziru exactly twice; no terminal.
+  // probe is only a Task subagent's own label; the subagent follows its unlabelled owner, so no probe header.
+  assert.deepEqual(nodes.get('tree-root')?.children, ['group:audit', 'group:fleet-refit', ungroupedID])
+  // ziru carries no label: its labelled reports root under their own headers without it.
+  assert.deepEqual(nodes.get('group:fleet-refit')?.children, ['group:fleet-refit/agent:impl-hine', 'group:fleet-refit/agent:impl-geni'])
+  assert.deepEqual(nodes.get('group:audit')?.children, ['group:audit/agent:impl-pono', 'group:audit/agent:impl-bomi'])
+  assert.equal(nodes.has('group:fleet-refit/agent:ziru'), false)
+  assert.equal(nodes.has('group:audit/agent:ziru'), false)
+  assert.equal(nodes.has('group:audit/agent:vara'), false)
+  // Ungrouped: every row with no label of its own, as the manager tree restricted to them;
+  // doza hangs under ziru, and ziru shows only that unlabelled report.
+  assert.deepEqual(nodes.get(ungroupedID)?.children, ['group:/agent:ziru', 'group:/agent:vara', 'group:/agent:grill-tume', 'group:/agent:grill-lubo'])
+  assert.deepEqual(nodes.get('group:/agent:ziru')?.children, ['group:/agent:design-doza'])
+  assert.deepEqual(nodes.get('group:/agent:vara')?.children, [])
+  // A Task subagent takes its owner's label, not its own.
+  assert.deepEqual(nodes.get('group:/agent:grill-tume')?.children, ['group:/agent:tume_general_purpose_1'])
+  assert.equal(nodes.get('group:/agent:tume_general_purpose_1')?.kind, 'subagent')
+  assert.deepEqual(groupMembers(nodes, ungroupedID).sort(), ['design-doza', 'grill-lubo', 'grill-tume', 'tume_general_purpose_1', 'vara', 'ziru'])
+  // Every agent exactly once across the whole map; no terminal.
   const leaves = [...nodes.values()].filter((node) => node.pane).map((node) => node.pane!.agent)
   const count = (name: string) => leaves.filter((leaf) => leaf === name).length
-  for (const leaf of ['impl-hine', 'impl-geni', 'impl-bomi', 'impl-pono', 'design-doza', 'grill-lubo', 'tume_general_purpose_1']) assert.equal(count(leaf), 1, leaf)
-  assert.equal(count('ziru'), 2)
+  for (const leaf of ['ziru', 'vara', 'grill-tume', 'impl-hine', 'impl-geni', 'impl-bomi', 'impl-pono', 'design-doza', 'grill-lubo', 'tume_general_purpose_1']) assert.equal(count(leaf), 1, leaf)
   assert.equal(count('-'), 0)
   assert.equal(leaves.includes('lima'), false)
   // Header summary reads like a folded manager: (total · active) and the badge count.
   const header = nodes.get('group:fleet-refit')!
-  assert.deepEqual(header.summary, { total: 3, active: 1 })
-  assert.equal(header.count, 3)
-  assert.equal(collapsedLabel(header), 'fleet-refit (3 · 1 active)')
+  assert.deepEqual(header.summary, { total: 2, active: 1 })
+  assert.equal(header.count, 2)
+  assert.equal(collapsedLabel(header), 'fleet-refit (2 · 1 active)')
   assert.equal(header.group, 'fleet-refit')
   assert.equal(nodes.get(ungroupedID)?.group, '')
   // Rows render like supervision rows: title over bus name, context and pane carried.
-  assert.equal(nodes.get('group:probe/agent:grill-tume')?.name, 'grill')
-  assert.equal(nodes.get('group:probe/agent:grill-tume')?.secondary, 'grill-tume')
-  assert.deepEqual(groupMembers(nodes, 'group:audit').sort(), ['impl-bomi', 'impl-pono', 'vara', 'ziru'])
+  assert.equal(nodes.get('group:/agent:grill-tume')?.name, 'grill')
+  assert.equal(nodes.get('group:/agent:grill-tume')?.secondary, 'grill-tume')
+  assert.deepEqual(groupMembers(nodes, 'group:audit').sort(), ['impl-bomi', 'impl-pono'])
 })
 
 test('the Ungrouped header is drawn only when non-empty and a fully grouped board has no header for it', () => {
   const grouped = board()
   grouped.unplaced = grouped.unplaced.filter((row) => row.agent !== 'grill-lubo' && row.agent !== 'design-doza')
-  grouped.workspaces[0].tabs[0].panes = grouped.workspaces[0].tabs[0].panes.filter((pane) => pane.agent !== 'vara')
+  grouped.workspaces[0].tabs[0].panes = grouped.workspaces[0].tabs[0].panes
+    .filter((pane) => pane.agent !== 'vara')
+    .map((pane) => pane.agent === 'ziru' || pane.agent === 'grill-tume' ? { ...pane, group: 'ops' } : pane)
   const nodes = buildGroupNodes(grouped)
   assert.equal(nodes.has(ungroupedID), false)
   assert.equal(nodes.get('tree-root')?.children.includes(ungroupedID), false)
@@ -97,8 +101,8 @@ test('header ids are stable across frames so expansion persists, and a new heade
   next.unplaced.push(agent('impl-new', { manager: 'ziru', manager_state: 'live', group: 'fleet-refit', created_at: '2026-09-07T00:00:00Z' }))
   next.unplaced.push(agent('impl-solo', { manager_state: 'unknown', group: 'zed', created_at: '2026-09-07T00:00:00Z' }))
   const second = buildGroupNodes(next)
-  assert.deepEqual(second.get('tree-root')?.children, ['group:audit', 'group:fleet-refit', 'group:probe', 'group:zed', ungroupedID])
-  assert.ok(first.has('group:fleet-refit') && second.has('group:fleet-refit') && second.has('group:fleet-refit/agent:ziru'))
+  assert.deepEqual(second.get('tree-root')?.children, ['group:audit', 'group:fleet-refit', 'group:zed', ungroupedID])
+  assert.ok(first.has('group:fleet-refit') && second.has('group:fleet-refit') && second.has('group:fleet-refit/agent:impl-hine'))
   const placement = new Map(), supervision = new Map()
   const state = { expandedItems: ['group:audit'], knownWorkspaceItems: [], knownManagerItems: managerItems(first) }
   assert.equal(reconcileExpansion(placement, supervision, state, first), null)
@@ -109,20 +113,22 @@ test('header ids are stable across frames so expansion persists, and a new heade
   assert.equal(transition?.expandedItems?.includes('group:fleet-refit'), false)
 })
 
-test('membership is order-independent: an a↔b cycle carrying labels A and B puts both agents under both headers in either roster order', () => {
+test('membership is order-independent: an a↔b cycle carrying labels A and B puts each agent under its own header only, in either roster order', () => {
   const a = () => agent('a', { manager: 'b', manager_state: 'live', group: 'A', created_at: '2026-09-01T00:00:00Z' })
   const b = () => agent('b', { manager: 'a', manager_state: 'live', group: 'B', created_at: '2026-09-02T00:00:00Z' })
   for (const unplaced of [[a(), b()], [b(), a()]]) {
     const nodes = buildGroupNodes({ workspaces: [], unplaced })
     assert.deepEqual(nodes.get('tree-root')?.children, ['group:A', 'group:B'])
-    assert.deepEqual(groupMembers(nodes, 'group:A').sort(), ['a', 'b'])
-    assert.deepEqual(groupMembers(nodes, 'group:B').sort(), ['a', 'b'])
+    assert.deepEqual(groupMembers(nodes, 'group:A'), ['a'])
+    assert.deepEqual(groupMembers(nodes, 'group:B'), ['b'])
   }
-  // Order independence without a cycle too: the labelled leaf may arrive before or after its manager.
+  // Order independence without a cycle too: the labelled leaf may arrive before or after its unlabelled manager.
   const m = () => agent('m', { manager_state: 'unknown', created_at: '2026-09-01T00:00:00Z' })
   const leaf = () => agent('leaf', { manager: 'm', manager_state: 'live', group: 'G', created_at: '2026-09-02T00:00:00Z' })
   for (const unplaced of [[m(), leaf()], [leaf(), m()]]) {
-    assert.deepEqual(buildGroupNodes({ workspaces: [], unplaced }).get('group:G')?.children, ['group:G/agent:m'])
+    const nodes = buildGroupNodes({ workspaces: [], unplaced })
+    assert.deepEqual(nodes.get('group:G')?.children, ['group:G/agent:leaf'])
+    assert.deepEqual(nodes.get(ungroupedID)?.children, ['group:/agent:m'])
   }
 })
 
@@ -182,4 +188,18 @@ test('the toggle offers the groups view and the sidebar renders the header actio
   assert.equal((sidebar.match(/onDragStart:/g) ?? []).length, 1)
   assert.equal((sidebar.match(/onDrop:/g) ?? []).length, 1)
   assert.equal((sidebar.match(/await assignAgent\(/g) ?? []).length, 1)
+})
+
+test('a manager with no label and one labelled report gives a header with exactly that report, and the manager under Ungrouped', () => {
+  const nodes = buildGroupNodes({ workspaces: [], unplaced: [
+    agent('chief', { manager: 'operator', manager_state: 'operator', created_at: '2026-09-01T00:00:00Z' }),
+    agent('impl-kela', { manager: 'chief', manager_state: 'live', group: 'build', created_at: '2026-09-02T00:00:00Z' }),
+  ] })
+  assert.deepEqual(nodes.get('tree-root')?.children, ['group:build', ungroupedID])
+  assert.deepEqual(nodes.get('group:build')?.children, ['group:build/agent:impl-kela'])
+  assert.deepEqual(groupMembers(nodes, 'group:build'), ['impl-kela'])
+  assert.equal(nodes.get('group:build')?.count, 1)
+  assert.equal(nodes.has('group:build/agent:chief'), false)
+  assert.deepEqual(nodes.get(ungroupedID)?.children, ['group:/agent:chief'])
+  assert.deepEqual(nodes.get('group:/agent:chief')?.children, [], 'the grouped report does not hang under its manager in Ungrouped')
 })
