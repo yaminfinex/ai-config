@@ -239,13 +239,13 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
 }
 
 // Groups view: the tree is the group label, one header per distinct label
-// (alphabetical) and Ungrouped last. Membership is derived upward: an agent
-// belongs to group X when its own label is X or any descendant's label is
-// (reports by the manager edge, Task subagents by parent_agent), so an
-// orchestrator with reports in two groups appears under both headers and a
-// leaf appears exactly once. Under a header the tree is the manager tree
-// restricted to members; node ids are `<header>/agent:<name>` so the same
-// agent can sit under two headers with distinct, frame-stable ids. The label
+// (alphabetical) and Ungrouped last. Membership is the agent's own label
+// (a Task subagent takes its owning top-level agent's), so every agent sits
+// under exactly one header and a manager never joins a group through its
+// reports; an agent with no label is Ungrouped even when its reports are
+// grouped. Under a header the tree is the manager tree restricted to
+// members: a member whose manager is not one roots there. Node ids are
+// `<header>/agent:<name>`, stable across frames. The label
 // component of a header id is URI-encoded, so a label containing "/" or
 // ":" can never collide with another header's row ids; the raw label stays
 // on the node for display and for the assignment a drop writes. Headers
@@ -306,30 +306,13 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     return owner
   }
 
-  // labelsBelow(name) is the set of labels anywhere in name's subtree
-  // (itself included), built by walking each labelled row UP its ancestor
-  // chain. Every row is visited once per label it carries, whatever order the
-  // roster arrives in, and the per-walk seen set makes a reparent cycle
-  // finite (both members of an a↔b cycle receive both labels).
-  const labelsBelow = new Map([...rows.keys()].map((name) => [name, new Set<string>()]))
-  for (const flat of rows.values()) {
-    const label = groupOf(flat.row)
-    if (!label) continue
-    let ancestor: FlatRow | undefined = flat
-    const seen = new Set<string>()
-    while (ancestor && !seen.has(ancestor.row.agent)) {
-      seen.add(ancestor.row.agent)
-      labelsBelow.get(ancestor.row.agent)!.add(label)
-      const parent = parentOf(ancestor)
-      ancestor = parent ? rows.get(parent) : undefined
-    }
-  }
+  // labelOf(name) is the one label an agent is shown under: its own, or for
+  // a Task subagent its owner's. A report's label never reaches its manager.
+  const labelOf = new Map([...rows.values()].map((flat) => [flat.row.agent, groupOf(ownerOf(flat).row)]))
+  const distinct = new Set([...labelOf.values()].filter((label) => label !== ''))
 
-  const distinct = new Set<string>()
-  for (const set of labelsBelow.values()) for (const label of set) distinct.add(label)
-
-  // A row is a root under header X when it is a member and no manager/parent
-  // above it is also a member (otherwise it hangs under that one).
+  // A row is a root under header X when it is a member and its manager or
+  // parent is not (otherwise it hangs under that one).
   const addHeader = (id: string, kind: 'group' | 'ungrouped', name: string, group: string, member: (agent: string) => boolean) => {
     const placed = new Set<string>()
     const addAgent = (flat: FlatRow): string => {
@@ -370,7 +353,7 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     root.children.push(id)
   }
   for (const label of [...distinct].sort((left, right) => left.localeCompare(right))) {
-    addHeader(groupHeaderID(label), 'group', label, label, (agent) => labelsBelow.get(ownerOf(rows.get(agent)!).row.agent)!.has(label))
+    addHeader(groupHeaderID(label), 'group', label, label, (agent) => labelOf.get(agent) === label)
   }
   for (const label of new Set(pendingGroups)) {
     if (!label || distinct.has(label)) continue
@@ -378,7 +361,7 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     result.set(id, { id, kind: 'group', name: label, children: [], group: label, placeholder: true, summary: { total: 0, active: 0 }, count: 0 })
     root.children.push(id)
   }
-  addHeader(ungroupedID, 'ungrouped', 'Ungrouped', '', (agent) => labelsBelow.get(ownerOf(rows.get(agent)!).row.agent)!.size === 0)
+  addHeader(ungroupedID, 'ungrouped', 'Ungrouped', '', (agent) => labelOf.get(agent) === '')
   return result
 }
 

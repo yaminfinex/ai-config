@@ -193,11 +193,12 @@ GET `/api/fleet`
   Groups view (sidebar). The third fleet view is its own client-side
   builder over the same payload: one header per distinct `group` label
   (alphabetical) and an "Ungrouped" header last, drawn only while it has
-  rows. Membership is derived upward: an agent belongs to a group when its
-  own label or any descendant's label (reports by `manager`, Task subagents
-  by `parent_agent`) matches, so an orchestrator with reports in two groups
-  appears under both headers and a leaf appears exactly once; under a
-  header the tree is the manager tree restricted to members. The supervision
+  rows. Membership is the agent's own label (a Task subagent takes its
+  owning top-level agent's), so every agent appears under exactly one
+  header and a manager never joins a group through its reports; an agent
+  with no label is Ungrouped even when its reports are grouped. Under a
+  header the tree is the manager tree restricted to members, and a member
+  whose manager is not one is a root there. The supervision
   view draws no group nodes. Dragging an agent row onto a header issues one
   `POST /api/agents/{bus-name}/assignment` with `{"group":"<header>"}`
   (the Ungrouped header sends `""`, which clears); the client updates

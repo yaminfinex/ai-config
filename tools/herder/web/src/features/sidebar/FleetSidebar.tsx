@@ -136,13 +136,8 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
     }
     const matches = (node: SidebarNode | undefined) => !!node && agentKinds.has(node.kind) && (activeAgent ? node.pane?.agent === activeAgent : node.pane?.pane_id === activePane)
     const first = activeAgent && view === 'supervision' ? nodes.get(agentNodeID(activeAgent)) : [...nodes.values()].find(matches)
-    // An agent can appear under several group headers: keep the occurrence
-    // the operator clicked while it still matches; fall back to the first
-    // match only when that node is gone from this frame.
-    setSelectedItems((current) => {
-      const kept = current.find((id) => matches(nodes.get(id)))
-      return kept ? [kept] : first ? [first.id] : []
-    })
+    // Every view draws an agent once, so its one row is the selection.
+    setSelectedItems(first ? [first.id] : [])
   }, [activeAgent, activePane, nodes, view])
 
   const tree = useTree<SidebarNode>({
