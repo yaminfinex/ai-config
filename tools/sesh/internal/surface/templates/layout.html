@@ -40,6 +40,33 @@ p.notice { border: 1px solid color-mix(in srgb, currentColor 30%, transparent); 
 dl.meta { font-size: .85em; display: grid; grid-template-columns: max-content 1fr; gap: .1rem 1rem; }
 dl.meta dt { opacity: .6; }
 dl.meta dd { margin: 0; }
+.conv { margin: .6rem 0; }
+.msg { margin: .7rem 0; padding: .1rem 0 .1rem .7rem; border-left: 3px solid color-mix(in srgb, currentColor 15%, transparent); }
+.msg-user { border-left-color: #4a7dbd; }
+.msg-assistant { border-left-color: #4aa564; }
+.msg-hcom { border-left-color: #8a63c9; }
+.msg .who { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; opacity: .7; }
+.msg .when { font-weight: 400; opacity: .8; margin-left: .4em; }
+.msg .say { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .say code { font-size: .9em; padding: 0 .2em; border-radius: .2em; background: color-mix(in srgb, currentColor 8%, transparent); }
+.msg .say code.fence { display: block; margin: .3em 0; padding: .4em .6em; overflow-x: auto; white-space: pre; }
+.run { display: flex; flex-wrap: wrap; gap: .25rem; margin: .3rem 0 .3rem .7rem; align-items: flex-start; }
+.pill { font-size: .78em; border-radius: .8em; padding: .05em .6em; max-width: 100%; overflow-wrap: anywhere; background: color-mix(in srgb, currentColor 7%, transparent); border: 1px solid color-mix(in srgb, currentColor 18%, transparent); }
+details.pill > summary { cursor: pointer; list-style: none; }
+details.pill > summary::-webkit-details-marker { display: none; }
+details.pill[open] { flex-basis: 100%; border-radius: .4em; padding: .3em .6em; }
+details.pill[open] > summary { font-weight: 600; }
+details.pill pre { font-size: 1.05em; max-height: 32rem; overflow: auto; }
+.pill .rlabel { font-size: .9em; opacity: .6; margin-top: .3em; }
+.pill.tone-tool { border-color: color-mix(in srgb, #4a7dbd 45%, transparent); }
+.pill.tone-thinking { opacity: .7; font-style: italic; }
+.pill.tone-message { border-color: color-mix(in srgb, #8a63c9 55%, transparent); }
+.pill.tone-status { border-color: color-mix(in srgb, #4aa564 50%, transparent); }
+.pill.tone-context { opacity: .75; }
+.pill.tone-warn { border-color: #b8860b; color: #b8860b; }
+.pill.tone-error { border-color: #c0392b; color: #c0392b; }
+.divider { display: flex; align-items: center; gap: .6rem; margin: 1rem 0; font-size: .8em; opacity: .65; }
+.divider::before, .divider::after { content: ""; flex: 1; border-top: 1px dashed currentColor; }
 </style>
 </head>
 <body>

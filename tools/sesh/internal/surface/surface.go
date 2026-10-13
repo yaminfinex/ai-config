@@ -319,9 +319,11 @@ func (s *Server) handleNodes(w http.ResponseWriter, r *http.Request) {
 
 func mustPage(page string) *template.Template {
 	t := template.New(page).Funcs(template.FuncMap{
-		"fmtTime": fmtTime,
-		"fmtAge":  fmtAge,
-		"fmtSize": fmtSize,
+		"fmtTime":  fmtTime,
+		"fmtAge":   fmtAge,
+		"fmtSize":  fmtSize,
+		"fmtClock": fmtClock,
+		"prose":    prose,
 	})
 	return template.Must(t.ParseFS(templateFS, "templates/layout.html", "templates/"+page))
 }
@@ -497,6 +499,14 @@ func (s *Server) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := s.transcriptData(r.Context(), sum, rows, markers, branchNotice, pageParam(r))
+	full := r.URL.Query().Get("view") == "full"
+	page.Compact = !full
+	page.CompactURL = transcriptPageURL(s.transcriptURL(sum), page.Page)
+	page.FullURL = viewURL(page.CompactURL, true)
+	page.NewerURL, page.OlderURL = viewURL(page.NewerURL, full), viewURL(page.OlderURL, full)
+	if page.Compact {
+		page.Conv = compactRows(page.Entries)
+	}
 	if err := s.render(w, s.transcriptTmpl, "transcript.html", page); err != nil {
 		s.logRenderFailure("/s/*", err)
 		s.serveRawFallback(w, r, sum, "transcript render failed — raw mirror lines")

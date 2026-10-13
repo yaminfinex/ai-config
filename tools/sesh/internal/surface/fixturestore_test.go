@@ -342,7 +342,7 @@ func fixtureClaudeConversationType(entryType string) bool {
 
 func fixtureClaudeSidecarType(entryType string) bool {
 	switch entryType {
-	case "agent-name", "ai-title", "bridge-session", "file-history-snapshot",
+	case "agent-name", "ai-title", "atis-latch", "bridge-session", "file-history-snapshot",
 		"last-prompt", "mode", "permission-mode", "pr-link", "queue-operation",
 		"worktree-state":
 		return true

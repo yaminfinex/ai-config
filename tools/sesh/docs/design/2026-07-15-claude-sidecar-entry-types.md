@@ -43,6 +43,15 @@ empty-UUID non-participation semantics, but the index assigns `role=meta`:
 | `queue-operation` | 6,402 | queued-prompt state transition |
 | `worktree-state` | 22 | worktree session state |
 
+Addendum 2026-10-13: `atis-latch` joins the allowlist. A top-level census of
+400 admitted session files on the fleet host found 19,100 rows, every one with
+the key set `{atis, sessionId, type}` and a string `atis`: per-turn state
+with no message, uuid, or timestamp. Unclassified, it took 82 of the 200
+window slots in one live session. Rows indexed before the addition keep
+`role=unknown`; the surface's exclusion (window arithmetic and the session
+list's row counts) admits `role=unknown` for allowlisted types so those rows
+need no reindex. An unlisted type stays visible whatever its role.
+
 The recursive census also found three types only in nested workflow journals:
 
 | Entry type | Recursive snapshot rows | Classification |

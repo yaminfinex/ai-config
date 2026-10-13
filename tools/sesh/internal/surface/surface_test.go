@@ -119,9 +119,9 @@ func TestResumePairRendersOneTranscript(t *testing.T) {
 	var whole strings.Builder
 	lastPage := (renderable + surface.TranscriptWindowMessages - 1) / surface.TranscriptWindowMessages
 	for page := 1; page <= lastPage; page++ {
-		path := "/s/claude/" + uuidResumeOrig
+		path := "/s/claude/" + uuidResumeOrig + "?view=full"
 		if page > 1 {
-			path += "?page=" + strconv.Itoa(page)
+			path += "&page=" + strconv.Itoa(page)
 		}
 		body := mustGet200(t, srv, path)
 		whole.WriteString(body)
@@ -167,28 +167,28 @@ func TestTranscriptWindowBoundsLargeSession(t *testing.T) {
 	// links older history; the raw route still serves the whole session.
 	const n = 600
 	srv := newServer(t, manyLargeLinesStore(t, n, 64, false))
-	body := mustGet200(t, srv, "/s/claude/"+uuidNormal)
+	body := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?view=full")
 	if got := strings.Count(body, `<li class="entry`); got != surface.TranscriptWindowMessages {
 		t.Errorf("page one rendered %d entries, want the %d-message window", got, surface.TranscriptWindowMessages)
 	}
 	if !strings.Contains(body, "messages 401–600 of 600") {
 		t.Error("page one must label the latest window (messages 401–600 of 600)")
 	}
-	if !strings.Contains(body, `?page=2">older`) {
+	if !strings.Contains(body, `?page=2&amp;view=full">older`) {
 		t.Error("page one must link the older window")
 	}
 	if strings.Contains(body, "← newer") {
 		t.Error("the newest window must not offer a newer link")
 	}
 
-	oldest := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?page=3")
+	oldest := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?page=3&view=full")
 	if !strings.Contains(oldest, "showing messages 1–200 of 600") {
 		t.Error("the oldest window must label its slice")
 	}
 	if strings.Contains(oldest, "older →") {
 		t.Error("the oldest window must not offer an older link")
 	}
-	if !strings.Contains(oldest, `<a href="/s/claude/`+uuidNormal+`?page=2">← newer</a>`) {
+	if !strings.Contains(oldest, `<a href="/s/claude/`+uuidNormal+`?page=2&amp;view=full">← newer</a>`) {
 		t.Error("the oldest window must link the newer window")
 	}
 
@@ -223,7 +223,7 @@ func TestTranscriptWindowsCountConversationNotClaudeMetadata(t *testing.T) {
 	}
 	srv := newServer(t, oneFileStore(t, data, false))
 
-	latest := mustGet200(t, srv, "/s/claude/"+uuidNormal)
+	latest := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?view=full")
 	if n := strings.Count(latest, `<li class="entry`); n != surface.TranscriptWindowMessages {
 		t.Fatalf("latest window rendered %d entries, want %d conversation messages", n, surface.TranscriptWindowMessages)
 	}
@@ -237,7 +237,7 @@ func TestTranscriptWindowsCountConversationNotClaudeMetadata(t *testing.T) {
 		t.Error("known Claude metadata rendered as a conversation entry")
 	}
 
-	older := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?page=2")
+	older := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?page=2&view=full")
 	if n := strings.Count(older, `<li class="entry`); n != 5 {
 		t.Fatalf("older window rendered %d entries, want 5 conversation messages", n)
 	}
@@ -314,7 +314,7 @@ func TestTranscriptBudgetOmitsRowsHonestly(t *testing.T) {
 	// past the 8 MiB budget — the byte backstop must stop the page and say
 	// how many rows it left out, pointing at the raw view.
 	srv := newServer(t, manyMultiBlockLinesStore(t, surface.TranscriptWindowMessages, 4, 20<<10))
-	body := mustGet200(t, srv, "/s/claude/"+uuidNormal)
+	body := mustGet200(t, srv, "/s/claude/"+uuidNormal+"?view=full")
 	if len(body) > 10<<20 {
 		t.Errorf("transcript rendered %d bytes; the display budget must bound the page", len(body))
 	}

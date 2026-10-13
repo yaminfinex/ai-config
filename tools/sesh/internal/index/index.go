@@ -811,6 +811,7 @@ func isClaudeSidecarType(entryType string) bool {
 	switch entryType {
 	case "agent-name",
 		"ai-title",
+		"atis-latch",
 		"bridge-session",
 		"file-history-snapshot",
 		"last-prompt",

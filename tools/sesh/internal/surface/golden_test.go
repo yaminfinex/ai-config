@@ -47,12 +47,17 @@ func TestGoldenSnapshots(t *testing.T) {
 		"recency.html":                  "/sessions",
 		"recency-node-filtered.html":    "/sessions?node=grace@workstation",
 		"recency-fragment.html":         "/fragments/recency",
-		"transcript-claude-normal.html": "/s/claude/" + uuidNormal,
-		"transcript-resume-pair.html":   "/s/claude/" + uuidResumeOrig,
-		"transcript-interleaved.html":   "/s/claude/" + uuidInterleave,
-		"transcript-codex.html":         "/s/codex/" + uuidCodexMeta,
-		"transcript-grok.html":          "/s/grok/" + uuidGrokChat,
-		"fallback-quarantined-raw.html": "/s/claude/" + uuidPartial,
+		"transcript-claude-normal.html": "/s/claude/" + uuidNormal + "?view=full",
+		"transcript-resume-pair.html":   "/s/claude/" + uuidResumeOrig + "?view=full",
+		"transcript-interleaved.html":   "/s/claude/" + uuidInterleave + "?view=full",
+		"transcript-codex.html":         "/s/codex/" + uuidCodexMeta + "?view=full",
+		"transcript-grok.html":          "/s/grok/" + uuidGrokChat + "?view=full",
+		// The default conversation view, one per tool shape.
+		"transcript-claude-normal-conv.html": "/s/claude/" + uuidNormal,
+		"transcript-interleaved-conv.html":   "/s/claude/" + uuidInterleave,
+		"transcript-codex-conv.html":         "/s/codex/" + uuidCodexMeta,
+		"transcript-grok-conv.html":          "/s/grok/" + uuidGrokChat,
+		"fallback-quarantined-raw.html":      "/s/claude/" + uuidPartial,
 	}
 	for name, path := range pages {
 		t.Run(name, func(t *testing.T) {
@@ -65,9 +70,12 @@ func TestGoldenSnapshots(t *testing.T) {
 
 func TestGoldenPiBranched(t *testing.T) {
 	srv := newServer(t, piStore(t))
-	body := mustGet200(t, srv, "/s/pi/"+uuidPiBranched)
+	body := mustGet200(t, srv, "/s/pi/"+uuidPiBranched+"?view=full")
 	assertWellFormedHTML(t, body)
 	checkGolden(t, "transcript-pi-branched.html", body)
+	conv := mustGet200(t, srv, "/s/pi/"+uuidPiBranched)
+	assertWellFormedHTML(t, conv)
+	checkGolden(t, "transcript-pi-branched-conv.html", conv)
 }
 
 // --- minimal strict well-formedness checker for our own output ---

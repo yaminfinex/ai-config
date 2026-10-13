@@ -14,6 +14,7 @@ const sidecarSessionID = "10000000-0000-0000-0000-000000000000"
 var claudeMetadataTypes = []string{
 	"agent-name",
 	"ai-title",
+	"atis-latch",
 	"bridge-session",
 	"file-history-snapshot",
 	"last-prompt",

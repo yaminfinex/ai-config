@@ -117,7 +117,7 @@ func TestSQLStoreRendersResumePairOnceFromLiveIndex(t *testing.T) {
 	// Render through the real seam: the 191 conversation rows fit one bounded
 	// window, while the excluded sidecars remain byte-faithful in raw.
 	srv := newServer(t, live)
-	page1 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig)
+	page1 := mustGet200(t, srv, "/s/claude/"+uuidResumeOrig+"?view=full")
 	seen := map[string]int{}
 	for _, m := range dataUUIDRe.FindAllStringSubmatch(page1, -1) {
 		seen[m[1]]++
@@ -157,7 +157,7 @@ func TestSQLStoreKeepsUnknownClaudeTypeDegradedVisible(t *testing.T) {
 	}
 
 	srv := newServer(t, live)
-	body := mustGet200(t, srv, "/s/claude/"+sidecarFixtureSessionID)
+	body := mustGet200(t, srv, "/s/claude/"+sidecarFixtureSessionID+"?view=full")
 	if n := strings.Count(body, `<li class="entry`); n != 6 {
 		t.Fatalf("rendered %d entries, want two messages plus four unknown-visible probes", n)
 	}
@@ -166,8 +166,15 @@ func TestSQLStoreKeepsUnknownClaudeTypeDegradedVisible(t *testing.T) {
 			t.Fatalf("unknown-visible Claude type %s was silently dropped", typ)
 		}
 	}
-	if !strings.Contains(body, "10 known metadata lines excluded") {
+	if !strings.Contains(body, "11 known metadata lines excluded") {
 		t.Fatal("known sidecar exclusion count is missing")
+	}
+	// The conversation view keeps every unknown type visible as a pill too.
+	compact := mustGet200(t, srv, "/s/claude/"+sidecarFixtureSessionID)
+	for _, typ := range []string{"fork-context-ref", "result", "started", "future-sidecar-probe"} {
+		if !strings.Contains(compact, ">"+typ) {
+			t.Fatalf("unknown Claude type %s was dropped from the conversation view", typ)
+		}
 	}
 }
 

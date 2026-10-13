@@ -239,6 +239,12 @@ rows (`?page=N` walks older windows, same pager idiom as the sessions
 list), the byte-level display budget stays as the in-window backstop, and
 the raw route streams every mirrored file whole, byte-faithful, in
 first-ingest order (a newline is inserted only where a file ends mid-line).
+A transcript page reads as a conversation by default: user, assistant and
+hcom request turns as prose; tool calls (each paired with its result),
+thinking, fenced status notes, hook notices and injected context folded into
+expandable pills; known bookkeeping lines (token counts, mode and settings
+records, empty thinking signatures) hidden. Unrecognized shapes always stay
+visible as a pill. `?view=full` renders every line of the window as before.
 When the index cannot render a session, the transcript page itself falls
 back to a bounded HTML view of the mirror lines. The sessions list is bounded:
 request-time work is proportional to the page, not the corpus (fleet
