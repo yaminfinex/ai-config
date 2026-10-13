@@ -271,6 +271,26 @@ export type GitFileRead = {
   truncated: boolean
 }
 
+export type GitHubLocation = {
+  owner: string
+  repo: string
+  path: string
+  kind: 'blob' | 'tree'
+  sha: string
+  ref: string
+  at_head: boolean
+  uncommitted: boolean
+  differs: boolean
+}
+
+export type GitHubRead = {
+  root: string
+  path: string
+  github?: GitHubLocation
+  reason?: string
+  fetched_at: string
+}
+
 export interface FileTarget {
   root: string
   path: string

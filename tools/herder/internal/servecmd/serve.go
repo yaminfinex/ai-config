@@ -1073,6 +1073,13 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveGitFile(w, r, deps)
 	})
+	mux.HandleFunc("/api/git/github", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveGitHub(w, r, deps)
+	})
 	mux.HandleFunc("/api/agents/{busName}", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")
