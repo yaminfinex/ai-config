@@ -24,6 +24,7 @@ import { failureBanner, PanelState } from '../../shared/PanelState'
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { treeChildIndex, treeKeyIntent, treeParentIndex } from '../../shared/treeModel'
 import { PathCopyButton } from '../../shared/PathCopyButton'
+import { GitHubLinkButtons, useGitHubLocation } from '../git/GitHubLinkButtons'
 
 function childPath(parent: string, name: string) {
   return [parent.replace(/\/+$/u, ''), name].filter(Boolean).join('/')
@@ -200,6 +201,7 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
     queryFn: ({ signal }) => getBacklog(target.root, currentDir, fetch, signal),
     retry: false,
   })
+  const githubQuery = useGitHubLocation(target.root, currentDir)
   const available = boardAvailable(backlog.data)
   const showBoard = available && boardView
 
@@ -246,8 +248,8 @@ export function FolderPanel({ target, agents, active, selectionHint, onSelection
   const absolutePath = rootJoinedAbsolutePath(target.root, currentDir)
   return <main className="folder-panel">
     <header className="folder-header">
-      <div className="folder-title"><div className="path-name"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><button type="button" className={`header-refresh${currentTree.isFetching || backlog.isFetching ? ' busy' : ''}`}
-        title={currentTree.isFetching || backlog.isFetching ? 'Refreshing…' : 'Refresh'} aria-label="Refresh" onClick={() => { currentTree.refetch(); backlog.refetch() }} disabled={currentTree.isFetching || backlog.isFetching}>
+      <div className="folder-title"><div className="path-name"><strong>{rootLabel(currentDir) || rootLabel(target.root)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><GitHubLinkButtons query={githubQuery} /><button type="button" className={`header-refresh${currentTree.isFetching || backlog.isFetching ? ' busy' : ''}`}
+        title={currentTree.isFetching || backlog.isFetching ? 'Refreshing…' : 'Refresh'} aria-label="Refresh" onClick={() => { currentTree.refetch(); backlog.refetch(); void githubQuery.refetch() }} disabled={currentTree.isFetching || backlog.isFetching}>
         <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M12 7a5 5 0 1 1-1.46-3.54" /><path d="M12.5 1.5v2.6h-2.6" /></svg>
       </button></div>{parentFolder !== null && <a className="path-parent-link"
         href={`/folder?${new URLSearchParams({ root: target.root, path: parentFolder })}`} title={`Open ${rootJoinedAbsolutePath(target.root, parentFolder)} · ${openInSideLabel(navigator.userAgent)}`}

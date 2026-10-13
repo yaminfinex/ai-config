@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
-import { assignAgent, getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitLog, getGitStatus, getState, lifecycleProblem, mutationProblem, renameAgent, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
+import { assignAgent, getAgent, getBacklog, getEntries, getFile, getFileTree, getGitDiff, getGitFile, getGitHub, getGitLog, getGitStatus, getState, lifecycleProblem, mutationProblem, renameAgent, resolveFiles, sendMessage, sendPaneInput, spawnAgent, upsertState, viewerReadOnlyMessage } from '../src/api/client.ts'
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' }, ...init })
@@ -58,6 +58,8 @@ test('git reads encode roots, paths, mutable bases, cursors, and immutable shas'
   await getGitDiff('/repo with space', 'old App.tsx', 'commit', fetcher, undefined, '731'.repeat(13) + '7')
   await getGitLog('/repo with space', 'src/App.tsx', 'opaque+/=', fetcher)
   await getGitFile('/repo with space', 'old App.tsx', '731'.repeat(13) + '7', fetcher)
+  await getGitHub('/repo with space', 'docs/read me #1%.md', fetcher)
+  await getGitHub('/repo with space', '', fetcher)
   assert.deepEqual(calls, [
     '/api/git/status?root=%2Frepo+with+space',
     '/api/git/status?root=%2Frepo+with+space&base=branch',
@@ -65,6 +67,8 @@ test('git reads encode roots, paths, mutable bases, cursors, and immutable shas'
     `/api/git/diff?root=%2Frepo+with+space&path=old+App.tsx&base=commit&sha=${'731'.repeat(13)}7`,
     '/api/git/log?root=%2Frepo+with+space&path=src%2FApp.tsx&cursor=opaque%2B%2F%3D',
     `/api/git/file?root=%2Frepo+with+space&path=old+App.tsx&sha=${'731'.repeat(13)}7`,
+    '/api/git/github?root=%2Frepo+with+space&path=docs%2Fread+me+%231%25.md',
+    '/api/git/github?root=%2Frepo+with+space',
   ])
 })
 

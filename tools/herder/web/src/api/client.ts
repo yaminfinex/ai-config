@@ -1,4 +1,4 @@
-import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTreeRead, GitDiffRead, GitFileRead, GitLogRead, GitStatusRead, LifecycleResult, PaneHistory, Refusal, ResolveResponse } from '../types'
+import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTreeRead, GitDiffRead, GitFileRead, GitHubRead, GitLogRead, GitStatusRead, LifecycleResult, PaneHistory, Refusal, ResolveResponse } from '../types'
 import type { GitBase } from '../features/git/gitViewModel'
 
 export type Fetcher = typeof fetch
@@ -30,6 +30,7 @@ export const queryKeys = {
   gitDiff: (root: string, path: string, base: GitBase | 'commit', sha?: string) => ['git-diff', root, path, base, sha] as const,
   gitLog: (root: string, path: string) => ['git-log', root, path] as const,
   gitFile: (root: string, path: string, sha: string) => ['git-file', root, path, sha] as const,
+  gitHub: (root: string, path: string) => ['git-github', root, path] as const,
 }
 
 export type LifecycleProblem = {
@@ -195,6 +196,12 @@ export function getGitLog(root: string, path: string, cursor?: string, fetcher: 
 export function getGitFile(root: string, path: string, sha: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
   const query = new URLSearchParams({ root, path, sha })
   return requestJSON<GitFileRead>(`/api/git/file?${query}`, { signal }, fetcher)
+}
+
+export function getGitHub(root: string, path: string, fetcher: Fetcher = fetch, signal?: AbortSignal) {
+  const query = new URLSearchParams({ root })
+  if (path) query.set('path', path)
+  return requestJSON<GitHubRead>(`/api/git/github?${query}`, { signal }, fetcher)
 }
 
 export function sendMessage(name: string, text: string, fetcher?: Fetcher) {

@@ -15,6 +15,7 @@ import { useFileWatch } from '../../stream/fileWatchRegistry'
 import { failureBanner, PanelState, useActivationRefetch } from '../../shared/PanelState'
 import { historyPagingState } from './historyPaging'
 import { PathCopyButton } from '../../shared/PathCopyButton'
+import { GitHubLinkButtons, useGitHubLocation } from '../git/GitHubLinkButtons'
 import { useTranscriptFileResolver } from './TranscriptFileResolver'
 import { useNoteCapture } from '../notes/useNoteCapture'
 import type { NoteSource } from '../notes/notesStore'
@@ -59,6 +60,7 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
     queryFn: ({ signal }) => getGitStatus(target.root, fetch, signal),
     retry: false,
   })
+  const githubQuery = useGitHubLocation(target.root, target.path)
   const gitAvailable = Boolean(statusQuery.data && 'repo' in statusQuery.data)
   const branchAvailable = Boolean(statusQuery.data && 'repo' in statusQuery.data && statusQuery.data.repo.branch_base.status === 'available')
   const effectiveBase: GitBase = gitState.base === 'branch' && !branchAvailable ? 'uncommitted' : gitState.base
@@ -99,6 +101,7 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
       if (gitState.mode === 'current' && !gitState.revision) void fileQuery.refetch()
       if (rawQueryEnabled) void rawQuery.refetch()
       void statusQuery.refetch()
+      void githubQuery.refetch()
       if (gitState.mode === 'diff' && gitAvailable) void diffQuery.refetch()
       if (gitState.mode === 'history' && gitAvailable) void historyQuery.refetch()
   })
@@ -141,6 +144,7 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
       : statusQuery.data && 'git' in statusQuery.data ? statusQuery.data.git.reason : ''
   const refresh = () => {
     void statusQuery.refetch()
+    void githubQuery.refetch()
     if (rawQueryEnabled) void rawQuery.refetch()
     if (gitState.mode === 'current' && !gitState.revision) void fileQuery.refetch()
     else if (gitState.mode === 'diff' && gitAvailable) void diffQuery.refetch()
@@ -151,7 +155,7 @@ export function FilePanel({ target, agents, viewMode, gitState, active, onViewMo
   const absolutePath = rootJoinedAbsolutePath(target.root, target.path)
   return <main className="file-panel" ref={noteCapture.containerRef} onDoubleClickCapture={noteCapture.onDoubleClick}>
     <header className="file-header">
-      <div className="file-title"><div className="path-name"><strong>{rootLabel(target.path)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><button type="button" className={`header-refresh${refreshing ? ' busy' : ''}`}
+      <div className="file-title"><div className="path-name"><strong>{rootLabel(target.path)}</strong><PathCopyButton key={absolutePath} path={absolutePath} /><GitHubLinkButtons query={githubQuery} lines={gitState.revision ? null : selectedCurrentLines(target.line)} /><button type="button" className={`header-refresh${refreshing ? ' busy' : ''}`}
         title={refreshing ? 'Refreshing…' : 'Refresh'} aria-label="Refresh" onClick={refresh} disabled={refreshing}>
         <svg viewBox="0 0 14 14" aria-hidden="true" focusable="false"><path d="M12 7a5 5 0 1 1-1.46-3.54" /><path d="M12.5 1.5v2.6h-2.6" /></svg>
       </button></div><a className="path-parent-link" href={`/folder?${new URLSearchParams({ root: target.root, path: containingFolder })}`}

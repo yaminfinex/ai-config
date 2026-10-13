@@ -124,3 +124,28 @@ type FileResult struct {
 	Size      int64   `json:"size"`
 	Truncated *bool   `json:"truncated,omitempty"`
 }
+
+// GitHubLocation names one path on GitHub. Path is relative to the repository
+// top level ("" is the top level itself); Kind is blob or tree. SHA is HEAD
+// when AtHead, otherwise the commit of Ref (an origin remote-tracking branch).
+// Uncommitted reports local changes against HEAD; Differs reports that the
+// local copy is not what the link shows.
+type GitHubLocation struct {
+	Owner       string `json:"owner"`
+	Repo        string `json:"repo"`
+	Path        string `json:"path"`
+	Kind        string `json:"kind"`
+	SHA         string `json:"sha"`
+	Ref         string `json:"ref"`
+	AtHead      bool   `json:"at_head"`
+	Uncommitted bool   `json:"uncommitted"`
+	Differs     bool   `json:"differs"`
+}
+
+type GitHubResult struct {
+	Root      string          `json:"root"`
+	Path      string          `json:"path"`
+	GitHub    *GitHubLocation `json:"github,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+	FetchedAt time.Time       `json:"fetched_at"`
+}

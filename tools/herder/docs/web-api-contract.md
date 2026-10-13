@@ -813,7 +813,7 @@ unattributed viewers have the same read access, and no file write exists.
 
 ### AMENDMENT (owner-ratified, conductor-acked, 2026-08-28) — bounded Git reads
 
-Four read-only Git endpoints extend the opaque-root file universe. They compute
+Read-only Git endpoints extend the opaque-root file universe. They compute
 facts on demand and hold no persistent state. Each path is root-relative and
 inherits the file endpoints' traversal, `.git`-internal, and symlink-escape
 refusals. A root nested inside a repository remains its own readable universe:
@@ -998,6 +998,44 @@ GET `/api/git/file?root={root-id}&path={relative-file}&sha={full-commit-sha}`
   404s. Successful responses omit `fetched_at` and set
   `Cache-Control: public, max-age=31536000, immutable` because the SHA-addressed
   representation cannot change.
+
+GET `/api/git/github?root={root-id}&path={optional-relative-file-or-directory}`
+  (AMENDMENT github-links, owner #442574, 2026-10-13.) Locates a file or
+  folder on GitHub so the file and folder headers can open and copy its link
+  beside Copy path. An omitted or empty `path` is the root itself. It is its
+  own endpoint rather than a field on `/api/git/status` because it is per
+  path, while status is per root and the Changes view polls it. Success is
+  `{"root":"/opaque/root","path":"docs/guide.md","github":{"owner":"acme","repo":"widgets","path":"tools/herder/docs/guide.md","kind":"blob","sha":"<full-commit-sha>","ref":"HEAD","at_head":true,"uncommitted":false,"differs":false},"fetched_at":"..."}`.
+  `github.path` is relative to the Git top level (a linked worktree's top level
+  is the worktree; a root nested in a repository keeps its prefix) and is `""`
+  for the top level itself. `kind` is `blob` or `tree`, read from Git at `sha`.
+
+  `owner`/`repo` come only from `git remote get-url origin`, which already
+  applies Git's `url.*.insteadOf` rewrites. The accepted forms are
+  `git@github.com:o/r(.git)`, `ssh://git@github.com[:port]/o/r(.git)`,
+  `https://github.com/o/r(.git)` and `git://`, with host `github.com`,
+  `www.github.com` or GitHub's SSH-over-443 `ssh.github.com`. Any other host,
+  including an SSH config alias that Git itself does not rewrite, is not
+  GitHub.
+
+  The ref rule: the link names HEAD's commit (`ref:"HEAD"`, `at_head:true`)
+  when an `refs/remotes/origin/*` ref contains it, tested first with
+  `merge-base --is-ancestor` against the branch's origin upstream and
+  `origin/HEAD`, then with `for-each-ref --contains` over origin's refs.
+  Otherwise it names the commit of the branch's origin upstream, else of
+  `origin/HEAD` (`ref:"origin/<branch>"`, `at_head:false`). Proofs that HEAD
+  is on origin are cached per (top level, HEAD) in process; a negative answer
+  is never cached because a push can change it. `uncommitted` is true when
+  `git status` shows staged, unstaged or untracked changes under the path;
+  `differs` is true when the working copy is not what the link shows
+  (`uncommitted`, or a `git diff` against a non-HEAD `sha`).
+
+  When no link can be proved the response is still HTTP 200 with `github`
+  omitted and a plain `reason`: not a git repository, no origin remote, an
+  origin that is not GitHub, no origin commit to name, or a path that does
+  not exist at the chosen commit (an untracked file, or one only in unpushed
+  commits). The client shows nothing then. Escapes and `.git` internals are
+  refused as for the other Git reads; no GitHub API or network call is made.
 
 Agent detail additionally carries top-level `cwd` and optional
 `git:{branch,remote_url,worktree_of}` derived read-only from its current roster

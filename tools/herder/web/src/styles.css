@@ -455,6 +455,7 @@ h2, h3, p { margin-top: 0; }
 @keyframes header-refresh-spin { to { transform: rotate(360deg); } }
 .header-refresh.busy svg { animation: header-refresh-spin .9s linear infinite; }
 .path-copy.copied { color: var(--green); }
+.github-open .github-mark { fill: currentColor; stroke: none; }
 .path-copy.failed { color: var(--error-text); }
 .path-copy-status { position: absolute; overflow: hidden; width: 1px; height: 1px; margin: -1px; white-space: nowrap; clip-path: inset(50%); }
 .file-view-toggle { flex: 0 0 auto; }

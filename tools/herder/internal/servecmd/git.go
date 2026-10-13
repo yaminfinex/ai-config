@@ -109,6 +109,24 @@ func serveGitFile(w http.ResponseWriter, r *http.Request, deps dependencies) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func serveGitHub(w http.ResponseWriter, r *http.Request, deps dependencies) {
+	root, ok := gitRoot(w, r, deps)
+	if !ok {
+		return
+	}
+	path, err := optionalQuery(r, "path")
+	if err != nil {
+		refuse(w, http.StatusBadRequest, "bad request", err.Error())
+		return
+	}
+	result, err := gitapi.ReadGitHub(r.Context(), root, path, deps.now)
+	if err != nil {
+		serveGitError(w, err, "git unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func gitPathQueries(w http.ResponseWriter, r *http.Request, deps dependencies) (string, string, bool) {
 	root, ok := gitRoot(w, r, deps)
 	if !ok {

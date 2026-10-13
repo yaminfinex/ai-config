@@ -168,3 +168,49 @@ func fileAPIGitOutput(t *testing.T, root string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestGitHubEndpointPinsShapes(t *testing.T) {
+	repo := newFileAPIGitRepo(t)
+	writeFileAPIFixture(t, repo, "docs/guide.md", "guide\n")
+	fileAPIGit(t, repo, "add", ".")
+	fileAPIGit(t, repo, "commit", "-m", "initial")
+	fileAPIGit(t, repo, "remote", "add", "origin", "https://github.com/acme/widgets.git")
+	fileAPIGit(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	sha := strings.TrimSpace(fileAPIGitOutput(t, repo, "rev-parse", "HEAD"))
+	plain := t.TempDir()
+	fetched := time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
+	deps := fileAPIDeps(t, []string{repo, plain}, nil)
+	deps.now = func() time.Time { return fetched }
+	handler := newHandler(deps)
+
+	file := httptest.NewRecorder()
+	handler.ServeHTTP(file, httptest.NewRequest(http.MethodGet, "/api/git/github?root="+url.QueryEscape(repo)+"&path=docs/guide.md", nil))
+	want := `{"root":"` + repo + `","path":"docs/guide.md","github":{"owner":"acme","repo":"widgets","path":"docs/guide.md","kind":"blob","sha":"` + sha + `","ref":"HEAD","at_head":true,"uncommitted":false,"differs":false},"fetched_at":"2026-10-13T09:00:00Z"}`
+	if file.Code != http.StatusOK || strings.TrimSpace(file.Body.String()) != want {
+		t.Fatalf("file=%d %s", file.Code, file.Body.String())
+	}
+
+	rootFolder := httptest.NewRecorder()
+	handler.ServeHTTP(rootFolder, httptest.NewRequest(http.MethodGet, "/api/git/github?root="+url.QueryEscape(repo), nil))
+	if rootFolder.Code != http.StatusOK || !strings.Contains(rootFolder.Body.String(), `"path":"","kind":"tree"`) {
+		t.Fatalf("root folder=%d %s", rootFolder.Code, rootFolder.Body.String())
+	}
+
+	nothing := httptest.NewRecorder()
+	handler.ServeHTTP(nothing, httptest.NewRequest(http.MethodGet, "/api/git/github?root="+url.QueryEscape(plain)+"&path=notes.txt", nil))
+	if nothing.Code != http.StatusOK || strings.Contains(nothing.Body.String(), `"github"`) || !strings.Contains(nothing.Body.String(), `"reason":"not a git repository"`) {
+		t.Fatalf("non-repository=%d %s", nothing.Code, nothing.Body.String())
+	}
+
+	escape := httptest.NewRecorder()
+	handler.ServeHTTP(escape, httptest.NewRequest(http.MethodGet, "/api/git/github?root="+url.QueryEscape(repo)+"&path=../outside", nil))
+	if escape.Code != http.StatusConflict {
+		t.Fatalf("escape=%d %s", escape.Code, escape.Body.String())
+	}
+
+	post := httptest.NewRecorder()
+	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/api/git/github?root="+url.QueryEscape(repo), nil))
+	if post.Code != http.StatusBadRequest {
+		t.Fatalf("post=%d %s", post.Code, post.Body.String())
+	}
+}
