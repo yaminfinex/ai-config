@@ -85,6 +85,10 @@ cat >"$STUBS/gcloud" <<'EOF'
 #!/usr/bin/env sh
 echo "$*" >>"$STUB_STATE/gcloud.log"
 EOF
+cat >"$STUBS/rclone" <<'EOF'
+#!/usr/bin/env sh
+echo "$*" >>"$STUB_STATE/rclone.log"
+EOF
 # sqlite3 CLI shim over python3's bindings (the REAL sqlite engine executes
 # the statement — VACUUM INTO included); the gate machine may lack the CLI
 # that bootstrap installs on the VM. Single statements only, like backup.sh.
@@ -348,5 +352,24 @@ SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="gs://test-bucket/sesh" SESH_DISK_WA
 grep -q 'WARNING' "$WORK/bk-warn.out" || fail "no capacity warning at threshold 0"
 grep -q 'escape triggers' "$WORK/bk-warn.out" || fail "warning does not point at the escape triggers"
 ok "disk pressure warns loudly and names the escape triggers"
+
+step "backup: an s3:// target goes through rclone, same order, endpoint required"
+RLOG="$STUB_STATE/rclone.log"
+: >"$RLOG"
+: >"$GLOG"
+SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="s3://bk/sesh" SESH_S3_ENDPOINT="https://s3.example" \
+  PATH="$STUBS:$PATH" sh "$OPS_SRC/backup.sh" >"$WORK/bk-s3.out" 2>&1 ||
+  fail "s3 backup run failed: $(cat "$WORK/bk-s3.out")"
+[ -s "$GLOG" ] && fail "s3 target still called gcloud: $(cat "$GLOG")"
+grep -q 'store.sqlite' "$RLOG" && fail "a store.sqlite path reached rclone (live-file copy forbidden)"
+grep -q -- '--s3-endpoint https://s3.example' "$RLOG" || fail "endpoint not passed to rclone: $(cat "$RLOG")"
+MIRROR_LN=$(grep -n "/mirror :s3:bk/sesh/mirror" "$RLOG" | cut -d: -f1 | head -1)
+DB_LN=$(grep -n "/backup/db :s3:bk/sesh/db" "$RLOG" | cut -d: -f1 | head -1)
+{ [ -n "$MIRROR_LN" ] && [ -n "$DB_LN" ] && [ "$MIRROR_LN" -lt "$DB_LN" ]; } ||
+  fail "s3 upload order wrong or incomplete: $(cat "$RLOG")"
+grep -q "/tsnet :s3:bk/sesh/tsnet" "$RLOG" || fail "tsnet identity not in the s3 backup"
+SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="s3://bk/sesh" PATH="$STUBS:$PATH" \
+  sh "$OPS_SRC/backup.sh" >/dev/null 2>&1 && fail "an s3 target without SESH_S3_ENDPOINT must fail"
+ok "s3 backups: rclone copy, mirror before db, tsnet included, endpoint enforced"
 
 all_green

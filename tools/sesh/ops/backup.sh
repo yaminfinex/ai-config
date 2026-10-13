@@ -46,14 +46,35 @@ if [ -f "$DATA_DIR/store.sqlite" ]; then
   mv "$DATA_DIR/backup/db/store.sqlite.tmp" "$DATA_DIR/backup/db/store.sqlite"
 fi
 
+# push <dir> <bucket path>: copy-only (never deletes remote objects; the
+# bucket's versioning keeps overwritten history). gs:// goes through gcloud;
+# s3:// goes through rclone against SESH_S3_ENDPOINT (any S3-compatible
+# store), credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, which
+# sesh-backup.service loads from the root-only /etc/sesh/backup.env.
+push() {
+  case "$BUCKET" in
+    s3://*)
+      rclone copy --s3-provider Other --s3-env-auth --s3-endpoint "$SESH_S3_ENDPOINT" \
+        "$1" ":s3:${2#s3://}"
+      ;;
+    *) gcloud storage rsync -r "$1" "$2" ;;
+  esac
+}
+case "$BUCKET" in
+  s3://*)
+    [ -n "${SESH_S3_ENDPOINT:-}" ] ||
+      { echo "sesh-backup.sh: an s3:// bucket needs SESH_S3_ENDPOINT" >&2; exit 1; }
+    ;;
+esac
+
 # Upload order is load-bearing (see header): mirror first, db snapshot after.
 if [ -d "$DATA_DIR/mirror" ]; then
-  gcloud storage rsync -r "$DATA_DIR/mirror" "$BUCKET/mirror"
+  push "$DATA_DIR/mirror" "$BUCKET/mirror"
 fi
-gcloud storage rsync -r "$DATA_DIR/backup/db" "$BUCKET/db"
+push "$DATA_DIR/backup/db" "$BUCKET/db"
 if [ -d "$DATA_DIR/tsnet" ]; then
-  gcloud storage rsync -r "$DATA_DIR/tsnet" "$BUCKET/tsnet"
+  push "$DATA_DIR/tsnet" "$BUCKET/tsnet"
 fi
 if [ -d "$DATA_DIR/releases" ]; then
-  gcloud storage rsync -r "$DATA_DIR/releases" "$BUCKET/releases"
+  push "$DATA_DIR/releases" "$BUCKET/releases"
 fi
