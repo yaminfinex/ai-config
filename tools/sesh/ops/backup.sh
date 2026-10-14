@@ -54,7 +54,7 @@ fi
 push() {
   case "$BUCKET" in
     s3://*)
-      rclone copy --s3-provider Other --s3-env-auth --s3-endpoint "$SESH_S3_ENDPOINT" \
+      rclone copy --s3-provider Other --s3-env-auth --s3-no-check-bucket --s3-endpoint "$SESH_S3_ENDPOINT" \
         "$1" ":s3:${2#s3://}"
       ;;
     *) gcloud storage rsync -r "$1" "$2" ;;
