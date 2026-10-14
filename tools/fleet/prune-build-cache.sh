@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The one way the shared Rust build cache (mbx, /mnt/xfs-nvme/mbx) is pruned.
-# mbx never collects on its own here (gc.auto = false in
-# ~/.config/mbx/config.toml), so nothing is deleted until a caller runs this
-# with --apply. Without --apply it only previews. The budgets come from that
-# config: gc.max_total_size and gc.min_free_size. Before running mbx at all it
-# proves those premises from mbx's effective settings and refuses otherwise.
-# Nothing calls this script implicitly; any cadence is the operator's call.
+# Collects the shared Rust build cache (mbx, /mnt/xfs-nvme/mbx) now. mbx also
+# collects on its own after builds (gc.auto = true in
+# ~/.config/mbx/config.toml); this previews that collection, or with --apply
+# runs it without waiting for one. The budgets come from that config:
+# gc.max_total_size and gc.min_free_size. Before running mbx at all it proves
+# the cache location and budgets from mbx's effective settings and refuses
+# otherwise. Nothing calls this script implicitly.
 #   prune-build-cache.sh            preview what `mbx gc` would remove
 #   prune-build-cache.sh --apply    run `mbx gc`
 
@@ -45,7 +45,6 @@ cache_dir=$(setting cache_dir)
 mount_real=$(realpath -- "$CACHE_MOUNT")
 cache_real=$(realpath -m -- "$cache_dir")
 [[ $cache_real == "${mount_real%/}"/* ]] || die "mbx cache_dir $cache_dir is not under $CACHE_MOUNT"
-[[ $(setting gc.auto) == false ]] || die "mbx gc.auto is not false, so this is not the only path that deletes"
 for key in gc.max_total_size gc.min_free_size; do
   [[ -n $(setting "$key") ]] || die "mbx $key is unset, so mbx would prune to its default budget"
 done

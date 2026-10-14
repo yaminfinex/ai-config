@@ -1161,8 +1161,7 @@ cat >"$TEST_ROOT/mbx/mbx" <<'EOF'
 if [[ $1 == settings && $2 == get ]]; then
   case $3 in
     cache_dir) printf '%s\n' "${FAKE_MBX_CACHE_DIR-/srv/cache/mbx}" ;;
-    gc.auto) printf '%s\n' "${FAKE_MBX_GC_AUTO-false}" ;;
-    gc.max_total_size) printf '%s\n' "${FAKE_MBX_MAX_TOTAL-400GiB}" ;;
+    gc.max_total_size) printf '%s\n' "${FAKE_MBX_MAX_TOTAL-1TiB}" ;;
     gc.min_free_size) printf '%s\n' "${FAKE_MBX_MIN_FREE-100GiB}" ;;
     *) exit 2 ;;
   esac
@@ -1196,7 +1195,6 @@ fi
 for refusal in \
   '/|FAKE_MBX_CACHE_DIR=|cache_dir is unset' \
   '/proc|FAKE_MBX_CACHE_DIR=/srv/cache/mbx|cache_dir /srv/cache/mbx is not under /proc' \
-  '/|FAKE_MBX_GC_AUTO=true|gc.auto is not false' \
   '/|FAKE_MBX_MAX_TOTAL=|gc.max_total_size is unset' \
   '/|FAKE_MBX_MIN_FREE=|gc.min_free_size is unset'; do
   mount=${refusal%%|*}

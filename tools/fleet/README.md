@@ -111,15 +111,14 @@ project conventions.
 `tools/fleet/drift.sh` is a read-only report of placement drift: tabs holding
 more than one agent pane and panes holding only an idle shell, one per line.
 
-`tools/fleet/prune-build-cache.sh` is the only thing that prunes the shared
-Rust build cache (mbx at `/mnt/xfs-nvme/mbx`). mbx never collects on its own
-on this host (`gc.auto = false`), so the cache only grows until a caller runs
-this. With no argument it previews `mbx gc --dry-run`; `--apply` runs `mbx gc`
-against the budgets in `~/.config/mbx/config.toml` (`gc.max_total_size`,
-`gc.min_free_size`). It runs the mbx that `mise which mbx` names (the
-mr-boxington tool in the global mise config), else `mbx` on PATH;
-`MBX_BIN` overrides both. spawn and cull never call it; any cadence is the
-operator's call.
+mbx collects the shared Rust build cache (`/mnt/xfs-nvme/mbx`) on its own
+(`gc.auto = true`): after a build it sweeps to the budgets in
+`~/.config/mbx/config.toml` (`gc.max_total_size`, `gc.min_free_size`), at most
+once per `gc.interval` while the disk has room. `tools/fleet/prune-build-cache.sh`
+collects now instead of waiting. With no argument it previews
+`mbx gc --dry-run`; `--apply` runs `mbx gc`. It runs the mbx that
+`mise which mbx` names (the mr-boxington tool in the global mise config), else
+`mbx` on PATH; `MBX_BIN` overrides both. spawn and cull never call it.
 
 When the seat occupied the only pane in a worktree workspace, managed close
 also removes that workspace. The git checkout remains deliberate state: after
