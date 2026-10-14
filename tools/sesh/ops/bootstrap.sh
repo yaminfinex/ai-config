@@ -52,8 +52,8 @@ if [ -z "$ROOT" ] && [ "$(id -u)" -ne 0 ]; then
 fi
 
 # --- dependencies (backup needs both) ----------------------------------------
-if ! command -v sqlite3 >/dev/null 2>&1; then
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sqlite3
+if ! command -v sqlite3 >/dev/null 2>&1 || ! command -v zstd >/dev/null 2>&1; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sqlite3 zstd
 fi
 # The upload tool follows the backup target: gcloud for gs:// (GCE images
 # ship it), rclone for s3:// (SESH_BACKUP_BUCKET in /etc/sesh/backup.env).

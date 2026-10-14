@@ -15,7 +15,7 @@ set -euo pipefail
 OPS_SRC="$SESH_MODULE_DIR/ops"
 
 preflight
-for dep in systemd-analyze just; do
+for dep in systemd-analyze just zstd; do
   command -v "$dep" >/dev/null 2>&1 || fail "harness dependency missing: $dep"
 done
 setup_workspace
@@ -329,8 +329,15 @@ GLOG="$STUB_STATE/gcloud.log"
 : >"$GLOG"
 SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="gs://test-bucket/sesh" PATH="$STUBS:$PATH" \
   sh "$OPS_SRC/backup.sh" >"$WORK/bk.out" 2>&1 || fail "backup run failed: $(cat "$WORK/bk.out")"
-[ "$(PATH="$STUBS:$PATH" sqlite3 "$BK_DATA/backup/db/store.sqlite" 'SELECT v FROM t;')" = "snapshot-me" ] ||
-  fail "db snapshot is not a queryable copy"
+# snap_query <sql>: decompress the one local snapshot and query it.
+snap_query() {
+  set -- "$1" "$(ls "$BK_DATA"/backup/db/store-*.sqlite.zst 2>/dev/null)"
+  [ "$(printf '%s\n' "$2" | grep -c .)" = 1 ] || fail "want exactly one local snapshot, have: $2"
+  zstd -q -d -f "$2" -o "$WORK/snap.sqlite"
+  PATH="$STUBS:$PATH" sqlite3 "$WORK/snap.sqlite" "$1"
+}
+[ "$(snap_query 'SELECT v FROM t;')" = "snapshot-me" ] ||
+  fail "db snapshot is not a queryable zstd copy"
 grep -q 'store.sqlite' "$GLOG" && fail "a store.sqlite path reached gcloud (live-file copy forbidden)"
 MIRROR_LN=$(grep -n "/mirror gs://test-bucket/sesh/mirror" "$GLOG" | cut -d: -f1 | head -1)
 DB_LN=$(grep -n "/backup/db gs://test-bucket/sesh/db" "$GLOG" | cut -d: -f1 | head -1)
@@ -341,17 +348,24 @@ grep -q "/tsnet gs://test-bucket/sesh/tsnet" "$GLOG" || fail "tsnet identity not
 grep -q "/releases gs://test-bucket/sesh/releases" "$GLOG" || fail "releases channel not in the backup"
 ok "VACUUM INTO snapshot; mirror before db; tsnet + releases included"
 
-step "backup: second run refreshes the snapshot; fresh empty data dir is fine"
+step "backup: db snapshot daily (not every run), newest only on disk; empty data dir is fine"
 PATH="$STUBS:$PATH" sqlite3 "$BK_DATA/store.sqlite" "INSERT INTO t VALUES('second')"
+: >"$GLOG"
 SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="gs://test-bucket/sesh" PATH="$STUBS:$PATH" \
   sh "$OPS_SRC/backup.sh" >/dev/null 2>&1 || fail "second backup run failed"
-[ "$(PATH="$STUBS:$PATH" sqlite3 "$BK_DATA/backup/db/store.sqlite" 'SELECT count(*) FROM t;')" = 2 ] ||
-  fail "second run did not refresh the snapshot"
+[ "$(snap_query 'SELECT count(*) FROM t;')" = 1 ] ||
+  fail "a run inside the interval took a fresh db snapshot"
+grep -q "/mirror gs://test-bucket/sesh/mirror" "$GLOG" || fail "mirror not uploaded on a no-snapshot run"
+sleep 1
+SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="gs://test-bucket/sesh" SESH_DB_BACKUP_EVERY_MIN=0 \
+  PATH="$STUBS:$PATH" sh "$OPS_SRC/backup.sh" >/dev/null 2>&1 || fail "due-snapshot run failed"
+[ "$(snap_query 'SELECT count(*) FROM t;')" = 2 ] ||
+  fail "a due run did not refresh the snapshot (or left the old one on disk)"
 EMPTY="$WORK/bk-empty"
 mkdir -p "$EMPTY"
 SESH_DATA_DIR="$EMPTY" SESH_BACKUP_BUCKET="gs://test-bucket/sesh" PATH="$STUBS:$PATH" \
   sh "$OPS_SRC/backup.sh" >"$WORK/bk-empty.out" 2>&1 || fail "backup on empty dir failed: $(cat "$WORK/bk-empty.out")"
-ok "snapshots refresh; first-boot empty dir does not crash the timer"
+ok "snapshot only when due, old local copy replaced; first-boot empty dir does not crash the timer"
 
 step "backup: capacity warning fires past the threshold"
 SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="gs://test-bucket/sesh" SESH_DISK_WARN_PCT=0 \
@@ -376,8 +390,14 @@ DB_LN=$(grep -n "/backup/db :s3:bk/sesh/db" "$RLOG" | cut -d: -f1 | head -1)
 { [ -n "$MIRROR_LN" ] && [ -n "$DB_LN" ] && [ "$MIRROR_LN" -lt "$DB_LN" ]; } ||
   fail "s3 upload order wrong or incomplete: $(cat "$RLOG")"
 grep -q "/tsnet :s3:bk/sesh/tsnet" "$RLOG" || fail "tsnet identity not in the s3 backup"
+grep -q '^delete --min-age 7d :s3:bk/sesh/db ' "$RLOG" || fail "old db snapshots not expired: $(cat "$RLOG")"
+grep -q '^backend cleanup-hidden :s3:bk/sesh/db ' "$RLOG" || fail "hidden db versions not purged: $(cat "$RLOG")"
+DB_DEL_LN=$(grep -n '^delete' "$RLOG" | cut -d: -f1 | head -1)
+[ "$DB_DEL_LN" -gt "$DB_LN" ] || fail "old snapshots expired before the new one was uploaded"
+BAD_DEL=$(grep -E '^(delete|purge|sync|move|backend|rmdirs|deletefile)' "$RLOG" | grep -v ' :s3:bk/sesh/db ' || true)
+[ -z "$BAD_DEL" ] || fail "a delete reached beyond db/ (transcripts must never be deleted): $BAD_DEL"
 SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="s3://bk/sesh" PATH="$STUBS:$PATH" \
   sh "$OPS_SRC/backup.sh" >/dev/null 2>&1 && fail "an s3 target without SESH_S3_ENDPOINT must fail"
-ok "s3 backups: rclone copy, mirror before db, tsnet included, endpoint enforced"
+ok "s3 backups: rclone copy, mirror before db, tsnet included, endpoint enforced, deletes confined to db/"
 
 all_green

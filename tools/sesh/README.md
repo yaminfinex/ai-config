@@ -408,8 +408,10 @@ independent. Everything lives in `ops/`:
   (`sesh.prev` retained via hardlink, atomic rename; the only known-good
   binary is never overwritten in place) → restart → prints the version of
   the **running** store image
-- `ops/backup.sh` + timer — sqlite snapshot-API copy (never the live file),
-  upload ordering that keeps the backup restorable, tsnet identity included
+- `ops/backup.sh` + timer — transcripts every 15 minutes (never deleted),
+  a daily compressed sqlite snapshot-API copy (never the live file; 7 days
+  kept), upload ordering that keeps the backup restorable, tsnet identity
+  included
 - `ops/README.md` — the owner execution runbook (admin key → bootstrap →
   deploy → deny-verify → first tagged release → announcement), the restore
   drill, the escape triggers for leaving the shared host, and the

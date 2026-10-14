@@ -16,7 +16,7 @@ Design authority: `docs/design/2026-07-12-sesh-store-served-distribution.md`
 | `bootstrap.sh` | idempotent host bring-up: `sesh` user, `/var/lib/sesh` (+ `tsnet/`, `releases/`, `backup/db/`), unit install, TS_AUTHKEY first-start handoff |
 | `systemd/sesh-serve.service` | system unit: `sesh serve --tsnet --tsnet-hostname sesh`, dedicated user, data dir `/var/lib/sesh` |
 | `systemd/sesh-backup.{service,timer}` | 15-minute backup schedule (RPO 15 min), runs as `sesh`; target + credentials from `/etc/sesh/backup.env` |
-| `backup.sh` | sqlite snapshot + bucket upload (gs:// via gcloud, s3:// via rclone) in recoverable ordering (below) |
+| `backup.sh` | daily compressed sqlite snapshot + 15-minute bucket upload (gs:// via gcloud, s3:// via rclone) in recoverable ordering, 7-day db retention (below) |
 | `deploy-remote.sh` | host half of `just deploy-store`: crash-safe binary swap, restart, running-version print |
 
 The store embeds tsnet: its own tailnet node (`sesh`), own identity state
@@ -142,13 +142,15 @@ touching the publish path.
 
 ## Backup and restore
 
-`backup.sh` runs every 15 minutes as user `sesh` (RPO = 15 min), uploading
-copy-only (never deleting remote objects) to `SESH_BACKUP_BUCKET` from
-`/etc/sesh/backup.env`. Bucket layout, all under the sesh-only prefix:
+`backup.sh` runs every 15 minutes as user `sesh` (RPO = 15 min for
+transcripts), uploading to `SESH_BACKUP_BUCKET` from `/etc/sesh/backup.env`.
+Bucket layout, all under the sesh-only prefix:
 
 ```
 s3://sesh-backup/sesh/
-  db/store.sqlite   VACUUM INTO snapshot — the live file is never copied
+  db/store-<UTC stamp>.sqlite.zst
+                    daily VACUUM INTO snapshot, zstd-compressed (~1.2 GB ->
+                    ~140 MB); the live file is never copied; 7 days kept
   mirror/           append-only transcript mirror (source of truth)
   tsnet/            tailnet identity — restoring it brings the node back AS
                     `sesh`, same URL, zero shipper changes
@@ -163,6 +165,17 @@ mirror lacks — the one combination that would make a restore lie to shippers
 (ACK'd bytes silently gone, which the wire never re-sends). The benign
 inverse (older db, newer mirror) restores cleanly: surplus mirror bytes heal
 via `sesh reindex` and the wire's PUT overlap comparison.
+
+**What grows, what is deleted.** Transcripts are never deleted from the
+bucket: `mirror/`, `tsnet/` and `releases/` are copy-only, and versioning
+keeps every replaced copy (a live transcript re-uploads whole when it grows,
+roughly 60 MB of superseded copies per run). Only `db/` is pruned: a db
+snapshot is taken once a day (`SESH_DB_BACKUP_EVERY_MIN`, default 1440) and
+snapshots older than 7 days (`SESH_DB_BACKUP_KEEP_DAYS`) are deleted along
+with their hidden versions, so the space really comes back. The db can be
+daily because a restore reindexes from the mirror (step 3 below); the mirror
+carries the 15-minute RPO. The gate fails if any delete reaches outside
+`db/`.
 
 The script also warns (journal, every run) when the disk holding the data
 dir passes 80% — see the escape triggers.
@@ -183,15 +196,17 @@ binary is deployed):
    sudo sh -ac '. /etc/sesh/backup.env
      r() { rclone copy --s3-provider Other --s3-env-auth --s3-no-check-bucket \
              --s3-endpoint "$SESH_S3_ENDPOINT" ":s3:${SESH_BACKUP_BUCKET#s3://}/$1" "/var/lib/sesh/$2"; }
-     r mirror mirror; r tsnet tsnet; r releases releases; r db .'
+     r mirror mirror; r tsnet tsnet; r releases releases; r db backup/db'
+   sudo sh -c 'zstd -d "$(ls /var/lib/sesh/backup/db/store-*.sqlite.zst | tail -1)" \
+     -o /var/lib/sesh/store.sqlite'
    sudo chown -R sesh:sesh /var/lib/sesh
    sudo chmod 700 /var/lib/sesh/tsnet
    ```
 
-   (`db/` holds only `store.sqlite`, so `r db .` lands it at
-   `/var/lib/sesh/store.sqlite`.) For a GCS target the equivalent is
+   The newest `db/` snapshot is the one to restore (names sort by time).
+   For a GCS target the equivalent is
    `gcloud storage rsync -r gs://.../<dir> /var/lib/sesh/<dir>` per
-   directory and `gcloud storage cp` for the db.
+   directory, then the same `zstd -d`.
 
    Restore order does not matter: the backup-time invariant (db never newer
    than mirror) is what makes the restored pair safe.
