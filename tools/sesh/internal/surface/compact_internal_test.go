@@ -205,3 +205,30 @@ func TestProseFencedBlock(t *testing.T) {
 		t.Fatalf("prose = %q\nwant    %q", got, want)
 	}
 }
+
+// A session with no index rows is not necessarily quarantined: its rows may
+// simply not be indexed yet, or it may hold no messages at all. The badge
+// says quarantined only when quarantined rows exist.
+func TestRecencyRawOnlyBadgeNamesTheCause(t *testing.T) {
+	tmpl := mustPage("recency.html")
+	for _, tc := range []struct {
+		quarantined int
+		want        string
+	}{
+		{quarantined: 2, want: "quarantined — raw only"},
+		{quarantined: 0, want: "no messages indexed — raw only"},
+	} {
+		sum := SessionSummary{Tool: wire.ToolClaude, LogicalSessionID: "92c419c4-3bfe-4c8d-a2e6-380018362035", QuarantinedRows: tc.quarantined}
+		var b strings.Builder
+		page := recencyPage{Sessions: sessionItems([]SessionSummary{sum}), Total: 1, From: 1, To: 1}
+		if err := tmpl.ExecuteTemplate(&b, "recencyBody", page); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(b.String(), tc.want) {
+			t.Errorf("quarantined rows %d: badge lacks %q", tc.quarantined, tc.want)
+		}
+		if tc.quarantined == 0 && strings.Contains(b.String(), "quarantined") {
+			t.Errorf("a session with no quarantined rows is badged quarantined")
+		}
+	}
+}

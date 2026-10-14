@@ -24,7 +24,7 @@
 {{- range .Sessions}}
 <tr>
 <td><a href="{{.URL}}" title="{{.LogicalSessionID}}"><code>{{printf "%.8s" .LogicalSessionID}}</code></a>
-{{- if .FullyQuarantined}}<span class="badge warn">quarantined — raw only</span>{{end}}</td>
+{{- if .FullyQuarantined}}<span class="badge warn">{{if .QuarantinedRows}}quarantined{{else}}no messages indexed{{end}} — raw only</span>{{end}}</td>
 <td>{{.Tool}}</td>
 <td><a href="{{.NodeURL}}">{{.Node}}</a></td>
 <td>{{if .Owner.Conflict}}<span class="badge warn">conflicting claims</span>{{else if .Owner.Claimed}}{{.Owner.Name}} <span class="source">{{.Owner.Source}}</span>{{else}}<span class="secondary" title="{{.Owner.Source}}">—</span>{{end}}</td>

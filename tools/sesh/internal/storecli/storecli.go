@@ -232,6 +232,10 @@ func serveTSNet(ctx context.Context, ingestHandler, surfaceHandler http.Handler,
 
 const serveShutdownTimeout = 10 * time.Second
 
+// catchUpEvery is how often the index consumer rescans for generations whose
+// index lags the mirror (it also scans once at startup). A var for tests.
+var catchUpEvery = 10 * time.Minute
+
 // Listener timeouts bound what a stalled or idle client can pin: a header
 // that never finishes, or a parked keep-alive connection. There is
 // deliberately no ReadTimeout or WriteTimeout: /raw and /releases/ stream
@@ -436,9 +440,40 @@ func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer
 			)
 		}
 	}
+	// Catch-up: generations whose index lags the mirror are replayed at
+	// startup and every catchUpEvery, one at a time and only while no live
+	// append is waiting, so live ingest keeps priority and the buffer does
+	// not overflow behind a long backlog.
+	var backlog []wire.AppendEvent
+	sweep := func() {
+		lagging, err := idx.Lagging(workCtx)
+		if err != nil {
+			logger.Error("index catch-up scan failed", "error", err)
+			return
+		}
+		if len(lagging) > 0 {
+			logger.Info("index catch-up", "generations", len(lagging))
+		}
+		backlog = lagging
+	}
 	go func() {
 		defer close(consumer.done)
+		ticker := time.NewTicker(catchUpEvery)
+		defer ticker.Stop()
+		sweep()
 		for {
+			if len(backlog) > 0 {
+				select {
+				case <-consumer.stop:
+				case ev := <-st.AppendEvents():
+					process(ev)
+					continue
+				default:
+					process(backlog[0])
+					backlog = backlog[1:]
+					continue
+				}
+			}
 			select {
 			case <-consumer.stop:
 				for {
@@ -451,6 +486,10 @@ func startIndexConsumer(ctx context.Context, st *store.Store, idx *index.Indexer
 				}
 			case ev := <-st.AppendEvents():
 				process(ev)
+			case <-ticker.C:
+				if len(backlog) == 0 {
+					sweep()
+				}
 			}
 		}
 	}()
