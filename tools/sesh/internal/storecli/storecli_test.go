@@ -771,3 +771,74 @@ func TestIndexConsumerFailureMarksGenerationDirty(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A store that died with append events still buffered (or dropped one on a
+// full buffer) leaves mirrored bytes the index never saw; nothing re-sends
+// them. The consumer's startup sweep must index them without a reindex.
+func TestIndexConsumerCatchesUpLostAppendEvents(t *testing.T) {
+	st, err := store.Open(t.Context(), store.Config{Dir: t.TempDir(), AppendBuffer: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	idx, err := index.New(t.Context(), st.DB(), st.MirrorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put := func(sessionID, fileUUID, messageUUID string) {
+		body := []byte(`{"type":"user","uuid":"` + messageUUID + `","sessionId":"` + sessionID + `"}` + "\n")
+		req := httptest.NewRequest(http.MethodPut, "/v1/files/claude/"+sessionID+"/"+fileUUID+"/bytes?offset=0", bytes.NewReader(body))
+		req.Header.Set("Content-Type", wire.ContentTypeBytes)
+		req.Header.Set(wire.HeaderWireVersion, "1")
+		req.Header.Set(wire.HeaderHostname, "node-a")
+		req.Header.Set(wire.HeaderOSUser, "grace")
+		rr := httptest.NewRecorder()
+		st.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("PUT status=%d body=%s", rr.Code, rr.Body.String())
+		}
+	}
+	// Lost in a crash: the event is taken off the buffer and never indexed.
+	put("11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "lost-in-crash")
+	<-st.AppendEvents()
+	// Dropped on a full buffer: the store marks the generation dirty.
+	put("33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444", "fills-buffer")
+	put("55555555-5555-5555-5555-555555555555", "66666666-6666-6666-6666-666666666666", "dropped")
+	<-st.AppendEvents()
+
+	lagging, err := idx.Lagging(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lagging) != 3 {
+		t.Fatalf("lagging generations = %d, want 3", len(lagging))
+	}
+	consumer := startIndexConsumer(t.Context(), st, idx, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rows, err := idx.RowCount(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rows == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rows = %d after catch-up, want all 3 lost appends indexed", rows)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := consumer.StopAndWait(); err != nil {
+		t.Fatal(err)
+	}
+	if lagging, err = idx.Lagging(t.Context()); err != nil || len(lagging) != 0 {
+		t.Fatalf("still lagging after catch-up: %d (err %v)", len(lagging), err)
+	}
+	var dirty int
+	if err := st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM files WHERE dirty_for_reindex = 1`).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 0 {
+		t.Fatalf("dirty generations after catch-up = %d, want 0", dirty)
+	}
+}

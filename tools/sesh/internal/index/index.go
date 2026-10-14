@@ -493,6 +493,35 @@ func (idx *Indexer) generations(ctx context.Context) ([]generation, error) {
 	return out, rows.Err()
 }
 
+// Lagging returns one append event per generation whose index stops short
+// of its mirrored high water, or that is marked dirty: appends whose event
+// never reached the indexer (a crash with events still buffered, a full
+// buffer, a failed index write). ProcessAppend resumes each from its
+// complete offset, exactly like a late append, so the index heals without
+// an offline reindex. A trailing partial line also reads as lagging; its
+// replay parses nothing and costs one short read.
+func (idx *Indexer) Lagging(ctx context.Context) ([]wire.AppendEvent, error) {
+	rows, err := idx.queryContext(ctx, `SELECT f.tool, f.session_id, f.file_uuid, f.generation, f.high_water
+		FROM files f LEFT JOIN index_file_state s
+			ON s.tool = f.tool AND s.wire_session_id = f.session_id
+			AND s.file_uuid = f.file_uuid AND s.generation = f.generation
+		WHERE f.high_water > COALESCE(s.complete_offset, 0) OR f.dirty_for_reindex = 1
+		ORDER BY f.created_at, f.tool, f.session_id, f.file_uuid, f.generation`)
+	if err != nil {
+		return nil, normalizeDBError(err)
+	}
+	defer rows.Close()
+	var out []wire.AppendEvent
+	for rows.Next() {
+		var ev wire.AppendEvent
+		if err := rows.Scan(&ev.Tool, &ev.WireSessionID, &ev.FileUUID, &ev.Generation, &ev.ByteEnd); err != nil {
+			return nil, err
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
 func (idx *Indexer) parseComplete(ctx context.Context, ev wire.AppendEvent, start int64) ([]indexedMessage, int64, error) {
 	if ev.ByteEnd <= start {
 		return nil, start, nil
