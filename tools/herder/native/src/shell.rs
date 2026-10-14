@@ -376,14 +376,22 @@ pub fn run() {
         harness::metric("init done");
 
         let automated = script.is_some();
+        // A scripted window is never shown, so it needs no centring and gets exactly the size asked
+        // (`centered` would shrink it to the display's visible area): the same on any display.
+        let bounds = match automated {
+            true => Bounds::new(Point::default(), harness::window_size()),
+            false => Bounds::centered(None, harness::window_size(), cx),
+        };
         let opts = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(harness::window_size(), cx)),
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
                 title: Some(APP_NAME.into()),
                 ..Default::default()
             }),
-            // An automated run never takes focus (settled decision 8).
+            // An automated run never takes focus (settled decision 8), and its window is never ordered
+            // in, so no display shows a pixel of it (H3); the harness draws it and shots render it offscreen.
             focus: !automated,
+            show: !automated,
             ..Default::default()
         };
         let mut shell = None;
@@ -395,9 +403,7 @@ pub fn run() {
         };
         let (handle, _) = gpui_kit::open_window(opts, cx, frame).expect("window");
         let shell = shell.expect("the window built the shell");
-        if automated {
-            platform_mac::order_back();
-        } else {
+        if !automated {
             cx.activate(true);
         }
         let _ = handle.update(cx, |_, window, cx| {
@@ -442,13 +448,19 @@ impl harness::Probe for Entity<Shell> {
 }
 
 /// Bring the app forward, to a notification's agent or space (`space::summon`); `""` is the lens.
+/// A scripted run never brings its window in (H3).
 fn summon(tag: &str, cx: &mut App) {
-    cx.activate(true);
+    let quiet = platform_mac::quiet();
+    if !quiet {
+        cx.activate(true);
+    }
     let Some(window) = cx.windows().into_iter().next() else {
         return;
     };
     let _ = window.update(cx, |_, window, cx| {
-        window.activate_window();
+        if !quiet {
+            window.activate_window();
+        }
         window.dispatch_action(Box::new(space::Summon(tag.to_string().into())), cx);
     });
 }

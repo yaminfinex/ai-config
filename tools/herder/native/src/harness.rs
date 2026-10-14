@@ -1,12 +1,12 @@
 //! Scripted runs for screenshots and metrics, driven by `HERDER_NATIVE_SCRIPT` (space-separated steps).
-//! Such a run opens its window without focus and behind everything else, quits when the script ends,
+//! Such a run opens its window without focus and never shows it (H3), quits when the script ends,
 //! and exits non-zero when any step fails (settled decision 8 and the A0 review).
 //!
 //! Steps: `wait:<ms>` · `key:<keystroke>` (GPUI syntax such as `cmd-=`, through
 //! `Window::dispatch_keystroke`, the real input path) · `shot:<name>` (draws a fresh frame, then
 //! `render_to_image`; needs `--features shots`; written to `HERDER_NATIVE_SHOT_DIR`) · `rss` · `quit`.
 //! `cpu:<ms>` (CPU over `ms`, with the pulse's paints and the shell's renders meanwhile) · `draw` (one
-//! frame, as an occluded window gets none) · `link:<url>` (what clicking a transcript link dispatches;
+//! frame, as a window never shown gets none) · `link:<url>` (what clicking a transcript link dispatches;
 //! `beside:<url>` the same with alt held, DK2) ·
 //! `summon:<tag>` (what clicking a notification tagged so dispatches, without activating the app; U6) ·
 //! `expect:<agent>` (the zoom shows it; a preview tab is `expect:<agent>+preview`) · `dock:<text>` (the
@@ -196,7 +196,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
                     "cpu {pct:.2}% of one core over {ms} ms ({on}): {m} pointer moves, {p} pulse paints, {r} shell renders"
                 ));
             }
-            // A window behind others is not drawn on its own; layout-driven work (paging) needs a frame.
+            // A window never shown is not drawn on its own; layout-driven work (paging) needs a frame.
             "draw" => drop(cx.update(|window, cx| window.draw(cx).clear(cx))),
             // `point:x,y`: a real left click at a window point (move, down, up), through the window's
             // event path, so what the element under it does is what a pointer gets.
@@ -349,7 +349,7 @@ pub async fn run(script: String, probe: impl Probe, cx: &mut AsyncWindowContext)
 #[cfg(feature = "shots")]
 fn shot(dir: &str, name: &str, cx: &mut AsyncWindowContext) -> Result<(), String> {
     let path = format!("{dir}/{name}.png");
-    // render_to_image reads the last drawn scene; a window ordered behind others may not have drawn
+    // render_to_image reads the last drawn scene; a window never shown may not have drawn
     // since the state changed, so draw now, twice: a draw can queue a follow-up (revealing the selection).
     cx.update(|window, cx| window.draw(cx).clear(cx))
         .map_err(|e| e.to_string())?;
