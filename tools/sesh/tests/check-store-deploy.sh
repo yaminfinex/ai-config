@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Store-deployment gate — everything locally provable about the quick-host
+# Store-deployment gate — everything locally provable about the store-host
 # deployment artifacts (ops/ + the deploy-store/tag/release recipes). The
 # halves needing a real VM/tailnet (tsnet join, deny-verify pair, GCS write,
 # real restore drill) are the owner runbook in ops/README.md; this script
@@ -8,7 +8,7 @@
 # deploy-remote.sh (prev retained, target never missing, junk refused,
 # running-image version reported), backup.sh's recoverable ordering (db
 # snapshot never newer than the uploaded mirror, live sqlite never copied),
-# unit lints, and the justfile recipes against a stubbed gcloud.
+# unit lints, and the justfile recipes against stubbed scp/ssh/sudo.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
@@ -84,6 +84,10 @@ EOF
 cat >"$STUBS/gcloud" <<'EOF'
 #!/usr/bin/env sh
 echo "$*" >>"$STUB_STATE/gcloud.log"
+EOF
+cat >"$STUBS/rclone" <<'EOF'
+#!/usr/bin/env sh
+echo "$*" >>"$STUB_STATE/rclone.log"
 EOF
 # sqlite3 CLI shim over python3's bindings (the REAL sqlite engine executes
 # the statement — VACUUM INTO included); the gate machine may lack the CLI
@@ -268,23 +272,29 @@ ok "honest failed-but-forward reporting"
 kill "$(cat "$DR_STATE/pid")" 2>/dev/null || true
 
 # --- just recipes ---------------------------------------------------------------
-step "just deploy-store: build + IAP ship against a stubbed gcloud"
-: >"$STUB_STATE/gcloud.log" 2>/dev/null || true
-(cd "$SESH_MODULE_DIR" && PATH="$STUBS:$PATH" just deploy-store >"$WORK/ds.out" 2>&1) ||
+step "just deploy-store: build, then scp + ssh from elsewhere, in place on the host"
+RLOG_DS="$STUB_STATE/deploy.log"
+for c in scp ssh sudo; do
+  printf '#!/usr/bin/env sh\necho "%s $*" >>"$STUB_STATE/deploy.log"\n' "$c" >"$STUBS/$c"
+done
+printf '#!/usr/bin/env sh\necho "${STUB_HOSTNAME:-gate-box}"\n' >"$STUBS/hostname"
+chmod 755 "$STUBS"/scp "$STUBS"/ssh "$STUBS"/sudo "$STUBS"/hostname
+: >"$RLOG_DS"
+(cd "$SESH_MODULE_DIR" && PATH="$STUBS:$PATH" SESH_STORE_HOST=ops@store-box just deploy-store >"$WORK/ds.out" 2>&1) ||
   fail "just deploy-store failed: $(cat "$WORK/ds.out")"
 [ -f /tmp/sesh-linux-amd64 ] || fail "linux/amd64 build not produced"
-SCP_LINE=$(grep '^compute scp' "$STUB_STATE/gcloud.log" || true)
-SSH_LINE=$(grep '^compute ssh' "$STUB_STATE/gcloud.log" || true)
-[ -n "$SCP_LINE" ] || fail "no gcloud scp invocation recorded"
-[ -n "$SSH_LINE" ] || fail "no gcloud ssh invocation recorded"
-echo "$SCP_LINE" | grep -q -- '--tunnel-through-iap' || fail "scp does not tunnel through IAP"
-echo "$SCP_LINE" | grep -q '/tmp/sesh-linux-amd64' || fail "scp does not ship the built binary"
-echo "$SCP_LINE" | grep -q 'deploy-remote.sh' || fail "scp does not ship deploy-remote.sh"
-echo "$SCP_LINE" | grep -q 'quick-host:/tmp/' || fail "scp target is not the VM tmp dir"
-echo "$SSH_LINE" | grep -q -- '--tunnel-through-iap' || fail "ssh does not tunnel through IAP"
-echo "$SSH_LINE" | grep -q 'sudo sh /tmp/deploy-remote.sh /tmp/sesh-linux-amd64' ||
-  fail "ssh does not run deploy-remote.sh on the uploaded binary"
-ok "deploy-store builds static linux/amd64 and drives deploy-remote.sh over IAP"
+grep -q "^scp /tmp/sesh-linux-amd64 .*/ops/deploy-remote.sh ops@store-box:/tmp/$" "$RLOG_DS" ||
+  fail "scp does not ship the binary + deploy-remote.sh to the host's /tmp: $(cat "$RLOG_DS")"
+grep -q "^ssh ops@store-box sudo sh /tmp/deploy-remote.sh /tmp/sesh-linux-amd64$" "$RLOG_DS" ||
+  fail "ssh does not run deploy-remote.sh on the uploaded binary: $(cat "$RLOG_DS")"
+grep -q '^sudo' "$RLOG_DS" && fail "remote deploy ran sudo locally: $(cat "$RLOG_DS")"
+: >"$RLOG_DS"
+(cd "$SESH_MODULE_DIR" && PATH="$STUBS:$PATH" STUB_HOSTNAME=store-box SESH_STORE_HOST=ops@store-box \
+  just deploy-store >"$WORK/ds-local.out" 2>&1) || fail "in-place deploy-store failed: $(cat "$WORK/ds-local.out")"
+grep -q "^sudo sh .*/ops/deploy-remote.sh /tmp/sesh-linux-amd64$" "$RLOG_DS" ||
+  fail "on the store host deploy-store does not swap in place: $(cat "$RLOG_DS")"
+grep -q '^scp\|^ssh' "$RLOG_DS" && fail "in-place deploy still went over ssh: $(cat "$RLOG_DS")"
+ok "deploy-store builds static linux/amd64 and drives deploy-remote.sh (ssh or in place)"
 
 step "just tag / release: monorepo prefix, validation, default dest"
 TAG_OUT=$(cd "$SESH_MODULE_DIR" && just -n tag 1.2.3 2>&1)
@@ -293,11 +303,12 @@ if (cd "$SESH_MODULE_DIR" && just tag v1.2.3 >"$WORK/tagbad.out" 2>&1); then
   fail "tag accepted a leading-v argument (would double the prefix)"
 fi
 grep -q 'sesh-vX.Y.Z' "$WORK/tagbad.out" || fail "tag rejection lacks usage: $(cat "$WORK/tagbad.out")"
-REL_OUT=$(cd "$SESH_MODULE_DIR" && just -n release 2>&1)
-echo "$REL_OUT" | grep -q 'release.sh sesh-host:/var/lib/sesh/releases' ||
-  fail "release default dest missing: $REL_OUT"
-VM_OUT=$(cd "$SESH_MODULE_DIR" && SESH_STORE_VM=other-vm just -n deploy-store 2>&1)
-echo "$VM_OUT" | grep -q 'other-vm:/tmp/' || fail "SESH_STORE_VM override ignored: $VM_OUT"
+REMOTE_DEST=$(cd "$SESH_MODULE_DIR" && PATH="$STUBS:$PATH" SESH_STORE_HOST=ops@store-box just --evaluate release_dest)
+[ "$REMOTE_DEST" = "ops@store-box:/var/lib/sesh/releases" ] || fail "release default dest off-host: $REMOTE_DEST"
+LOCAL_DEST=$(cd "$SESH_MODULE_DIR" && PATH="$STUBS:$PATH" STUB_HOSTNAME=store-box SESH_STORE_HOST=ops@store-box just --evaluate release_dest)
+[ "$LOCAL_DEST" = "/var/lib/sesh/releases" ] || fail "release default dest on the store host: $LOCAL_DEST"
+OVR_DEST=$(cd "$SESH_MODULE_DIR" && SESH_RELEASE_DEST=x:/y just --evaluate release_dest)
+[ "$OVR_DEST" = "x:/y" ] || fail "SESH_RELEASE_DEST override ignored: $OVR_DEST"
 ok "sesh-v prefix enforced, bad input refused, default dest + env overrides wired"
 
 # --- backup.sh -------------------------------------------------------------------
@@ -348,5 +359,25 @@ SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="gs://test-bucket/sesh" SESH_DISK_WA
 grep -q 'WARNING' "$WORK/bk-warn.out" || fail "no capacity warning at threshold 0"
 grep -q 'escape triggers' "$WORK/bk-warn.out" || fail "warning does not point at the escape triggers"
 ok "disk pressure warns loudly and names the escape triggers"
+
+step "backup: an s3:// target goes through rclone, same order, endpoint required"
+RLOG="$STUB_STATE/rclone.log"
+: >"$RLOG"
+: >"$GLOG"
+SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="s3://bk/sesh" SESH_S3_ENDPOINT="https://s3.example" \
+  PATH="$STUBS:$PATH" sh "$OPS_SRC/backup.sh" >"$WORK/bk-s3.out" 2>&1 ||
+  fail "s3 backup run failed: $(cat "$WORK/bk-s3.out")"
+[ -s "$GLOG" ] && fail "s3 target still called gcloud: $(cat "$GLOG")"
+grep -q 'store.sqlite' "$RLOG" && fail "a store.sqlite path reached rclone (live-file copy forbidden)"
+grep -q -- '--s3-endpoint https://s3.example' "$RLOG" || fail "endpoint not passed to rclone: $(cat "$RLOG")"
+grep -q -- '--s3-no-check-bucket' "$RLOG" || fail "rclone would try CreateBucket (a bucket-scoped key gets 403): $(cat "$RLOG")"
+MIRROR_LN=$(grep -n "/mirror :s3:bk/sesh/mirror" "$RLOG" | cut -d: -f1 | head -1)
+DB_LN=$(grep -n "/backup/db :s3:bk/sesh/db" "$RLOG" | cut -d: -f1 | head -1)
+{ [ -n "$MIRROR_LN" ] && [ -n "$DB_LN" ] && [ "$MIRROR_LN" -lt "$DB_LN" ]; } ||
+  fail "s3 upload order wrong or incomplete: $(cat "$RLOG")"
+grep -q "/tsnet :s3:bk/sesh/tsnet" "$RLOG" || fail "tsnet identity not in the s3 backup"
+SESH_DATA_DIR="$BK_DATA" SESH_BACKUP_BUCKET="s3://bk/sesh" PATH="$STUBS:$PATH" \
+  sh "$OPS_SRC/backup.sh" >/dev/null 2>&1 && fail "an s3 target without SESH_S3_ENDPOINT must fail"
+ok "s3 backups: rclone copy, mirror before db, tsnet included, endpoint enforced"
 
 all_green

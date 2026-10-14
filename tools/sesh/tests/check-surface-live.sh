@@ -108,7 +108,9 @@ step "drill-down renders ONE conversation transcript (no duplicated history)"
 # The 334 deduped index rows contain 143 known Claude sidecars. They remain
 # in the raw mirror but do not consume conversation-window slots, so all 191
 # renderable messages fit in one bounded page.
-transcript=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL") || fail "GET transcript failed"
+transcript=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL?view=full") || fail "GET transcript failed"
+conversation=$(curl -sf "$SURFACE_URL/s/claude/$LOGICAL") || fail "GET conversation view failed"
+grep -q '<div class="conv">' <<<"$conversation" || fail "default transcript view is not the conversation view"
 entries=$(grep -c '<li class="entry' <<<"$transcript" || true)
 [ "$entries" = "191" ] || fail "transcript renders $entries entries, want 191 conversation messages"
 grep -q '143 known metadata lines excluded from this window' <<<"$transcript" ||
@@ -122,7 +124,7 @@ ok "one bounded conversation transcript, both files, no duplicates; sidecars bad
 
 step "raw fallback reachable; zero write surface"
 curl -sf "$SURFACE_URL/s/claude/$LOGICAL/raw" >/dev/null || fail "raw fallback GET failed"
-if grep -qiE '<[[:space:]]*(form|input|button|select|textarea)[>[:space:]]' <<<"$transcript$page"; then
+if grep -qiE '<[[:space:]]*(form|input|button|select|textarea)[>[:space:]]' <<<"$transcript$conversation$page"; then
   fail "rendered pages carry a write surface (R17)"
 fi
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$SURFACE_URL/")

@@ -71,6 +71,14 @@ type transcriptPage struct {
 	Page     int
 	NewerURL string
 	OlderURL string
+
+	// Compact selects the default conversation view (Conv); the full view
+	// (?view=full) renders Entries one index row at a time. CompactURL and
+	// FullURL switch views on the same window.
+	Compact    bool
+	Conv       []convRow
+	CompactURL string
+	FullURL    string
 }
 
 // transcriptData windows the session's sorted index rows to one page and
@@ -153,8 +161,12 @@ func (s *Server) transcriptData(ctx context.Context, sum SessionSummary, rows []
 	return page
 }
 
+// knownTranscriptMeta also admits role=unknown for an allowlisted type: rows
+// indexed before their type joined the allowlist keep the role they were
+// written with until a reindex. An unlisted type stays visible whatever its
+// role.
 func knownTranscriptMeta(tool wire.Tool, row wire.IndexMessage) bool {
-	return tool == wire.ToolClaude && row.Role == "meta" && isClaudeSidecarEntryType(row.EntryType)
+	return tool == wire.ToolClaude && (row.Role == "meta" || row.Role == "unknown") && isClaudeSidecarEntryType(row.EntryType)
 }
 
 // isClaudeSidecarEntryType mirrors the indexer's deliberately exact
@@ -165,6 +177,7 @@ func isClaudeSidecarEntryType(entryType string) bool {
 	switch entryType {
 	case "agent-name",
 		"ai-title",
+		"atis-latch",
 		"bridge-session",
 		"file-history-snapshot",
 		"last-prompt",
@@ -212,6 +225,25 @@ type displayBlock struct {
 	Text      string
 	Collapsed bool
 	Truncated bool
+
+	// Compact-view hints, set by the per-tool parsers where the line shape
+	// says more than Kind does; the full view ignores them. Pres overrides
+	// the Kind-derived presentation (see compactPres); Label is a pill's
+	// short text; ToolID pairs a tool call with its result; Speaker names a
+	// prose message's author when it differs from the row role.
+	// Alt (when HasAlt) replaces Text in the compact view only. Adjacent
+	// pills sharing a Merge key fold into one, labelled by the Primary.
+	Pres         string
+	Label        string
+	Tone         string
+	ToolID       string
+	IsError      bool
+	Speaker      string
+	HasAlt       bool
+	Alt          string
+	AltTruncated bool
+	Merge        string
+	Primary      bool
 }
 
 // sortTranscript applies the frozen surface ordering from the wire doc:
@@ -268,7 +300,7 @@ func (s *Server) buildEntries(ctx context.Context, tool wire.Tool, rows []wire.I
 			entry.BranchLabel = marker.Label
 		}
 		for _, b := range entry.Blocks {
-			spent += int64(len(b.Text))
+			spent += int64(len(b.Text) + len(b.Alt))
 		}
 		entries = append(entries, entry)
 	}
@@ -727,16 +759,24 @@ type claudeEntry struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+	// Compact-view hints; the full view reads none of these.
+	IsMeta           bool            `json:"isMeta"`
+	IsCompactSummary bool            `json:"isCompactSummary"`
+	Subtype          string          `json:"subtype"`
+	Content          json.RawMessage `json:"content"` // system entry text
+	Attachment       json.RawMessage `json:"attachment"`
 }
 
 type claudeContentBlock struct {
-	Type     string          `json:"type"`
-	Text     string          `json:"text"`
-	Thinking string          `json:"thinking"`
-	Name     string          `json:"name"`
-	Input    json.RawMessage `json:"input"`
-	Content  json.RawMessage `json:"content"` // tool_result payload
-	IsError  bool            `json:"is_error"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage `json:"content"` // tool_result payload
+	IsError   bool            `json:"is_error"`
 }
 
 func claudeBlocks(line []byte) []displayBlock {
@@ -749,14 +789,26 @@ func claudeBlocks(line []byte) []displayBlock {
 			return nil
 		}
 		// Bookkeeping entries (mode, attachment, ai-title, …): a muted
-		// one-liner keeps the transcript honest without drowning it.
-		return []displayBlock{{Kind: "meta", Title: e.Type}}
+		// one-liner keeps the transcript honest without drowning it. The
+		// compact view reads the classification riding on the block.
+		b := displayBlock{Kind: "meta", Title: e.Type}
+		classifyClaudeBookkeeping(&b, e)
+		return []displayBlock{b}
 	}
 
+	// An unrecognised entry type carrying a message speaks under its type,
+	// not a borrowed role.
+	speaker := ""
+	if e.Type != "user" && e.Type != "assistant" {
+		speaker = e.Type
+	}
 	// content may be a plain string or a block list.
 	var text string
 	if err := json.Unmarshal(e.Message.Content, &text); err == nil {
-		return []displayBlock{textBlock("text", "", text)}
+		b := textBlock("text", "", text)
+		b.Speaker = speaker
+		classifyClaudeText(&b, e, text)
+		return []displayBlock{b}
 	}
 	var parts []claudeContentBlock
 	if err := json.Unmarshal(e.Message.Content, &parts); err != nil {
@@ -766,14 +818,23 @@ func claudeBlocks(line []byte) []displayBlock {
 	for _, p := range parts {
 		switch p.Type {
 		case "text":
-			out = append(out, textBlock("text", "", p.Text))
+			b := textBlock("text", "", p.Text)
+			b.Speaker = speaker
+			classifyClaudeText(&b, e, p.Text)
+			out = append(out, b)
 		case "thinking":
 			b := textBlock("thinking", "thinking", p.Thinking)
 			b.Collapsed = true
+			if strings.TrimSpace(p.Thinking) == "" {
+				// Claude Code keeps only the signature: nothing to read.
+				b.Pres = presHide
+			}
 			out = append(out, b)
 		case "tool_use":
 			b := textBlock("tool_use", "tool: "+p.Name, prettyJSON(p.Input))
 			b.Collapsed = true
+			b.Label = toolUseLabel(p.Name, p.Input)
+			b.ToolID = p.ID
 			out = append(out, b)
 		case "tool_result":
 			title := "tool result"
@@ -782,6 +843,8 @@ func claudeBlocks(line []byte) []displayBlock {
 			}
 			b := textBlock("tool_result", title, toolResultText(p.Content))
 			b.Collapsed = true
+			b.ToolID = p.ToolUseID
+			b.IsError = p.IsError
 			out = append(out, b)
 		default:
 			b := textBlock("raw", "content block: "+p.Type, prettyJSON(mustCompact(p)))
@@ -840,13 +903,17 @@ func codexBlocks(line []byte) []displayBlock {
 		if e.Type != "event_msg" && e.Type != "response_item" {
 			b.Collapsed = true
 		}
+		classifyCodex(&b, e)
 		return []displayBlock{b}
 	}
 	if len(e.Payload) == 0 {
-		return []displayBlock{{Kind: "meta", Title: title}}
+		b := displayBlock{Kind: "meta", Title: title}
+		classifyCodex(&b, e)
+		return []displayBlock{b}
 	}
 	b := textBlock("raw", title, prettyJSON(mustCompact(e.Payload)))
 	b.Collapsed = true
+	classifyCodex(&b, e)
 	return []displayBlock{b}
 }
 
@@ -882,10 +949,13 @@ func codexText(payload map[string]any) string {
 // --- Grok chat_history line shapes ---
 
 type grokEntry struct {
-	Type      string          `json:"type"`
-	Content   json.RawMessage `json:"content"`
-	Summary   json.RawMessage `json:"summary"`
-	ToolCalls []struct {
+	Type            string          `json:"type"`
+	Content         json.RawMessage `json:"content"`
+	Summary         json.RawMessage `json:"summary"`
+	SyntheticReason string          `json:"synthetic_reason"`
+	ToolCallID      string          `json:"tool_call_id"`
+	ToolCalls       []struct {
+		ID        string          `json:"id"`
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	} `json:"tool_calls"`
@@ -906,7 +976,11 @@ func grokBlocks(line []byte) []displayBlock {
 		}
 	case "user", "assistant":
 		if text := grokText(e.Content); text != "" {
-			out = append(out, textBlock("text", "", text))
+			b := textBlock("text", "", text)
+			if e.Type == "user" {
+				classifyGrokUser(&b, e, text)
+			}
+			out = append(out, b)
 		}
 	case "reasoning":
 		if text := grokText(e.Summary); text != "" {
@@ -918,6 +992,7 @@ func grokBlocks(line []byte) []displayBlock {
 		if text := grokText(e.Content); text != "" {
 			b := textBlock("tool_result", "tool result", text)
 			b.Collapsed = true
+			b.ToolID = e.ToolCallID
 			out = append(out, b)
 		}
 	default:
@@ -935,6 +1010,12 @@ func grokBlocks(line []byte) []displayBlock {
 		}
 		b := textBlock("tool_use", "tool: "+tc.Name, pretty)
 		b.Collapsed = true
+		b.ToolID = tc.ID
+		if json.Valid([]byte(args)) {
+			b.Label = toolUseLabel(tc.Name, json.RawMessage(args))
+		} else {
+			b.Label = toolUseLabel(tc.Name, tc.Arguments)
+		}
 		out = append(out, b)
 	}
 	if len(out) == 0 {

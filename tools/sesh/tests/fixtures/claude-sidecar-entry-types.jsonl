@@ -9,6 +9,7 @@
 {"type":"pr-link","prNumber":1,"prRepository":"example/repository","prUrl":"https://example.invalid/pull/1","sessionId":"10000000-0000-0000-0000-000000000000","timestamp":"2026-07-15T12:00:03Z"}
 {"type":"file-history-snapshot","isSnapshotUpdate":false,"messageId":"10000000-0000-0000-0000-000000000002","snapshot":{}}
 {"type":"worktree-state","sessionId":"10000000-0000-0000-0000-000000000000","worktreeSession":false}
+{"type":"atis-latch","atis":"","sessionId":"10000000-0000-0000-0000-000000000000"}
 {"type":"fork-context-ref","agentId":"scrubbed-agent","contextLength":1,"parentLastUuid":"10000000-0000-0000-0000-000000000002","parentSessionId":"10000000-0000-0000-0000-000000000000"}
 {"type":"bridge-session","bridgeSessionId":"20000000-0000-0000-0000-000000000000","lastSequenceNum":1,"sessionId":"10000000-0000-0000-0000-000000000000"}
 {"type":"started","agentId":"scrubbed-agent","key":"scrubbed-key"}

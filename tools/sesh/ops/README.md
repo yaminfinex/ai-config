@@ -1,51 +1,71 @@
-# sesh store ops — quick-host deployment
+# sesh store ops — store host deployment
 
-Deployment artifacts for the standing store host (the quick-host VM), shaped
-after quick's `ops/` on the same machine. This directory is `ops/` rather
-than `etc/` deliberately: in this module `etc/` means field-node installer
-artifacts, while everything here is store-host machinery — and the layout
-mirrors quick's on the VM the two services share.
+Deployment artifacts for the standing store host. Since 2026-10-14 that is
+`yamen-superset-f4-med-syd-1`, a Latitude bare-metal box in Sydney (SYD2;
+32 cores, 187 GB RAM, data on the RAID1 NVMe root). It previously rode the
+shared quick-host GCE VM (`prod-infinex-687a`, northamerica-south1); see
+"Why the store left quick-host" below. This directory is `ops/` rather than
+`etc/` deliberately: in this module `etc/` means field-node installer
+artifacts, while everything here is store-host machinery.
 
 Design authority: `docs/design/2026-07-12-sesh-store-served-distribution.md`
 (§7 publishing, §8 exposure) and `backlog/docs/doc-002` §2b (hosting shape).
 
 | File | Role |
 |---|---|
-| `bootstrap.sh` | idempotent VM bring-up: `sesh` user, `/var/lib/sesh` (+ `tsnet/`, `releases/`, `backup/db/`), unit install, TS_AUTHKEY first-start handoff |
+| `bootstrap.sh` | idempotent host bring-up: `sesh` user, `/var/lib/sesh` (+ `tsnet/`, `releases/`, `backup/db/`), unit install, TS_AUTHKEY first-start handoff |
 | `systemd/sesh-serve.service` | system unit: `sesh serve --tsnet --tsnet-hostname sesh`, dedicated user, data dir `/var/lib/sesh` |
-| `systemd/sesh-backup.{service,timer}` | 15-minute backup schedule (RPO 15 min), runs as `sesh` |
-| `backup.sh` | sqlite snapshot + GCS rsync in recoverable ordering (below) |
-| `deploy-remote.sh` | VM half of `just deploy-store`: crash-safe binary swap, restart, running-version print |
+| `systemd/sesh-backup.{service,timer}` | 15-minute backup schedule (RPO 15 min), runs as `sesh`; target + credentials from `/etc/sesh/backup.env` |
+| `backup.sh` | sqlite snapshot + bucket upload (gs:// via gcloud, s3:// via rclone) in recoverable ordering (below) |
+| `deploy-remote.sh` | host half of `just deploy-store`: crash-safe binary swap, restart, running-version print |
 
-Coexistence rule (hosting shape §2b): **quickd, Caddy, and the VM's
-tailscaled are untouched by construction.** The store embeds tsnet — its own
-tailnet node (`sesh`), own identity state under `/var/lib/sesh/tsnet`, no
-Caddyfile changes, no port negotiation. quickd restarts and sesh restarts are
-independent. The backup is the same GCS machinery as quick's but a separate
-script, timer, and bucket prefix — zero quick-owned files.
+The store embeds tsnet: its own tailnet node (`sesh`), own identity state
+under `/var/lib/sesh/tsnet`, independent of the host's tailscaled. Restarts
+of anything else on the host and sesh restarts are independent.
+
+Per-host settings live outside the repo, in two root-only places:
+
+- `/etc/systemd/system/sesh-serve.service.d/host.conf` — memory caps sized to
+  the host (the base unit's caps were sized for the 4 GB VM). On the
+  Latitude host: `GOMEMLIMIT=4GiB`, `MemoryHigh=6G`, `MemoryMax=8G`.
+- `/etc/sesh/backup.env` (0600) — backup target and credentials:
+
+  ```
+  SESH_BACKUP_BUCKET=s3://sesh-backup/sesh
+  SESH_S3_ENDPOINT=https://s3.ap-southeast-2.storage.sh
+  AWS_ACCESS_KEY_ID=...
+  AWS_SECRET_ACCESS_KEY=...
+  ```
+
+  The bucket is Latitude object storage `sesh-backup` (site SYD, versioning
+  on; SYD2 has no object storage, so backups sit in a different facility
+  from the host). The key is a Limited, read-write key on that bucket only,
+  created in the Latitude dashboard (Object storage → Access keys); its
+  secret is shown once. Never paste it into an agent chat: transcripts are
+  mirrored into this very store. Without the file, backup.sh falls back to
+  the GCS default, which only works on GCE.
 
 One deliberate divergence from quick's bootstrap: **no automatic restore
-from GCS on an empty data dir.** An empty `/var/lib/sesh` is also the normal
-first-boot state; restoring the store is the drill below, run on purpose.
+from a bucket on an empty data dir.** An empty `/var/lib/sesh` is also the
+normal first-boot state; restoring the store is the drill below, run on
+purpose.
 
 ## Owner execution runbook (end-to-end)
 
-Prerequisites: `gcloud` authenticated with IAP access to the VM; the
-tailnet-admin ask from the README ("The tailnet-admin ask") answered — one
-`tag:sesh` grant plus one **reusable** tagged auth key.
+Prerequisites: ssh + sudo on the store host; for a brand-new tailnet
+identity, the tailnet-admin ask from the README ("The tailnet-admin ask")
+answered — one `tag:sesh` grant plus one **reusable** tagged auth key. A
+host taking over an existing identity needs no key (migration drill, README).
 
-1. **Admin key arrives.** Confirm it is reusable and carries `tag:sesh`.
+1. **Admin key arrives** (new identity only). Confirm it is reusable and
+   carries `tag:sesh`.
 
-2. **Bootstrap** (idempotent; safe to re-run any time):
+2. **Bootstrap** (idempotent; safe to re-run any time). Write
+   `/etc/sesh/backup.env` first so bootstrap picks the right upload tool
+   (rclone for s3://, gcloud otherwise). On the store host:
 
    ```sh
-   cd tools/sesh
-   gcloud compute scp --recurse --tunnel-through-iap \
-     --zone northamerica-south1-c --project prod-infinex-687a \
-     ops quick-host:/tmp/sesh-ops
-   gcloud compute ssh quick-host --tunnel-through-iap \
-     --zone northamerica-south1-c --project prod-infinex-687a \
-     --command 'sudo TS_AUTHKEY=tskey-auth-... sh /tmp/sesh-ops/bootstrap.sh'
+   sudo TS_AUTHKEY=tskey-auth-... sh tools/sesh/ops/bootstrap.sh   # key: new identity only
    ```
 
    The key lands in `/etc/sesh/serve.env` (root-only) for the first service
@@ -53,10 +73,12 @@ tailnet-admin ask from the README ("The tailnet-admin ask") answered — one
 
 3. **Deploy the store**: `just deploy-store`. Builds linux/amd64 from
    `./cmd/sesh-store` (the FULL build — the release channel publishes only
-   the slim client, which cannot serve), ships via
-   IAP, swaps the binary crash-safely, restarts, and prints the version of
-   the **running** image. On the first start the store joins the tailnet as
-   node `sesh`. Then:
+   the slim client, which cannot serve), ships it with
+   `scripts/deploy-store.sh` (in place when run on the store host, else
+   scp + ssh to `SESH_STORE_HOST`, default
+   `ubuntu@yamen-superset-f4-med-syd-1`), swaps the binary crash-safely,
+   restarts, and prints the version of the **running** image. On a first
+   start with a new key the store joins the tailnet as node `sesh`. Then:
    - ask the admin to disable key expiry on the node (item 3 of the ask);
    - scrub the now-inert key:
      `sudo sed -i '/^TS_AUTHKEY=/d' /etc/sesh/serve.env`.
@@ -72,10 +94,10 @@ tailnet-admin ask from the README ("The tailnet-admin ask") answered — one
    ```sh
    just tag 0.1.0                     # creates monorepo-prefixed tag sesh-v0.1.0
    git push origin sesh-v0.1.0
-   just release                       # defaults to sesh-host:/var/lib/sesh/releases
+   just release                       # defaults to the store host's /var/lib/sesh/releases
    ```
 
-   Publishing needs the ssh alias and group membership below.
+   Publishing needs the group membership below.
 
 6. **Slack announcement.** Post the one-liner from the README install
    section: `curl http://sesh.<tailnet>.ts.net:8765/install.sh | sh`
@@ -86,28 +108,16 @@ tailnet-admin ask from the README ("The tailnet-admin ask") answered — one
 
 ## Publishing access (`just release` default dest)
 
-`just release` defaults to `sesh-host:/var/lib/sesh/releases`. `sesh-host`
-is an ssh alias for the VM over IAP — `scripts/release.sh` needs plain
-`ssh`/`rsync`, not `gcloud compute ssh`:
+`just release` publishes to `/var/lib/sesh/releases` on the store host: a
+local path when run there, `$SESH_STORE_HOST:/var/lib/sesh/releases` over
+plain ssh/rsync from anywhere else (`SESH_RELEASE_DEST` overrides both).
+From another machine, make sure `ssh $SESH_STORE_HOST` works
+non-interactively first — release.sh drives ssh/rsync without a terminal,
+so an unanswered host-key prompt stalls or aborts the publish
+(`StrictHostKeyChecking accept-new` in `~/.ssh/config` pins the key on
+first contact and still refuses a later change).
 
-```
-# ~/.ssh/config
-Host sesh-host
-    HostName quick-host
-    User <your VM login>
-    IdentityFile ~/.ssh/google_compute_engine
-    ProxyCommand gcloud compute start-iap-tunnel quick-host %p --listen-on-stdin --zone northamerica-south1-c --project prod-infinex-687a
-    StrictHostKeyChecking accept-new
-```
-
-`accept-new` matters on the FIRST publish (first-rollout lesson): the VM's
-host key is not in `known_hosts` yet, and release.sh drives ssh/rsync
-non-interactively, so a default TOFU prompt stalls or aborts the publish.
-`accept-new` pins the key on first contact and still refuses a later key
-change (unlike `no`, which would accept silently).
-
-(`gcloud compute config-ssh` generates the key pair if you have never
-ssh'd to the VM.) On the VM, one-time, add your login to the `sesh` group so
+On the store host, one-time, add the publishing login to the `sesh` group so
 the publish path needs no sudo — `releases/` is group-writable with setgid:
 
 ```sh
@@ -132,11 +142,12 @@ touching the publish path.
 
 ## Backup and restore
 
-`backup.sh` runs every 15 minutes as user `sesh` (RPO = 15 min). Bucket
-layout, all under the sesh-only prefix:
+`backup.sh` runs every 15 minutes as user `sesh` (RPO = 15 min), uploading
+copy-only (never deleting remote objects) to `SESH_BACKUP_BUCKET` from
+`/etc/sesh/backup.env`. Bucket layout, all under the sesh-only prefix:
 
 ```
-gs://infinex-quick-backup/sesh/
+s3://sesh-backup/sesh/
   db/store.sqlite   VACUUM INTO snapshot — the live file is never copied
   mirror/           append-only transcript mirror (source of truth)
   tsnet/            tailnet identity — restoring it brings the node back AS
@@ -165,16 +176,22 @@ binary is deployed):
 1. Stop the store: `sudo systemctl stop sesh-serve`. Shippers hold position
    by design — cursors untouched, source files remain the buffer; nothing is
    lost while the store is dark.
-2. Pull the data back:
+2. Pull the data back, with the same credentials the backup uses (put
+   `/etc/sesh/backup.env` on the target host first):
 
    ```sh
-   sudo gcloud storage rsync -r gs://infinex-quick-backup/sesh/mirror   /var/lib/sesh/mirror
-   sudo gcloud storage rsync -r gs://infinex-quick-backup/sesh/tsnet    /var/lib/sesh/tsnet
-   sudo gcloud storage rsync -r gs://infinex-quick-backup/sesh/releases /var/lib/sesh/releases
-   sudo gcloud storage cp gs://infinex-quick-backup/sesh/db/store.sqlite /var/lib/sesh/store.sqlite
+   sudo sh -ac '. /etc/sesh/backup.env
+     r() { rclone copy --s3-provider Other --s3-env-auth --s3-no-check-bucket \
+             --s3-endpoint "$SESH_S3_ENDPOINT" ":s3:${SESH_BACKUP_BUCKET#s3://}/$1" "/var/lib/sesh/$2"; }
+     r mirror mirror; r tsnet tsnet; r releases releases; r db .'
    sudo chown -R sesh:sesh /var/lib/sesh
    sudo chmod 700 /var/lib/sesh/tsnet
    ```
+
+   (`db/` holds only `store.sqlite`, so `r db .` lands it at
+   `/var/lib/sesh/store.sqlite`.) For a GCS target the equivalent is
+   `gcloud storage rsync -r gs://.../<dir> /var/lib/sesh/<dir>` per
+   directory and `gcloud storage cp` for the db.
 
    Restore order does not matter: the backup-time invariant (db never newer
    than mirror) is what makes the restored pair safe.
@@ -201,38 +218,56 @@ is back.
 ## Memory ceiling and profiling
 
 `sesh-serve.service` caps the store at `MemoryMax=1800M` (with
-`MemoryHigh=1500M` and `GOMEMLIMIT=1200MiB` under it). Past the cap the
-kernel kills only sesh and `Restart=always` brings it back, instead of a
-global OOM taking down quickd and the VM's networking with it (2026-10-02:
+`MemoryHigh=1500M` and `GOMEMLIMIT=1200MiB` under it), sized for the old
+4 GB VM; the Latitude host raises them in its `host.conf` drop-in (above).
+Past the cap the kernel kills only sesh and `Restart=always` brings it back,
+instead of a global OOM taking the host's networking with it (2026-10-02:
 an uncapped sesh at 3.4 GB left quick-host off the network for six days).
 `journalctl -u sesh-serve | grep -i oom` shows whether the cap has fired.
 
-To see what the heap holds, profile on the VM; pprof listens on loopback
+To see what the heap holds, profile on the store host; pprof listens on loopback
 only, never the tailnet:
 
 ```sh
-curl -s localhost:8767/debug/pprof/heap > heap.pb   # on quick-host
+curl -s localhost:8767/debug/pprof/heap > heap.pb   # on the store host
 go tool pprof -top heap.pb                          # anywhere with the binary's source
 ```
 
+## Why the store left quick-host
+
+Hosting on quick-host was always a threshold decision (`backlog/docs/doc-002`
+§2d). On 2026-10-14 it moved to the Latitude host via the README's store
+host migration drill (tsnet identity carried, URL unchanged, no shipper
+touched), for three measured reasons:
+
+- **Distance.** Every node shipping to the store is in or near Sydney; the
+  VM was in Mexico (~180 ms round trip), which was about 0.4 s of every
+  0.6 s page load.
+- **Disk.** pd-standard on a 4 GB VM: pages not already in the small page
+  cache took 1–3 s on first view.
+- **Backups never ran.** The VM's target `gs://infinex-quick-backup` did not
+  exist, so every run since 2026-07-13 had failed and there was no off-site
+  copy. The new host backs up to Latitude object storage (above).
+
+The old VM's `/var/lib/sesh` was left in place, stopped and disabled, as a
+rollback copy. Never start it while the new host runs: two stores on one
+tsnet identity fight over the node.
+
 ## Escape triggers (pre-agreed thresholds)
 
-Hosting on quick-host is a threshold decision, not a permanent one
-(`backlog/docs/doc-002` §2d). Any ONE of these fires the store host
-migration drill (README, "Store host migration drill") to a dedicated node —
-no re-litigating:
+Any ONE of these fires the store host migration drill (README, "Store host
+migration drill") to another host — no re-litigating:
 
-- **Disk/mirror growth**: mirror + db exceed 20 GB, or the shared disk
-  passes 80% (the backup script warns at 80% on every run; disk-full 5xx's
-  sesh ingest — safe, shippers hold — but could break quickd, which is
-  worse).
-- **quickd incident**: any security incident on quickd. The store shares its
-  kernel with the most-exposed service on the tailnet; a VM compromise is a
+- **Disk/mirror growth**: the disk holding `/var/lib/sesh` passes 80% (the
+  backup script warns at 80% on every run; disk-full 5xx's ingest — safe,
+  shippers hold — but the host is shared with other work).
+- **Host incident**: any security incident on the host. The store shares
+  its kernel with everything else running there; a host compromise is a
   store compromise regardless of app-layer grants.
 - **Team growth / availability**: the shipping fleet passes ~10 users, or
-  sesh availability starts competing with quick deploys (store downtime
-  blocks nothing — shippers hold — but repeated collisions signal the shared
-  host is outgrown).
+  store availability starts competing with other uses of the host (store
+  downtime blocks nothing — shippers hold — but repeated collisions signal
+  the shared host is outgrown).
 
 Moving is cheap by design: the tsnet state dir IS the identity; the drill
 carries it, the URL survives, and no shipper changes anything.

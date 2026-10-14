@@ -55,8 +55,15 @@ fi
 if ! command -v sqlite3 >/dev/null 2>&1; then
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq sqlite3
 fi
-command -v gcloud >/dev/null 2>&1 ||
-  fail "gcloud not found (backup pushes to GCS; expected on GCE images)"
+# The upload tool follows the backup target: gcloud for gs:// (GCE images
+# ship it), rclone for s3:// (SESH_BACKUP_BUCKET in /etc/sesh/backup.env).
+if grep -qs '^SESH_BACKUP_BUCKET=s3://' "$ETC_DIR/backup.env"; then
+  command -v rclone >/dev/null 2>&1 ||
+    fail "rclone not found (the s3:// backup target needs it: apt-get install rclone)"
+else
+  command -v gcloud >/dev/null 2>&1 ||
+    fail "gcloud not found (default backup target is GCS; for an S3 bucket set SESH_BACKUP_BUCKET=s3://... in $ETC_DIR/backup.env)"
+fi
 
 # --- user + dirs ---------------------------------------------------------------
 if ! id sesh >/dev/null 2>&1; then

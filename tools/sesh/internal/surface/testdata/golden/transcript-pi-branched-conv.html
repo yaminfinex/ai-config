@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sesh — session 019f64a0</title>
+<script src="/assets/htmx.min.js"></script>
+<style>
+:root { color-scheme: light dark; }
+body { font: 14px/1.45 system-ui, sans-serif; margin: 0 auto; max-width: 72rem; padding: 0 1rem 3rem; }
+header.site { display: flex; gap: .6rem; align-items: baseline; padding: .8rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); margin-bottom: 1rem; }
+header.site a { font-weight: 700; text-decoration: none; color: inherit; }
+header.site .tagline { opacity: .6; font-size: .85em; }
+h2 { font-size: 1.1rem; margin: 1.2rem 0 .3rem; }
+h3 { font-size: .95rem; margin: .8rem 0 .3rem; opacity: .85; }
+.source, .secondary { opacity: .6; font-size: .85em; font-weight: 400; }
+table.sessions { border-collapse: collapse; width: 100%; }
+table.sessions td, table.sessions th { text-align: left; padding: .25rem .6rem .25rem 0; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); vertical-align: baseline; }
+table.sessions th { font-size: .78em; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+.badge { font-size: .75em; border: 1px solid color-mix(in srgb, currentColor 35%, transparent); border-radius: .6em; padding: 0 .45em; margin-left: .4em; opacity: .8; white-space: nowrap; }
+.badge.warn { border-color: #b8860b; color: #b8860b; }
+code, pre { font: .86em/1.4 ui-monospace, monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: .2rem 0; }
+ol.transcript, ol.rawlines { list-style: none; padding: 0; }
+li.entry { border-left: 3px solid color-mix(in srgb, currentColor 15%, transparent); padding: .3rem 0 .3rem .7rem; margin: .35rem 0; }
+li.entry.role-user { border-left-color: #4a7dbd; }
+li.entry.role-assistant { border-left-color: #4aa564; }
+li.entry.quarantined { border-left-color: #b8860b; }
+.entryhead { font-size: .8em; opacity: .75; display: flex; gap: .7em; flex-wrap: wrap; }
+.entryhead .role { font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+.block.meta { opacity: .55; font-size: .82em; }
+.block .btitle { font-size: .82em; font-weight: 600; opacity: .8; margin-top: .25rem; }
+details.block { margin: .2rem 0; }
+details.block > summary { cursor: pointer; font-size: .84em; opacity: .75; }
+li.rawline { padding: .1rem 0; border-bottom: 1px dotted color-mix(in srgb, currentColor 10%, transparent); }
+p.crumbs { font-size: .85em; }
+p.notice { border: 1px solid color-mix(in srgb, currentColor 30%, transparent); border-radius: .3rem; padding: .4rem .7rem; background: color-mix(in srgb, currentColor 6%, transparent); }
+.empty { opacity: .6; }
+dl.meta { font-size: .85em; display: grid; grid-template-columns: max-content 1fr; gap: .1rem 1rem; }
+dl.meta dt { opacity: .6; }
+dl.meta dd { margin: 0; }
+.conv { margin: .6rem 0; }
+.msg { margin: .7rem 0; padding: .1rem 0 .1rem .7rem; border-left: 3px solid color-mix(in srgb, currentColor 15%, transparent); }
+.msg-user { border-left-color: #4a7dbd; }
+.msg-assistant { border-left-color: #4aa564; }
+.msg-hcom { border-left-color: #8a63c9; }
+.msg .who { font-size: .78em; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; opacity: .7; }
+.msg .when { font-weight: 400; opacity: .8; margin-left: .4em; }
+.msg .say { white-space: pre-wrap; overflow-wrap: anywhere; }
+.msg .say code { font-size: .9em; padding: 0 .2em; border-radius: .2em; background: color-mix(in srgb, currentColor 8%, transparent); }
+.msg .say code.fence { display: block; margin: .3em 0; padding: .4em .6em; overflow-x: auto; white-space: pre; }
+.run { display: flex; flex-wrap: wrap; gap: .25rem; margin: .3rem 0 .3rem .7rem; align-items: flex-start; }
+.pill { font-size: .78em; border-radius: .8em; padding: .05em .6em; max-width: 100%; overflow-wrap: anywhere; background: color-mix(in srgb, currentColor 7%, transparent); border: 1px solid color-mix(in srgb, currentColor 18%, transparent); }
+details.pill > summary { cursor: pointer; list-style: none; }
+details.pill > summary::-webkit-details-marker { display: none; }
+details.pill[open] { flex-basis: 100%; border-radius: .4em; padding: .3em .6em; }
+details.pill[open] > summary { font-weight: 600; }
+details.pill pre { font-size: 1.05em; max-height: 32rem; overflow: auto; }
+.pill .rlabel { font-size: .9em; opacity: .6; margin-top: .3em; }
+.pill.tone-tool { border-color: color-mix(in srgb, #4a7dbd 45%, transparent); }
+.pill.tone-thinking { opacity: .7; font-style: italic; }
+.pill.tone-message { border-color: color-mix(in srgb, #8a63c9 55%, transparent); }
+.pill.tone-status { border-color: color-mix(in srgb, #4aa564 50%, transparent); }
+.pill.tone-context { opacity: .75; }
+.pill.tone-warn { border-color: #b8860b; color: #b8860b; }
+.pill.tone-error { border-color: #c0392b; color: #c0392b; }
+.divider { display: flex; align-items: center; gap: .6rem; margin: 1rem 0; font-size: .8em; opacity: .65; }
+.divider::before, .divider::after { content: ""; flex: 1; border-top: 1px dashed currentColor; }
+</style>
+</head>
+<body>
+<header class="site"><a href="/">sesh</a><a href="/sessions">sessions</a><span class="tagline">team session mirror — read-only</span></header>
+<main>
+<p class="crumbs"><a href="/">← nodes</a> · <a href="/sessions">all sessions</a> · view: <b>conversation</b> · <a href="/s/pi/019f64a0-1111-7222-8333-444444444444?view=full">every line</a> · <a href="/s/pi/019f64a0-1111-7222-8333-444444444444/raw">raw JSONL from mirror</a></p>
+<h2>pi session <code>019f64a0-1111-7222-8333-444444444444</code></h2>
+<dl class="meta">
+<dt>owner</dt><dd>grace <span class="source">OS user (no owner claim)</span></dd>
+<dt>node</dt><dd>grace@workstation</dd>
+<dt>last activity</dt><dd>2026-07-15 12:35:02 UTC</dd>
+<dt>mirrored at</dt><dd>2026-07-15 12:36:00 UTC</dd>
+<dt>files</dt><dd><code>019f64a0</code> gen 0</dd>
+</dl>
+<div class="conv">
+<div class="run"><span class="pill tone-other">session format v3 · cwd /workspace/pi-fixture</span><span class="pill tone-other">model: fixture/fixture-model</span><span class="pill tone-other">thinking level: low</span>
+</div>
+<div class="msg msg-user"><div class="who">user <span class="when" title="2026-07-15 12:34:57 UTC">12:34:57</span></div><div class="say">Choose a route.</div></div>
+<div class="run"><span class="pill tone-warn">branch point: active path &#34;chosen option&#34;; 1 alternate branch(es) hidden</span>
+</div>
+<div class="msg msg-assistant"><div class="who">assistant <span class="when" title="2026-07-15 12:34:58 UTC">12:34:58</span></div><div class="say">I can take either route.</div></div>
+<div class="run"><span class="pill tone-other">branch label: chosen option</span>
+</div>
+<div class="msg msg-user"><div class="who">user <span class="when" title="2026-07-15 12:35:01 UTC">12:35:01</span></div><div class="say">Take the active route.</div></div>
+<div class="msg msg-assistant"><div class="who">assistant <span class="when" title="2026-07-15 12:35:02 UTC">12:35:02</span></div><div class="say">ACTIVE-BRANCH-CONTENT</div></div>
+<div class="run"><span class="pill tone-other">label active01: chosen option</span>
+</div>
+</div>
+</main>
+</body>
+</html>
+
+
+
+

@@ -39,8 +39,9 @@ hold the fixture back (playbook rule).
   file is a minimal sanitized stand-in, following the existing Pi precedent:
   it preserves the audited shapes but replaces values with fixture-only
   UUIDs, labels, URLs, and content.
-- 16 valid JSONL lines ending in `\n`: two real-shape conversation messages,
-  the 10 metadata types observed and audited in admitted session files, three
+- 17 valid JSONL lines ending in `\n`: two real-shape conversation messages,
+  the 11 metadata types observed and audited in admitted session files
+  (`atis-latch` added 2026-10-13, see the sidecar design note), three
   synthesized unknown-visible probes (`result`, `started`, and
   `fork-context-ref`) whose shapes were observed only in recursively found
   workflow journals, and one invented `future-sidecar-probe` silent-drop

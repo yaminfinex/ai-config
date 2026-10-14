@@ -1,7 +1,7 @@
 {{template "layout" .}}
 {{define "title"}}sesh — session {{printf "%.8s" .Session.LogicalSessionID}}{{end}}
 {{define "main" -}}
-<p class="crumbs"><a href="/">← nodes</a> · <a href="/sessions">all sessions</a> · <a href="{{.RawURL}}">raw JSONL from mirror</a></p>
+<p class="crumbs"><a href="/">← nodes</a> · <a href="/sessions">all sessions</a> · view: {{if .Compact}}<b>conversation</b> · <a href="{{.FullURL}}">every line</a>{{else}}<a href="{{.CompactURL}}">conversation</a> · <b>every line</b>{{end}} · <a href="{{.RawURL}}">raw JSONL from mirror</a></p>
 <h2>{{.Session.Tool}} session <code>{{.Session.LogicalSessionID}}</code></h2>
 <dl class="meta">
 {{- $owner := .Session.DisplayOwner}}
@@ -20,11 +20,29 @@
 <dt>quarantined</dt><dd>{{.Session.QuarantinedRows}} lines held out of render — see raw view</dd>
 {{- end}}
 </dl>
-{{- if .KnownMetaRows}}
+{{- if and .KnownMetaRows (not .Compact)}}
 <p class="secondary"><span class="badge">{{.KnownMetaRows}} known metadata lines excluded from this window</span> · full bytes remain in the <a href="{{.RawURL}}">raw view</a></p>
 {{- end}}
 {{- template "transcriptPager" .}}
 {{- if .BranchNotice}}<p class="notice">{{.BranchNotice}}</p>{{end}}
+{{- if .Compact}}
+<div class="conv">
+{{- range .Conv}}
+{{- if eq .Kind "message"}}
+<div class="msg msg-{{.Role}}"><div class="who">{{.Speaker}}{{if .Timestamp}} <span class="when" title="{{fmtTime .Timestamp}}">{{fmtClock .Timestamp}}</span>{{end}}</div><div class="say">{{prose .Text}}</div>{{if .Truncated}}<div class="secondary">truncated — full text in the <a href="{{$.FullURL}}">every-line view</a></div>{{end}}</div>
+{{- else if eq .Kind "divider"}}
+<div class="divider"><span>{{.Text}}{{with fmtClock .Timestamp}} · {{.}}{{end}}</span></div>
+{{- else}}
+<div class="run">
+{{- range .Pills}}
+{{- if .Expandable}}<details class="pill tone-{{.Tone}}"><summary>{{.Label}}{{if gt .Count 1}} ×{{.Count}}{{end}}</summary>{{if .Detail}}<pre>{{.Detail}}</pre>{{if .DetailTruncated}}<div class="secondary">truncated</div>{{end}}{{end}}{{if .HasResult}}<div class="rlabel">result</div><pre>{{.Result}}</pre>{{if .ResultTruncated}}<div class="secondary">truncated</div>{{end}}{{end}}</details>
+{{- else}}<span class="pill tone-{{.Tone}}">{{.Label}}{{if gt .Count 1}} ×{{.Count}}{{end}}</span>{{end}}
+{{- end}}
+</div>
+{{- end}}
+{{- end}}
+</div>
+{{- else}}
 <ol class="transcript">
 {{- range .Entries}}
 <li class="entry role-{{.Role}}{{if .Quarantined}} quarantined{{end}}"{{with .MessageUUID}} data-uuid="{{.}}"{{end}}>
@@ -45,6 +63,7 @@
 </li>
 {{- end}}
 </ol>
+{{- end}}
 {{- if .OmittedRows}}
 <p class="notice">display budget reached — {{.OmittedRows}} further lines omitted from this render; the full bytes are in the <a href="{{.RawURL}}">raw view</a> and the mirror.</p>
 {{- end}}

@@ -1,11 +1,16 @@
 # /etc/systemd/system/sesh-backup.service — installed by ops/bootstrap.sh.
 # Triggered by sesh-backup.timer every 15 min as user `sesh`. RPO = 15 min.
 [Unit]
-Description=sesh backup — sqlite VACUUM INTO snapshot + GCS rsync
+Description=sesh backup — sqlite VACUUM INTO snapshot + bucket upload
 Wants=network-online.target
 After=network-online.target
 
 [Service]
 Type=oneshot
 User=sesh
+# Optional per-host target and credentials, root-only 0600, e.g.
+# SESH_BACKUP_BUCKET=s3://... SESH_S3_ENDPOINT=... AWS_ACCESS_KEY_ID=...
+# AWS_SECRET_ACCESS_KEY=... Absent on GCE, where the VM's service account
+# authenticates gcloud against the default gs:// bucket.
+EnvironmentFile=-/etc/sesh/backup.env
 ExecStart=/usr/local/bin/sesh-backup.sh
