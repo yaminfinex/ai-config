@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import type { DockviewApi } from 'dockview-react'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { queryKeys } from '../../api/client'
@@ -6,8 +6,11 @@ import type { Board, EntriesPage } from '../../types'
 import { useDOMEvent } from '../../shared/lifecycle'
 import { panelParams } from '../layout/dockLayout'
 import { findAgentRow } from '../../shared/agentStatus'
+import { liveMembers, readViewedBlocks, writeViewedBlocks, type LensView } from '../lens/index.ts'
 import {
   agentUnread,
+  boardAgents,
+  boardAttention,
   dwelledAgents,
   latestPosition,
   markLastTurnUnread,
@@ -16,6 +19,7 @@ import {
   markerKeepSet,
   nextArmed,
   nextDwellDelay,
+  nextViewedBlocks,
   nextViewing,
   readUpdates,
   seedUpdates,
@@ -25,6 +29,7 @@ import {
   viewedAgents,
   type ReadPosition,
   type SpaceAttention,
+  type SpaceMember,
   type ViewingState,
 } from '../spaces/index.ts'
 import { useDraftMarks } from '../drafts/useDraftMarks.ts'
@@ -43,12 +48,16 @@ function transcriptEnd(queryClient: QueryClient, name: string): ReadPosition | n
 }
 
 // useSpaceAttention derives each space's waiting/blocked/draft agents from
-// its open agents (useSpaceAgents), the fleet board and the shared read
-// markers, and records reading for the dwell.
-export function useSpaceAttention({ apiRef, board, openBySpace }: {
+// its members on the board (spaces.members), the board-wide total, the
+// fleet board and the shared read markers; it records reading for the
+// dwell and keeps the viewed-blocks set. Only the focused panel is seen:
+// the zoom's focused group, the agent opened alone, nothing on the lens.
+export function useSpaceAttention({ apiRef, board, openBySpace, membersBySpace, view }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   board: Board | undefined
   openBySpace: Record<string, string[]>
+  membersBySpace: Record<string, SpaceMember[]>
+  view: LensView
 }) {
   const queryClient = useQueryClient()
   const { store, pulled } = useReadMarkersContext()
@@ -59,24 +68,41 @@ export function useSpaceAttention({ apiRef, board, openBySpace }: {
   const [dwellTick, setDwellTick] = useState(0)
   const [entriesTick, setEntriesTick] = useState(0)
   const [armed, setArmed] = useState<ReadonlySet<string>>(() => new Set())
+  const [initialBlocks] = useState(() => readViewedBlocks(localStorage))
+  const [viewedBlocks, setViewedBlocks] = useState(initialBlocks.blocks)
+  const blocksState = useRef(initialBlocks.state)
 
   useDOMEvent(document, 'visibilitychange', () => setVisible(documentVisible()))
 
   const api = apiRef.current
   const groups = api?.groups ?? []
-  const viewedKey = viewedAgents(groups.map((group) => {
-    const params = panelParams(group.activePanel?.params)
-    return { visible: group.api.isVisible, activeAgent: params?.kind === 'agent' ? params.name : undefined }
-  }), visible).join('\n')
+  const activeGroupID = api?.activeGroup?.id
+  const viewedKey = view.kind === 'lens' ? ''
+    : view.kind === 'alone' ? visible ? view.agent : ''
+      : viewedAgents(groups.map((group) => {
+        const params = panelParams(group.activePanel?.params)
+        return { visible: group.api.isVisible, focused: group.id === activeGroupID, activeAgent: params?.kind === 'agent' ? params.name : undefined }
+      }), visible).join('\n')
   // A reload restoring the viewed panel is not leaving it: arming waits
-  // for a dock with groups in a visible document.
-  const dockReady = Boolean(api) && groups.length > 0 && visible
+  // for a dock with groups in a visible document. The lens views nothing,
+  // so marks arm there at once.
+  const dockReady = visible && (view.kind !== 'zoom' || (Boolean(api) && groups.length > 0))
   useEffect(() => {
     setViewing((previous) => nextViewing(previous, viewedKey.split('\n').filter(Boolean), Date.now()))
   }, [viewedKey])
   useEffect(() => {
     setArmed((previous) => nextArmed(previous, markers, viewedKey.split('\n').filter(Boolean), dockReady))
   }, [dockReady, markers, viewedKey])
+  // Viewing a blocked agent views its block at once, and a block landing
+  // while it is viewed too; unblocking drops the mark.
+  const memberKey = Object.values(membersBySpace).flat().flatMap((member) => member.kind === 'agent' ? [member.name] : []).join('\n')
+  useEffect(() => {
+    const members = new Set(memberKey.split('\n'))
+    setViewedBlocks((previous) => nextViewedBlocks(previous, board, viewedKey.split('\n').filter(Boolean), (name) => members.has(name)))
+  }, [board, memberKey, viewedKey])
+  useEffect(() => {
+    blocksState.current = writeViewedBlocks(localStorage, viewedBlocks, blocksState.current)
+  }, [viewedBlocks])
   useEffect(() => {
     const delay = nextDwellDelay(viewing, Date.now())
     if (delay === null) return
@@ -98,8 +124,9 @@ export function useSpaceAttention({ apiRef, board, openBySpace }: {
     const keep = markerKeepSet(board, open)
     if (keep) store.prune(keep)
     // Seeding waits for the first pull so a fresh browser never quietly
-    // overwrites what another device has not read yet.
-    if (pulled) store.apply(seedUpdates(store.markers(), board, open), { weak: true })
+    // overwrites what another device has not read yet. Every board agent is
+    // seeded, so one in no space can turn unread and count in the total.
+    if (pulled) store.apply(seedUpdates(store.markers(), board, [...(board ? boardAgents(board) : []), ...open]), { weak: true })
     const dwelled = dwelledAgents(viewing, Date.now())
     const positions = Object.fromEntries(dwelled.map((name) => [name, transcriptEnd(queryClient, name)]))
     store.apply(readUpdates({ markers: store.markers(), board, viewed: dwelled, positions, armed, now: Date.now() }))
@@ -136,8 +163,25 @@ export function useSpaceAttention({ apiRef, board, openBySpace }: {
     else markUnread(name)
   }, [markRead, markUnread, queryClient, store])
 
-  const attention = useMemo(() => Object.fromEntries(Object.entries(openBySpace)
-    .map(([id, agents]) => [id, spaceAttention(board, agents, markers, drafts)])) as Record<string, SpaceAttention>, [board, drafts, markers, openBySpace])
-  const markSpaceRead = useCallback((spaceID: string) => markRead(attention[spaceID]?.unread ?? []), [attention, markRead])
-  return { attention, markUnread, markRead, toggleRead, markSpaceRead }
+  const attention = useMemo(() => Object.fromEntries(Object.entries(membersBySpace)
+    .map(([id, members]) => [id, spaceAttention(board, liveMembers(members, board), markers, drafts, viewedBlocks)])) as Record<string, SpaceAttention>, [board, drafts, markers, membersBySpace, viewedBlocks])
+  const total = useMemo(() => boardAttention(board, markers, drafts, viewedBlocks), [board, drafts, markers, viewedBlocks])
+  // viewBlocks views the named agents' current blocks, as looking at them would.
+  const viewBlocks = useCallback((names: readonly string[]) => {
+    const current = queryClient.getQueryData<Board>(queryKeys.fleet)
+    setViewedBlocks((previous) => nextViewedBlocks(previous, current, names, (name) => previous.has(name)))
+  }, [queryClient])
+  // m: the space's unread members read, and their blocks viewed.
+  const markSpaceRead = useCallback((spaceID: string) => {
+    const space = attention[spaceID]
+    if (!space) return
+    markRead(space.unread)
+    viewBlocks(space.blocked)
+  }, [attention, markRead, viewBlocks])
+  // u: every member on the board marked unread from its latest turn; each
+  // mark holds until its agent is left and come back to (nextArmed).
+  const markSpaceUnread = useCallback((spaceID: string) => {
+    for (const name of liveMembers(membersBySpace[spaceID] ?? [], queryClient.getQueryData<Board>(queryKeys.fleet))) markUnread(name)
+  }, [markUnread, membersBySpace, queryClient])
+  return { attention, total, viewedBlocks, markUnread, markRead, toggleRead, markSpaceRead, markSpaceUnread }
 }

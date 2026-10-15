@@ -3,33 +3,33 @@ import type { DockviewApi } from 'dockview-react'
 import { followScrollCommandEvent, type FollowScrollCommand } from '../../shared/useFollowScroll'
 import { panelParams } from '../layout/dockLayout'
 import { bindShellShortcuts } from '../layout/shellShortcuts'
-import { spaceIDInDirection, type SpaceDefinition } from '../spaces/index.ts'
 
 export function useWorkspaceShortcuts({
   apiRef,
+  docked,
   shortcutReference,
   setShortcutReference,
   showQuickOpen,
   closePanel,
   toggleNotesRail,
-  spaces,
-  activeSpaceID,
-  switchSpace,
+  stepSpace,
   toggleRead,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
+  // docked answers whether a dock is on screen: on the lens the dock keys are inert.
+  docked: () => boolean
   shortcutReference: boolean
   setShortcutReference: (open: boolean) => void
   showQuickOpen: () => void
   closePanel: (id: string) => void
   toggleNotesRail: () => void
-  spaces: SpaceDefinition[]
-  activeSpaceID: string | null
-  switchSpace: (id: string) => boolean
+  // ⇧⌥←/→ is the zoom's [ ]: the previous or next space in lens order.
+  stepSpace: (by: -1 | 1) => boolean
   toggleRead: (name: string) => void
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
+      if (!docked()) return false
       const viewport = document.querySelector('.dv-active-group [data-follow-scroll]')
       if (!viewport) return false
       viewport.dispatchEvent(new CustomEvent(followScrollCommandEvent, { detail: command }))
@@ -37,7 +37,7 @@ export function useWorkspaceShortcuts({
     }
     const switchTab = (direction: 'previous' | 'next') => {
       const api = apiRef.current
-      if (!api?.activeGroup || api.activeGroup.panels.length === 0) return false
+      if (!docked() || !api?.activeGroup || api.activeGroup.panels.length === 0) return false
       const panels = api.activeGroup.panels
       const index = panels.findIndex((panel) => panel.id === api.activeGroup?.activePanel?.id)
       panels[(index + (direction === 'next' ? 1 : -1) + panels.length) % panels.length]?.api.setActive()
@@ -47,7 +47,7 @@ export function useWorkspaceShortcuts({
       quickOpen: showQuickOpen,
       closePanel: () => {
         const panel = apiRef.current?.activePanel
-        if (!panel) return false
+        if (!docked() || !panel) return false
         closePanel(panel.id)
         return true
       },
@@ -58,11 +58,9 @@ export function useWorkspaceShortcuts({
         return true
       },
       switchTab,
-      switchSpace: (direction) => {
-        const target = spaceIDInDirection(spaces, activeSpaceID, direction)
-        return target ? switchSpace(target) : false
-      },
+      switchSpace: (direction) => stepSpace(direction === 'next' ? 1 : -1),
       focusFleet: () => {
+        if (!docked()) return false
         const item = document.querySelector<HTMLElement>('.fleet-tree [role="treeitem"]')
         if (!item) return false
         item.focus()
@@ -70,6 +68,7 @@ export function useWorkspaceShortcuts({
       },
       toggleNotesRail,
       focusComposer: () => {
+        if (!docked()) return false
         const composer = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
         if (!composer) return false
         composer.focus()
@@ -79,17 +78,17 @@ export function useWorkspaceShortcuts({
       goToBottom: () => scrollActivePanel('bottom'),
       toggleMaximize: () => {
         const group = apiRef.current?.activeGroup
-        if (!group) return false
+        if (!docked() || !group) return false
         if (group.api.isMaximized()) group.api.exitMaximized()
         else group.api.maximize()
         return true
       },
       toggleRead: () => {
         const params = panelParams(apiRef.current?.activePanel?.params)
-        if (params?.kind !== 'agent') return false
+        if (!docked() || params?.kind !== 'agent') return false
         toggleRead(params.name)
         return true
       },
     }, navigator.userAgent)
-  }, [activeSpaceID, apiRef, closePanel, setShortcutReference, shortcutReference, showQuickOpen, spaces, switchSpace, toggleNotesRail, toggleRead])
+  }, [apiRef, closePanel, docked, setShortcutReference, shortcutReference, showQuickOpen, stepSpace, toggleNotesRail, toggleRead])
 }

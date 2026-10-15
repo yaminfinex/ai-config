@@ -103,6 +103,10 @@ test('Escape blurs the composer without claiming the event', () => {
   assert.equal(blurred, true)
   blurred = false
   assert.equal(blurComposerOnEscape({ key: 'Enter', currentTarget: { blur: () => { blurred = true } } }), false)
+  let panelFocused = false
+  const panel = { focus: () => { panelFocused = true } } as unknown as Element
+  assert.equal(blurComposerOnEscape({ key: 'Escape', currentTarget: { blur: () => undefined, closest: (selector: string) => selector === '.agent-page' ? panel : null } }), true)
+  assert.equal(panelFocused, true, 'esc hands the keys to the panel so the next esc zooms out')
   assert.equal(blurred, false)
 })
 

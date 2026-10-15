@@ -81,6 +81,70 @@ export function isEditableShortcutTarget(target: EventTarget | null) {
     (target.isContentEditable || Boolean(target.closest('input, textarea, select')))
 }
 
+// Where a bare lens or zoom key (n, [, esc …) means something else: a text
+// field or terminal, the notes list, a popover, menu, picker or dialog.
+const ownKeysSelector = '.xterm, .notes-list, [role="dialog"], [role="menu"], [role="listbox"], .note-quick-add-popover, .quick-open'
+
+export function isOwnKeysTarget(target: EventTarget | null) {
+  return isEditableShortcutTarget(target) ||
+    (typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && Boolean(target.closest(ownKeysSelector)))
+}
+
+// An open popover, menu, picker or dialog takes esc for itself.
+export function overlayOpen(root: Pick<Document, 'querySelector'> = document) {
+  return Boolean(root.querySelector('[role="dialog"], [role="menu"], .shortcut-backdrop, .note-quick-add-popover'))
+}
+
+export type LensKeyActions = {
+  // Each answers false when the key means nothing in the current view, so
+  // the browser keeps it.
+  step: (by: -1 | 1) => boolean | void
+  stepRow: (by: -1 | 1) => boolean | void
+  zoomIn: () => boolean | void
+  zoomOut: () => boolean | void
+  nextNeeding: (zoom: boolean) => boolean | void
+  place: (row: 0 | 1 | 2) => boolean | void
+  cycleVisible: () => boolean | void
+  markRead: () => boolean | void
+  markUnread: () => boolean | void
+  stepSpace: (by: -1 | 1) => boolean | void
+}
+
+function bare(action: () => boolean | void, activates = false): KeybindingHandler {
+  return (event) => {
+    if (event.defaultPrevented || isOwnKeysTarget(event.target)) return
+    // Enter on a focused button or link presses it.
+    if (activates && event.target instanceof HTMLElement && event.target.closest('button, a[href]')) return
+    if (action() === false) return
+    event.preventDefault()
+  }
+}
+
+// bindLensShortcuts binds the lens's and the zoom's bare keys. None fires
+// from a text field, a terminal, the notes list, a popover or a picker.
+export function bindLensShortcuts(target: Window | HTMLElement, actions: LensKeyActions) {
+  return tinykeys(target, {
+    'ArrowLeft': bare(() => actions.step(-1)),
+    'ArrowRight': bare(() => actions.step(1)),
+    'h': bare(() => actions.step(-1)),
+    'l': bare(() => actions.step(1)),
+    'j': bare(() => actions.stepRow(1)),
+    'k': bare(() => actions.stepRow(-1)),
+    'Enter': bare(actions.zoomIn, true),
+    'Escape': bare(() => overlayOpen() ? false : actions.zoomOut()),
+    'n': bare(() => actions.nextNeeding(false)),
+    'Shift+N': bare(() => actions.nextNeeding(true)),
+    '1': bare(() => actions.place(0)),
+    '2': bare(() => actions.place(1)),
+    '3': bare(() => actions.place(2)),
+    'v': bare(actions.cycleVisible),
+    'm': bare(actions.markRead),
+    'u': bare(actions.markUnread),
+    '[': bare(() => actions.stepSpace(-1)),
+    ']': bare(() => actions.stepSpace(1)),
+  }, { ignore: (event) => event.repeat || event.isComposing })
+}
+
 function claimed(action: () => boolean | void, guarded = false): KeybindingHandler {
   return (event) => {
     if (guarded && isEditableShortcutTarget(event.target)) return

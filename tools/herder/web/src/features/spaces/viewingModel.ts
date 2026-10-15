@@ -6,13 +6,15 @@ export const viewDwellMs = 1000
 
 export type ViewingState = Readonly<Record<string, number>>
 
-type Group = { visible: boolean, activeAgent?: string }
+type Group = { visible: boolean, focused: boolean, activeAgent?: string }
 
-// viewedAgents are the agents whose panel is the active panel of a visible
-// group in the live (active space) dock while the document is visible.
+// viewedAgents is the agent seen now: the active panel of the focused group
+// in the live (active space) dock, while it is visible and so is the
+// document (owner, 2026-10-03: in a split only the focused panel counts as
+// seen). The lens shows no panel, so the caller passes no groups there.
 export function viewedAgents(groups: readonly Group[], documentVisible: boolean): string[] {
   if (!documentVisible) return []
-  return [...new Set(groups.flatMap((group) => group.visible && group.activeAgent ? [group.activeAgent] : []))]
+  return groups.flatMap((group) => group.focused && group.visible && group.activeAgent ? [group.activeAgent] : []).slice(0, 1)
 }
 
 // nextViewing keeps each agent's start time while it stays viewed so a

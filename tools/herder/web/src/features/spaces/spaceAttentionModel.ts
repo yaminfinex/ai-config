@@ -198,14 +198,6 @@ export function attentionLabel(attention: SpaceAttention): string {
   return waiting || 'no agents waiting'
 }
 
-export function totalAttention(values: readonly SpaceAttention[]): SpaceAttention {
-  return {
-    unread: [...new Set(values.flatMap((value) => value.unread))],
-    blocked: [...new Set(values.flatMap((value) => value.blocked))],
-    drafts: [...new Set(values.flatMap((value) => value.drafts))],
-  }
-}
-
 // boardAttention is the header total and the badge: every agent on the
 // board that needs the owner, each once, whether it sits in one space,
 // several or none. It is not the sum of the spaces' counts.
