@@ -1,5 +1,6 @@
 import type { Board } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
+import { terminalTheme } from '../screen/terminalTheme.ts'
 
 // The herdr view: herdr itself, one client per browser, in a PTY the serve
 // owns (GET /api/herdr/term upgraded to a WebSocket; docs/web-api-contract.md,
@@ -11,6 +12,16 @@ export const herdrTermPath = '/api/herdr/term'
 // Leaving the view keeps the client this long, so flipping back is instant.
 export const leaveGraceMs = 60_000
 export const resizeDebounceMs = 120
+
+// The base terminal palette hides xterm's cursor (it is the background
+// colour); in the herdr view the owner types, so the caret is a bright block
+// with the character under it in the background colour.
+export const herdrTerminalTheme = {
+  ...terminalTheme,
+  cursor: terminalTheme.brightWhite,
+  cursorAccent: terminalTheme.background,
+}
+
 const firstRetryMs = 500
 const maxRetryMs = 10_000
 

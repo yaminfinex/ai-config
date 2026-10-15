@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { connectionLabel, focusFrame, followTarget, herdrTermURL, leaveGraceMs, parseNotice, reconnectDelay, resizeFrame, shouldFollow } from '../src/features/herdr/herdrViewModel.ts'
+import { connectionLabel, focusFrame, followTarget, herdrTermURL, herdrTerminalTheme, leaveGraceMs, parseNotice, reconnectDelay, resizeFrame, shouldFollow } from '../src/features/herdr/herdrViewModel.ts'
+import { contrastRatio, terminalTheme } from '../src/features/screen/terminalTheme.ts'
 import type { Board } from '../src/types.ts'
 
 const board: Board = {
@@ -66,4 +68,15 @@ test('follow sends once per new target while open, live and on', () => {
   assert.equal(shouldFollow({ ...live, open: false }, 'w1:p1'), false, 'a hidden view moves nobody')
   assert.equal(shouldFollow({ ...live, connection: 'reconnecting' }, 'w1:p1'), false)
   assert.equal(shouldFollow(live, null), false)
+})
+
+test('the herdr view has a caret the owner can see; the base palette keeps its hidden', () => {
+  assert.ok(contrastRatio(herdrTerminalTheme.cursor, herdrTerminalTheme.background) >= 4.5, 'the caret stands out from the background')
+  assert.ok(contrastRatio(herdrTerminalTheme.cursorAccent, herdrTerminalTheme.cursor) >= 4.5, 'the character under the caret stays readable')
+  assert.deepEqual({ ...herdrTerminalTheme, cursor: terminalTheme.cursor, cursorAccent: terminalTheme.cursorAccent }, terminalTheme, 'only the cursor differs from the screen palette')
+  assert.equal(terminalTheme.cursor, terminalTheme.background, 'the base palette still hides the cursor')
+  assert.equal(terminalTheme.cursorAccent, terminalTheme.background)
+  const surface = readFileSync(new URL('../src/features/herdr/terminalSurface.ts', import.meta.url), 'utf8')
+  assert.match(surface, /theme: herdrTerminalTheme/)
+  assert.match(surface, /cursorStyle: 'block'/)
 })
