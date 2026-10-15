@@ -13,29 +13,13 @@ import {
   catchUpExternalPanels,
   readStoredSpaceLayout,
   restoreDockLayout,
-  screenIdentityState,
   writeStoredLayout,
   storedSpaceActivePanel,
   writeStoredSpaceLayout,
   writePanelToStoredSpace,
   spaceLayoutRecoveryPrefix,
   type DockPanelParams,
-  type ScreenPanelParams,
 } from '../src/features/layout/dockLayout.ts'
-import type { Board } from '../src/types.ts'
-
-const board: Board = {
-  workspaces: [{
-    workspace_id: 'workspace-1', number: 1, label: 'fixture', focused: true,
-    pane_count: 1, tab_count: 1, active_tab_id: 'tab-1', agent_status: 'active',
-    tabs: [{
-      tab_id: 'tab-1', number: 1, label: 'agents', focused: true,
-      pane_count: 1, agent_status: 'active',
-      panes: [{ pane_id: 'pane-1', agent: 'mavu', tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '', agent_session: 'session-1' }],
-    }],
-  }],
-  unplaced: [],
-}
 
 const singleGroupDock = {
   grid: { root: { type: 'branch', data: [{
@@ -49,16 +33,88 @@ const singleGroupDock = {
   activeGroup: 'group-main',
 }
 
-test('screen restore waits for the fleet and rejects reused pane identities', () => {
-  const params: ScreenPanelParams = {
-    kind: 'screen', preview: false,
-    pane: board.workspaces[0].tabs[0].panes[0],
-    identity: { paneID: 'pane-1', workspaceID: 'workspace-1', tabID: 'tab-1', agent: 'mavu', sessionID: 'session-1' },
+// Saved before the standalone terminal tab was retired: the herdr view (⌃`)
+// replaced it. A pane herdr attributed to an agent was saved with that agent.
+const screenPanel = (paneID: string, agent: string, preview = false) => ({
+  id: `screen:${paneID}`, contentComponent: 'screen', tabComponent: 'herder-tab', title: paneID,
+  params: {
+    kind: 'screen', preview,
+    pane: { pane_id: paneID, agent, tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '' },
+    identity: { paneID, workspaceID: 'workspace-1', tabID: 'tab-1', agent, sessionID: 'session-1' },
+  },
+})
+
+const legacyScreenDock = {
+  grid: { root: { type: 'branch', data: [
+    { type: 'leaf', size: 600, data: { id: 'group-main', views: ['agent:lead', 'screen:pane-1', 'screen:pane-2'], activeView: 'screen:pane-1' } },
+    { type: 'leaf', size: 400, data: { id: 'group-side', views: ['screen:pane-9'], activeView: 'screen:pane-9' } },
+  ] } },
+  panels: {
+    'agent:lead': { id: 'agent:lead', contentComponent: 'agent', tabComponent: 'herder-tab', title: 'lead', params: { kind: 'agent', name: 'lead', preview: false } },
+    // mavu's terminal, the shown tab: it becomes mavu's transcript, in place.
+    'screen:pane-1': screenPanel('pane-1', 'mavu'),
+    // lead's terminal: lead already has a panel, so this one goes.
+    'screen:pane-2': screenPanel('pane-2', 'lead', true),
+    // A terminal herdr could not attribute: no agent, so it is dropped.
+    'screen:pane-9': screenPanel('pane-9', '-'),
+  },
+  activeGroup: 'group-side',
+}
+
+test('a saved screen panel restores as its agent\'s transcript; an unattributed one is dropped', () => {
+  for (const raw of [
+    JSON.stringify({ version: 3, dock: legacyScreenDock, rails: { fleet: { width: 250, collapsed: false }, notes: { width: 280, collapsed: false } } }),
+    JSON.stringify({ version: 4, dock: legacyScreenDock }),
+  ]) {
+    const dock = (JSON.parse(raw) as { version: number }).version === 3 ? parseStoredLayout(raw)?.dock : parseStoredSpaceLayout(raw)?.layout.dock
+    assert.ok(dock, 'never an error, never a blank dock')
+    assert.deepEqual(Object.keys(dock.panels), ['agent:lead', 'agent:mavu'])
+    assert.deepEqual(dock.panels['agent:mavu'], { id: 'agent:mavu', contentComponent: 'agent', tabComponent: 'herder-tab', title: 'mavu', params: { kind: 'agent', name: 'mavu', preview: false } })
+    assert.deepEqual(dock.grid.root, { type: 'branch', data: [
+      { type: 'leaf', size: 600, data: { id: 'group-main', views: ['agent:lead', 'agent:mavu'], activeView: 'agent:mavu' } },
+    ] })
+    assert.equal(dock.activeGroup, 'group-main', 'the emptied group\'s focus falls back to a surviving group')
+    assert.deepEqual(activePanelInDock(dock), { kind: 'agent', name: 'mavu', preview: false }, 'the shown terminal is now the shown transcript')
+    assert.deepEqual(persistableDockLayout(dock), dock, 'the migrated dock is canonical')
+    let loaded: unknown
+    assert.equal(restoreDockLayout({ fromJSON: (value) => { loaded = value } }, dock), true)
+    assert.deepEqual(loaded, dock)
   }
-  assert.equal(screenIdentityState(params), 'checking')
-  assert.equal(screenIdentityState(params, board), 'ready')
-  assert.equal(screenIdentityState({ ...params, identity: { ...params.identity, sessionID: 'other-session' } }, board), 'mismatch')
-  assert.equal(screenIdentityState({ ...params, identity: { ...params.identity, paneID: 'vanished' } }, board), 'mismatch')
+  // A migration is not a salvage: the space stays writable and its raw stays last-good.
+  const values = new Map([['herder.web.layout.v4:alpha', JSON.stringify({ version: 4, dock: legacyScreenDock })]])
+  const read = readStoredSpaceLayout({ getItem: (key) => values.get(key) ?? null }, 'alpha')
+  assert.equal(read.problem, false)
+  assert.equal(read.recovering, false)
+  assert.deepEqual(Object.keys(read.stored?.dock?.panels ?? {}), ['agent:lead', 'agent:mavu'])
+  // A preview terminal reopens as a preview transcript.
+  const preview = parseStoredSpaceLayout(JSON.stringify({ version: 4, dock: {
+    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'g', views: ['screen:pane-3'], activeView: 'screen:pane-3' } }] } },
+    panels: { 'screen:pane-3': screenPanel('pane-3', 'zira', true) },
+    activeGroup: 'g',
+  } }))
+  assert.deepEqual(preview?.layout.dock?.panels['agent:zira']?.params, { kind: 'agent', name: 'zira', preview: true })
+  // A dock that held only an unattributed terminal restores empty, the default layout.
+  const only = parseStoredSpaceLayout(JSON.stringify({ version: 4, dock: {
+    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'g', views: ['screen:pane-9'], activeView: 'screen:pane-9' } }] } },
+    panels: { 'screen:pane-9': screenPanel('pane-9', '-') },
+    activeGroup: 'g',
+  } }))
+  assert.ok(only)
+  assert.equal(only.layout.dock, null)
+})
+
+test('an agent panel saved in Screen mode restores as its transcript', () => {
+  // Screen mode was session state (never a panel param), so a saved agent
+  // panel restores as the transcript. A stray mode field from any build is
+  // dropped rather than refusing the panel.
+  const dock = {
+    grid: { root: { type: 'branch', data: [{ type: 'leaf', data: { id: 'g', views: ['agent:mavu'], activeView: 'agent:mavu' } }] } },
+    panels: { 'agent:mavu': { id: 'agent:mavu', contentComponent: 'agent', tabComponent: 'herder-tab', title: 'mavu', params: { kind: 'agent', name: 'mavu', preview: false, view: 'screen', screenPaneID: 'pane-1' } } },
+    activeGroup: 'g',
+  }
+  const restored = parseStoredSpaceLayout(JSON.stringify({ version: 4, dock }))
+  assert.deepEqual(restored?.layout.dock?.panels['agent:mavu']?.params, { kind: 'agent', name: 'mavu', preview: false })
+  assert.deepEqual(activePanelInDock(restored?.layout.dock), { kind: 'agent', name: 'mavu', preview: false })
 })
 
 test('single-group pinned agent, file, and folder panels round-trip with a branch root', () => {

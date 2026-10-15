@@ -20,11 +20,11 @@ const file = (path = 'README.md', line?: number): DockPanelParams => ({
 })
 const folder = (): DockPanelParams => ({ kind: 'folder', root: '/repo root', path: 'src/lib', preview: true })
 const changes = (): DockPanelParams => ({ kind: 'changes', root: '/repo root', preview: true })
-const screen = (): DockPanelParams => ({
+// The history subject the retired terminal tab recorded, at '/'.
+const screenSubject = (agent = 'mavu') => ({
   kind: 'screen',
-  pane: { pane_id: 'pane-1', agent: 'mavu', tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '' },
-  identity: { paneID: 'pane-1', workspaceID: 'workspace-1', tabID: 'tab-1', agent: 'mavu' },
-  preview: true,
+  pane: { pane_id: 'pane-1', agent, tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '' },
+  identity: { paneID: 'pane-1', workspaceID: 'workspace-1', tabID: 'tab-1', agent },
 })
 
 test('every addressable panel kind has a canonical URL and round-trips through its registry validator', () => {
@@ -47,9 +47,9 @@ test('every addressable panel kind has a canonical URL and round-trips through i
 test('space composes with every panel route without disturbing panel query parameters', () => {
   assert.equal(historyEntryForPanel(agent('mavu'), 'review/one').path, '/agents/mavu?space=review%2Fone')
   assert.equal(historyEntryForPanel(file('README.md', 8), 'review').path, '/file?root=%2Frepo+root&path=README.md&line=8&space=review')
-  assert.equal(historyEntryForPanel(screen(), 'review').path, '/?space=review')
+  assert.equal(historyEntryForPanel(folder(), 'review').path, '/folder?root=%2Frepo+root&path=src%2Flib&space=review')
   assert.equal(pathWithSpace('/file?root=x&path=y&space=old', 'new'), '/file?root=x&path=y&space=new')
-  assert.equal(routeFromHistory('/', '?space=stale', historyEntryForPanel(screen(), 'stale').state).page, 'panel')
+  assert.equal(routeFromHistory('/', '?space=stale', { ...layoutRouteState, subject: screenSubject() }).page, 'panel')
 })
 
 test('HTML deep links default rendered unless a line anchor requests source', () => {
@@ -62,16 +62,15 @@ test('HTML deep links default rendered unless a line anchor requests source', ()
   if (source.page === 'panel') assert.equal(source.params.kind === 'file' ? source.params.viewMode : undefined, 'source')
 })
 
-test('screen entries keep their validated subject in state while the URL asserts only the workspace', () => {
-  const entry = historyEntryForPanel(screen())
-  assert.equal(entry.path, '/')
-  assert.equal('preview' in (entry.state.subject as object), false)
-  const route = routeFromHistory('/', '', entry.state)
-  assert.equal(route.page, 'panel')
-  if (route.page === 'panel') {
-    assert.equal(route.params.kind, 'screen')
-    assert.equal(route.params.preview, true)
-  }
+test('a retired terminal-tab history entry replays as its agent\'s transcript', () => {
+  const route = routeFromHistory('/', '?space=review', { ...layoutRouteState, subject: screenSubject() })
+  assert.deepEqual(route, { page: 'panel', params: { kind: 'agent', name: 'mavu', preview: true }, spaceID: 'review' })
+  // Only where the terminal tab lived: elsewhere the URL decides.
+  assert.deepEqual(routeFromHistory('/agents/zira', '', { ...layoutRouteState, subject: screenSubject() }), {
+    page: 'panel', params: { kind: 'agent', name: 'zira', preview: true }, spaceID: null,
+  })
+  // A terminal herdr never attributed replays as the shell.
+  assert.deepEqual(routeFromHistory('/', '', { ...layoutRouteState, subject: screenSubject('-') }), { page: 'shell', spaceID: null })
 })
 
 test('history subjects omit pin and view state but retain a file line opening hint', () => {

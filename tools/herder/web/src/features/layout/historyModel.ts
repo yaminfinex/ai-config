@@ -1,5 +1,6 @@
 import type { DockPanelParams } from './dockLayout.ts'
 import {
+  legacyScreenPanelParams,
   panelID,
   panelParamsFromHistorySubject,
   panelParamsFromRouteLocation,
@@ -74,6 +75,10 @@ export function routeFromLocation(pathname: string, search: string): Route {
 export function routeFromHistory(pathname: string, search: string, state: unknown): HistoryRoute {
   const spaceID = spaceIDFromSearch(search)
   if (isLayoutRouteState(state) && 'subject' in state) {
+    // An entry for the retired terminal tab sits at '/' and replays as its
+    // agent's transcript; one with no agent replays as the shell.
+    const legacy = legacyScreenPanelParams(state.subject)
+    if (legacy && pathWithoutSpace(pathname, search) === '/') return { page: 'panel', params: { ...legacy, preview: true }, spaceID }
     const params = panelParamsFromHistorySubject(state.subject)
     if (params && panelRoutePath(params) === pathWithoutSpace(pathname, search)) return { page: 'panel', params, spaceID }
   }

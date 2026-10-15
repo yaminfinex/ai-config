@@ -76,13 +76,6 @@ export interface ScreenFrame {
   rows?: number
 }
 
-export interface PaneHistory {
-  pane_id: string
-  text: string
-  truncated: boolean
-  fetched_at: string
-}
-
 export interface Refusal {
   error: string
   detail: string

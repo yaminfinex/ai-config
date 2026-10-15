@@ -3,8 +3,8 @@ import { initialFileViewMode } from '../files/fileTabs.ts'
 import { panelID, panelParams } from '../workspace/panelRegistryModel.ts'
 import { readStoredSpaceLayout, type DockPanelParams } from '../layout/dockLayout.ts'
 
-// A space's members are the pinned agent and file tabs in its dock. Screen,
-// folder and changes panels, and every preview (italic) tab, are left out.
+// A space's members are the pinned agent and file tabs in its dock. Folder
+// and changes panels, and every preview (italic) tab, are left out.
 export type SpaceMember = { kind: 'agent', name: string } | { kind: 'file', root: string, path: string }
 export type SpaceMembersValue = { members: SpaceMember[], updated: number }
 export type SpaceMembersRow = { key: string, members: SpaceMember[], updated: number, writeID: string, deleted: boolean }

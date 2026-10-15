@@ -27,7 +27,6 @@ class MemoryStorage {
 
 const agent = (name: string, preview = false): DockPanelParams => ({ kind: 'agent', name, preview })
 const file = (root: string, path: string, preview = false): DockPanelParams => ({ kind: 'file', root, path, preview, viewMode: 'source' })
-const pane = { pane_id: 'p1', agent: 'riko', tool: 'claude', herdr_status: 'idle', bus_status: 'listening', gap: '' }
 
 function dock(groups: DockPanelParams[][]): SerializedDockview {
   const panels: Record<string, unknown> = {}
@@ -40,10 +39,10 @@ function dock(groups: DockPanelParams[][]): SerializedDockview {
 
 const names = (members: SpaceMember[]) => members.map((member) => member.kind === 'agent' ? member.name : `${member.root}:${member.path}`)
 
-test('membersFromDock lists pinned agent and file tabs in group then tab order, excluding previews, screens, folders and changes', () => {
+test('membersFromDock lists pinned agent and file tabs in group then tab order, excluding previews, folders and changes', () => {
   const layout = dock([
     [agent('riko'), agent('mupo', true), { kind: 'folder', root: '/r', path: 'src', preview: false }],
-    [file('/r', 'a.md'), { kind: 'screen', pane, identity: { paneID: 'p1', workspaceID: 'w', tabID: 't', agent: 'riko' }, preview: false }],
+    [file('/r', 'a.md')],
     [{ kind: 'changes', root: '/r', preview: false }, agent('lora'), file('/r', 'b.md', true)],
   ])
   assert.deepEqual(membersFromDock(layout), [

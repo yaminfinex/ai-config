@@ -56,22 +56,20 @@ export function withoutUnsubscribedTranscripts(problems: Record<string, string>,
 }
 
 // FleetTargets is what the one event stream follows: transcripts by agent,
-// screen frames by pane, file watches, and the focused screen.
+// screen frames by pane, and file watches.
 export type FleetTargets = {
   agents: string[]
   screens?: string[]
   watches?: FileWatchTarget[]
-  focusedScreen?: string
 }
 
-function eventQuery({ agents, screens = [], watches = [], focusedScreen }: FleetTargets) {
+function eventQuery({ agents, screens = [], watches = [] }: FleetTargets) {
   const query = new URLSearchParams()
   const agentList = [...new Set(agents)].sort().join(',')
   const screenList = [...new Set(screens)].sort().join(',')
   if (agentList) query.set('agents', agentList)
   if (screenList) query.set('screens', screenList)
   if (watches.length > 0) query.set('watches', JSON.stringify(watches))
-  if (focusedScreen) query.set('focused_screen', focusedScreen)
   return query
 }
 
@@ -83,11 +81,11 @@ export function fleetTargetsKey(targets: FleetTargets) {
 function targetsFromKey(key: string): FleetTargets {
   const query = new URLSearchParams(key)
   const list = (name: string) => (query.get(name) ?? '').split(',').filter(Boolean)
-  return { agents: list('agents'), screens: list('screens'), watches: JSON.parse(query.get('watches') ?? '[]') as FileWatchTarget[], focusedScreen: query.get('focused_screen') ?? undefined }
+  return { agents: list('agents'), screens: list('screens'), watches: JSON.parse(query.get('watches') ?? '[]') as FileWatchTarget[] }
 }
 
-export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = [], focusedScreenPaneID?: string) {
-  const query = eventQuery({ agents: agentNames, screens: screenPaneIDs, watches: fileWatches, focusedScreen: focusedScreenPaneID })
+export function eventStreamURL(agentNames: string[], screenPaneIDs: string[] = [], fileWatches: FileWatchTarget[] = []) {
+  const query = eventQuery({ agents: agentNames, screens: screenPaneIDs, watches: fileWatches })
   return query.size ? `/api/events?${query}` : '/api/events'
 }
 
@@ -266,7 +264,7 @@ export function subscribeToFleet(queryClient: QueryClient, initial: FleetTargets
     listening = new Set()
     following = fleetTargetsKey(targets)
     try {
-      events = createEventSource(eventStreamURL(targets.agents, targets.screens, targets.watches, targets.focusedScreen))
+      events = createEventSource(eventStreamURL(targets.agents, targets.screens, targets.watches))
     } catch {
       scheduleReconnect('Live stream disconnected; reconnecting…')
       return

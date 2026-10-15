@@ -46,12 +46,14 @@ test('reconnects back off from half a second to ten, and leaving keeps the clien
 test('follow targets the pane of the agent the web is on', () => {
   assert.equal(followTarget(board, { onLens: true, lensAgent: 'bravo', activeAgent: 'alpha' }), 'w1:p2', 'the lens follows the selected card, not the dock')
   assert.equal(followTarget(board, { onLens: false, activeAgent: 'alpha' }), 'w1:p1')
-  assert.equal(followTarget(board, { onLens: false, aloneAgent: 'bravo', activeAgent: 'alpha', activePane: 'w1:p1' }), 'w1:p2', 'an agent alone covers the dock')
-  assert.equal(followTarget(board, { onLens: false, activePane: 'w2:p7' }), 'w2:p7', 'a terminal panel is its own pane')
+  assert.equal(followTarget(board, { onLens: false, aloneAgent: 'bravo', activeAgent: 'alpha' }), 'w1:p2', 'an agent alone covers the dock')
+  assert.equal(followTarget(board, { onLens: false, activeAgent: 'alpha', terminal: 'w2:p7' }), 'w2:p7', 'a terminal the view was opened on is its own pane')
+  assert.equal(followTarget(board, { onLens: true, lensAgent: 'bravo', terminal: 'w2:p7' }), 'w2:p7', 'over the lens too')
+  assert.equal(followTarget(board, { onLens: false, aloneAgent: 'bravo', terminal: 'w2:p7' }), 'w2:p7', 'and over an agent alone')
   assert.equal(followTarget(board, { onLens: true, lensAgent: '—' }), null, 'a card with no agent follows nothing')
   assert.equal(followTarget(board, { onLens: false, activeAgent: 'ghost' }), null, 'an agent with no pane follows nothing')
   assert.equal(followTarget(board, { onLens: false, activeAgent: 'shade' }), null, 'the board\'s "-" is no pane')
-  assert.equal(followTarget(board, { onLens: false, activePane: '-' }), null)
+  assert.equal(followTarget(board, { onLens: false, terminal: '-' }), null)
   assert.equal(followTarget(undefined, { onLens: false, activeAgent: 'alpha' }), null)
 })
 

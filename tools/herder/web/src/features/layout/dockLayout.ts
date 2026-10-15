@@ -1,8 +1,7 @@
 import type { DockviewApi, SerializedDockview } from 'dockview-react'
-import type { Board, Pane } from '../../types'
 import type { FileViewMode } from '../files/fileTabs.ts'
 import { agentTabID } from '../../previewTabs.ts'
-import { panelID, panelParams, panelPresentation } from '../workspace/panelRegistryModel.ts'
+import { legacyScreenPanelParams, panelID, panelParams, panelPresentation } from '../workspace/panelRegistryModel.ts'
 import { clampRailWidth, defaultRailPreferences, type RailPreferences } from './utilityRailModel.ts'
 
 export const layoutStorageKey = 'herder.web.layout.v3'
@@ -14,8 +13,6 @@ export const spaceLayoutBackupPrefix = 'herder.web.layout.v4.last-good:'
 export const spaceLayoutRecoveryPrefix = 'herder.web.layout.v4.recovery:'
 
 export type AgentPanelParams = { kind: 'agent', name: string, preview: boolean }
-export type ScreenIdentity = { paneID: string, workspaceID: string, tabID: string, agent: string, sessionID?: string }
-export type ScreenPanelParams = { kind: 'screen', pane: Pane, identity: ScreenIdentity, preview: boolean }
 export type FilePanelParams = {
   kind: 'file'
   // The API's canonical absolute served-root path is the root ID. File reads
@@ -28,7 +25,7 @@ export type FilePanelParams = {
 }
 export type FolderPanelParams = { kind: 'folder', root: string, path: string, preview: boolean }
 export type ChangesPanelParams = { kind: 'changes', root: string, preview: boolean }
-export type DockPanelParams = AgentPanelParams | ScreenPanelParams | FilePanelParams | FolderPanelParams | ChangesPanelParams
+export type DockPanelParams = AgentPanelParams | FilePanelParams | FolderPanelParams | ChangesPanelParams
 
 export type StoredLayout = {
   version: 3
@@ -108,8 +105,51 @@ function canonicalSerializedPanel(id: string, serialized: unknown) {
     : null
 }
 
-function sanitizeStoredDock(value: unknown): { dock: SerializedDockview | null, salvaged: boolean } | null {
-  if (value === null) return { dock: null, salvaged: false }
+function renameGridViews(node: UnknownRecord, renamed: Map<string, string>): UnknownRecord {
+  const rename = (id: unknown) => typeof id === 'string' ? renamed.get(id) ?? id : id
+  if (node.type === 'branch') return Array.isArray(node.data) ? { ...node, data: node.data.map((child) => record(child) ? renameGridViews(child, renamed) : child) } : node
+  if (!record(node.data)) return node
+  const data = node.data
+  return { ...node, data: {
+    ...data,
+    ...(Array.isArray(data.views) ? { views: data.views.map(rename) } : {}),
+    ...(data.activeView === undefined ? {} : { activeView: rename(data.activeView) }),
+    ...(Array.isArray(data.tabGroups) ? { tabGroups: data.tabGroups.map((group) => record(group) && Array.isArray(group.panelIds) ? { ...group, panelIds: group.panelIds.map(rename) } : group) } : {}),
+  } }
+}
+
+// migrateRetiredPanels rewrites retired panel kinds before the salvage pass,
+// so a layout saved before a kind was retired restores as a migration rather
+// than a salvage. A saved screen panel becomes its agent's panel, in the same
+// place; one with no agent, or whose agent already has a panel, is dropped.
+function migrateRetiredPanels(value: UnknownRecord): UnknownRecord {
+  if (!record(value.panels) || !record(value.grid) || !record(value.grid.root)) return value
+  const all = Object.entries(value.panels)
+  const legacy = all.flatMap(([id, serialized]) => {
+    const params = record(serialized) ? legacyScreenPanelParams(serialized.params) : undefined
+    return params === undefined ? [] : [{ id, serialized: serialized as UnknownRecord, params }]
+  })
+  if (legacy.length === 0) return value
+  const legacyIDs = new Set(legacy.map(({ id }) => id))
+  const panels: UnknownRecord = Object.fromEntries(all.filter(([id]) => !legacyIDs.has(id)))
+  const renamed = new Map<string, string>()
+  for (const { id, serialized, params } of legacy) {
+    if (!params) continue
+    const next = panelID(params)
+    if (next in panels) continue
+    panels[next] = { ...serialized, id: next, contentComponent: params.kind, title: panelPresentation(params).title, params }
+    renamed.set(id, next)
+  }
+  const root = pruneGridRoot(renameGridViews(value.grid.root, renamed), new Set(Object.keys(panels)))
+  if (!root) return { ...value, panels: {} }
+  const ids = groupIDs(root)
+  const activeGroup = typeof value.activeGroup === 'string' && ids.has(value.activeGroup) ? value.activeGroup : firstGroupID(root)
+  return { ...value, panels, grid: { ...value.grid, root }, activeGroup }
+}
+
+function sanitizeStoredDock(stored: unknown): { dock: SerializedDockview | null, salvaged: boolean } | null {
+  if (stored === null) return { dock: null, salvaged: false }
+  const value = record(stored) ? migrateRetiredPanels(stored) : stored
   if (!record(value) || !record(value.panels) || !record(value.grid) || !record(value.grid.root) || value.grid.root.type !== 'branch') return null
   let salvaged = 'floatingGroups' in value || 'popoutGroups' in value || 'edgeGroups' in value
   const panels = Object.fromEntries(Object.entries(value.panels).flatMap(([id, serialized]) => {
@@ -489,33 +529,4 @@ export function restoreDockLayout(api: Pick<DockviewApi, 'fromJSON'>, dock: Seri
     console.error('Failed to restore persisted dock layout; using the default layout.', error)
     return false
   }
-}
-
-export type ScreenIdentityState = 'checking' | 'ready' | 'mismatch'
-
-export function screenIdentityState(params: ScreenPanelParams, board?: Board): ScreenIdentityState {
-  if (!board) return 'checking'
-  for (const workspace of board.workspaces) {
-    for (const tab of workspace.tabs) {
-      const pane = tab.panes.find((candidate) => candidate.pane_id === params.identity.paneID)
-      if (!pane) continue
-      return workspace.workspace_id === params.identity.workspaceID && tab.tab_id === params.identity.tabID &&
-        pane.agent === params.identity.agent && pane.agent_session === params.identity.sessionID ? 'ready' : 'mismatch'
-    }
-  }
-  return 'mismatch'
-}
-
-export function screenPanelParams(board: Board, pane: Pane, preview: boolean): ScreenPanelParams | null {
-  for (const workspace of board.workspaces) {
-    for (const tab of workspace.tabs) {
-      const live = tab.panes.find((candidate) => candidate.pane_id === pane.pane_id)
-      if (!live) continue
-      return {
-        kind: 'screen', pane: live, preview,
-        identity: { paneID: live.pane_id, workspaceID: workspace.workspace_id, tabID: tab.tab_id, agent: live.agent, sessionID: live.agent_session },
-      }
-    }
-  }
-  return null
 }
