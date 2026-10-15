@@ -17,7 +17,7 @@ export const defaultLensRow: LensRow = 'watch'
 // LensPrefs are this browser's lens choices: each space's row and each
 // space's visible agent (v), and the card text (t) and focus size (s),
 // answer and the first size while unset.
-export type LensPrefs = Readonly<{ rows: Readonly<Record<string, LensRow>>, visible: Readonly<Record<string, string>>, text?: CardTextMode, size?: number }>
+export type LensPrefs = Readonly<{ rows: Readonly<Record<string, LensRow>>, visible: Readonly<Record<string, string>>, text?: CardTextMode, size?: number, peek?: number }>
 export const emptyLensPrefs: LensPrefs = { rows: {}, visible: {} }
 
 // The view: the lens, a zoom into the active space's dock, or one agent in

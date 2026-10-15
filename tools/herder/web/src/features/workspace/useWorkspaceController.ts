@@ -506,7 +506,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     onReadMarkersStateChanged(namespace, rev)
   }, [onMembersStateChanged, onNotesStateChanged, onReadMarkersStateChanged])
   const openBySpace = useSpaceAgents({ revision, spaces, activeSpaceID, activeAgents: agentNames })
-  useFleetStream({ agents: spaceStreamAgents(agentNames, openBySpace), screens: screenPaneIDs, watches: fileWatchTargets, focusedScreen: focusedPane }, onStateChanged)
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
   const viewer = viewerQuery.data?.viewer ?? 'unresolved'
@@ -693,6 +692,9 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     selected: lensSelected, setSelected: setLensSelected, lastPanel, zoomInto, zoomOut, openAlone,
     markSpaceRead: spaceAttention.markSpaceRead, markSpaceUnread: spaceAttention.markSpaceUnread,
   })
+  // The stream keeps the open panels' transcripts live, and the peeked agent's on the lens.
+  const peeked = view.kind === 'lens' && lens.peek?.agent ? [lens.peek.agent] : []
+  useFleetStream({ agents: spaceStreamAgents([...agentNames, ...peeked], openBySpace), screens: screenPaneIDs, watches: fileWatchTargets, focusedScreen: focusedPane }, onStateChanged)
   // A space chosen anywhere but a zoom (⌥Tab or ⌘K on the lens) zooms into it.
   const switchSpaceAnywhere = useCallback((id: string, from?: 'quick-open') => viewRef.current.kind === 'zoom' ? switchSpaceFocusing(id, from) : lens.zoomCard(id), [lens.zoomCard, switchSpaceFocusing])
   const docked = useCallback(() => viewRef.current.kind === 'zoom', [])

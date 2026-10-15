@@ -139,7 +139,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
           pinnedTabs={dockPinnedTabs} layoutHistory={dockLayoutHistory} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
         {workspace.onLens && <LensHome rows={workspace.lens.rows} spaces={workspace.lensSpaces} needYou={workspace.lens.needYou} selected={workspace.lens.selected}
-          revealTick={workspace.lens.revealTick} onSelect={workspace.lens.select} onZoom={workspace.lens.zoomCard} />}
+          revealTick={workspace.lens.revealTick} onSelect={workspace.lens.select} onZoom={workspace.lens.zoomCard}
+          peek={workspace.lens.peek} peekWidth={workspace.lens.peekWidth} onPeekWidth={workspace.lens.setPeekWidth}
+          mentionMatcher={workspace.data.mentionMatcher} onOpenAgent={workspace.lens.summon} />}
         {workspace.aloneAgent && <AloneAgentPanel name={workspace.aloneAgent} onOpenAgent={workspace.lens.summon} />}
       </div>
     </section>

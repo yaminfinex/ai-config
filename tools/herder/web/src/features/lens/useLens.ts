@@ -35,6 +35,8 @@ import {
 import { readLensPrefs, writeLensPrefs } from './lensPrefs.ts'
 import { agentFolder, nextCardSize, nextCardText, type CardRead } from './cardTextModel.ts'
 import { useCardText } from './useCardText.ts'
+import { leavePeek, type PeekTarget } from './LensPeek.tsx'
+import { clampPeekWidth, peekWidth } from './peekModel.ts'
 
 // LensCard is everything one card draws. text is the body: by t, the
 // visible agent's last answer (the status until it loads), its status or
@@ -125,6 +127,17 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     }))
   }, [answer, attention, board, chosen, membersBySpace, needing, prefs, size, spaces, text])
 
+  // The peek follows the selection: its space and that space's visible agent.
+  const peek = useMemo((): PeekTarget | null => {
+    const space = chosen ? spaces.find((item) => item.id === chosen) : undefined
+    if (!space) return null
+    const agent = visibleAgent(live(space.id), prefs.visible[space.id])
+    const agentRow = agent ? findAgentRow(board, agent) : undefined
+    if (!agent || !agentRow) return { space: space.name, agent: null, status: null, title: '' }
+    return { space: space.name, agent, status: lensStatus(agentRow), title: agentRow.title ?? '' }
+  }, [board, chosen, live, prefs.visible, spaces])
+  const setPeekWidth = useCallback((width: number) => setPrefs((current) => ({ ...current, peek: clampPeekWidth(width) })), [])
+
   const select = useCallback((id: string) => {
     setSelected(id)
     setRevealTick((tick) => tick + 1)
@@ -154,7 +167,7 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     step: (by) => lensKey((id) => setSelected(stepCard(order, id, by)))(),
     stepRow: (by) => lensKey((id) => setSelected(stepRow(spaces, prefs, id, by)))(),
     zoomIn: () => onLens && chosen ? zoomCard(chosen) : false,
-    zoomOut: () => enabled && view.kind !== 'lens' ? zoomOut() : false,
+    zoomOut: () => !enabled ? false : view.kind !== 'lens' ? zoomOut() : leavePeek(),
     nextNeeding: (zoom) => {
       if (!enabled) return false
       const from = view.kind === 'alone' ? { kind: 'alone' as const, agent: view.agent }
@@ -205,5 +218,5 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     else openAlone(agent)
   }, [membersBySpace, openAlone, order, zoomInto])
 
-  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total) }
+  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total), peek, peekWidth: prefs.peek ?? peekWidth, setPeekWidth }
 }

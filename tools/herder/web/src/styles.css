@@ -880,8 +880,18 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 }
 
 /* The lens: home. Rows of fixed-width space cards in monospace. */
-.lens { --lens-line: 18px; position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--lens-ink); font: 12px/var(--lens-line) var(--mono); outline: none; }
-.lens-rows { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 22px; padding: 20px; overflow: auto; }
+.lens { --lens-line: 18px; position: absolute; inset: 0; display: flex; background: var(--bg); color: var(--lens-ink); font: 12px/var(--lens-line) var(--mono); outline: none; }
+.lens-rows { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; gap: 22px; padding: 20px; overflow: auto; }
+.lens-peek-resizer { width: 5px; flex: 0 0 5px; border-left: 1px solid var(--border); cursor: col-resize; outline: none; }
+.lens-peek-resizer:hover, .lens-peek-resizer:focus-visible { background: var(--accent); }
+.lens-peek { display: flex; flex: 0 0 auto; min-width: 0; flex-direction: column; background: var(--bg); }
+.lens-peek-head { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--border); color: var(--lens-slate); white-space: nowrap; }
+.lens-peek-agent { color: var(--lens-ink); }
+.lens-peek-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lens-peek-title::before, .lens-peek-space::before { content: '· '; }
+/* The peek's transcript reads as a panel's does, not in the lens's mono. */
+.lens-peek-body { color: var(--text); font: 13px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.lens-peek-none { margin: 20px 14px; color: var(--lens-slate); }
 .lens-header, .lens-head { color: var(--lens-slate); }
 .lens-head { margin-bottom: 8px; font-size: 11px; letter-spacing: .06em; }
 .lens-grid { display: flex; flex-wrap: wrap; gap: 10px; }
