@@ -23,6 +23,7 @@ import {
   stepRow,
   visibleAgent,
   whoLine,
+  zoomLanding,
   type CardLook,
   type LensPrefs,
   type LensRow,
@@ -53,7 +54,7 @@ const quiet: SpaceAttention = { unread: [], blocked: [], drafts: [] }
 // useLens owns the lens: its rows and visible agents (this browser's
 // prefs), the selection, the cards and every lens and zoom key. The
 // workspace controller owns the view and the zoom itself.
-export function useLens({ enabled, spaces, membersBySpace, board, attention, total, view, activeSpaceID, selected, setSelected, zoomInto, zoomOut, openAlone, markSpaceRead, markSpaceUnread }: {
+export function useLens({ enabled, spaces, membersBySpace, board, attention, total, view, activeSpaceID, selected, setSelected, lastPanel, zoomInto, zoomOut, openAlone, markSpaceRead, markSpaceUnread }: {
   enabled: boolean
   spaces: SpaceDefinition[]
   membersBySpace: Record<string, SpaceMember[]>
@@ -64,6 +65,9 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   activeSpaceID: string | null
   selected: string | null
   setSelected: (id: string | null) => void
+  // lastPanel is the panel a space last had focused: the live dock's for the
+  // active space, the saved layout's for the others.
+  lastPanel: (spaceID: string) => { kind: string, name?: string } | undefined
   zoomInto: (spaceID: string, agent?: string) => boolean
   zoomOut: () => boolean
   openAlone: (agent: string) => void
@@ -81,7 +85,8 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   const chosen = selectedSpace(order, selected)
   const needing = useMemo(() => new Set([...total.unread, ...total.blocked]), [total])
   const live = useCallback((id: string) => liveMembers(membersBySpace[id] ?? [], board), [board, membersBySpace])
-  const entry = useCallback((id: string) => entryAgent(live(id), prefs.visible[id], (name) => needing.has(name)), [live, needing, prefs.visible])
+  const entry = useCallback((id: string) => zoomLanding(lastPanel(id), (name) => Boolean(findAgentRow(board, name)),
+    () => entryAgent(live(id), prefs.visible[id], (name) => needing.has(name))), [board, lastPanel, live, needing, prefs.visible])
 
   const rows = useMemo((): LensRowView[] => {
     const grouped = lensRowsOf(spaces, prefs)

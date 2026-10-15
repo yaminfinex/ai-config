@@ -21,6 +21,7 @@ import {
   stepRow,
   visibleAgent,
   whoLine,
+  zoomLanding,
   type LensPrefs,
 } from '../src/features/lens/lensModel.ts'
 import { lensPrefsKey, parseLensPrefs, parseViewedBlocks, readLensPrefs, readViewedBlocks, writeLensPrefs, writeViewedBlocks } from '../src/features/lens/lensPrefs.ts'
@@ -104,6 +105,18 @@ test('the visible agent is the pick while it is a member on the board, else the 
   assert.equal(cycleVisible([], undefined), undefined)
   assert.equal(entryAgent(live, 'ziru', (name) => name === 'mavu'), 'mavu', 'a zoom lands on the first member needing you')
   assert.equal(entryAgent(live, 'mavu', () => false), 'mavu', 'else on the visible agent')
+})
+
+test('a zoom returns to the panel last focused in the space; the entry agent only without one (owner #463121)', () => {
+  const onBoard = (name: string) => ['lead', 'mavu', 'ziru'].includes(name)
+  // The herder space: lead first, needing you, but the owner was last on mavu.
+  const entry = () => entryAgent(['lead', 'mavu'], undefined, (name) => name === 'lead')
+  assert.equal(zoomLanding({ kind: 'agent', name: 'mavu' }, onBoard, entry), 'mavu', 'not the lead, though the lead needs you')
+  assert.equal(zoomLanding({ kind: 'agent', name: 'ziru' }, onBoard, entry), 'ziru', 'a preview of a non-member still on the board')
+  assert.equal(zoomLanding({ kind: 'file' }, onBoard, entry), undefined, 'a file tab is kept as the layout holds it')
+  assert.equal(zoomLanding({ kind: 'agent', name: 'gone' }, onBoard, entry), 'lead', 'an agent no longer on the board falls back')
+  assert.equal(zoomLanding(undefined, onBoard, entry), 'lead', 'a space never focused falls back')
+  assert.equal(zoomLanding(undefined, onBoard, () => undefined), undefined, 'with no member on the board, nothing opens')
 })
 
 test('the who line names the visible agent and counts every other member, files included', () => {

@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
+import { useCallback, useRef, type MutableRefObject } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import type { DockviewApi } from 'dockview-react'
-import { focusComposerWhenReady } from '../../composerState'
 import type { Board, FileTarget, FolderTarget, Pane } from '../../types'
 import { fileTabID, initialFileViewMode, type FileViewMode } from '../files/fileTabs'
 import { gitStateForFileOpen, type GitBase, type GitFileState } from '../git/gitViewModel'
 import { dockOpenTarget, type OpenPlacement } from '../layout/openPlacement'
 import { screenPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import type { PanelRecordUpdate } from './usePanelRecords'
+import type { Arrive } from './useArrive'
 import { folderTabID } from '../folders/folderModel'
 import {
   invalidatePanel,
@@ -49,6 +49,9 @@ type WorkspaceActionOptions = {
   resetPersistedLayout: () => void
   withHistorySuppressed: <T>(operation: () => T) => T
   onActivePanelParamsChanged: (params: DockPanelParams) => void
+  // arrive lands on the agent an open chose (a sidebar or notes agent, a
+  // mention, a ⌘K agent row).
+  arrive: Arrive
 }
 
 export function useWorkspaceActions({
@@ -63,28 +66,12 @@ export function useWorkspaceActions({
   resetPersistedLayout,
   withHistorySuppressed,
   onActivePanelParamsChanged,
+  arrive,
 }: WorkspaceActionOptions) {
-  const composerFocusCancel = useRef<() => void>(() => undefined)
   const boardRef = useRef(board)
   const quickOpenGroupRef = useRef(quickOpenGroup)
   boardRef.current = board
   quickOpenGroupRef.current = quickOpenGroup
-
-  const focusComposer = useCallback(() => {
-    composerFocusCancel.current()
-    composerFocusCancel.current = focusComposerWhenReady(
-      () => {
-        // A disabled composer (read-only viewer, retired agent) cannot take focus; the pane itself does.
-        const field = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
-        if (!field) return null
-        return field.disabled ? field.closest<HTMLElement>('.agent-page') ?? field : field
-      },
-      requestAnimationFrame,
-      20,
-      cancelAnimationFrame,
-    )
-  }, [])
-  useEffect(() => () => composerFocusCancel.current(), [])
 
   const openPanel = useCallback((params: DockPanelParams, placement?: OpenPlacement, focus = false) => {
     const api = apiRef.current
@@ -102,7 +89,7 @@ export function useWorkspaceActions({
       else target.panel.api.setActive()
       invalidatePanel(queryClient, params)
       syncDock()
-      if (focus) focusComposer()
+      if (focus) arrive()
       return 'existing' as const
     }
     const requestedPlacement = !placement && panelUsesQuickOpenGroup(params) && quickOpenGroupRef.current
@@ -126,9 +113,9 @@ export function useWorkspaceActions({
     invalidatePanel(queryClient, params)
     if (panelUsesQuickOpenGroup(params)) setQuickOpenGroup(undefined)
     syncDock()
-    if (focus) focusComposer()
+    if (focus) arrive()
     return 'new' as const
-  }, [apiRef, focusComposer, onActivePanelParamsChanged, queryClient, setQuickOpenGroup, syncDock, withHistorySuppressed])
+  }, [apiRef, arrive, onActivePanelParamsChanged, queryClient, setQuickOpenGroup, syncDock, withHistorySuppressed])
 
   const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement, focus = false) => {
     openPanel({ kind: 'agent', name, preview }, placement, focus)

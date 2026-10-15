@@ -189,7 +189,10 @@ test('selecting an agent focuses its composer only on user-driven opens', () => 
   const applyRoute = controller.slice(controller.indexOf('const applyRoute'), controller.indexOf('const onDockReady'))
   assert.match(applyRoute, /openPanel\(\{ \.\.\.route\.params, preview: true \}, undefined, false\)/)
   assert.doesNotMatch(applyRoute, /openPanel\([^\n]*true\)/)
-  assert.match(actions, /focusComposerWhenReady/)
+  assert.match(actions, /if \(focus\) arrive\(\)/)
+  assert.doesNotMatch(actions, /focusComposerWhenReady/, 'opens arrive through the one shared path')
+  const arrive = readFileSync(new URL('../src/features/workspace/useArrive.ts', import.meta.url), 'utf8')
+  assert.match(arrive, /focusComposerWhenReady/)
 })
 
 test('deletion and mid-draft measurement never collapse the live composer', () => {
@@ -273,8 +276,10 @@ test('ArrowUp travels as props: the composer calls back, the panel counts a requ
   assert.match(strip, /<NotesList [^>]*focusRequest=\{expandedBy\} returnTo=\{agent\}/)
   const list = readFileSync(new URL('../src/features/notes/NotesList.tsx', import.meta.url), 'utf8')
   assert.match(list, /if \(!focusRequest \|\| !returnTo\) return\n\s*const landed = notesFocusSelection\(selection, notes, returnTo\)\n\s*if \(!landed\) return\n\s*setSelection\(landed\)\n\s*focus\(landed\.cursor\)\n\s*\}, \[focusRequest\]\)/)
-  const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
-  assert.match(actions, /field\.disabled \? field\.closest<HTMLElement>\('\.agent-page'\)/)
+  // A disabled composer (read-only viewer, retired agent) cannot take focus; its panel does (arriveDecision).
+  const arrive = readFileSync(new URL('../src/features/workspace/useArrive.ts', import.meta.url), 'utf8')
+  assert.match(arrive, /const panel = field\?\.closest<HTMLElement>\('\.agent-page'\)/)
+  assert.match(arrive, /composer: field \? \{ disabled: field\.disabled \} : null/)
 })
 
 test('the notes focus window event no longer exists anywhere in src', () => {

@@ -53,7 +53,7 @@ export function stepCard(order: readonly string[], selected: string, by: -1 | 1)
   return order[Math.max(0, Math.min(order.length - 1, (at < 0 ? 0 : at) + by))] ?? selected
 }
 
-// stepRow is j k: the same column in the next or previous row that has
+// stepRow is ↓ ↑ (j k): the same column in the next or previous row that has
 // cards, else that row's last card; at the edge the selection stays.
 export function stepRow(spaces: readonly SpaceLike[], prefs: LensPrefs, selected: string, by: -1 | 1): string {
   const rows = lensRowsOf(spaces, prefs)
@@ -95,10 +95,22 @@ export function cycleVisible(live: readonly string[], pick: string | undefined):
   return live[(live.indexOf(current) + 1) % live.length]
 }
 
-// entryAgent is where a zoom lands: the space's first member on the board
-// that needs the owner, else its visible agent.
+// entryAgent is where a zoom lands in a space with no last panel to return
+// to: the space's first member on the board that needs the owner, else its
+// visible agent.
 export function entryAgent(live: readonly string[], pick: string | undefined, needsYou: (name: string) => boolean): string | undefined {
   return live.find(needsYou) ?? visibleAgent(live, pick)
+}
+
+// zoomLanding is the agent a zoom into a space lands on (owner #463121,
+// over the spec's entry point): the panel the owner last had focused there,
+// kept as the layout holds it, while it is a file or an agent still on the
+// board; only without one, the entry agent. undefined keeps the layout's
+// focused panel as it is.
+export function zoomLanding(last: { kind: string, name?: string } | undefined, onBoard: (name: string) => boolean, entry: () => string | undefined): string | undefined {
+  if (!last) return entry()
+  if (last.kind !== 'agent') return undefined
+  return last.name !== undefined && onBoard(last.name) ? last.name : entry()
 }
 
 // looseAgents are the board agents in no space, by name: n and N reach them

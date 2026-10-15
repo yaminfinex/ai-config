@@ -128,6 +128,8 @@ export function bindLensShortcuts(target: Window | HTMLElement, actions: LensKey
     'ArrowRight': bare(() => actions.step(1)),
     'h': bare(() => actions.step(-1)),
     'l': bare(() => actions.step(1)),
+    'ArrowDown': bare(() => actions.stepRow(1)),
+    'ArrowUp': bare(() => actions.stepRow(-1)),
     'j': bare(() => actions.stepRow(1)),
     'k': bare(() => actions.stepRow(-1)),
     'Enter': bare(actions.zoomIn, true),

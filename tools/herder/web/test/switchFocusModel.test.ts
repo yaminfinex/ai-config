@@ -1,35 +1,40 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { focusAtEnd, focusOrigin, switchFocusDecision, type SwitchFocusInput } from '../src/features/spaces/switchFocusModel.ts'
+import { arriveDecision, focusAtEnd, focusOrigin, type ArriveInput } from '../src/features/spaces/switchFocusModel.ts'
 
-const ready = { disabled: false, visible: true }
-const decide = (input: Partial<SwitchFocusInput>) => switchFocusDecision({ origin: 'other', activePanelKind: 'agent', composer: ready, ...input })
+const ready = { disabled: false }
+const decide = (input: Partial<ArriveInput>) => arriveDecision({ origin: 'other', activePanelKind: 'agent', composer: ready, panel: true, lastTry: false, ...input })
 
-test('a switch lands in the active agent composer once it is visible and enabled', () => {
-  assert.equal(decide({}), 'focus')
-  assert.equal(decide({ origin: 'composer' }), 'focus', '⌥Tab from one composer lands in the next')
-  assert.equal(decide({ composer: null }), 'wait', 'the restored panel has not mounted its composer yet')
+test('an arrival lands in the agent composer once it is drawn and writable', () => {
+  assert.equal(decide({}), 'composer')
+  assert.equal(decide({ origin: 'composer' }), 'composer', '⌥Tab from one composer lands in the next')
+  assert.equal(decide({ composer: null }), 'wait', 'the panel has not mounted its composer yet')
+  assert.equal(decide({ composer: null, panel: false }), 'wait', 'nor drawn its panel')
 })
 
-test('focus stays put for a non-agent panel, a read-only or hidden composer, or an empty space', () => {
+test('a read-only composer, or one that never mounts, hands the keys to the panel', () => {
+  assert.equal(decide({ composer: { disabled: true } }), 'panel', 'a read-only viewer or retired agent')
+  assert.equal(decide({ composer: null, lastTry: true }), 'panel', 'no composer by the last try')
+  assert.equal(decide({ composer: null, panel: false, lastTry: true }), 'leave', 'nothing drawn to take focus')
+})
+
+test('focus stays put for a non-agent panel or an empty space', () => {
   assert.equal(decide({ activePanelKind: 'file' }), 'leave')
   assert.equal(decide({ activePanelKind: 'screen', composer: null }), 'leave', 'no waiting for a composer that never comes')
   assert.equal(decide({ activePanelKind: undefined, composer: null }), 'leave')
-  assert.equal(decide({ composer: { disabled: true, visible: true } }), 'leave')
-  assert.equal(decide({ composer: { disabled: false, visible: false } }), 'leave')
 })
 
-test('a switch begun from a text field, such as a space rename, never steals its focus', () => {
+test('an arrival begun from a text field, such as a space rename, never steals its focus', () => {
   assert.equal(decide({ origin: 'text-field' }), 'leave')
   assert.equal(decide({ origin: 'text-field', composer: null }), 'leave')
 })
 
 test('a space chosen in ⌘K lands in its composer although the palette search had focus', () => {
-  assert.equal(decide({ origin: 'quick-open' }), 'focus')
+  assert.equal(decide({ origin: 'quick-open' }), 'composer')
   assert.equal(decide({ origin: 'quick-open', composer: null }), 'wait')
   assert.equal(decide({ origin: 'quick-open', activePanelKind: 'file' }), 'leave', 'a non-agent panel keeps focus where it is')
-  assert.equal(decide({ origin: 'quick-open', composer: { disabled: true, visible: true } }), 'leave')
+  assert.equal(decide({ origin: 'quick-open', composer: { disabled: true } }), 'panel')
 })
 
 test('the origin tells a composer from other text fields and from buttons', () => {
@@ -60,24 +65,47 @@ test('the caret goes after the draft and the field scrolls to it', () => {
 })
 
 const hook = readFileSync(new URL('../src/features/workspace/useSwitchSpaceFocusing.ts', import.meta.url), 'utf8')
+const arrive = readFileSync(new URL('../src/features/workspace/useArrive.ts', import.meta.url), 'utf8')
 const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActions.ts', import.meta.url), 'utf8')
+const shortcuts = readFileSync(new URL('../src/features/workspace/useWorkspaceShortcuts.ts', import.meta.url), 'utf8')
+const registry = readFileSync(new URL('../src/features/workspace/panelRegistry.tsx', import.meta.url), 'utf8')
 
 test('in a zoom the rail, ⌥Tab and ⌘K switch through the focusing wrapper; ⇧⌥←/→ is the zoom\'s [ ]', () => {
-  assert.match(controller, /const switchSpaceFocusing = useSwitchSpaceFocusing\(apiRef, switchSpace, readActiveSpaceID\)/)
+  assert.match(controller, /const switchSpaceFocusing = useSwitchSpaceFocusing\(switchSpace, readActiveSpaceID, arrive\)/)
   assert.match(controller, /const switchSpaceAnywhere = useCallback\(\(id: string, from\?: 'quick-open'\) => viewRef\.current\.kind === 'zoom' \? switchSpaceFocusing\(id, from\) : lens\.zoomCard\(id\)/)
-  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*stepSpace: lens\.stepSpace, toggleRead \}\)/)
+  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*stepSpace: lens\.stepSpace, toggleRead, arrive \}\)/)
   assert.match(controller, /useSpaceSwitcher\(\{[^}]*switchSpace: switchSpaceAnywhere \}\)/)
   assert.match(controller, /switch: switchSpaceAnywhere,/)
 })
 
-test('the wrapper reads the origin before switching and retries the decision until the composer mounts', () => {
+test('the wrapper reads the origin before switching, then arrives', () => {
   assert.ok(hook.indexOf('focusOrigin(document.activeElement)') < hook.indexOf('switchSpace(spaceID)'), 'origin is captured before the old layout unmounts')
-  assert.match(hook, /if \(!refocus && !switchSpace\(spaceID\)\) return false/)
-  assert.match(hook, /document\.querySelector<HTMLTextAreaElement>\('\.dv-active-group textarea\[data-composer\]'\)/)
-  assert.match(hook, /activePanelKind: panelParams\(api\?\.activePanel\?\.params\)\?\.kind/)
-  assert.match(hook, /if \(decision === 'wait'\) return null/)
-  assert.match(hook, /if \(decision === 'focus' && field\) focusAtEnd\(field\)/)
-  assert.match(hook, /focusComposerWhenReady\(/)
+  assert.match(hook, /if \(!refocus && !switchSpace\(spaceID\)\) return false\n\s+arrive\(origin\)/)
+})
+
+test('one arrive path: it retries the decision until the arriving agent\'s own composer mounts and can take focus', () => {
+  assert.match(arrive, /focusComposerWhenReady\(/)
+  assert.match(arrive, /document\.querySelector\(alone === undefined \? '\.dv-active-group' : '\.alone-agent'\)/)
+  assert.match(arrive, /candidate\.id === composerFieldId\(name\)/)
+  assert.match(arrive, /activePanelKind: params\?\.kind/)
+  assert.match(arrive, /if \(decision === 'wait'\) return null/)
+  assert.match(arrive, /if \(!lastTry && !target\.checkVisibility\(\{ visibilityProperty: true \}\)\) return null/)
+  assert.match(arrive, /decision === 'composer' \? focusAtEnd\(field!\) : target\.focus\(\{ preventScroll: true \}\)/)
+})
+
+test('every entry path arrives through it: zooms, alone, opens, tabs, ⌥←/→, back/forward and load', () => {
+  assert.match(controller, /const arrive = useArrive\(apiRef, aloneAgent\)/)
+  const zoomInto = controller.slice(controller.indexOf('const zoomInto'), controller.indexOf('const zoomOut'))
+  assert.match(zoomInto, /if \(focus\) arrive\(\)/)
+  const openAlone = controller.slice(controller.indexOf('const openAlone'), controller.indexOf('const inZoom'))
+  assert.match(openAlone, /arrive\(\)/)
+  assert.match(controller, /\{ switchSpace, applyRoute \},\n\s+\)\)\n\s+\}\n\s+arrive\(\)/, 'back/forward into a zoom or alone')
+  assert.match(controller, /if \(viewRef\.current\.kind !== 'lens'\) arrive\(\)/, 'a page loaded on a zoom')
+  assert.match(actions, /if \(focus\) arrive\(\)/)
+  assert.match(shortcuts, /\?\.api\.setActive\(\)\n\s+arrive\(\)/, '⌥←/→')
+  assert.match(registry, /onClick=\{\(event\) => \{ if \(!\(event\.target as Element\)\.closest\('\.dock-tab-close'\)\) actions\.arrive\(\) \}\}/, 'a tab click')
+  assert.doesNotMatch(controller, /focusZoom/, 'no second focus path for zooms')
 })
 
 const quickOpen = readFileSync(new URL('../src/features/files/QuickOpen.tsx', import.meta.url), 'utf8')
@@ -89,5 +117,6 @@ test('⌘K switches with an explicit quick-open intent, refocuses the active spa
   assert.doesNotMatch(quickOpen, /row\.id === activeSpaceID \|\|/)
   assert.match(hook, /const origin = from \?\? focusOrigin\(document\.activeElement\)/)
   assert.match(hook, /const refocus = from === 'quick-open' && activeSpaceID\(\) === spaceID/)
-  assert.match(hook, /document\.activeElement\?\.closest\('\.quick-open'\) \? null : document\.activeElement/)
+  // The palette's search box is never the owner's text field, for a ⌘K agent row as for a space row.
+  assert.match(arrive, /focusOrigin\(document\.activeElement\?\.closest\('\.quick-open'\) \? null : document\.activeElement\)/)
 })

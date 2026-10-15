@@ -1,39 +1,19 @@
-import { useCallback, useEffect, useRef, type MutableRefObject } from 'react'
-import type { DockviewApi } from 'dockview-react'
-import { focusComposerWhenReady } from '../../composerState'
-import { panelParams } from '../layout/dockLayout'
-import { focusAtEnd, focusOrigin, switchFocusDecision } from '../spaces/index.ts'
+import { useCallback } from 'react'
+import { focusOrigin } from '../spaces/index.ts'
+import type { Arrive } from './useArrive'
 
-// useSwitchSpaceFocusing wraps switchSpace for the deliberate switches (rail
-// click, ⌥Tab switcher, ⇧⌥←/→, a ⌘K space row): after the new layout mounts,
-// the active agent's composer takes focus with the caret after its draft, as
-// decided by switchFocusModel. The restored panels render over the next
-// frames, so the decision is retried until the composer appears. ⌘K passes
-// from 'quick-open' (its search box is not the owner's text field), and
-// choosing the space already showing there refocuses its composer.
-const composerFrames = 60
-
-export function useSwitchSpaceFocusing(apiRef: MutableRefObject<DockviewApi | undefined>, switchSpace: (id: string) => boolean, activeSpaceID: () => string | null) {
-  const cancel = useRef<() => void>(() => undefined)
-  useEffect(() => () => cancel.current(), [])
+// useSwitchSpaceFocusing wraps switchSpace for the switches inside a zoom
+// (the Spaces list, the ⌥Tab switcher, a ⌘K space row): the new space's
+// focused agent is arrived at like any other (useArrive). The origin is read
+// before the old layout unmounts. ⌘K passes from 'quick-open' (its search box
+// is not the owner's text field), and choosing the space already showing
+// there arrives at its agent again.
+export function useSwitchSpaceFocusing(switchSpace: (id: string) => boolean, activeSpaceID: () => string | null, arrive: Arrive) {
   return useCallback((spaceID: string, from?: 'quick-open') => {
     const origin = from ?? focusOrigin(document.activeElement)
     const refocus = from === 'quick-open' && activeSpaceID() === spaceID
     if (!refocus && !switchSpace(spaceID)) return false
-    cancel.current()
-    cancel.current = focusComposerWhenReady(() => {
-      const api = apiRef.current
-      const field = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
-      const decision = switchFocusDecision({
-        // A text field focused since the switch began is the owner's too; the
-        // palette's own search box, still open on the first try, is not.
-        origin: origin === 'text-field' ? origin : focusOrigin(document.activeElement?.closest('.quick-open') ? null : document.activeElement),
-        activePanelKind: panelParams(api?.activePanel?.params)?.kind,
-        composer: field ? { disabled: field.disabled, visible: Boolean(api?.activeGroup?.api.isVisible) && field.getClientRects().length > 0 } : null,
-      })
-      if (decision === 'wait') return null
-      return { focus: () => { if (decision === 'focus' && field) focusAtEnd(field) } }
-    }, requestAnimationFrame, composerFrames, cancelAnimationFrame)
+    arrive(origin)
     return true
-  }, [activeSpaceID, apiRef, switchSpace])
+  }, [activeSpaceID, arrive, switchSpace])
 }

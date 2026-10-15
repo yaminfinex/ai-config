@@ -57,25 +57,31 @@ test('home is the lens: zoom in and out, [ ] across spaces, N to an agent alone,
   assert.equal(await evaluate(leftRail), 'flex', 'the fleet rail returns inside a zoom')
   assert.match(await evaluate(crumb) as string, /^lens ›.*›bravo/)
   assert.match(await evaluate('location.search') as string, new RegExp(`space=${order[1]}`))
-  assert.equal(await evaluate(`document.activeElement?.matches('textarea') ?? false`), false, 'a zoom hands the keys to the panel, not the composer')
+  await waitFor(`document.activeElement === ${composer('bravo')}`)
+  assert.equal(await evaluate(`document.activeElement === ${composer('bravo')}`), true, 'a zoom arrives in the agent composer (owner #463121)')
 
-  // esc zooms out with the space still selected.
+  // esc hands the keys to the panel; the next zooms out with the space still selected.
+  await press('Escape')
   await press('Escape')
   await waitFor(onLens)
   assert.equal(await evaluate(selected), order[1])
   assert.equal(await evaluate('location.pathname + location.search'), '/')
 
-  // Double-click zooms; [ ] cross spaces in lens order, wrapping.
+  // Double-click zooms; [ ] cross spaces in lens order, wrapping. Each lands in a composer, so esc hands the keys back first.
   await evaluate(`document.querySelector('.lens-card[data-space-id="${order[0]}"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })), true`)
-  await waitFor(`!${onLens} && Boolean(${composer('alpha')})`)
+  await waitFor(`!${onLens} && document.activeElement === ${composer('alpha')}`)
+  await press('Escape')
   await press(']')
-  await waitFor(`Boolean(${composer('bravo')}) && (${crumb}).includes('bravo')`)
+  await waitFor(`document.activeElement === ${composer('bravo')} && (${crumb}).includes('bravo')`)
+  await press('Escape')
   await press(']')
-  await waitFor(`Boolean(${composer('alpha')}) && (${crumb}).includes('alpha')`)
+  await waitFor(`document.activeElement === ${composer('alpha')} && (${crumb}).includes('alpha')`)
+  await press('Escape')
   await press('[')
-  await waitFor(`Boolean(${composer('bravo')})`)
+  await waitFor(`document.activeElement === ${composer('bravo')}`)
+  await press('Escape')
   await press('[')
-  await waitFor(`Boolean(${composer('alpha')})`)
+  await waitFor(`document.activeElement === ${composer('alpha')}`)
 
   // Typing in the composer: no lens or zoom key fires; esc returns to the panel, the next esc to the lens.
   await evaluate(`${composer('alpha')}.focus(), true`)

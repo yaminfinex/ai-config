@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  activePanelInDock,
   layoutStorageBackupKey,
   layoutStorageKey,
   parseLegacyLayout,
@@ -14,6 +15,7 @@ import {
   restoreDockLayout,
   screenIdentityState,
   writeStoredLayout,
+  storedSpaceActivePanel,
   writeStoredSpaceLayout,
   writePanelToStoredSpace,
   spaceLayoutRecoveryPrefix,
@@ -119,6 +121,34 @@ test('v4 dock-only layouts reuse the one sanitizer and isolate keys by space', (
   assert.notEqual(writeStoredSpaceLayout(storage, 'beta', JSON.stringify({ version: 4, dock: null }), initial), initial)
   assert.ok(readStoredSpaceLayout(storage, 'alpha').stored?.dock)
   assert.equal(readStoredSpaceLayout(storage, 'beta').stored?.dock, null)
+})
+
+test('a saved space names its focused panel: the active group\'s shown tab, which a zoom returns to', () => {
+  const split = {
+    grid: { root: { type: 'branch', data: [
+      { type: 'leaf', data: { id: 'group-lead', views: ['agent:lead'], activeView: 'agent:lead' } },
+      { type: 'leaf', data: { id: 'group-side', views: ['agent:mavu', 'agent:ziru'], activeView: 'agent:ziru' } },
+    ] } },
+    panels: {
+      'agent:lead': { id: 'agent:lead', contentComponent: 'agent', params: { kind: 'agent', name: 'lead', preview: false } },
+      'agent:mavu': { id: 'agent:mavu', contentComponent: 'agent', params: { kind: 'agent', name: 'mavu', preview: false } },
+      'agent:ziru': { id: 'agent:ziru', contentComponent: 'agent', params: { kind: 'agent', name: 'ziru', preview: true } },
+    },
+    activeGroup: 'group-side',
+  }
+  assert.deepEqual(activePanelInDock(split as never), { kind: 'agent', name: 'ziru', preview: true }, 'not the first group\'s lead')
+  assert.deepEqual(activePanelInDock({ ...split, activeGroup: undefined } as never), { kind: 'agent', name: 'lead', preview: false }, 'no active group: the first')
+  assert.equal(activePanelInDock(singleGroupDock as never)?.kind, 'folder', 'a file or folder tab counts as the focused panel')
+  assert.equal(activePanelInDock(null), undefined)
+
+  const values = new Map<string, string>()
+  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value) } }
+  writeStoredSpaceLayout(storage, 'herder', JSON.stringify({ version: 4, dock: split }), { recovering: false, lastGoodRaw: null })
+  assert.deepEqual(storedSpaceActivePanel(storage, 'herder'), { kind: 'agent', name: 'ziru', preview: true })
+  assert.equal(storedSpaceActivePanel(storage, 'never-saved'), undefined)
+  values.set('herder.web.layout.v4:broken', '{')
+  assert.equal(storedSpaceActivePanel({ getItem: storage.getItem }, 'broken'), undefined, 'an unreadable layout has none, and is read without a recovery write')
+  assert.equal(values.has('herder.web.layout.v4.recovery:broken'), false)
 })
 
 test('one corrupt v4 space preserves raw and cannot poison another space', () => {
