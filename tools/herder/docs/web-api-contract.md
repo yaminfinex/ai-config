@@ -1594,3 +1594,13 @@ snapshot transport rather than a raw PTY stream or WebSocket.
 3. Contextual spawn (web fork removed by the 2026-08-26 owner ruling).
 Each step merges green behind the dark `serve` flag; UI ships
 embedded (React + Vite, go:embed) per the web-lane plan.
+
+### AMENDMENT (owner #470358, 2026-10-15) — xterm.js is the herdr view's default again
+
+ghostty-web 0.4.0 repaints its canvas on every animation frame for as long as
+the view is mounted, and the view stays mounted (hidden) once opened. That
+held the owner's tab near 80% CPU. Until that is fixed, the herdr view runs on
+xterm.js. A browser opts back into ghostty-web with localStorage
+`herder.web.herdrTerminal.v1` = `ghostty`, and then the ghostty rules above
+apply, including the fallback. Without the opt-in ghostty-web is never fetched
+and no fallback note is shown.

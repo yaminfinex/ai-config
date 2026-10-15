@@ -206,9 +206,11 @@ export const renderCounter = `(() => {
 // terminal surface (whichever emulator it is), and window.__caret(), the
 // colours a ghostty caret's cell is painted in: how many of its pixels are
 // the caret colour, how many are dark (the character under it, drawn in the
-// accent colour, antialiased), and the colour at its centre. Evaluate it once the app has loaded.
+// accent colour, antialiased), and the colour at its centre. It opts this
+// browser into ghostty-web. Evaluate it once the app has loaded.
 export const herdrSurfaceProbe = `(async () => {
   const surfaces = await import('/src/features/herdr/terminalSurface.ts')
+  localStorage.setItem(surfaces.terminalPreferenceKey, 'ghostty')
   window.__surface = () => { const host = document.querySelector('.herdr-view-terminal'); return host ? surfaces.surfaceOf(host) ?? null : null }
   window.__caret = () => {
     const surface = window.__surface()

@@ -4,8 +4,8 @@ import '@xterm/xterm/css/xterm.css'
 import { herdrTerminalTheme } from './herdrViewModel.ts'
 
 // TerminalSurface is all the herdr view asks of a terminal emulator:
-// ghostty-web (libghostty as WASM, loaded when the view first opens) by
-// default, xterm.js when that cannot load.
+// xterm.js by default (see preferredSurface), or ghostty-web (libghostty as
+// WASM, loaded when the view first opens) with xterm.js when that cannot load.
 // A right-click on the host (⌃-click on a Mac) never opens the browser's
 // context menu: the button is herdr's, reported to it like any other when
 // it tracks the mouse, and selects nothing in the browser.
@@ -39,9 +39,24 @@ export type TerminalSurfaceFactory = (host: HTMLElement, options: TerminalSurfac
 const surfaces = new WeakMap<Element, TerminalSurface>()
 export const surfaceOf = (host: Element) => surfaces.get(host)
 
-// The default surface: ghostty-web's module (and its WASM, inlined in it)
+// The ghostty surface: ghostty-web's module (and its WASM, inlined in it)
 // is fetched from this serve only when the herdr view first opens.
 export const createGhosttySurface: TerminalSurfaceFactory = async (host, options) => (await import('./ghosttySurface.ts')).openGhosttySurface(host, options)
+
+// The herdr view runs on xterm.js unless this browser opts into ghostty-web
+// (localStorage terminalPreferenceKey = 'ghostty'): ghostty-web 0.4.0
+// repaints every frame for as long as the view is mounted, hidden or not,
+// which held the owner's tab near 80% CPU.
+export const terminalPreferenceKey = 'herder.web.herdrTerminal.v1'
+export const preferredSurface: TerminalSurfaceFactory = (host, options) => {
+  let ghostty = false
+  try {
+    ghostty = localStorage.getItem(terminalPreferenceKey) === 'ghostty'
+  } catch {
+    // No storage: the default stands.
+  }
+  return (ghostty ? createGhosttySurface : createXtermSurface)(host, options)
+}
 
 // openTerminalSurface makes the preferred surface on host or, when that
 // fails (the WASM did not load or start), xterm.js, saying why. Once signal
