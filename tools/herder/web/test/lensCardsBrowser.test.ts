@@ -107,23 +107,29 @@ test('the zoom morphs from its card and back, n and ⇧⌥←/→ swipe, none of
   const { url, browser, evaluate, waitFor } = await twoSpaces(api, 'lens-motion', context)
   const press = async (key: string) => { await browser(['press', key]) }
   const composerFocused = (name: string) => `document.activeElement?.getAttribute('aria-label') === 'Message ${name}'`
-  // record watches every frame for the next half second: the dock host's
-  // motion, whether the dock showed over the lens, and whether the composer
-  // or the lens already had the keys while it moved.
+  // record watches every frame until recorded: the dock host's motion,
+  // whether the dock showed over the lens, and whether the composer or the
+  // lens already had the keys while it moved. Each motion it sees runs at a
+  // quarter speed, so a slow machine still shows whether focus waited for it.
   const record = () => evaluate(`(() => {
     window.__motion = new Set()
-    const until = performance.now() + 500
+    window.__recording = true
     const frame = () => {
+      for (const animation of document.getAnimations()) if (animation.effect?.target?.closest?.('.dock-host') && animation.playbackRate === 1) animation.playbackRate = 0.25
       const kinds = ${motion}
       for (const kind of kinds) window.__motion.add(kind)
       if (kinds.length && document.activeElement?.matches('textarea[data-composer], .lens')) window.__motion.add('keys-while-moving')
       if (document.querySelector('.dock-host').dataset.morph) window.__motion.add('over-lens')
-      if (performance.now() < until) requestAnimationFrame(frame)
+      if (window.__recording) requestAnimationFrame(frame)
     }
     requestAnimationFrame(frame)
     return true
   })()`)
-  const recorded = async () => { await browser(['wait', '600']); return evaluate('[...window.__motion].sort()') }
+  const recorded = async () => {
+    await waitFor(`(${motion}).length === 0`)
+    await browser(['wait', '50'])
+    return evaluate('window.__recording = false, [...window.__motion].sort()')
+  }
   await browser(['open', url])
   await waitFor(`${onLens} && document.querySelectorAll('.lens-card').length === 2`)
   await evaluate('document.activeElement?.blur(), true')

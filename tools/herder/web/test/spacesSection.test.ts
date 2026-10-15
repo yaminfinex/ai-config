@@ -116,7 +116,7 @@ test('the attention hook prunes, seeds weakly after the first pull, and reads af
   assert.match(attentionHook, /useDOMEvent\(document, 'visibilitychange'/)
   assert.match(spaceAgentsHook, /storedSpaceAgents\(localStorage, space\.id\)/)
   assert.match(spaceAgentsHook, /event\.key\?\.startsWith\('herder\.web\.layout\.v4'\)/)
-  assert.match(controller, /useFleetStream\(\{ agents: spaceStreamAgents\(agentNames, openBySpace\)/, 'the stream follows every space so a switch never reconnects')
+  assert.match(controller, /useFleetStream\(\{ agents: spaceStreamAgents\(\[\.\.\.agentNames, \.\.\.peeked\], openBySpace\)/, 'the stream follows every space so a switch never reconnects, and the peeked agent')
 })
 
 test('every switch, whatever started it, touches the MRU order, which lives beside the switcher', () => {
