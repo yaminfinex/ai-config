@@ -1,10 +1,13 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { terminalTheme } from '../screen/terminalTheme.ts'
+import { herdrTerminalTheme } from './herdrViewModel.ts'
 
 // TerminalSurface is all the herdr view asks of a terminal emulator, so
 // ghostty-web (libghostty WASM) can replace xterm.js behind it later.
+// A right-click on the host (⌃-click on a Mac) never opens the browser's
+// context menu: the button is herdr's, reported to it like any other when
+// it tracks the mouse, and selects nothing in the browser.
 export interface TerminalSurface {
   write(bytes: Uint8Array): void
   // onInput delivers what the owner typed or pasted, as the bytes to send.
@@ -29,18 +32,26 @@ export const createXtermSurface: TerminalSurfaceFactory = (host, { ownKey }) => 
   const terminal = new Terminal({
     allowProposedApi: false,
     cursorBlink: true,
+    // A solid block while the view has the keys; an outline only once focus leaves.
+    cursorStyle: 'block',
+    cursorInactiveStyle: 'outline',
     fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
     fontSize: 13,
     lineHeight: 1.1,
     // herdr owns scrollback; the browser keeps none of its own.
     scrollback: 0,
     macOptionIsMeta: true,
-    theme: terminalTheme,
+    // On a Mac xterm.js selects the word under a right-click even while
+    // herdr tracks the mouse; the click is herdr's, not a selection.
+    rightClickSelectsWord: false,
+    theme: herdrTerminalTheme,
   })
   const fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)
   terminal.attachCustomKeyEventHandler((event) => !ownKey(event))
   terminal.open(host)
+  const noContextMenu = (event: MouseEvent) => event.preventDefault()
+  host.addEventListener('contextmenu', noContextMenu)
   const latin1 = (data: string) => Uint8Array.from(data, (char) => char.charCodeAt(0) & 0xff)
   return {
     write: (bytes) => terminal.write(bytes),
@@ -60,6 +71,9 @@ export const createXtermSurface: TerminalSurfaceFactory = (host, { ownKey }) => 
     },
     focus: () => terminal.focus(),
     reset: () => terminal.reset(),
-    dispose: () => terminal.dispose(),
+    dispose: () => {
+      host.removeEventListener('contextmenu', noContextMenu)
+      terminal.dispose()
+    },
   }
 }
