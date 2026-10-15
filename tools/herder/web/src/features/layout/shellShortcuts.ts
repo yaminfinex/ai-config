@@ -28,6 +28,7 @@ export type ShortcutLabels = {
   toggleNotesRail: string
   focusComposer: string
   sendRequest: string
+  fileBack: string
   leaveComposer: string
   goToTop: string
   goToBottom: string
@@ -51,6 +52,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     toggleNotesRail: '⌥3',
     focusComposer: '/',
     sendRequest: '⌘Enter',
+    fileBack: '⇧⌘Enter',
     leaveComposer: 'Esc',
     goToTop: '⌥↑',
     goToBottom: '⌥↓',
@@ -67,6 +69,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     toggleNotesRail: 'Alt+3',
     focusComposer: '/',
     sendRequest: 'Ctrl+Enter',
+    fileBack: 'Ctrl+Shift+Enter',
     leaveComposer: 'Esc',
     goToTop: 'Alt+Up',
     goToBottom: 'Alt+Down',
@@ -107,7 +110,8 @@ export type LensKeyActions = {
   cycleVisible: () => boolean | void
   markRead: () => boolean | void
   markUnread: () => boolean | void
-  stepSpace: (by: -1 | 1) => boolean | void
+  cycleText: () => boolean | void
+  cycleSize: () => boolean | void
 }
 
 function bare(action: () => boolean | void, activates = false): KeybindingHandler {
@@ -142,8 +146,8 @@ export function bindLensShortcuts(target: Window | HTMLElement, actions: LensKey
     'v': bare(actions.cycleVisible),
     'm': bare(actions.markRead),
     'u': bare(actions.markUnread),
-    '[': bare(() => actions.stepSpace(-1)),
-    ']': bare(() => actions.stepSpace(1)),
+    't': bare(actions.cycleText),
+    's': bare(actions.cycleSize),
   }, { ignore: (event) => event.repeat || event.isComposing })
 }
 

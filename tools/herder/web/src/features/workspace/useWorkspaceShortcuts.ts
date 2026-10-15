@@ -25,7 +25,7 @@ export function useWorkspaceShortcuts({
   showQuickOpen: () => void
   closePanel: (id: string) => void
   toggleNotesRail: () => void
-  // ⇧⌥←/→ is the zoom's [ ]: the previous or next space in lens order.
+  // ⇧⌥←/→ in a zoom: the previous or next space in lens order.
   stepSpace: (by: -1 | 1) => boolean
   toggleRead: (name: string) => void
   // ⌥←/→ arrives at the tab it shows, as a click on it does.

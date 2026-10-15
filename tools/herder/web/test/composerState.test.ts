@@ -8,6 +8,7 @@ import {
   composerDraftKey,
   blurComposerOnEscape,
   composerArrowUpAction,
+  isComposerFileBackShortcut,
   isComposerQueueShortcut,
   isComposerSendShortcut,
   persistComposerDraft,
@@ -308,4 +309,22 @@ test('Escape with nothing selected in the strip list returns to that agent compo
   assert.match(list, /action === 'clear' && selection\.selected\.size === 0 && returnTo\) \{\n\s*document\.getElementById\(composerFieldId\(returnTo\)\)\?\.focus\(\)/)
   const strip = readFileSync(new URL('../src/features/notes/AgentNotesStrip.tsx', import.meta.url), 'utf8')
   assert.match(strip, /returnTo=\{agent\}/)
+})
+
+test('⌘⇧⏎ sends and files back; plain ⌘⏎ only sends, and lands where it is', () => {
+  const key = (event: Partial<KeyboardEvent>) => ({ key: 'Enter', altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, ...event })
+  assert.equal(isComposerFileBackShortcut(key({ metaKey: true, shiftKey: true })), true)
+  assert.equal(isComposerFileBackShortcut(key({ ctrlKey: true, shiftKey: true })), true)
+  assert.equal(isComposerFileBackShortcut(key({ metaKey: true })), false)
+  assert.equal(isComposerFileBackShortcut(key({ shiftKey: true })), false)
+  assert.equal(isComposerFileBackShortcut(key({ metaKey: true, shiftKey: true, altKey: true })), false)
+  assert.equal(isComposerSendShortcut(key({ metaKey: true, shiftKey: true })), false, '⌘⇧⏎ is not a plain send')
+  const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
+  // What the owner saw is taken as the send starts; filing back runs only once it lands.
+  assert.match(composer, /const landed = fileBack \? onFileBack\?\.\(\) : undefined/)
+  assert.match(composer, /onProblem\(''\)\n {6}landed\?\.\(\)\n {4}\} catch/)
+  const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
+  assert.match(controller, /const seen = seenNow\(name\)\n {4}return \(\) => \{\n {6}readThroughSeen\(name, seen\)\n {6}zoomOut\(\)/)
+  const attention = readFileSync(new URL('../src/features/workspace/useSpaceAttention.ts', import.meta.url), 'utf8')
+  assert.match(attention, /readThrough\(store\.markers\(\)\[name\], seen\.turn, seen\.position, Date\.now\(\)\)/)
 })

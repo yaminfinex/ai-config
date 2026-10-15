@@ -274,13 +274,20 @@ test('lens arrows: ← → step cards, ↓ ↑ step rows like j k; a key the vie
     step: (by) => lensKey(`step:${by}`)(),
     stepRow: (by) => lensKey(`row:${by}`)(),
     zoomIn: lensKey('zoom'), zoomOut: lensKey('out'), nextNeeding: () => false, place: () => false,
-    cycleVisible: () => false, markRead: () => false, markUnread: () => false, stepSpace: () => false,
+    cycleVisible: () => false, markRead: () => false, markUnread: () => false,
+    cycleText: lensKey('text'), cycleSize: lensKey('size'),
   })
   try {
     for (const [key, code] of [['ArrowLeft', 'ArrowLeft'], ['ArrowRight', 'ArrowRight'], ['ArrowDown', 'ArrowDown'], ['ArrowUp', 'ArrowUp'], ['j', 'KeyJ'], ['k', 'KeyK']]) {
       assert.equal(dispatch(target, { key: key!, code: code! }).defaultPrevented, true, key)
     }
     assert.deepEqual(calls, ['step:-1', 'step:1', 'row:1', 'row:-1', 'row:1', 'row:-1'])
+    // t and s cycle the card text and size; bare [ ] are no keys any more (owner #463844).
+    assert.equal(dispatch(target, { key: 't', code: 'KeyT' }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: 's', code: 'KeyS' }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: '[', code: 'BracketLeft' }).defaultPrevented, false)
+    assert.equal(dispatch(target, { key: ']', code: 'BracketRight' }).defaultPrevented, false)
+    assert.deepEqual(calls.splice(6), ['text', 'size'])
     // In a zoom the arrows scroll the transcript as before.
     onLens = false
     assert.equal(dispatch(target, { key: 'ArrowDown', code: 'ArrowDown' }).defaultPrevented, false)

@@ -40,6 +40,10 @@ export type WorkspaceActionsValue = {
   // arrive lands on the zoom's focused agent: its composer when writable,
   // else its panel (useArrive).
   arrive: () => void
+  // fileBack is ⌘⇧⏎, called as the send starts: it notes what the owner
+  // has seen of the agent and answers what to do once the send lands (read
+  // up to that, back to the lens with the space selected).
+  fileBack: (name: string) => () => void
 }
 
 // WorkspaceDataValue holds no fleet board: a fleet event changes the board,

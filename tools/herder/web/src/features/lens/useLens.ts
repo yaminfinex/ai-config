@@ -2,16 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Board } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { bindLensShortcuts, type LensKeyActions } from '../layout/shellShortcuts.ts'
-import { needsYou, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
+import { needsYou, turnEnd, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
 import {
   cardLook,
   cardShape,
   cycleVisible,
   entryAgent,
+  focusSizes,
   lensOrder,
   lensRows,
   lensRowsOf,
   lensStatus,
+  rowOf,
   liveMembers,
   looseAgents,
   nextNeeding,
@@ -31,9 +33,12 @@ import {
   type LensView,
 } from './lensModel.ts'
 import { readLensPrefs, writeLensPrefs } from './lensPrefs.ts'
+import { agentFolder, nextCardSize, nextCardText, type CardRead } from './cardTextModel.ts'
+import { useCardText } from './useCardText.ts'
 
-// LensCard is everything one card draws. text is the status fallback; the
-// last-answer text (lens-cards) slots in here.
+// LensCard is everything one card draws. text is the body: by t, the
+// visible agent's last answer (the status until it loads), its status or
+// its folder.
 export type LensCard = {
   id: string
   name: string
@@ -68,7 +73,7 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   // lastPanel is the panel a space last had focused: the live dock's for the
   // active space, the saved layout's for the others.
   lastPanel: (spaceID: string) => { kind: string, name?: string } | undefined
-  zoomInto: (spaceID: string, agent?: string) => boolean
+  zoomInto: (spaceID: string, agent?: string, focus?: boolean, by?: -1 | 1) => boolean
   zoomOut: () => boolean
   openAlone: (agent: string) => void
   markSpaceRead: (spaceID: string) => void
@@ -85,6 +90,16 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   const chosen = selectedSpace(order, selected)
   const needing = useMemo(() => new Set([...total.unread, ...total.blocked]), [total])
   const live = useCallback((id: string) => liveMembers(membersBySpace[id] ?? [], board), [board, membersBySpace])
+  const text = prefs.text ?? 'answer'
+  const size = prefs.size ?? 0
+  // The text cards' agents (focus and watch), each with its turn, read only while the cards show answers.
+  const carded = useMemo((): CardRead[] => text !== 'answer' ? [] : spaces.flatMap((space) => {
+    if (rowOf(prefs, space.id) === 'background') return []
+    const agent = visibleAgent(liveMembers(membersBySpace[space.id] ?? [], board), prefs.visible[space.id])
+    return agent ? [{ agent, turn: turnEnd(findAgentRow(board, agent)) }] : []
+  }), [board, membersBySpace, prefs, spaces, text])
+  const onBoard = useCallback((agent: string) => Boolean(findAgentRow(board, agent)), [board])
+  const answer = useCardText(carded, onBoard)
   const entry = useCallback((id: string) => zoomLanding(lastPanel(id), (name) => Boolean(findAgentRow(board, name)),
     () => entryAgent(live(id), prefs.visible[id], (name) => needing.has(name))), [board, lastPanel, live, needing, prefs.visible])
 
@@ -99,30 +114,32 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
         const status = agentRow ? lensStatus(agentRow) : null
         const needs = needsYou(attention[space.id] ?? quiet)
         const who = whoLine(members, agent)
+        const fallback = statusText(agentRow, agent !== undefined && needing.has(agent))
+        const body = !agent || !agentRow ? fallback : text === 'cwd' ? agentFolder(board, agent) : text === 'answer' ? answer(agent) ?? fallback : fallback
         return {
           id: space.id, name: space.name, needs, look: cardLook(needs, space.id === chosen, status),
-          agent: who.name, status, others: who.others,
-          text: statusText(agentRow, agent !== undefined && needing.has(agent)),
-          ...cardShape(row),
+          agent: who.name, status, others: who.others, text: body,
+          ...cardShape(row, size),
         }
       }),
     }))
-  }, [attention, board, chosen, membersBySpace, needing, prefs, spaces])
+  }, [answer, attention, board, chosen, membersBySpace, needing, prefs, size, spaces, text])
 
   const select = useCallback((id: string) => {
     setSelected(id)
     setRevealTick((tick) => tick + 1)
   }, [setSelected])
-  const zoomCard = useCallback((id: string) => {
+  // by is the side a zoom from another zoom swipes in from.
+  const zoomCard = useCallback((id: string, by: -1 | 1 = 1) => {
     setSelected(id)
-    return zoomInto(id, entry(id))
+    return zoomInto(id, entry(id), true, by)
   }, [entry, setSelected, zoomInto])
 
-  // A step to a space in lens order from the zoomed one, wrapping: [ ] and ⇧⌥←/→.
+  // A step to a space in lens order from the zoomed one, wrapping: ⇧⌥←/→.
   const stepSpace = useCallback((by: -1 | 1) => {
     if (view.kind !== 'zoom') return false
     const next = spaceStep(order, activeSpaceID, by)
-    return next ? zoomCard(next) : false
+    return next ? zoomCard(next, by) : false
   }, [activeSpaceID, order, view.kind, zoomCard])
 
   const latest = useRef<LensKeyActions | null>(null)
@@ -163,7 +180,8 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     })(),
     markRead: () => lensKey(markSpaceRead)(),
     markUnread: () => lensKey(markSpaceUnread)(),
-    stepSpace,
+    cycleText: () => lensKey(() => setPrefs((current) => ({ ...current, text: nextCardText(current.text ?? 'answer') })))(),
+    cycleSize: () => lensKey(() => setPrefs((current) => ({ ...current, size: nextCardSize(current.size ?? 0, focusSizes.length) })))(),
   }
   useEffect(() => bindLensShortcuts(window, {
     step: (by) => latest.current?.step(by),
@@ -175,7 +193,8 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     cycleVisible: () => latest.current?.cycleVisible(),
     markRead: () => latest.current?.markRead(),
     markUnread: () => latest.current?.markUnread(),
-    stepSpace: (by) => latest.current?.stepSpace(by),
+    cycleText: () => latest.current?.cycleText(),
+    cycleSize: () => latest.current?.cycleSize(),
   }), [])
 
   // A zoom's agent opened from a mention while alone: the first space in lens

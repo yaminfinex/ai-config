@@ -2,6 +2,7 @@ import type { Board, Row } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { agentBlocked } from '../spaces/spaceAttentionModel.ts'
 import type { SpaceMember } from '../spaces/index.ts'
+import type { CardTextMode } from './cardTextModel.ts'
 
 // The lens is the home view: every space as a card in one of three rows
 // the owner picks (1 2 3). Lens order is the focus row, then watch, then
@@ -14,8 +15,9 @@ export const lensRows: readonly LensRow[] = ['focus', 'watch', 'background']
 export const defaultLensRow: LensRow = 'watch'
 
 // LensPrefs are this browser's lens choices: each space's row and each
-// space's visible agent (v).
-export type LensPrefs = Readonly<{ rows: Readonly<Record<string, LensRow>>, visible: Readonly<Record<string, string>> }>
+// space's visible agent (v), and the card text (t) and focus size (s),
+// answer and the first size while unset.
+export type LensPrefs = Readonly<{ rows: Readonly<Record<string, LensRow>>, visible: Readonly<Record<string, string>>, text?: CardTextMode, size?: number }>
 export const emptyLensPrefs: LensPrefs = { rows: {}, visible: {} }
 
 // The view: the lens, a zoom into the active space's dock, or one agent in
@@ -67,8 +69,8 @@ export function stepRow(spaces: readonly SpaceLike[], prefs: LensPrefs, selected
   return selected
 }
 
-// spaceStep is [ ] (and ⇧⌥←/→ in a zoom): the previous or next space in
-// lens order, wrapping.
+// spaceStep is ⇧⌥←/→ in a zoom: the previous or next space in lens order,
+// wrapping.
 export function spaceStep(order: readonly string[], from: string | null, by: -1 | 1): string | null {
   if (order.length === 0) return null
   const at = from ? order.indexOf(from) : -1
@@ -166,7 +168,7 @@ export const statusGlyph: Record<Exclude<LensStatus, 'working'>, string> = { blo
 
 // statusText is a card's fallback body: "<label> · <title>", the label
 // "your turn" while the agent needs the owner, else its status. The answer
-// text (lens-cards) replaces it once loaded.
+// text replaces it once loaded (cardTextModel).
 export function statusText(row: Row | undefined, needs: boolean): string {
   if (!row) return 'no agent on the board'
   const label = needs ? 'your turn' : lensStatus(row)
@@ -174,8 +176,8 @@ export function statusText(row: Row | undefined, needs: boolean): string {
 }
 
 // Each row's card: its width and body lines. Focus takes the card size
-// (284px, five lines by default; s cycles it in lens-cards), watch keeps the
-// focus width at two lines, background is a compact card with no body.
+// (284px, five lines by default; s cycles it), watch keeps the focus width
+// at two lines, background is a compact card with no body.
 export const focusSizes: readonly (readonly [number, number])[] = [[284, 5], [360, 8], [440, 12], [240, 3]]
 
 export function cardShape(row: LensRow, size = 0): { width: number, lines: number } {

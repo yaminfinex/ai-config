@@ -84,7 +84,7 @@ test('j k keep the column, else take the row\'s last card, skip empty rows and s
   assert.equal(stepRow([{ id: 'a' }, { id: 'b' }], noWatch, 'a', 1), 'b', 'an empty row is skipped')
 })
 
-test('[ ] step through spaces in lens order and wrap', () => {
+test('⇧⌥←/→ step through spaces in lens order and wrap', () => {
   const order = lensOrder(spaces, prefs)
   assert.equal(spaceStep(order, 'd', 1), 'b')
   assert.equal(spaceStep(order, 'b', -1), 'd')
