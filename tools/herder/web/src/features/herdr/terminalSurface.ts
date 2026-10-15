@@ -21,6 +21,11 @@ export interface TerminalSurface {
   reset(): void
   // screen reads the visible rows back as text, and where the caret is.
   screen(): TerminalScreen
+  // setVisible says whether the view is shown: hidden, the surface does no
+  // render work and keeps no timer (writes still land); shown, it repaints.
+  setVisible(visible: boolean): void
+  // renders counts the emulator's renders so far, where it can (ghostty), for the tests and the bench.
+  renders?(): number
   dispose(): void
 }
 
@@ -45,8 +50,9 @@ export const createGhosttySurface: TerminalSurfaceFactory = async (host, options
 
 // The herdr view runs on xterm.js unless this browser opts into ghostty-web
 // (localStorage terminalPreferenceKey = 'ghostty'): ghostty-web 0.4.0
-// repaints every frame for as long as the view is mounted, hidden or not,
-// which held the owner's tab near 80% CPU.
+// repainted every frame for as long as the view was mounted, hidden or not,
+// which held the owner's tab near 80% CPU. ghosttySurface now renders on
+// demand and not at all while hidden; the default waits on the owner.
 export const terminalPreferenceKey = 'herder.web.herdrTerminal.v1'
 export const preferredSurface: TerminalSurfaceFactory = (host, options) => {
   let ghostty = false
@@ -124,6 +130,8 @@ export const createXtermSurface = (host: HTMLElement, { ownKey }: TerminalSurfac
     },
     focus: () => terminal.focus(),
     reset: () => terminal.reset(),
+    // xterm.js renders on demand already, and pauses itself while its element is not on screen.
+    setVisible: () => {},
     screen: () => {
       const buffer = terminal.buffer.active
       const rows = Array.from({ length: terminal.rows }, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '')

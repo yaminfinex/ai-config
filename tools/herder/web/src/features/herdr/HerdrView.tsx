@@ -74,10 +74,13 @@ export function HerdrView({ open, followPane, leaveLabel, onLeave, surface = pre
     }
   }, [surface])
 
-  // Open attaches (or keeps) the client and takes the keys; leaving starts the grace.
+  // Open shows the terminal, attaches (or keeps) the client and takes the
+  // keys; leaving stops its rendering and starts the client's grace.
   const ready = loaded !== null
   useEffect(() => {
-    if (!open || !ready) return
+    if (!ready) return
+    terminal.current?.setVisible(open)
+    if (!open) return
     // Size first, so a new client starts at the view's grid.
     const size = terminal.current?.fit()
     if (size) socket.current?.resize(size.cols, size.rows)
