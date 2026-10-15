@@ -1604,3 +1604,14 @@ xterm.js. A browser opts back into ghostty-web with localStorage
 `herder.web.herdrTerminal.v1` = `ghostty`, and then the ghostty rules above
 apply, including the fallback. Without the opt-in ghostty-web is never fetched
 and no fallback note is shown.
+
+### AMENDMENT (owner #470358, 2026-10-15) — ghostty-web renders on demand and not at all while hidden
+
+On ghostty-web the herdr view renders at most once a frame, and only when
+something changed: output, a resize, a scroll, a selection, a hovered link,
+focus, or the caret's blink. The caret blinks only while the terminal has the
+keys; out of focus it is a steady outline and nothing renders. While the view
+is hidden it renders nothing and keeps no timer; output still lands, and
+showing the view repaints it. Should a ghostty-web release change the
+internals this needs, the view renders every frame as that release ships.
+xterm.js stays the default; the switch back is the owner's.
