@@ -2,8 +2,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-import type { Note } from '../src/features/notes/notesStore.ts'
+import { createNotesStore, type Note } from '../src/features/notes/notesStore.ts'
 import {
+  arrivedNoteID,
   dragNoteIDs,
   handOffRoute,
   notesFocusLanding,
@@ -95,6 +96,21 @@ test('removal crosses rendered group boundaries and empties only with the list',
   assert.equal(emptied.cursor, undefined)
 })
 
+test('deleting from the oldest-first list lands on the next newer note, and the newest falls back to the one above it', () => {
+  let now = 1_000
+  let sequence = 0
+  const store = createNotesStore({ storage: null, events: null, now: () => now, randomID: () => `id-${++sequence}`, schedule: () => 0, cancel: () => {} })
+  for (const text of ['old', 'middle', 'new']) { store.add({ group: 'kilo', text }); now += 1_000 }
+  const ids = store.list().map((entry) => entry.id)
+  const textOf = (id: string | undefined) => store.list().find((entry) => entry.id === id)?.text
+  assert.deepEqual(store.list().map((entry) => entry.text), ['old', 'middle', 'new'])
+
+  const middle = selectionAfterRemoval(selectionAfterClick(empty(), ids, ids[1]!, {}), ids, [ids[1]!])
+  assert.equal(textOf(middle.cursor), 'new', 'the note below, the next newer one')
+  const newest = selectionAfterRemoval(selectionAfterClick(empty(), ids, ids[2]!, {}), ids, [ids[2]!])
+  assert.equal(textOf(newest.cursor), 'middle', 'the bottom note falls back to the one above')
+})
+
 test('shift-arrow extends from the successor after removal', () => {
   const ids = ['a', 'b', 'c', 'd']
   const removed = selectionAfterRemoval(selectionAfterClick(empty(), ids, 'b', {}), ids, ['b'])
@@ -162,12 +178,12 @@ test('the rail button runs send all through the shared hand-off function', () =>
   assert.match(rail, /aria-label="Send all notes to their agents"[^>]*disabled=\{plan\.handOffs\.length === 0\}[^>]*onClick=\{sendAll\}/)
 })
 
-test("ArrowUp from a composer lands on the cursor, else that agent's first note, else the first card, and selects it", () => {
-  const notes = [note('g1', 'general'), note('a1', 'ann'), note('a2', 'ann')]
+test("ArrowUp from a composer lands on the cursor, else that agent's newest (bottom) note, else the last card, and selects it", () => {
+  const notes = [note('g1', 'general'), note('a1', 'ann'), note('a2', 'ann'), note('g2', 'general')]
   const ids = notes.map((item) => item.id)
-  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: 'a2' }, notes, 'ann'), 'a2')
-  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: 'gone' }, notes, 'ann'), 'a1')
-  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: undefined }, notes, 'zed'), 'g1')
+  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: 'a1' }, notes, 'ann'), 'a1')
+  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: 'gone' }, notes, 'ann'), 'a2')
+  assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: undefined }, notes, 'zed'), 'g2')
   assert.equal(notesFocusLanding({ selected: new Set(), anchor: undefined, cursor: undefined }, [], 'ann'), undefined)
   const landed = selectionAfterClick({ selected: new Set(['g1']), anchor: 'g1', cursor: 'g1' }, ids, 'a1', { shift: false, command: false })
   assert.deepEqual([...landed.selected], ['a1'])
@@ -192,12 +208,14 @@ test('ArrowUp from the composer lands with every note selected, then a plain arr
   const landed = notesFocusSelection(empty(), notes, 'ann')
   assert.ok(landed)
   assert.deepEqual([...landed.selected], ids)
-  assert.equal(landed.cursor, 'a1')
+  assert.equal(landed.cursor, 'a3', 'the newest note, nearest the composer')
   const remembered = notesFocusSelection({ selected: new Set(), anchor: undefined, cursor: 'a2' }, notes, 'ann')
   assert.deepEqual([...remembered!.selected], ids)
   assert.equal(remembered!.cursor, 'a2')
-  const down = selectionAfterArrow(landed, ids, 1, false)
-  assert.deepEqual([...down.selected], ['a2'])
+  const climb = selectionAfterArrow(landed, ids, -1, false)
+  assert.deepEqual([...climb.selected], ['a2'])
+  const down = selectionAfterArrow(remembered!, ids, 1, false)
+  assert.deepEqual([...down.selected], ['a3'])
   const up = selectionAfterArrow(remembered!, ids, -1, false)
   assert.deepEqual([...up.selected], ['a1'])
   assert.equal(notesFocusSelection(empty(), [], 'ann'), undefined)
@@ -206,4 +224,12 @@ test('ArrowUp from the composer lands with every note selected, then a plain arr
 test('send-all button names how many notes go to the composer', () => {
   assert.equal(sendAllToComposerLabel(1), 'Send all 1 note to composer')
   assert.equal(sendAllToComposerLabel(4), 'Send all 4 notes to composer')
+})
+
+test('the note that just arrived is the newest id not shown before; the first render reveals nothing', () => {
+  assert.equal(arrivedNoteID(undefined, ['a', 'b']), undefined, 'opening a list never jumps')
+  assert.equal(arrivedNoteID(['a', 'b'], ['a', 'b', 'c']), 'c')
+  assert.equal(arrivedNoteID(['a', 'b'], ['a', 'b']), undefined)
+  assert.equal(arrivedNoteID(['a', 'b'], ['a']), undefined, 'a removal reveals nothing')
+  assert.equal(arrivedNoteID(['a'], ['x', 'a', 'y']), 'y', 'the lowest arrival when several land')
 })

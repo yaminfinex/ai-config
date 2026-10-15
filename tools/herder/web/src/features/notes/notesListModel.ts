@@ -67,6 +67,14 @@ export function selectionAfterRemoval(state: NoteSelection, ordered: string[], r
     : { selected: new Set(), anchor: undefined, cursor: undefined }
 }
 
+// The note that just arrived in a list, to scroll into view: the newest id
+// not shown before. Nothing on the first render, so opening a list never jumps.
+export function arrivedNoteID(previous: readonly string[] | undefined, next: readonly string[]): string | undefined {
+  if (!previous) return undefined
+  const shown = new Set(previous)
+  return [...next].reverse().find((id) => !shown.has(id))
+}
+
 export function pruneNoteSelection(state: NoteSelection, ordered: string[]): NoteSelection {
   const present = new Set(ordered)
   const selected = new Set([...state.selected].filter((id) => present.has(id)))
@@ -118,10 +126,11 @@ export function sendAllPlan(groups: Array<{ group: string, orphaned?: boolean }>
   return { handOffs, skipped }
 }
 
-// Where ArrowUp from a composer lands: the last cursor, else that agent's first note, else the first card.
+// Where ArrowUp from a composer lands: the last cursor, else that agent's newest note, else the last card.
+// Notes run oldest first, so the newest is the bottom one, nearest the composer.
 export function notesFocusLanding(state: NoteSelection, notes: Array<Pick<Note, 'id' | 'group'>>, agent: string) {
   if (state.cursor && notes.some((note) => note.id === state.cursor)) return state.cursor
-  return notes.find((note) => note.group === agent)?.id ?? notes[0]?.id
+  return [...notes].reverse().find((note) => note.group === agent)?.id ?? notes.at(-1)?.id
 }
 
 // ArrowUp from an empty composer lands on notesFocusLanding with every note selected, so Enter hands them all off.
