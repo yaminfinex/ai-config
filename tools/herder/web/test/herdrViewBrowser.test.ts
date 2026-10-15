@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { fixtureAPI, startBrowser } from './browserFixture.ts'
+import { fixtureAPI, herdrSurfaceProbe, startBrowser } from './browserFixture.ts'
 
 // A WebSocket that records what the page sends and lets the test speak for
 // the serve. Vite's own HMR socket is already open, so only the herdr view's
@@ -25,6 +25,7 @@ const sent = `(window.__live()?.sent ?? [])`
 const focusSent = (pane: string) => `${sent}.includes('{"type":"focus","pane_id":"${pane}"}')`
 const viewOpen = `Boolean(document.querySelector('.herdr-view:not([hidden])'))`
 const viewState = `(document.querySelector('.herdr-view-state')?.textContent ?? '')`
+const screenText = `(window.__surface()?.screen().rows.join('\\n') ?? '')`
 const selectedAgent = `(document.querySelector('.lens-card.selected .lens-agent')?.textContent ?? null)`
 const cardOf = (agent: string) => `[...document.querySelectorAll('.lens-card')].find((card) => card.querySelector('.lens-agent')?.textContent === '${agent}')`
 
@@ -47,6 +48,7 @@ test('the herdr view opens and leaves by chord and control, owns the keys, resiz
   await browser(['open', url])
   await waitFor(`document.querySelectorAll('.lens-card').length === 2`)
   await evaluate(fakeSocket)
+  await evaluate(herdrSurfaceProbe)
   await evaluate(`${cardOf('alpha')}.click(), true`)
   await waitFor(`${selectedAgent} === 'alpha'`)
   assert.equal(await evaluate(`Boolean(document.querySelector('.herdr-view'))`), false, 'nothing mounts or connects before the owner asks')
@@ -62,13 +64,26 @@ test('the herdr view opens and leaves by chord and control, owns the keys, resiz
   assert.deepEqual(await evaluate(`(() => { const r = document.querySelector('.herdr-view').getBoundingClientRect(); return [r.left, r.top, r.width, r.height] })()`), [0, 0, 1400, 900], 'full size over the app')
   await waitFor(focusSent('w1:p1'))
   assert.match(await evaluate(`document.querySelector('.herdr-view-header').textContent`) as string, /⌃`|Ctrl\+`/, 'the header names the leave chord')
-  assert.equal(await evaluate(`document.activeElement?.closest('.herdr-view .xterm') !== null`), true, 'the terminal has the keys')
+  assert.equal(await evaluate(`window.__surface()?.kind`), 'ghostty', 'the view runs on ghostty-web')
+  assert.equal(await evaluate(`document.activeElement?.closest('.herdr-view-terminal') !== null`), true, 'the terminal has the keys')
   // The caret is a solid bright block while the view has the keys (it blinks, so wait for its on phase).
-  await waitFor(`(() => { const caret = document.querySelector('.herdr-view .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-block'); return Boolean(caret) && getComputedStyle(caret).backgroundColor === 'rgb(247, 249, 252)' })()`)
+  await waitFor(`(() => { const caret = window.__caret(); return caret !== null && caret.caret === caret.total })()`)
 
   // Output is drawn; keys go to herdr and the lens and shell keys stay inert.
   await evaluate(`${live}.push('hello from herdr'), true`)
-  await waitFor(`document.querySelector('.herdr-view .xterm-rows')?.textContent.includes('hello from herdr')`)
+  await waitFor(`${screenText}.includes('hello from herdr')`)
+  // Over a character the caret draws it in the accent colour; out of focus it is a steady outline.
+  await evaluate(`${live}.push('\\r'), true`)
+  await waitFor(`(() => { const caret = window.__caret(); return window.__surface().screen().cursor.col === 0 && caret.caret > caret.total / 2 && caret.dark > 0 })()`)
+  await evaluate(`document.activeElement.blur(), true`)
+  await waitFor(`(() => { const caret = window.__caret(); return caret.caret > 0 && caret.caret < caret.total / 2 && caret.centre.join() !== '247,249,252' })()`)
+  for (let sample = 0; sample < 8; sample++) {
+    await browser(['wait', '150'])
+    assert.ok((await evaluate(`window.__caret().caret`) as number) > 0, 'the outline does not blink away')
+  }
+  await evaluate(`window.__surface().focus(), true`)
+  await waitFor(`document.activeElement?.closest('.herdr-view-terminal') !== null`)
+  await evaluate(`${live}.push('\\x1b[16C'), true`)
   const before = await evaluate(`${sent}.length`) as number
   for (const key of ['n', 'ArrowRight', 'Escape', 'Enter', '?', '/', 'Alt+w']) await press(key)
   const typed = (await evaluate(`${sent}.slice(${before})`) as string[]).filter((frame) => frame.startsWith('bytes:')).map((frame) => frame.slice(6))

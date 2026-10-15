@@ -202,6 +202,46 @@ export const renderCounter = `(() => {
   }
 })()`
 
+// herdrSurfaceProbe gives the page window.__surface(), the herdr view's
+// terminal surface (whichever emulator it is), and window.__caret(), the
+// colours a ghostty caret's cell is painted in: how many of its pixels are
+// the caret colour, how many are dark (the character under it, drawn in the
+// accent colour, antialiased), and the colour at its centre. Evaluate it once the app has loaded.
+export const herdrSurfaceProbe = `(async () => {
+  const surfaces = await import('/src/features/herdr/terminalSurface.ts')
+  window.__surface = () => { const host = document.querySelector('.herdr-view-terminal'); return host ? surfaces.surfaceOf(host) ?? null : null }
+  window.__caret = () => {
+    const surface = window.__surface()
+    const canvas = document.querySelector('.herdr-view-terminal canvas')
+    if (!surface || !canvas) return null
+    const screen = surface.screen()
+    const width = canvas.width / screen.cols, height = canvas.height / screen.rows.length
+    const left = Math.round(screen.cursor.col * width), top = Math.round(screen.cursor.row * height)
+    const pixels = canvas.getContext('2d').getImageData(left, top, Math.floor(width), Math.floor(height)).data
+    const at = (x, y) => { const index = (y * Math.floor(width) + x) * 4; return [pixels[index], pixels[index + 1], pixels[index + 2]] }
+    let caret = 0, dark = 0
+    for (let index = 0; index < pixels.length; index += 4) {
+      if (pixels[index] === 247 && pixels[index + 1] === 249 && pixels[index + 2] === 252) caret++
+      if (Math.max(pixels[index], pixels[index + 1], pixels[index + 2]) < 128) dark++
+    }
+    return { caret, dark, total: pixels.length / 4, centre: at(Math.floor(width / 2), Math.floor(height / 2)) }
+  }
+  return true
+})()`
+
+// blockGhosttyWasm is an init script that makes every fetch of ghostty-web's
+// WASM fail, after delayMs (its inlined data: URL and the same-origin
+// fallbacks), so the herdr view's ghostty surface cannot start and it falls
+// back to xterm.js.
+export const blockGhosttyWasm = (delayMs = 0) => `(() => {
+  const fetch = window.fetch
+  window.fetch = function (input, init) {
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    if (href.startsWith('data:application/wasm') || href.endsWith('ghostty-vt.wasm')) return new Promise((_, reject) => setTimeout(() => reject(new TypeError('blocked by the test')), ${delayMs}))
+    return fetch.call(this, input, init)
+  }
+})()`
+
 // viteCacheDir gives a test's Vite server its own dep cache: browser tests run
 // in parallel, and a shared node_modules/.vite let one server's re-optimization
 // stall another page's module loads. Remove it once the server has closed.
@@ -211,13 +251,13 @@ export async function viteCacheDir(name: string) {
 }
 
 // startBrowser serves the app on Vite with the given fixture API and drives one agent-browser session.
-export async function startBrowser(context: TestContext, name: string, plugin: Plugin) {
+export async function startBrowser(context: TestContext, name: string, plugin: Plugin | Plugin[]) {
   const cache = await viteCacheDir(name)
   const server = await createServer({
     root: new URL('..', import.meta.url).pathname,
     cacheDir: cache.cacheDir,
     logLevel: 'silent',
-    plugins: [plugin],
+    plugins: [plugin].flat(),
     server: { host: '127.0.0.1', port: 0 },
   })
   await server.listen()

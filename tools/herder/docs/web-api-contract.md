@@ -1545,6 +1545,23 @@ subscribes through `screens` exactly as before. The web no longer sends
 `POST /api/panes/{pane-id}/input`; the server still serves all three until a
 later unit removes them.
 
+### AMENDMENT (owner #466055, 2026-10-15) — the herdr view runs on ghostty-web
+
+The herdr view's terminal is ghostty-web (libghostty's VT parser as WASM),
+pinned at 0.4.0. Its module, with the WASM inlined, is a separate chunk of
+the serve's own dist, fetched only when the view first opens: no CDN and no
+fetch outside the serve's origin. Until it is up the header says `loading
+terminal…` and no client connects. If the WASM cannot load or start, the
+view runs on xterm.js instead and the header says so in one line.
+
+Nothing on the wire changes: the same socket, frames and `TERM=xterm-256color`
+(ghostty speaks it). ghostty-web 0.4.0 tracks the client's mouse modes but
+reports nothing, so the page encodes the reports itself (X10, normal,
+button-event and any-event tracking; default, UTF-8, SGR and urxvt
+encodings), and ⌥ with a printable key sends ESC and the key (Option as
+Meta). A right-click on the terminal never opens the browser's menu, on
+either emulator.
+
 ## Explicitly absent (ruled)
 
 No WebSocket other than the herdr view above. No pane injection other than the attributed, bounded Herdr
