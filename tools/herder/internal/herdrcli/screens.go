@@ -85,6 +85,43 @@ func (s *LiveScreens) SendInput(input PaneInput) error {
 	}
 }
 
+// FocusPane asks herdr to show a pane (`pane.focus`): its workspace and tab
+// come forward in the attached client, as `herdr agent focus` does for an
+// agent, but for any pane, agent-hosting or not.
+func (s *LiveScreens) FocusPane(paneID string) error {
+	conn, err := net.DialTimeout("unix", s.socket, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("connect herdr socket %s: %w", s.socket, err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+	const requestID = "herder-pane-focus"
+	request := map[string]any{"id": requestID, "method": "pane.focus", "params": map[string]string{"pane_id": paneID}}
+	if err := json.NewEncoder(conn).Encode(request); err != nil {
+		return fmt.Errorf("request herdr pane.focus: %w", err)
+	}
+	decoder := json.NewDecoder(conn)
+	for {
+		var response struct {
+			ID    any                             `json:"id"`
+			Error *struct{ Code, Message string } `json:"error"`
+		}
+		if err := decoder.Decode(&response); err != nil {
+			if err == io.EOF {
+				return fmt.Errorf("herdr socket closed before pane.focus response")
+			}
+			return fmt.Errorf("read herdr pane.focus: %w", err)
+		}
+		if fmt.Sprint(response.ID) != requestID {
+			continue
+		}
+		if response.Error != nil {
+			return fmt.Errorf("herdr pane.focus: %s: %s", response.Error.Code, response.Error.Message)
+		}
+		return nil
+	}
+}
+
 func (s *LiveScreens) read(paneID, requestID, source string, lines int) (VisibleScreen, error) {
 	conn, err := net.DialTimeout("unix", s.socket, 2*time.Second)
 	if err != nil {

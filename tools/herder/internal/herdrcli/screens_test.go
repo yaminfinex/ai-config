@@ -161,3 +161,55 @@ func TestReadHistoryUsesBoundedRecentANSIProtocol(t *testing.T) {
 		t.Fatalf("history = %#v", history)
 	}
 }
+
+func TestFocusPaneSendsPaneFocusAndSurfacesRefusals(t *testing.T) {
+	for name, refusal := range map[string]map[string]any{
+		"accepted": nil,
+		"refused":  {"code": "pane_not_found", "message": "no pane w1:p9"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			socket := filepath.Join(t.TempDir(), "herdr.sock")
+			listener, err := net.Listen("unix", socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			done := make(chan error, 1)
+			go func() {
+				connection, acceptErr := listener.Accept()
+				if acceptErr != nil {
+					done <- acceptErr
+					return
+				}
+				defer connection.Close()
+				var request struct {
+					ID, Method string
+					Params     map[string]string `json:"params"`
+				}
+				if err := json.NewDecoder(connection).Decode(&request); err != nil {
+					done <- err
+					return
+				}
+				if request.Method != "pane.focus" || len(request.Params) != 1 || request.Params["pane_id"] != "w1:p2" {
+					done <- fmt.Errorf("unexpected pane.focus request: %#v", request)
+					return
+				}
+				response := map[string]any{"id": request.ID, "result": map[string]any{"ok": true}}
+				if refusal != nil {
+					response = map[string]any{"id": request.ID, "error": refusal}
+				}
+				done <- json.NewEncoder(connection).Encode(response)
+			}()
+			err = (&LiveScreens{socket: socket}).FocusPane("w1:p2")
+			if refusal == nil && err != nil {
+				t.Fatal(err)
+			}
+			if refusal != nil && (err == nil || err.Error() != "herdr pane.focus: pane_not_found: no pane w1:p9") {
+				t.Fatalf("refusal error = %v", err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
