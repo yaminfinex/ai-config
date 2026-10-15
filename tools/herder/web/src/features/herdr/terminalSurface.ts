@@ -1,7 +1,7 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
-import { terminalTheme } from '../screen/terminalTheme.ts'
+import { herdrTerminalTheme } from './herdrViewModel.ts'
 
 // TerminalSurface is all the herdr view asks of a terminal emulator, so
 // ghostty-web (libghostty WASM) can replace xterm.js behind it later.
@@ -32,6 +32,9 @@ export const createXtermSurface: TerminalSurfaceFactory = (host, { ownKey }) => 
   const terminal = new Terminal({
     allowProposedApi: false,
     cursorBlink: true,
+    // A solid block while the view has the keys; an outline only once focus leaves.
+    cursorStyle: 'block',
+    cursorInactiveStyle: 'outline',
     fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
     fontSize: 13,
     lineHeight: 1.1,
@@ -41,7 +44,7 @@ export const createXtermSurface: TerminalSurfaceFactory = (host, { ownKey }) => 
     // On a Mac xterm.js selects the word under a right-click even while
     // herdr tracks the mouse; the click is herdr's, not a selection.
     rightClickSelectsWord: false,
-    theme: terminalTheme,
+    theme: herdrTerminalTheme,
   })
   const fitAddon = new FitAddon()
   terminal.loadAddon(fitAddon)

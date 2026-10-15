@@ -63,6 +63,8 @@ test('the herdr view opens and leaves by chord and control, owns the keys, resiz
   await waitFor(focusSent('w1:p1'))
   assert.match(await evaluate(`document.querySelector('.herdr-view-header').textContent`) as string, /⌃`|Ctrl\+`/, 'the header names the leave chord')
   assert.equal(await evaluate(`document.activeElement?.closest('.herdr-view .xterm') !== null`), true, 'the terminal has the keys')
+  // The caret is a solid bright block while the view has the keys (it blinks, so wait for its on phase).
+  await waitFor(`(() => { const caret = document.querySelector('.herdr-view .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-block'); return Boolean(caret) && getComputedStyle(caret).backgroundColor === 'rgb(247, 249, 252)' })()`)
 
   // Output is drawn; keys go to herdr and the lens and shell keys stay inert.
   await evaluate(`${live}.push('hello from herdr'), true`)
