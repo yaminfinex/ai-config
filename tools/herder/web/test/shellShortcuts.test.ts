@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { bindLensShortcuts, bindShellShortcuts, bindSpaceSwitcher, isEditableShortcutTarget, shortcutLabels, switcherKeyIntent, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
+import { bindHerdrViewChord, bindLensShortcuts, bindShellShortcuts, bindSpaceSwitcher, herdrViewOwnsKeys, isEditableShortcutTarget, isHerdrViewChord, shortcutLabels, switcherKeyIntent, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
 import { idleSwitcher, reduceSwitcher, type SwitcherEvent, type SwitcherState } from '../src/features/spaces/spaceSwitcherModel.ts'
 
 type KeyboardInit = {
@@ -483,4 +483,60 @@ test('held-key intents: arrows step, Enter commits, Escape cancels, bare modifie
   assert.equal(switcherKeyIntent({ key: 'Alt', altKey: true }), null)
   assert.equal(switcherKeyIntent({ key: 'x', altKey: true }), null)
   assert.equal(switcherKeyIntent({ key: 'x', altKey: false }), 'release')
+})
+
+test('⌃` is the herdr view chord on every platform, claimed in the capture phase', () => {
+  assert.equal(shortcutLabels('Macintosh').herdrView, '⌃`')
+  assert.equal(shortcutLabels('Linux').herdrView, 'Ctrl+`')
+  assert.equal(isHerdrViewChord({ code: 'Backquote', ctrlKey: true, altKey: false, metaKey: false, shiftKey: false }), true)
+  for (const near of [{ ctrlKey: false }, { metaKey: true }, { altKey: true }, { shiftKey: true }]) {
+    assert.equal(isHerdrViewChord({ code: 'Backquote', ctrlKey: true, altKey: false, metaKey: false, shiftKey: false, ...near }), false)
+  }
+  const target = new EventTarget()
+  let toggles = 0
+  const unsubscribe = bindHerdrViewChord(target as unknown as Window, () => { toggles += 1 })
+  try {
+    assert.equal(dispatch(target, { key: '`', code: 'Backquote', ctrlKey: true }).defaultPrevented, true)
+    dispatch(target, { key: '`', code: 'Backquote', ctrlKey: true, repeat: true })
+    dispatch(target, { key: '`', code: 'Backquote' })
+    assert.equal(toggles, 1, 'a held chord toggles once; a bare backquote is not the chord')
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('inside the herdr view the shell and lens keys are inert; the chord is not', () => {
+  const previousHTMLElement = globalThis.HTMLElement
+  class TestHTMLElement extends EventTarget {
+    isContentEditable = false
+    closest(selector: string) { return selector === '.herdr-view:not([hidden])' ? this : null }
+  }
+  globalThis.HTMLElement = TestHTMLElement as unknown as typeof HTMLElement
+  const target = new TestHTMLElement()
+  const calls: string[] = []
+  const lensCalls: string[] = []
+  let toggles = 0
+  const unsubscribe = [
+    bindShellShortcuts(target as unknown as HTMLElement, actions(calls), 'Macintosh'),
+    bindLensShortcuts(target as unknown as Window, new Proxy({}, {
+      get: (_, name) => () => { lensCalls.push(String(name)); return true },
+    }) as Parameters<typeof bindLensShortcuts>[1]),
+    bindHerdrViewChord(target as unknown as Window, () => { toggles += 1 }),
+  ]
+  try {
+    assert.equal(herdrViewOwnsKeys(target), true)
+    assert.equal(isEditableShortcutTarget(target), false, 'the view is not a text box; it owns its keys another way')
+    for (const init of [
+      { key: '∑', code: 'KeyW', altKey: true }, { key: '/', code: 'Slash' }, { key: '?', code: 'Slash', shiftKey: true },
+      { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true }, { key: 'Dead', code: 'KeyU', altKey: true }, { key: 'k', code: 'KeyK', metaKey: true },
+      { key: 'ArrowRight', code: 'ArrowRight' }, { key: 'Enter', code: 'Enter' }, { key: 'Escape', code: 'Escape' }, { key: 'n', code: 'KeyN' },
+    ]) assert.equal(dispatch(target, init).defaultPrevented, false, `${init.code} reaches herdr untouched`)
+    assert.deepEqual(calls, [])
+    assert.deepEqual(lensCalls, [])
+    dispatch(target, { key: '`', code: 'Backquote', ctrlKey: true })
+    assert.equal(toggles, 1)
+  } finally {
+    for (const stop of unsubscribe) stop()
+    globalThis.HTMLElement = previousHTMLElement
+  }
 })

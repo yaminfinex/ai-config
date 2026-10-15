@@ -40,6 +40,7 @@ export function ShortcutReference({ open, lens, onClose }: { open: boolean, lens
     [labels.goToBottom, 'Go to bottom and resume follow'],
     [labels.toggleMaximize, 'Maximize or restore active pane'],
     [labels.toggleRead, 'Toggle the active agent read or unread'],
+    [labels.herdrView, 'Open or leave herdr itself (while open, every other key is herdr\'s)'],
     [openInSideKeys(navigator.userAgent), 'Open a link or path in closest side group'],
     [`${openInSideKeys(navigator.userAgent)} a transcript entry`, 'Mark unread from that entry'],
     ['?', 'Open this reference'],

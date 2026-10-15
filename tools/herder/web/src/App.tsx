@@ -26,6 +26,7 @@ import { browserOnlySpacesMessage, serverSpaceLookupMessage, SpacesSection, Spac
 import { liveRosterNames } from './features/notes/notesPresentation.ts'
 import { preserveDockTabBrowserHistory } from './features/workspace/dockTabHistoryModel.ts'
 import { ErrorBoundary } from './shared/ErrorBoundary'
+import { followTarget, HerdrView, useHerdrView } from './features/herdr/index.ts'
 import type { OpenPlacement } from './features/layout/openPlacement'
 import type { Pane } from './types'
 
@@ -63,7 +64,7 @@ function StreamBanners({ fleetProblem, viewerProblem, spaceProblem, flushLayout 
   </div>
 }
 
-function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, onSettings }: {
+function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, notesCollapsed, onToggleFleet, onToggleNotes, onShortcuts, onSettings, onHerdr }: {
   fleetProblem: string
   viewer: string
   viewerPending: boolean
@@ -73,6 +74,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
   onToggleNotes: () => void
   onShortcuts: () => void
   onSettings: () => void
+  onHerdr: () => void
 }) {
   const stream = useStreamStatus()
   const problems = useMemo(() => streamProblems(stream.problems, fleetProblem), [fleetProblem, stream.problems])
@@ -88,6 +90,7 @@ function StreamStatusBar({ fleetProblem, viewer, viewerPending, fleetCollapsed, 
       <span className="status-user" title="Web sends are attributed to this user; web senders are not addressable bus peers.">user: {viewerPending ? 'resolving…' : viewer}</span>
       <span className="status-notes-count"><NotesCount /></span>
       <span className="status-last">last event: {lastEvent}</span>
+      <button type="button" className="shortcut-button herdr-button" title={`herdr in the browser (${shortcuts.herdrView})`} aria-label="Open herdr" onClick={onHerdr}>h</button>
       <button type="button" className="shortcut-button" title="Keyboard shortcuts (?)" aria-label="Open keyboard shortcuts" onClick={onShortcuts}>?</button>
       <button type="button" className="shortcut-button settings-button" title="Settings" aria-label="Open settings" aria-haspopup="dialog" onClick={onSettings}><span aria-hidden="true">⚙</span></button>
       <ThemeToggle />
@@ -109,6 +112,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const pinAgent = useCallback((name: string, placement?: OpenPlacement) => openAgent(name, false, placement, true), [openAgent])
   const previewPane = useCallback((pane: Pane, placement?: OpenPlacement) => openScreen(pane, true, placement), [openScreen])
   const pinPane = useCallback((pane: Pane, placement?: OpenPlacement) => openScreen(pane, false, placement), [openScreen])
+  const herdr = useHerdrView()
+  const lensAgent = workspace.onLens ? workspace.lens.rows.flatMap((row) => row.cards).find((card) => card.id === workspace.lens.selected)?.agent : undefined
+  const followPane = followTarget(workspace.board, { onLens: workspace.onLens, lensAgent, aloneAgent: workspace.aloneAgent, activeAgent: workspace.activeAgent, activePane: workspace.activePane })
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell"><div className="shell-body">
     <QuickOpen open={workspace.quickOpen} mode={workspace.quickOpenMode} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} board={workspace.board}
       spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)}
@@ -154,7 +160,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       fleetCollapsed={fleetRail.collapsed} notesCollapsed={notesRail.collapsed}
       onToggleFleet={workspace.toggleFleetRail} onToggleNotes={workspace.toggleNotesRail}
       onShortcuts={() => workspace.setShortcutReference(true)}
-      onSettings={() => setSettingsOpen(true)} />
+      onSettings={() => setSettingsOpen(true)} onHerdr={herdr.show} />
+    {herdr.mounted && <HerdrView open={herdr.open} followPane={followPane} leaveLabel={shortcutLabels(navigator.userAgent).herdrView} onLeave={herdr.leave} />}
   </div></FileWatchContext.Provider></WorkspaceProviders>
 }
 
