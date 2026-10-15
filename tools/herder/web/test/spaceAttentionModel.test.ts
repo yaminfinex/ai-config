@@ -2,10 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   agentAttention,
+  agentBlocked,
   agentUnread,
   agentsInDock,
   attentionLabel,
   boardAgents,
+  boardAttention,
+  needsYou,
+  nextViewedBlocks,
   markerKeepSet,
   markReadUpdates,
   readUpdates,
@@ -15,7 +19,6 @@ import {
   spaceStreamAgents,
   storedSpaceAgents,
   streamAgentLimit,
-  totalAttention,
   turnEnd,
 } from '../src/features/spaces/spaceAttentionModel.ts'
 import { baselineMarker, type ReadMarker, type ReadMarkers } from '../src/features/spaces/readMarkerModel.ts'
@@ -235,8 +238,56 @@ test('labels read naturally for every count combination', () => {
   assert.equal(attentionLabel({ unread: [], blocked: [], drafts: [] }), 'no agents waiting')
 })
 
-test('the folded total counts an agent open in two spaces once', () => {
-  assert.deepEqual(totalAttention([{ unread: ['a', 'b'], blocked: ['c'], drafts: [] }, { unread: ['a'], blocked: ['c', 'd'], drafts: [] }]), { unread: ['a', 'b'], blocked: ['c', 'd'], drafts: [] })
+test('the header total counts every board agent once, in two spaces or in none; the cards count per space', () => {
+  const board = boardOf([
+    pane('mavu', 'listening', { turn_end_id: 9 }),
+    pane('ziru', 'blocked'),
+    pane('kelo', 'listening', { turn_end_id: 4 }),
+  ], [pane('lone', 'listening', { turn_end_id: 8 }), pane('-', 'blocked')])
+  const markers = marks({ mavu: 1, ziru: 1, kelo: 4, lone: 1 })
+  // mavu sits in both spaces; lone sits in none.
+  const alpha = spaceAttention(board, ['mavu', 'ziru'], markers)
+  const beta = spaceAttention(board, ['mavu', 'kelo'], markers)
+  assert.deepEqual([needsYou(alpha), needsYou(beta)], [2, 1], 'an agent in two spaces counts on both cards')
+  const total = boardAttention(board, markers)
+  assert.deepEqual(total, { unread: ['mavu', 'lone'], blocked: ['ziru'], drafts: [] }, 'each once, the no-space agent included, the unnamed row never')
+  assert.equal(needsYou(total), 3, 'not the sum of the cards (2 + 1), and with lone')
+  assert.deepEqual(boardAttention(undefined, markers), { unread: [], blocked: [], drafts: [] })
+  assert.deepEqual(boardAttention(board, markers, {}, new Set(['ziru'])).blocked, [], 'a viewed block leaves the total')
+})
+
+test('blocked is the bus or herdr saying so', () => {
+  assert.equal(agentBlocked(pane('a', 'blocked')), true)
+  assert.equal(agentBlocked(pane('a', 'listening', { herdr_status: 'blocked' })), true)
+  assert.equal(agentBlocked(pane('a', 'listening')), false)
+  assert.equal(agentBlocked(undefined), false)
+})
+
+test('a viewed block stops needing you; unblocking drops the mark, so re-blocking needs you again', () => {
+  const blocked = boardOf([pane('mavu', 'blocked', { turn_end_id: 5 }), pane('ziru', 'listening', { turn_end_id: 3 })])
+  const markers = marks({ mavu: 5, ziru: 3 })
+  assert.deepEqual(spaceAttention(blocked, ['mavu'], markers).blocked, ['mavu'], 'blocked needs you')
+  // Viewing it (the focused panel) views the block at once.
+  let viewed = nextViewedBlocks(new Set(), blocked, ['mavu'])
+  assert.deepEqual([...viewed], ['mavu'])
+  assert.deepEqual(spaceAttention(blocked, ['mavu'], markers, {}, viewed), { unread: [], blocked: [], drafts: [] }, 'viewing clears it')
+  assert.equal(nextViewedBlocks(viewed, blocked, []), viewed, 'looking away keeps the mark, and the same set')
+  assert.deepEqual([...nextViewedBlocks(new Set(), blocked, ['ziru'])], [], 'viewing an agent that is not blocked marks nothing')
+  // Unblocked: the mark lapses.
+  const unblocked = boardOf([pane('mavu', 'listening', { turn_end_id: 5 }), pane('ziru', 'listening', { turn_end_id: 3 })])
+  viewed = nextViewedBlocks(viewed, unblocked, [])
+  assert.deepEqual([...viewed], [])
+  // Blocked again: needs you again.
+  assert.deepEqual(spaceAttention(blocked, ['mavu'], markers, {}, nextViewedBlocks(viewed, blocked, [])).blocked, ['mavu'])
+  // A block landing while the owner watches is viewed at once.
+  assert.deepEqual([...nextViewedBlocks(new Set(), blocked, ['mavu'])], ['mavu'])
+  // Off the board: kept only while still wanted (a member of a space).
+  const gone = boardOf([])
+  assert.deepEqual([...nextViewedBlocks(new Set(['mavu']), gone, [], (name) => name === 'mavu')], ['mavu'])
+  assert.deepEqual([...nextViewedBlocks(new Set(['mavu']), gone, [])], [])
+  assert.equal(nextViewedBlocks(new Set(['mavu']), undefined, []).size, 1, 'no board: nothing is known')
+  // A viewed block that is also unread still counts as unread.
+  assert.deepEqual(spaceAttention(blocked, ['mavu'], { mavu: { ...m(5), unread: true } }, {}, new Set(['mavu'])).unread, ['mavu'])
 })
 
 const at = (offset: number) => ({ session: 's1', offset, ts: `t${offset}` })

@@ -55,22 +55,32 @@ export function turnEnd(row: Row | undefined): number | null {
 // on a finished turn; inactive, pending, unknown or '-' never count.
 const unreadStatuses = new Set(['listening', 'active'])
 
-// agentAttention: blocked always shows; a deliberate mark unread is quiet
-// unread; otherwise unread is a turn that ended after the marker's. With no
-// marker the baseline is unknown, so nothing is unread until seeding
-// records one.
-export function agentAttention(row: Row | undefined, marker: ReadMarker | undefined): 'blocked' | 'unread' | null {
-  if (row?.bus_status === 'blocked') return 'blocked'
+// agentBlocked is the board's blocked: the bus or herdr says the agent
+// cannot proceed.
+export function agentBlocked(row: Row | undefined): boolean {
+  return row?.bus_status === 'blocked' || row?.herdr_status === 'blocked'
+}
+
+// agentAttention: blocked shows until this block is viewed (blockViewed);
+// a deliberate mark unread is quiet unread; otherwise unread is a turn that
+// ended after the marker's. With no marker the baseline is unknown, so
+// nothing is unread until seeding records one.
+export function agentAttention(row: Row | undefined, marker: ReadMarker | undefined, blockViewed = false): 'blocked' | 'unread' | null {
+  if (agentBlocked(row) && !blockViewed) return 'blocked'
   if (marker?.unread) return 'unread'
   if (!row || !unreadStatuses.has(row.bus_status)) return null
   const id = turnEnd(row)
   return id !== null && marker !== undefined && id > marker.turn ? 'unread' : null
 }
 
-export function spaceAttention(board: Board | undefined, agents: readonly string[], markers: ReadMarkers, drafts: DraftMarks = {}): SpaceAttention {
+const noBlocks: ReadonlySet<string> = new Set()
+
+// spaceAttention is what each named agent asks of the owner; blocks in
+// viewedBlocks (this browser's viewed-blocks set) no longer count.
+export function spaceAttention(board: Board | undefined, agents: readonly string[], markers: ReadMarkers, drafts: DraftMarks = {}, viewedBlocks: ReadonlySet<string> = noBlocks): SpaceAttention {
   const result: SpaceAttention = { unread: [], blocked: [], drafts: [] }
   for (const name of agents) {
-    const state = agentAttention(findAgentRow(board, name), markers[name])
+    const state = agentAttention(findAgentRow(board, name), markers[name], viewedBlocks.has(name))
     if (state) result[state].push(name)
     if (drafts[name]) result.drafts.push(name)
   }
@@ -120,7 +130,7 @@ export function readUpdates({ markers, board, viewed, positions, armed, now }: {
 // agentUnread is whether an agent can be marked read: a deliberate mark
 // unread (even while blocked), or a turn that ended after the marker's.
 export function agentUnread(row: Row | undefined, marker: ReadMarker | undefined): boolean {
-  return Boolean(marker?.unread) || agentAttention(row, marker) === 'unread'
+  return Boolean(marker?.unread) || agentAttention(row, marker, true) === 'unread'
 }
 
 // markReadUpdates are what an explicit mark read writes for the named
@@ -151,7 +161,7 @@ export function markReadUpdates({ markers, board, names, positions, now }: {
 export function boardAgents(board: Board): Set<string> {
   const names = new Set<string>()
   const visit = (row: Row) => {
-    if (row.agent) names.add(row.agent)
+    if (row.agent && row.agent !== '-') names.add(row.agent)
     for (const child of row.subagents ?? []) visit(child)
   }
   for (const workspace of board.workspaces) for (const tab of workspace.tabs) for (const pane of tab.panes) visit(pane)
@@ -194,4 +204,34 @@ export function totalAttention(values: readonly SpaceAttention[]): SpaceAttentio
     blocked: [...new Set(values.flatMap((value) => value.blocked))],
     drafts: [...new Set(values.flatMap((value) => value.drafts))],
   }
+}
+
+// boardAttention is the header total and the badge: every agent on the
+// board that needs the owner, each once, whether it sits in one space,
+// several or none. It is not the sum of the spaces' counts.
+export function boardAttention(board: Board | undefined, markers: ReadMarkers, drafts: DraftMarks = {}, viewedBlocks: ReadonlySet<string> = noBlocks): SpaceAttention {
+  return board ? spaceAttention(board, [...boardAgents(board)], markers, drafts, viewedBlocks) : { unread: [], blocked: [], drafts: [] }
+}
+
+// needsYou is how many agents an attention asks of the owner: unread or
+// blocked (drafts never count).
+export function needsYou(attention: SpaceAttention): number {
+  return attention.unread.length + attention.blocked.length
+}
+
+// nextViewedBlocks keeps the viewed-blocks set: a block stays viewed while
+// its agent stays blocked (an agent off the board keeps its mark while
+// keep says it is still wanted, a member of some space), and a viewed agent
+// that is blocked now is viewed at once, so a block landing while the owner
+// watches never needs them. Unblocking drops the mark, so blocking again
+// needs the owner again. The same set comes back when nothing changed.
+export function nextViewedBlocks(previous: ReadonlySet<string>, board: Board | undefined, viewed: readonly string[], keep: (name: string) => boolean = () => false): ReadonlySet<string> {
+  if (!board) return previous
+  const next = new Set<string>()
+  for (const name of previous) {
+    const row = findAgentRow(board, name)
+    if (row ? agentBlocked(row) : keep(name)) next.add(name)
+  }
+  for (const name of viewed) if (agentBlocked(findAgentRow(board, name))) next.add(name)
+  return next.size === previous.size && [...next].every((name) => previous.has(name)) ? previous : next
 }
