@@ -3,12 +3,14 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { herdrTerminalTheme } from './herdrViewModel.ts'
 
-// TerminalSurface is all the herdr view asks of a terminal emulator, so
-// ghostty-web (libghostty WASM) can replace xterm.js behind it later.
+// TerminalSurface is all the herdr view asks of a terminal emulator:
+// ghostty-web (libghostty as WASM, loaded when the view first opens) by
+// default, xterm.js when that cannot load.
 // A right-click on the host (⌃-click on a Mac) never opens the browser's
 // context menu: the button is herdr's, reported to it like any other when
 // it tracks the mouse, and selects nothing in the browser.
 export interface TerminalSurface {
+  readonly kind: TerminalKind
   write(bytes: Uint8Array): void
   // onInput delivers what the owner typed or pasted, as the bytes to send.
   onInput(listener: (data: string | Uint8Array) => void): () => void
@@ -17,8 +19,13 @@ export interface TerminalSurface {
   focus(): void
   // reset clears the screen for a new client; herdr repaints on attach.
   reset(): void
+  // screen reads the visible rows back as text, and where the caret is.
+  screen(): TerminalScreen
   dispose(): void
 }
+
+export type TerminalKind = 'ghostty' | 'xterm'
+export type TerminalScreen = { cols: number, rows: string[], cursor: { col: number, row: number } }
 
 export type TerminalSurfaceOptions = {
   // ownKey is true for a key the page keeps (the leave chord): the
@@ -26,9 +33,39 @@ export type TerminalSurfaceOptions = {
   ownKey: (event: KeyboardEvent) => boolean
 }
 
-export type TerminalSurfaceFactory = (host: HTMLElement, options: TerminalSurfaceOptions) => TerminalSurface
+export type TerminalSurfaceFactory = (host: HTMLElement, options: TerminalSurfaceOptions) => TerminalSurface | Promise<TerminalSurface>
 
-export const createXtermSurface: TerminalSurfaceFactory = (host, { ownKey }) => {
+// The surface on each host, for whoever needs to read the screen back.
+const surfaces = new WeakMap<Element, TerminalSurface>()
+export const surfaceOf = (host: Element) => surfaces.get(host)
+
+// The default surface: ghostty-web's module (and its WASM, inlined in it)
+// is fetched from this serve only when the herdr view first opens.
+export const createGhosttySurface: TerminalSurfaceFactory = async (host, options) => (await import('./ghosttySurface.ts')).openGhosttySurface(host, options)
+
+// openTerminalSurface makes the preferred surface on host or, when that
+// fails (the WASM did not load or start), xterm.js, saying why. Once signal
+// aborts (the view unmounted while it loaded) the surface is disposed and
+// the answer is null.
+export async function openTerminalSurface(host: HTMLElement, options: TerminalSurfaceOptions, preferred: TerminalSurfaceFactory, signal: AbortSignal): Promise<{ surface: TerminalSurface, fallback?: string } | null> {
+  let surface: TerminalSurface
+  let fallback: string | undefined
+  try {
+    surface = await preferred(host, options)
+  } catch (error) {
+    if (signal.aborted) return null
+    surface = createXtermSurface(host, options)
+    fallback = error instanceof Error ? error.message : String(error)
+  }
+  if (signal.aborted) {
+    surface.dispose()
+    return null
+  }
+  surfaces.set(host, surface)
+  return { surface: { ...surface, dispose: () => { surfaces.delete(host); surface.dispose() } }, fallback }
+}
+
+export const createXtermSurface = (host: HTMLElement, { ownKey }: TerminalSurfaceOptions): TerminalSurface => {
   const terminal = new Terminal({
     allowProposedApi: false,
     cursorBlink: true,
@@ -54,6 +91,7 @@ export const createXtermSurface: TerminalSurfaceFactory = (host, { ownKey }) => 
   host.addEventListener('contextmenu', noContextMenu)
   const latin1 = (data: string) => Uint8Array.from(data, (char) => char.charCodeAt(0) & 0xff)
   return {
+    kind: 'xterm',
     write: (bytes) => terminal.write(bytes),
     onInput: (listener) => {
       const text = terminal.onData((data) => listener(data))
@@ -71,6 +109,11 @@ export const createXtermSurface: TerminalSurfaceFactory = (host, { ownKey }) => 
     },
     focus: () => terminal.focus(),
     reset: () => terminal.reset(),
+    screen: () => {
+      const buffer = terminal.buffer.active
+      const rows = Array.from({ length: terminal.rows }, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? '')
+      return { cols: terminal.cols, rows, cursor: { col: buffer.cursorX, row: buffer.cursorY } }
+    },
     dispose: () => {
       host.removeEventListener('contextmenu', noContextMenu)
       terminal.dispose()

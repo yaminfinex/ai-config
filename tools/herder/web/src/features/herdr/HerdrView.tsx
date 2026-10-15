@@ -3,7 +3,7 @@ import { isHerdrViewChord } from '../layout/shellShortcuts.ts'
 import { useSizeObserver } from '../../shared/lifecycle.ts'
 import { HerdrSocket } from './herdrSocket.ts'
 import { connectionLabel, herdrTermURL, resizeDebounceMs, shouldFollow, type HerdrConnection } from './herdrViewModel.ts'
-import { createXtermSurface, type TerminalSurface, type TerminalSurfaceFactory } from './terminalSurface.ts'
+import { createGhosttySurface, openTerminalSurface, type TerminalSurface, type TerminalSurfaceFactory } from './terminalSurface.ts'
 import { terminalTheme } from '../screen/terminalTheme.ts'
 import './herdrView.css'
 
@@ -11,7 +11,7 @@ import './herdrView.css'
 // browser, following the agent the web is on. It stays mounted once opened
 // (hidden while away) so the screen and, for leaveGraceMs, the client are
 // still there when the owner flips back.
-export function HerdrView({ open, followPane, leaveLabel, onLeave, surface = createXtermSurface }: {
+export function HerdrView({ open, followPane, leaveLabel, onLeave, surface = createGhosttySurface }: {
   open: boolean
   followPane: string | null
   leaveLabel: string
@@ -29,48 +29,62 @@ export function HerdrView({ open, followPane, leaveLabel, onLeave, surface = cre
   // The pane herdr was last asked to show on this client; null after a reconnect.
   const sent = useRef<string | null>(null)
 
+  // The terminal loads (ghostty-web's WASM the first time) before the client connects.
+  const [loaded, setLoaded] = useState<{ fallback?: string } | null>(null)
   useEffect(() => {
     const host = hostRef.current
     if (!host) return
-    const term = surface(host, { ownKey: isHerdrViewChord })
-    terminal.current = term
-    const client = new HerdrSocket({
-      url: (size) => herdrTermURL(window.location, size),
-      onOutput: (bytes) => term.write(bytes),
-      onNotice: (notice) => {
-        if (notice.type === 'focus_failed') setFollowProblem(`could not show ${notice.pane_id}: ${notice.detail}`)
-        else if (notice.type === 'focused') setFollowProblem('')
-        else if (notice.type === 'error') setProblem(notice.detail)
-      },
-      onConnection: (next, retryInMs) => {
-        // A new client repaints everything; drop the old screen first.
-        if (next === 'connecting' || next === 'reconnecting') sent.current = null
-        if (next === 'connecting') term.reset()
-        setConnection(next)
-        setRetryIn(retryInMs)
-      },
+    let stop: (() => void) | undefined
+    const unmounted = new AbortController()
+    void openTerminalSurface(host, { ownKey: isHerdrViewChord }, surface, unmounted.signal).then((opened) => {
+      if (!opened) return
+      const { surface: term, fallback } = opened
+      terminal.current = term
+      const client = new HerdrSocket({
+        url: (size) => herdrTermURL(window.location, size),
+        onOutput: (bytes) => term.write(bytes),
+        onNotice: (notice) => {
+          if (notice.type === 'focus_failed') setFollowProblem(`could not show ${notice.pane_id}: ${notice.detail}`)
+          else if (notice.type === 'focused') setFollowProblem('')
+          else if (notice.type === 'error') setProblem(notice.detail)
+        },
+        onConnection: (next, retryInMs) => {
+          // A new client repaints everything; drop the old screen first.
+          if (next === 'connecting' || next === 'reconnecting') sent.current = null
+          if (next === 'connecting') term.reset()
+          setConnection(next)
+          setRetryIn(retryInMs)
+        },
+      })
+      socket.current = client
+      const stopInput = term.onInput((data) => { client.input(data) })
+      stop = () => {
+        stopInput()
+        client.dispose()
+        term.dispose()
+        socket.current = null
+        terminal.current = null
+      }
+      setLoaded({ fallback })
     })
-    socket.current = client
-    const stopInput = term.onInput((data) => { client.input(data) })
     return () => {
-      stopInput()
-      client.dispose()
-      term.dispose()
-      socket.current = null
-      terminal.current = null
+      unmounted.abort()
+      stop?.()
+      setLoaded(null)
     }
   }, [surface])
 
   // Open attaches (or keeps) the client and takes the keys; leaving starts the grace.
+  const ready = loaded !== null
   useEffect(() => {
-    if (!open) return
+    if (!open || !ready) return
     // Size first, so a new client starts at the view's grid.
     const size = terminal.current?.fit()
     if (size) socket.current?.resize(size.cols, size.rows)
     socket.current?.attach()
     terminal.current?.focus()
     return () => socket.current?.detach()
-  }, [open])
+  }, [open, ready])
 
   const resizeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const fit = useCallback(() => {
@@ -88,13 +102,14 @@ export function HerdrView({ open, followPane, leaveLabel, onLeave, surface = cre
     if (socket.current?.focus(followPane)) sent.current = followPane
   }, [connection, follow, followPane, open])
 
-  const status = connectionLabel(connection, retryIn)
+  const status = ready ? connectionLabel(connection, retryIn) : 'loading terminal…'
   return <section className="herdr-view" hidden={!open} aria-label="herdr" onMouseDown={(event) => {
     if (!(event.target as Element).closest('button, label')) terminal.current?.focus()
   }}>
     <header className="herdr-view-header">
       <strong>herdr</strong>
       <span className={`herdr-view-state herdr-${connection}`} role="status">{status}</span>
+      {loaded?.fallback !== undefined && <span className="herdr-view-note" title={loaded.fallback}>ghostty did not load ({loaded.fallback}); this is xterm.js</span>}
       <label className="herdr-view-follow" title="Show the agent you are on in herdr">
         <input type="checkbox" checked={follow} onChange={(event) => { setFollow(event.target.checked); sent.current = null }} />follow
       </label>

@@ -76,7 +76,11 @@ test('the herdr view has a caret the owner can see; the base palette keeps its h
   assert.deepEqual({ ...herdrTerminalTheme, cursor: terminalTheme.cursor, cursorAccent: terminalTheme.cursorAccent }, terminalTheme, 'only the cursor differs from the screen palette')
   assert.equal(terminalTheme.cursor, terminalTheme.background, 'the base palette still hides the cursor')
   assert.equal(terminalTheme.cursorAccent, terminalTheme.background)
-  const surface = readFileSync(new URL('../src/features/herdr/terminalSurface.ts', import.meta.url), 'utf8')
-  assert.match(surface, /theme: herdrTerminalTheme/)
-  assert.match(surface, /cursorStyle: 'block'/)
+  // Both surfaces: ghostty-web, and xterm.js as its fallback.
+  for (const file of ['ghosttySurface.ts', 'terminalSurface.ts']) {
+    const surface = readFileSync(new URL(`../src/features/herdr/${file}`, import.meta.url), 'utf8')
+    assert.match(surface, /theme: herdrTerminalTheme/, file)
+    assert.match(surface, /cursorStyle: 'block'/, file)
+    assert.match(surface, /scrollback: 0/, `${file} keeps no scrollback of its own`)
+  }
 })
