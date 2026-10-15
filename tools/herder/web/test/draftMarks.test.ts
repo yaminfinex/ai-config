@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { appendComposerDraft, composerDraftKey, persistComposerDraft, readComposerDrafts, subscribeComposerDrafts } from '../src/composerState.ts'
 import { draftCountLabel, draftMarks, draftTitle, sameDraftMarks } from '../src/features/drafts/draftMarksModel.ts'
-import { attentionLabel, spaceAttention, totalAttention } from '../src/features/spaces/spaceAttentionModel.ts'
+import { attentionLabel, boardAttention, spaceAttention } from '../src/features/spaces/spaceAttentionModel.ts'
+import type { Board } from '../src/types.ts'
 
 function memoryStorage() {
   const values = new Map<string, string>()
@@ -40,8 +41,11 @@ test('a space rolls up its open agents with drafts beside unread and blocked, an
   const drafts = draftMarks({ mavu: 'x', away: 'y' }, [{ group: 'ziru' }])
   const one = spaceAttention(undefined, ['mavu', 'ziru', 'kobe'], {}, drafts)
   assert.deepEqual(one, { unread: [], blocked: [], drafts: ['mavu', 'ziru'] })
-  const two = spaceAttention(undefined, ['mavu'], {}, drafts)
-  assert.deepEqual(totalAttention([one, two]).drafts, ['mavu', 'ziru'])
+  assert.deepEqual(spaceAttention(undefined, ['mavu'], {}, drafts).drafts, ['mavu'])
+  const panes = ['mavu', 'ziru', 'kobe'].map((agent) => ({ pane_id: `pane-${agent}`, agent, tool: 'claude', herdr_status: 'idle', bus_status: 'listening', gap: '' }))
+  const board: Board = { workspaces: [{ workspace_id: 'w1', number: 1, label: 'fixture', focused: true, pane_count: 3, tab_count: 1, active_tab_id: 't1', agent_status: 'idle',
+    tabs: [{ tab_id: 't1', number: 1, label: 'agents', focused: true, pane_count: 3, agent_status: 'idle', panes }] }], unplaced: [] }
+  assert.deepEqual(boardAttention(board, {}, drafts).drafts, ['mavu', 'ziru'], 'the total counts each board agent once, whatever spaces hold it')
 })
 
 test('labels add drafts to the waiting and blocked wording', () => {

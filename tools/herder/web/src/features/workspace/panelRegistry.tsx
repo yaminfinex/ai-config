@@ -195,3 +195,27 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
 }
 
 export { mergePanelParams, panelID, panelParams, panelPresentation, panelUsesQuickOpenGroup, previewPanelToReplace }
+
+// AloneAgentPanel is a zoom of no space: one agent with no dock around it.
+// Links and paths open in the active space's dock (which zooms there); a
+// mention opens through onOpenAgent (its space, or alone again).
+export function AloneAgentPanel({ name, onOpenAgent }: { name: string, onOpenAgent: (name: string) => void }) {
+  const workspace = useWorkspaceActionsContext()
+  const data = useWorkspaceData()
+  const agents = useLiveRosterNames()
+  const unread = useAgentUnread(name)
+  const liveStatus = useAgentBoardStatus(name)
+  const onOpen = useCallback((agent: string) => onOpenAgent(agent), [onOpenAgent])
+  const onScreenPane = useCallback((paneID?: string) => workspace.setAgentScreenPane(name, paneID), [name, workspace])
+  const onTailPane = useCallback((paneID?: string) => workspace.setAgentTailPane(name, paneID), [name, workspace])
+  const onMarkUnread = useCallback((index?: number) => workspace.markUnread(name, index), [name, workspace])
+  const onMarkRead = useCallback(() => workspace.markRead([name]), [name, workspace])
+  const noop = useCallback(() => undefined, [])
+  return <div className="alone-agent"><ErrorBoundary><AgentPanel name={name} panelID={`alone:${name}`} agents={agents} active liveStatus={liveStatus} screenPaneID={data.agentScreenPanes[name]}
+    mentionMatcher={data.mentionMatcher} onOpenAgent={onOpen}
+    onScreenPane={onScreenPane} onTailPane={onTailPane} onOpenFile={workspace.openFile}
+    onOpenFolder={workspace.openFolder} onOpenChanges={workspace.openChanges}
+    identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={noop} onStatus={workspace.onAgentStatus}
+    onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={onMarkUnread}
+    unread={unread} onMarkRead={onMarkRead} /></ErrorBoundary></div>
+}

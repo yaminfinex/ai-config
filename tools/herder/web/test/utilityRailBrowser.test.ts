@@ -36,7 +36,8 @@ test('collapsed rails leave computed layout and reopen with status state in sync
   context.after(async () => {
     try { await browser(['close']) } finally { await server.close(); await cache.remove() }
   })
-  await browser(['open', url])
+  // A zoom: the lens at / hides the fleet rail.
+  await browser(['open', `${url}agents/alpha`])
   await browser(['wait', '--fn', "document.querySelectorAll('.utility-rail').length === 2"])
   await browser(['set', 'viewport', '1280', '800'])
 

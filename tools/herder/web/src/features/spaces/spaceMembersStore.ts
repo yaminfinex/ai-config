@@ -30,6 +30,10 @@ export type SpaceMembersStore = SpaceMembersReconcileStore & {
   merge: (rows: GenericStateRow[]) => void
   forget: (keys: string[]) => void
   subscribeMutations: (listener: (rows: GenericStateRow[]) => void) => () => void
+  // subscribe hears every change to the rows, local or merged; version
+  // counts them, for useSyncExternalStore.
+  subscribe: (listener: () => void) => () => void
+  version: () => number
 }
 
 export function membersStateRow(row: SpaceMembersRow): GenericStateRow {
@@ -67,6 +71,12 @@ export function createSpaceMembersStore(options: Options = {}): SpaceMembersStor
   const rows = new Map<string, SpaceMembersRow>()
   const locals = new Map<string, SpaceMembersLocal>()
   const mutationListeners = new Set<(rows: GenericStateRow[]) => void>()
+  const listeners = new Set<() => void>()
+  let version = 0
+  const changed = () => {
+    version += 1
+    for (const listener of listeners) listener()
+  }
   const tombstoneRetentionMs = options.tombstoneRetentionMs ?? defaultTombstoneRetention
   // Like notes and spaces, a tombstone past the retention is dropped on load
   // and never stored from a pull.
@@ -98,6 +108,7 @@ export function createSpaceMembersStore(options: Options = {}): SpaceMembersStor
     persistRows()
     const stateRow = membersStateRow(row)
     for (const listener of mutationListeners) listener([stateRow])
+    changed()
     return row
   }
   const nextUpdated = (spaceID: string) => Math.max(now(), (rows.get(spaceID)?.updated ?? 0) + 1)
@@ -106,25 +117,25 @@ export function createSpaceMembersStore(options: Options = {}): SpaceMembersStor
     rows: () => [...rows.values()].map(membersStateRow),
     row: (spaceID) => rows.get(spaceID),
     merge(incoming) {
-      let changed = false
+      let merged = false
       for (const raw of incoming) {
         const row = parseMembersRow(raw)
         if (!row) continue
         const current = rows.get(row.key)
         if (current && compareStateVersions(row.updated, row.writeID, current.updated, current.writeID) <= 0) continue
         if (expired(row)) {
-          changed = rows.delete(row.key) || changed
+          merged = rows.delete(row.key) || merged
           continue
         }
         rows.set(row.key, row)
-        changed = true
+        merged = true
       }
-      if (changed) persistRows()
+      if (merged) { persistRows(); changed() }
     },
     forget(keys) {
-      let changed = false
-      for (const key of keys) changed = rows.delete(key) || changed
-      if (changed) persistRows()
+      let forgot = false
+      for (const key of keys) forgot = rows.delete(key) || forgot
+      if (forgot) { persistRows(); changed() }
     },
     local: (spaceID) => locals.get(spaceID) ?? {},
     setLocal(spaceID, local) {
@@ -141,6 +152,11 @@ export function createSpaceMembersStore(options: Options = {}): SpaceMembersStor
       mutationListeners.add(listener)
       return () => { mutationListeners.delete(listener) }
     },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    version: () => version,
   }
 }
 

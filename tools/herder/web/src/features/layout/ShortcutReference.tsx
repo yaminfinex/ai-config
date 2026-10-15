@@ -1,14 +1,33 @@
 import { shortcutLabels } from './shellShortcuts'
 import { openInSideKeys } from './openPlacement'
 
-export function ShortcutReference({ open, onClose }: { open: boolean, onClose: () => void }) {
+// The lens's bare keys, and the zoom's. Neither fires from a text box.
+const lensKeys = [
+  ['← → / h l', 'Select the previous or next space'],
+  ['j / k', 'Select in the row below or above'],
+  ['Enter / double-click', 'Zoom into the selected space'],
+  ['n', 'Select the next space that needs you'],
+  ['N', 'Open the next space, or agent in no space, that needs you'],
+  ['1 / 2 / 3', 'Put the selected space in focus, watch or background'],
+  ['v', 'Show the next agent on the selected card'],
+  ['m', 'Mark the selected space read'],
+  ['u', 'Mark the selected space’s agents unread'],
+] as const
+const zoomKeys = [
+  ['Esc', 'Back to the lens'],
+  ['[ / ]', 'Previous or next space in lens order'],
+  ['n / N', 'Next space (N: or agent in no space) that needs you'],
+] as const
+
+export function ShortcutReference({ open, lens, onClose }: { open: boolean, lens: boolean, onClose: () => void }) {
   if (!open) return null
   const labels = shortcutLabels(navigator.userAgent)
   const shortcuts = [
+    ...(lens ? lensKeys : zoomKeys),
     [labels.closePanel, 'Close active pane'],
     [labels.quickOpen, 'Open spaces, agents, files, or folders'],
     [labels.switchTabs, 'Switch tabs'],
-    [labels.switchSpaces, 'Switch spaces in list order'],
+    [labels.switchSpaces, 'Previous or next space in lens order, as [ ]'],
     [labels.spaceSwitcher, 'Switch to recent spaces (hold ⌥/Alt to choose)'],
     [labels.focusFleet, 'Focus fleet sidebar'],
     [labels.toggleNotesRail, 'Toggle notes rail'],

@@ -92,16 +92,22 @@ test('the app mounts the switcher with the controller state and attention', () =
 
 test('the controller derives attention and the MRU switcher from the live workspace', () => {
   assert.match(controller, /const openBySpace = useSpaceAgents\(\{ revision, spaces, activeSpaceID, activeAgents: agentNames \}\)/)
-  assert.match(controller, /useSpaceAttention\(\{ apiRef, board: boardQuery\.data, openBySpace \}\)/)
-  assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), spaces, activeSpaceID, switchSpace: switchSpaceFocusing \}\)/)
+  assert.match(controller, /useSpaceAttention\(\{ apiRef, board: boardQuery\.data, openBySpace, membersBySpace, view \}\)/)
+  assert.match(controller, /const \{ stateChanged: onMembersStateChanged, membersBySpace \} = useSpaceMembers\(/, 'cards count spaces.members')
+  assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), spaces, activeSpaceID, switchSpace: switchSpaceAnywhere \}\)/)
   assert.match(controller, /attention: spaceAttention\.attention/)
+  assert.match(controller, /total: spaceAttention\.total,/, 'the collapsed Spaces total is the board-wide one')
   assert.match(controller, /spaceSwitcher,/)
 })
 
 test('the attention hook prunes, seeds weakly after the first pull, and reads after the dwell through the shared store', () => {
   assert.match(attentionHook, /const open = Object\.values\(openBySpace\)\.flat\(\)/)
   assert.match(attentionHook, /const keep = markerKeepSet\(board, open\)\s+if \(keep\) store\.prune\(keep\)/)
-  assert.match(attentionHook, /if \(pulled\) store\.apply\(seedUpdates\(store\.markers\(\), board, open\), \{ weak: true \}\)/)
+  assert.match(attentionHook, /if \(pulled\) store\.apply\(seedUpdates\(store\.markers\(\), board, \[\.\.\.\(board \? boardAgents\(board\) : \[\]\), \.\.\.open\]\), \{ weak: true \}\)/, 'every board agent is seeded weakly')
+  assert.match(attentionHook, /spaceAttention\(board, liveMembers\(members, board\), markers, drafts, viewedBlocks\)/, 'a card counts its members on the board')
+  assert.match(attentionHook, /const total = useMemo\(\(\) => boardAttention\(board, markers, drafts, viewedBlocks\)/)
+  assert.match(attentionHook, /focused: group\.id === activeGroupID/, 'only the focused panel is seen')
+  assert.match(attentionHook, /writeViewedBlocks\(localStorage, viewedBlocks, blocksState\.current\)/)
   assert.match(attentionHook, /const dwelled = dwelledAgents\(viewing, Date\.now\(\)\)/)
   assert.match(attentionHook, /store\.apply\(readUpdates\(\{ markers: store\.markers\(\), board, viewed: dwelled, positions, armed, now: Date\.now\(\) \}\)\)/)
   assert.match(attentionHook, /nextArmed\(previous, markers, viewedKey\.split\('\\n'\)\.filter\(Boolean\), dockReady\)/)
@@ -148,7 +154,7 @@ test('a space row opens "Mark all read" from its context menu only while it has 
   assert.match(source, /props\.markAllRead\(menuSpace\)/)
   assert.match(source, /const spaceMenu = usePositionedMenu\(\)/)
   assert.match(controller, /markAllRead: spaceAttention\.markSpaceRead,/)
-  assert.match(attentionHook, /const markSpaceRead = useCallback\(\(spaceID: string\) => markRead\(attention\[spaceID\]\?\.unread \?\? \[\]\)/)
+  assert.match(attentionHook, /const markSpaceRead = useCallback\(\(spaceID: string\) => \{\s+const space = attention\[spaceID\]\s+if \(!space\) return\s+markRead\(space\.unread\)\s+viewBlocks\(space\.blocked\)/)
   assert.match(attentionHook, /if \(agentUnread\(findAgentRow\(queryClient\.getQueryData<Board>\(queryKeys\.fleet\), name\), store\.markers\(\)\[name\]\)\) markRead\(\[name\]\)\n\s+else markUnread\(name\)/, '⌥U toggles')
   // markRead and toggleRead read the board from the cache, so a fleet refresh
   // leaves them, and every panel callback built on them, unchanged.

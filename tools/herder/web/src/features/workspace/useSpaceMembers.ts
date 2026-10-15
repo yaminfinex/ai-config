@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type MutableRefObject } from 'react'
 import type { DockviewApi } from 'dockview-react'
 import { writePanelToStoredSpace } from '../layout/dockLayout'
 import {
@@ -134,7 +134,20 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
 
   useEffect(() => { schedule() }, [revision, schedule, spaces])
 
-  return useCallback((namespace: string, rev: number) => {
+  const stateChanged = useCallback((namespace: string, rev: number) => {
     void syncRef.current?.stateChanged(namespace, rev)
   }, [])
+  // membersBySpace is each live space's spaces.members row, in dock order:
+  // what the lens counts. A space with no row yet reads its own dock.
+  const subscribe = useCallback((listener: () => void) => members?.subscribe(listener) ?? (() => undefined), [members])
+  const version = useSyncExternalStore(subscribe, () => members?.version() ?? 0)
+  const membersBySpace = useMemo(() => {
+    void version
+    return Object.fromEntries(spaces.map((space) => {
+      const row = members?.row(space.id)
+      return [space.id, row && !row.deleted ? row.members : read(space.id) ?? []]
+    })) as Record<string, SpaceMember[]>
+    // revision covers a dock change in a space not yet published.
+  }, [members, read, revision, spaces, version])
+  return { stateChanged, membersBySpace }
 }

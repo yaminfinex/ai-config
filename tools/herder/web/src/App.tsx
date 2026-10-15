@@ -6,7 +6,8 @@ import { QuickOpen } from './features/files/QuickOpen'
 import { ShortcutReference } from './features/layout/ShortcutReference'
 import { SettingsPanel } from './features/settings/SettingsPanel'
 import { RailStatusToggle, UtilityRail } from './features/layout/UtilityRail'
-import { dockComponents, DockTab } from './features/workspace/panelRegistry'
+import { AloneAgentPanel, dockComponents, DockTab } from './features/workspace/panelRegistry'
+import { Crumb, LensHome } from './features/lens/index.ts'
 import { DockHeaderActions, DockWatermark } from './features/workspace/workspaceChrome'
 import { WorkspaceProviders } from './features/workspace/workspaceContext'
 import { useWorkspaceController } from './features/workspace/useWorkspaceController'
@@ -114,14 +115,14 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder}
       onMode={(mode) => workspace.actions.showQuickOpen(workspace.quickOpenGroup, mode)}
       onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
-    <ShortcutReference open={workspace.shortcutReference} onClose={() => workspace.setShortcutReference(false)} />
+    <ShortcutReference open={workspace.shortcutReference} lens={workspace.onLens} onClose={() => workspace.setShortcutReference(false)} />
     <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     <SpaceSwitcher state={workspace.spaceSwitcher.state} spaces={workspace.spaces.items} activeID={workspace.spaces.activeID}
       attention={workspace.spaces.attention} onChoose={workspace.spaceSwitcher.choose} />
     <UtilityRail side="left" label="Fleet" headingStart={<span className="status-dot listening" />}
       preface={<SpacesSection {...workspace.spaces} />}
       subheading={<FleetViewToggle view={fleetView} onView={setFleetView} />}
-      width={fleetRail.width} collapsed={fleetRail.collapsed}
+      width={fleetRail.width} collapsed={fleetRail.collapsed || workspace.onLens}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
       <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
         onPreviewAgent={previewAgent} onPinAgent={pinAgent} onPreviewPane={previewPane} onPinPane={pinPane}
@@ -131,10 +132,15 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
     </UtilityRail>
     <section className="shell-main">
       <StreamBanners fleetProblem={workspace.fleetProblem} viewerProblem={workspace.viewerProblem} spaceProblem={workspace.spaces.enabled ? workspace.spaceProblem : ''} flushLayout={workspace.flushLayout} />
-      <div className="dock-host" onKeyDownCapture={preserveDockTabBrowserHistory}>
+      {workspace.crumb && <Crumb {...workspace.crumb} onLens={workspace.zoomOut} />}
+      {/* The dock stays laid out under the lens and an agent alone, out of sight. */}
+      <div className="dock-host" onKeyDownCapture={preserveDockTabBrowserHistory} data-covered={workspace.onLens || Boolean(workspace.aloneAgent)}>
         <DockviewReact components={dockComponents} tabComponents={dockTabComponents} rightHeaderActionsComponent={DockHeaderActions} watermarkComponent={DockWatermark}
           onReady={workspace.onDockReady} theme={herderTheme} disableFloatingGroups announcements noPanelsOverlay="watermark" tabGroupAccent="off"
           pinnedTabs={dockPinnedTabs} layoutHistory={dockLayoutHistory} autoHideEdgeGroups={false} dockToEdgeGroups={false} dndCompass={false} />
+        {workspace.onLens && <LensHome rows={workspace.lens.rows} spaces={workspace.lensSpaces} needYou={workspace.lens.needYou} selected={workspace.lens.selected}
+          revealTick={workspace.lens.revealTick} onSelect={workspace.lens.select} onZoom={workspace.lens.zoomCard} />}
+        {workspace.aloneAgent && <AloneAgentPanel name={workspace.aloneAgent} onOpenAgent={workspace.lens.summon} />}
       </div>
     </section>
     <UtilityRail side="right" label="Notes" headingAction={<NoteQuickAdd group="general" label="unassigned" />} width={notesRail.width} collapsed={notesRail.collapsed}

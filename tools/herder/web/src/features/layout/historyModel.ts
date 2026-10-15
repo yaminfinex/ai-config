@@ -42,6 +42,28 @@ export function historyEntryForPanel(params?: DockPanelParams, spaceID: string |
   }
 }
 
+// The lens is home: "/" with no space. A zoom is any other workspace
+// entry (a space, or a panel in one); "?alone" opens one agent in no
+// space by itself. Back from a zoom returns to the lens it came from.
+export const aloneQueryParam = 'alone'
+export const lensHistoryEntry = { path: '/', state: { ...layoutRouteState, lens: true } } as const
+
+export function aloneHistoryEntry(agent: string) {
+  return { path: `${panelRoutePath({ kind: 'agent', name: agent, preview: true })}?${aloneQueryParam}=1`, state: { ...layoutRouteState, alone: agent } }
+}
+
+export type HomeView = { kind: 'lens' } | { kind: 'zoom' } | { kind: 'alone', agent: string }
+
+// viewFromLocation is the view a URL asks for. Without spaces there is no
+// lens: every URL is the dock.
+export function viewFromLocation(route: Route, search: string, spacesEnabled: boolean): HomeView {
+  if (!spacesEnabled) return { kind: 'zoom' }
+  const query = new URLSearchParams(search)
+  if (route.page === 'panel' && route.params.kind === 'agent' && query.has(aloneQueryParam)) return { kind: 'alone', agent: route.params.name }
+  if (route.page === 'shell' && !query.get(spaceQueryParam)) return { kind: 'lens' }
+  return { kind: 'zoom' }
+}
+
 export function routeFromLocation(pathname: string, search: string): Route {
   const params = panelParamsFromRouteLocation(pathname, search)
   if (params) return { page: 'panel', params }

@@ -122,9 +122,13 @@ export function resizeComposerFromMirror(composer: ComposerResizeTarget, mirror:
   composer.style.overflowY = contentHeight > height ? 'auto' : 'hidden'
 }
 
-export function blurComposerOnEscape(event: { key: string, currentTarget: Pick<HTMLElement, 'blur'> }) {
+// Esc in the composer hands the keys back to its panel; the next esc is the
+// panel's (on the lens: zoom out).
+export function blurComposerOnEscape(event: { key: string, currentTarget: Pick<HTMLElement, 'blur'> & { closest?: (selector: string) => Element | null } }) {
   if (event.key !== 'Escape') return false
+  const panel = event.currentTarget.closest?.('.agent-page') as HTMLElement | null | undefined
   event.currentTarget.blur()
+  panel?.focus({ preventScroll: true })
   return true
 }
 

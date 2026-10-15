@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { usePositionedMenu } from '../../shared/usePositionedMenu.tsx'
 import type { SpaceDefinition, SpaceResult } from './spacesModel.ts'
 import type { SpacesStatus } from './spacesStore.ts'
-import { attentionLabel, quietAttention, spaceMenuItems, totalAttention, type SpaceAttention } from './spaceAttentionModel.ts'
+import { attentionLabel, quietAttention, spaceMenuItems, type SpaceAttention } from './spaceAttentionModel.ts'
 import { draftCountLabel } from '../drafts/draftMarksModel.ts'
 
 type Props = {
@@ -14,6 +14,9 @@ type Props = {
   status: SpacesStatus
   problem: string
   attention: Record<string, SpaceAttention>
+  // total is the board-wide attention (boardAttention): each agent once,
+  // agents in no space included.
+  total: SpaceAttention
   collapsed: boolean
   onCollapsed: (collapsed: boolean) => void
   switch: (id: string) => boolean
@@ -89,7 +92,7 @@ export function SpacesSection(props: Props) {
     spaceMenu.open(at, source)
   }
   const menuItems = spaceMenuItems(attentionOf(menuSpace))
-  const total = totalAttention(props.items.map((space) => attentionOf(space.id)))
+  const total = props.total
 
   return <section className={`spaces-section${props.collapsed ? ' collapsed' : ''}`} aria-label="Spaces">
     <header className="spaces-heading">

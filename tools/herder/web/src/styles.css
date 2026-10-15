@@ -31,6 +31,9 @@
   --jump-text: #ffffff; --floating-shadow: rgba(31,35,40,.25);
   --terminal-bg: #0d0f12; --terminal-text: #d3d8e2; --terminal-dim: #8b949e;
   --scrollbar-thumb: #afb8c1; --scrollbar-thumb-hover: #8c959f;
+  --lens-card: #ffffff; --lens-rule: #d0d7de; --lens-hover-border: #8c959f; --lens-ink: #1f2328; --lens-slate: #57606a;
+  --lens-needs-bg: #e8f0ff; --lens-needs-border: #0969da; --lens-selected-border: #9a6700;
+  --lens-pill-bg: #0969da; --lens-pill-text: #ffffff; --lens-green: #1a7f37; --lens-red: #cf222e;
   --diffs-addition-color-override: var(--green); --diffs-bg-addition-emphasis-override: var(--diff-add-emphasis); --diffs-bg-addition-number-override: var(--diff-add-bg); --diffs-bg-addition-override: var(--diff-add-bg);
   --diffs-bg-buffer-override: var(--bg2); --diffs-bg-caret-override: var(--accent-dim); --diffs-bg-context-gutter-override: var(--bg3); --diffs-bg-context-override: var(--bg2);
   --diffs-bg-deletion-emphasis-override: var(--diff-delete-emphasis); --diffs-bg-deletion-number-override: var(--diff-delete-bg); --diffs-bg-deletion-override: var(--diff-delete-bg);
@@ -65,6 +68,9 @@
   --jump-text: #ffffff; --floating-shadow: rgba(0,0,0,.4);
   --terminal-bg: #0d0f12; --terminal-text: #d3d8e2; --terminal-dim: #6a6d78;
   --scrollbar-thumb: #3a3c45; --scrollbar-thumb-hover: #565a66;
+  --lens-card: #212228; --lens-rule: #2e3037; --lens-hover-border: #565a66; --lens-ink: #d6d8df; --lens-slate: #8e919c;
+  --lens-needs-bg: #1a2745; --lens-needs-border: #86a8ff; --lens-selected-border: #f2b51c;
+  --lens-pill-bg: #86a8ff; --lens-pill-text: #1b1c21; --lens-green: #3cc486; --lens-red: #f0685c;
   --diffs-addition-color-override: var(--green); --diffs-bg-addition-emphasis-override: var(--diff-add-emphasis); --diffs-bg-addition-number-override: var(--diff-add-bg); --diffs-bg-addition-override: var(--diff-add-bg);
   --diffs-bg-buffer-override: var(--bg2); --diffs-bg-caret-override: var(--accent-dim); --diffs-bg-context-gutter-override: var(--bg3); --diffs-bg-context-override: var(--bg2);
   --diffs-bg-deletion-emphasis-override: var(--diff-delete-emphasis); --diffs-bg-deletion-number-override: var(--diff-delete-bg); --diffs-bg-deletion-override: var(--diff-delete-bg);
@@ -231,7 +237,10 @@ h2, h3, p { margin-top: 0; }
 .error-boundary p { max-width: 560px; margin: 0 0 14px; overflow-wrap: anywhere; }
 .error-boundary strong { margin-bottom: 7px; font: 600 14px var(--mono); }
 .error-boundary button { padding: 4px 10px; border-color: var(--error-border); background: var(--bg2); color: var(--error-text); }
-.dock-host { flex: 1; min-height: 0; min-width: 0; }
+.dock-host { position: relative; flex: 1; min-height: 0; min-width: 0; }
+/* The lens and an agent alone cover the dock, which stays laid out beneath. */
+.dock-host[data-covered='true'] > :not(.lens, .alone-agent) { visibility: hidden; }
+.alone-agent { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
 .dockview-theme-herder {
   --dv-paneview-active-outline-color: var(--accent); --dv-tabs-and-actions-container-font-size: 12px; --dv-tabs-and-actions-container-height: 32px;
   --dv-drag-over-background-color: var(--accent-dim); --dv-drag-over-border-color: var(--accent); --dv-edge-dock-indicator-color: var(--accent);
@@ -596,6 +605,8 @@ h2, h3, p { margin-top: 0; }
 .empty, .loading { margin: 12px 0; color: var(--dim); }
 
 .agent-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
+/* A zoom hands the keys to the panel: a quiet ring, like a focused rail. */
+.agent-page:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
 .screen-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; background: var(--terminal-bg); }
 .screen-header { display: flex; min-height: 38px; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--dim); font-size: 10px; }
 .screen-header strong { overflow: hidden; color: var(--text); font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
@@ -865,3 +876,31 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
   .file-header, .folder-header { align-items: stretch; flex-wrap: wrap; }
   .file-header > .file-title, .folder-title { flex-basis: 100%; }
 }
+
+/* The lens: home. Rows of fixed-width space cards in monospace. */
+.lens { --lens-line: 18px; position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); color: var(--lens-ink); font: 12px/var(--lens-line) var(--mono); outline: none; }
+.lens-rows { display: flex; flex: 1; min-height: 0; flex-direction: column; gap: 22px; padding: 20px; overflow: auto; }
+.lens-header, .lens-head { color: var(--lens-slate); }
+.lens-head { margin-bottom: 8px; font-size: 11px; letter-spacing: .06em; }
+.lens-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+.lens-card { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 2px solid var(--lens-rule); border-radius: 8px; background: var(--lens-card); cursor: default; user-select: none; }
+.lens-card.lens-compact { padding-block: 8px; }
+.lens-card:hover { border-color: var(--lens-hover-border); }
+.lens-card.needs { border-color: var(--lens-needs-border); background: var(--lens-needs-bg); }
+.lens-card.selected { border-color: var(--lens-selected-border); }
+.lens-title, .lens-who { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.lens-title strong, .lens-agent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lens-who { color: var(--lens-slate); }
+.lens-pill { margin-left: auto; padding: 0 7px; border-radius: 999px; background: var(--lens-pill-bg); color: var(--lens-pill-text); font-weight: 600; white-space: nowrap; }
+.lens-glyph { display: inline-flex; width: 10px; flex: 0 0 10px; justify-content: center; }
+.lens-glyph.blocked { color: var(--lens-red); }
+.lens-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--lens-green); animation: lens-pulse 1.6s steps(4) infinite; }
+@keyframes lens-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .lens-pulse { animation: none; } }
+.lens-body { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The zoom's crumb: lens › space › agent, and the zoom's keys. */
+.lens-crumb { display: flex; justify-content: space-between; gap: 12px; padding: 2px 10px; border-bottom: 1px solid var(--border); color: var(--lens-slate); font: 12px/20px var(--mono); }
+.lens-crumb-path { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; white-space: nowrap; }
+.lens-crumb-home { padding: 0; border: 0; background: none; color: var(--accent-text); font: inherit; cursor: pointer; }
+.lens-crumb-space, .lens-crumb-agent { color: var(--lens-ink); white-space: nowrap; }
+.lens-crumb-hints { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -54,13 +54,16 @@ test('the switcher does not open for fewer than two spaces and ignores stray eve
   assert.deepEqual(run([{ type: 'release' }, { type: 'step', direction: 'forward' }, { type: 'choose', id: 'now' }]), { state: idleSwitcher, commits: [] })
 })
 
-test('viewed agents are the active agent panels of visible groups while the page is visible', () => {
+test('only the focused panel is seen: the active agent of the focused, visible group while the page is visible', () => {
   const groups = [
-    { visible: true, activeAgent: 'mavu' }, { visible: false, activeAgent: 'ziru' },
-    { visible: true }, { visible: true, activeAgent: 'mavu' },
+    { visible: true, focused: false, activeAgent: 'mavu' }, { visible: false, focused: false, activeAgent: 'ziru' },
+    { visible: true, focused: true, activeAgent: 'kelo' }, { visible: true, focused: false, activeAgent: 'mavu' },
   ]
-  assert.deepEqual(viewedAgents(groups, true), ['mavu'])
+  assert.deepEqual(viewedAgents(groups, true), ['kelo'], 'a visible but unfocused group in a split is not seen')
   assert.deepEqual(viewedAgents(groups, false), [])
+  assert.deepEqual(viewedAgents([{ visible: true, focused: true }], true), [], 'a focused group showing a file sees no agent')
+  assert.deepEqual(viewedAgents([{ visible: false, focused: true, activeAgent: 'kelo' }], true), [], 'a hidden (maximized-over) group is not seen')
+  assert.deepEqual(viewedAgents([], true), [], 'the lens shows no panel')
 })
 
 test('a view only counts after the dwell, which survives unrelated layout churn', () => {

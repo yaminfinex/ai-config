@@ -62,11 +62,12 @@ test('the caret goes after the draft and the field scrolls to it', () => {
 const hook = readFileSync(new URL('../src/features/workspace/useSwitchSpaceFocusing.ts', import.meta.url), 'utf8')
 const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
 
-test('rail, ⌥Tab switcher and ⇧⌥←/→ all switch through the focusing wrapper', () => {
+test('in a zoom the rail, ⌥Tab and ⌘K switch through the focusing wrapper; ⇧⌥←/→ is the zoom\'s [ ]', () => {
   assert.match(controller, /const switchSpaceFocusing = useSwitchSpaceFocusing\(apiRef, switchSpace, readActiveSpaceID\)/)
-  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*switchSpace: switchSpaceFocusing, toggleRead \}\)/)
-  assert.match(controller, /useSpaceSwitcher\(\{[^}]*switchSpace: switchSpaceFocusing \}\)/)
-  assert.match(controller, /switch: switchSpaceFocusing,/)
+  assert.match(controller, /const switchSpaceAnywhere = useCallback\(\(id: string, from\?: 'quick-open'\) => viewRef\.current\.kind === 'zoom' \? switchSpaceFocusing\(id, from\) : lens\.zoomCard\(id\)/)
+  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*stepSpace: lens\.stepSpace, toggleRead \}\)/)
+  assert.match(controller, /useSpaceSwitcher\(\{[^}]*switchSpace: switchSpaceAnywhere \}\)/)
+  assert.match(controller, /switch: switchSpaceAnywhere,/)
 })
 
 test('the wrapper reads the origin before switching and retries the decision until the composer mounts', () => {

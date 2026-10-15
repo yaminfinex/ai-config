@@ -429,6 +429,8 @@ GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
   browser-local markers are written with `updated:1`, so any real write
   wins over them. Clients prune their local copy only; they never write a
   delete into this namespace.
+  Whether the owner has looked at a blocked agent's current block is kept
+  per browser and never written here.
 
   The serve sweeps stored state at start and then hourly. In `notes`,
   `spaces`, `spaces.members` and `read.markers` it removes tombstones older
