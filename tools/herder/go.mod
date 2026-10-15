@@ -3,14 +3,14 @@ module ai-config/tools/herder
 go 1.26.5
 
 require (
+	github.com/coder/websocket v1.8.15
+	github.com/creack/pty v1.1.24
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/junegunn/fzf v0.74.3
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	github.com/coder/websocket v1.8.15 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/junegunn/go-shellwords v0.0.0-20250127100254-2aa3b3277741 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
