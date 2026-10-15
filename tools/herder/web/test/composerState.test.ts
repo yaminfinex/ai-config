@@ -324,7 +324,8 @@ test('⌘⇧⏎ sends and files back; plain ⌘⏎ only sends, and lands where i
   assert.match(composer, /const landed = fileBack \? onFileBack\?\.\(\) : undefined/)
   assert.match(composer, /onProblem\(''\)\n {6}landed\?\.\(\)\n {4}\} catch/)
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
-  assert.match(controller, /const seen = seenNow\(name\)\n {4}return \(\) => \{\n {6}readThroughSeen\(name, seen\)\n {6}zoomOut\(\)/)
+  // Landing also views the agent's current block, as zooming in on it would.
+  assert.match(controller, /const seen = seenNow\(name\)\n {4}return \(\) => \{\n {6}readThroughSeen\(name, seen\)\n {6}viewBlocks\(\[name\]\)\n {6}zoomOut\(\)/)
   const attention = readFileSync(new URL('../src/features/workspace/useSpaceAttention.ts', import.meta.url), 'utf8')
   assert.match(attention, /readThrough\(store\.markers\(\)\[name\], seen\.turn, seen\.position, Date\.now\(\)\)/)
 })

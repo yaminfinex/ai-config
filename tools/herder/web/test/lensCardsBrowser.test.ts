@@ -228,3 +228,46 @@ test('⌘⇧⏎ sends, reads the agent up to the turn the owner saw, and files b
   assert.deepEqual(api.messages.at(-1), { agent: 'alpha', text: 'stay here' })
   assert.equal(await evaluate(onLens), false, '⌘⏎ stays in the zoom')
 })
+
+test('⌘⇧⏎ from a blocked agent views its block: the card goes quiet and it leaves "need you"; a failed send changes nothing; a later block needs you again', { timeout: 180_000 }, async (context) => {
+  const api = fixtureAPI(['alpha', 'bravo'], { entries })
+  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = 1
+  const pane = (agent: string) => api.board.workspaces[0]!.tabs[0]!.panes.find((row) => row.agent === agent)!
+  const { browser, evaluate, waitFor } = await twoSpaces(api, 'lens-file-back-block', context)
+  const composer = `document.querySelector('textarea[data-composer][aria-label="Message alpha"]')`
+  const viewedBlocks = async () => await evaluate(`JSON.parse(localStorage.getItem('herder.web.viewed-blocks.v1') ?? '{"agents":[]}').agents`) as string[]
+  const header = `document.querySelector('.lens-header')?.textContent ?? ''`
+  await evaluate(`[...document.querySelectorAll('.space-name')].find((node) => !node.closest('.space-row.active')).click(), true`)
+  await waitFor(`document.activeElement === ${composer}`)
+  // Hidden, the zoom views nothing, so only ⌘⇧⏎ can view the block.
+  await evaluate(`Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), document.dispatchEvent(new Event('visibilitychange')), true`)
+  pane('alpha').bus_status = 'blocked'
+  api.send('fleet', api.board)
+  await browser(['wait', '1000'])
+  assert.deepEqual(await viewedBlocks(), [], 'blocked and not yet viewed')
+
+  api.failSends('the bus is down')
+  await evaluate(`${composer}.focus(), true`)
+  await browser(['keyboard', 'inserttext', 'go ahead'])
+  await browser(['press', 'Control+Shift+Enter'])
+  await waitFor(`Boolean(document.querySelector('.send-box .inline-error'))`)
+  assert.deepEqual(await viewedBlocks(), [], 'a failed send views nothing')
+
+  api.failSends(null)
+  await evaluate(`${composer}.focus(), true`)
+  await browser(['press', 'Control+Shift+Enter'])
+  await waitFor(`Boolean(document.querySelector('.lens'))`)
+  assert.deepEqual(api.messages, [{ agent: 'alpha', text: 'go ahead' }])
+  await waitFor(`!${cardOf('alpha')}.querySelector('.lens-pill')`)
+  assert.deepEqual(await viewedBlocks(), ['alpha'], 'the block is viewed')
+  assert.match(await evaluate(header) as string, / 0 need you/, 'alpha drops from "need you"')
+
+  // Unblocked, then blocked again: needs you again, as today.
+  pane('alpha').bus_status = 'listening'
+  api.send('fleet', api.board)
+  await waitFor(`JSON.parse(localStorage.getItem('herder.web.viewed-blocks.v1') ?? '{"agents":[]}').agents.length === 0`)
+  pane('alpha').bus_status = 'blocked'
+  api.send('fleet', api.board)
+  await waitFor(`${cardOf('alpha')}.querySelector('.lens-pill')?.textContent === '1'`)
+  assert.match(await evaluate(header) as string, / 1 need you/)
+})
