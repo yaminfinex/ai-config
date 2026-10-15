@@ -121,7 +121,9 @@ GET `/api/fleet`
   Conversely, a visible Herdr pane without join evidence is not asserted to be
   agent-free. The client labels it **Terminal** and states plainly
   that Herdr cannot attribute the terminal and that it may belong to an
-  unplaced agent. This warning accompanies its standalone read-only screen.
+  unplaced agent. This warning accompanies the terminal's fleet-sidebar row
+  (its standalone screen tab was retired on 2026-10-15; see the Screen view
+  retirement amendment).
 
   ### AMENDMENT (conductor-acked, 2026-08-27) — explicit Claude subagent families
 
@@ -1158,6 +1160,9 @@ GET `/api/events?agents={comma-separated-bus-names}&screens={comma-separated-her
   being revoked. The server's readable scope is every currently visible Herdr
   pane; it does not infer ownership or restrict reads by client presentation.
 
+  (Retired 2026-10-15: the web no longer offers standalone screen tabs or the
+  agent tab's switch below; see the Screen view retirement amendment.)
+
   Each agent tab additionally offers an opt-in `Transcript` / `Screen` switch.
   `Transcript` is the default. `Screen` is enabled only while that exact agent
   detail has a proven live pane and mirrors that pane inside the agent tab; a
@@ -1522,6 +1527,24 @@ nested launch and retarget its CLI), the outer terminal's identity
 client with `sh -c "$HERDER_TERM_COMMAND"`; tests and scratch serves use it so
 nothing attaches to a real session.
 
+### AMENDMENT (owner #466011/#466017, 2026-10-15) — the Screen view retired; the herdr view replaces it
+
+The herdr view above is how the owner sees a whole terminal, so the web no
+longer has its own terminal surfaces. The agent tab's `Transcript` /
+`Screen` switch is gone (the transcript is the only agent view), and so is
+the standalone screen tab for a terminal herdr cannot attribute: that
+terminal's sidebar row opens the herdr view following its pane, until the
+view is left. A layout or history entry saved with a screen tab restores as
+its agent's transcript, in the same place, or is dropped when no agent was
+attributed or the agent already has a tab; never an error or a blank panel.
+
+The only web reader of `screen:{pane-id}` frames is now the live tail, the
+read-only strip of the last rows under a working agent's transcript. It
+subscribes through `screens` exactly as before. The web no longer sends
+`focused_screen`, reads `GET /api/panes/{pane-id}/history`, or writes
+`POST /api/panes/{pane-id}/input`; the server still serves all three until a
+later unit removes them.
+
 ## Explicitly absent (ruled)
 
 No WebSocket other than the herdr view above. No pane injection other than the attributed, bounded Herdr
@@ -1530,9 +1553,10 @@ retired-session lifecycle controls beyond the retained read-only transcript
 amendment, no sesh. No blank-form/global spawn, no new-workspace
 creation. No auth beyond the tailnet boundary. Server-side augmenting state
 exists in `agents/`; it is never lifecycle authority.
-No agent screen is selected by default. The opt-in interactive agent terminal
-viewport and unattributed-terminal surface are only the narrow exceptions
-defined by the 2026-08-28 expansion and TASK-73 amendment above.
+The web has no terminal surface of its own: the agent terminal viewport and
+the unattributed-terminal tab defined by the 2026-08-28 expansion and TASK-73
+were retired on 2026-10-15 in favour of the herdr view. The live tail is
+read-only.
 There are no file writes, content grep/search endpoint,
 archive/download surface, arbitrary-path read, mission-aware root behavior,
 whole-repository history browser, or persistent file state. File/folder change

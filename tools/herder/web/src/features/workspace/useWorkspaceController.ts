@@ -31,7 +31,7 @@ import {
   type HistoryCause,
 } from '../layout/historyModel'
 import { cardBounds, crumbParts, morphIn, morphOut, swipe, useLens, type LensView } from '../lens/index.ts'
-import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, storedSpaceActivePanel, writePanelToStoredSpace, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
+import { panelParams, pinMovedPreview, restoreDockLayout, storedSpaceActivePanel, writePanelToStoredSpace, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import { panelID } from './panelRegistry'
 import { panelFromAPI, useWorkspaceActions } from './useWorkspaceActions'
 import { usePanelRecords } from './usePanelRecords'
@@ -143,9 +143,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [shortcutReference, setShortcutReference] = useState(false)
   const [quickOpenGroup, setQuickOpenGroup] = useState<string>()
   const { records: agentStatuses, set: setAgentStatusRecord, prune: pruneAgentStatus } = usePanelRecords<string>()
-  const { records: agentScreenPanes, set: setAgentScreenPaneRecord, prune: pruneAgentScreenPane } = usePanelRecords<string>()
   const { records: agentTailPanes, set: setAgentTailPaneRecord, prune: pruneAgentTailPane } = usePanelRecords<string>()
-  const [focusedScreenPaneID, setFocusedScreenPaneID] = useState<string>()
   const { records: fileGitStates, set: setFileGitStateRecord, prune: pruneFileGitState } = usePanelRecords<GitFileState>(sameGitFileState)
   const { records: folderSelectionHints, set: setFolderSelectionHint, prune: pruneFolderSelectionHint } = usePanelRecords<FileTarget>()
   const [fileWatchTargets, setFileWatchTargets] = useState<FileWatchTarget[]>([])
@@ -226,7 +224,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   const workspaceActions = useWorkspaceActions({
     apiRef,
-    board: boardQuery.data,
     queryClient,
     quickOpenGroup,
     setQuickOpenGroup,
@@ -238,7 +235,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     onActivePanelParamsChanged,
     arrive,
   })
-  const { openPanel, openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, resetLayout } = workspaceActions
+  const { openPanel, openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, resetLayout } = workspaceActions
 
   const applyRoute = useCallback((route: Exclude<Route, { page: 'missing' }>) => {
     historySuppressor.run(() => {
@@ -443,7 +440,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         // A space switch removes panels under suppressed history and keeps their scroll; a close forgets it.
         if (!historySuppressor.active()) forgetFollowScroll(panel.id)
         pruneAgentStatus(params.name)
-        pruneAgentScreenPane(params.name)
         pruneAgentTailPane(params.name)
       },
       movePanel: ({ panel }) => { if (pinMovedPreview(panel)) syncDock() },
@@ -456,7 +452,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setRevision((value) => value + 1)
     // A page loaded on a zoom or an agent alone arrives there.
     if (viewRef.current.kind !== 'lens') arrive()
-  }, [activeSpaceID, applyRoute, arrive, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneAgentTailPane, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
+  }, [activeSpaceID, applyRoute, arrive, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentStatus, pruneAgentTailPane, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
 
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
@@ -486,9 +482,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     return params ? [params] : []
   }) ?? restoredPanels
   const agentNames = [...new Set(openPanels.flatMap((params) => params.kind === 'agent' ? [params.name] : []))]
-  const provenScreenPaneIDs = openPanels.flatMap((params) => params.kind === 'screen' && screenIdentityState(params, boardQuery.data) === 'ready' ? [params.identity.paneID] : [])
-  const screenPaneIDs = screenSubscriptionPaneIDs(provenScreenPaneIDs, agentNames, agentScreenPanes, agentTailPanes)
-  const focusedPane = focusedScreenPaneID && screenPaneIDs.includes(focusedScreenPaneID) ? focusedScreenPaneID : undefined
+  const screenPaneIDs = screenSubscriptionPaneIDs(agentNames, agentTailPanes)
   const { stateChanged: onMembersStateChanged, membersBySpace } = useSpaceMembers({
     store: spacesRuntime.store,
     apiRef,
@@ -697,14 +691,13 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   })
   // The stream keeps the open panels' transcripts live, and the peeked agent's on the lens.
   const peeked = view.kind === 'lens' && lens.peek?.agent ? [lens.peek.agent] : []
-  useFleetStream({ agents: spaceStreamAgents([...agentNames, ...peeked], openBySpace), screens: screenPaneIDs, watches: fileWatchTargets, focusedScreen: focusedPane }, onStateChanged)
+  useFleetStream({ agents: spaceStreamAgents([...agentNames, ...peeked], openBySpace), screens: screenPaneIDs, watches: fileWatchTargets }, onStateChanged)
   // A space chosen anywhere but a zoom (⌥Tab or ⌘K on the lens) zooms into it.
   const switchSpaceAnywhere = useCallback((id: string, from?: 'quick-open') => viewRef.current.kind === 'zoom' ? switchSpaceFocusing(id, from) : lens.zoomCard(id), [lens.zoomCard, switchSpaceFocusing])
   const docked = useCallback(() => viewRef.current.kind === 'zoom', [])
   useWorkspaceShortcuts({ apiRef, docked, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, stepSpace: lens.stepSpace, toggleRead, arrive })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceAnywhere })
   const zoomedOpenAgent = useMemo(() => inZoom(openAgent), [inZoom, openAgent])
-  const zoomedOpenScreen = useMemo(() => inZoom(openScreen), [inZoom, openScreen])
   const zoomedOpenFile = useMemo(() => inZoom(openFile), [inZoom, openFile])
   const zoomedOpenFileInDiff = useMemo(() => inZoom(openFileInDiff), [inZoom, openFileInDiff])
   const zoomedOpenChanges = useMemo(() => inZoom(openChanges), [inZoom, openChanges])
@@ -714,24 +707,23 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const quickOpenAgent = activeParams?.kind === 'agent' ? quickOpenAgentPreference(activeParams.name, activeAgentStatus) : undefined
   const setAgentStatus = useCallback((name: string, status: string) => setAgentStatusRecord(name, status), [setAgentStatusRecord])
   const setFileGitState = useCallback((id: string, state: GitFileState) => setFileGitStateRecord(id, state), [setFileGitStateRecord])
-  const setAgentScreenPane = useCallback((name: string, paneID?: string) => setAgentScreenPaneRecord(name, paneID), [setAgentScreenPaneRecord])
   const setAgentTailPane = useCallback((name: string, paneID?: string) => setAgentTailPaneRecord(name, paneID), [setAgentTailPaneRecord])
   const onViewer = useCallback((resolvedViewer: string) => queryClient.setQueryData(queryKeys.viewer, { viewer: resolvedViewer }), [queryClient])
 
   const actions = useMemo<WorkspaceActionsValue>(() => ({
     openAgent: zoomedOpenAgent, openFile: zoomedOpenFile, openFileInDiff: zoomedOpenFileInDiff, openChanges: zoomedOpenChanges, openFolder: zoomedOpenFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
-    setAgentScreenPane, setAgentTailPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
+    setAgentTailPane, onViewer, onAgentStatus: setAgentStatus,
     resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread, markRead, arrive, fileBack,
-  }), [arrive, closePanel, fileBack, markRead, markUnread, onViewer, zoomedOpenAgent, zoomedOpenChanges, zoomedOpenFile, zoomedOpenFileInDiff, zoomedOpenFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
+  }), [arrive, closePanel, fileBack, markRead, markUnread, onViewer, zoomedOpenAgent, zoomedOpenChanges, zoomedOpenFile, zoomedOpenFileInDiff, zoomedOpenFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
   // Panel params are read afresh from Dockview each render; the key keeps
   // the active panel's identity, and so the data context's, while it is unchanged.
   const activePanelKey = activeParams ? JSON.stringify(activeParams) : ''
   const activePanel = useMemo(() => activePanelKey ? { id: activePanelID, params: JSON.parse(activePanelKey) as DockPanelParams } : null, [activePanelID, activePanelKey])
   const data = useMemo<WorkspaceDataValue>(() => ({
-    mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentScreenPanes, agentStatuses,
+    mentionMatcher, identityReadOnly: viewerReadOnly, fileGitStates, folderSelectionHints, agentStatuses,
     spaces, activeSpaceID, activePanel,
-  }), [activePanel, activeSpaceID, agentScreenPanes, agentStatuses, fileGitStates, folderSelectionHints, mentionMatcher, spaces, viewerReadOnly])
+  }), [activePanel, activeSpaceID, agentStatuses, fileGitStates, folderSelectionHints, mentionMatcher, spaces, viewerReadOnly])
 
   return {
     actions, data, fileWatchRegister: fileWatchRegistry.register,
@@ -747,8 +739,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     pendingGroups: layout.pendingGroups, setPendingGroups: layout.setPendingGroups,
     board: boardQuery.data,
     activeAgent: activeParams?.kind === 'agent' ? activeParams.name : undefined,
-    activePane: activeParams?.kind === 'screen' ? activeParams.pane.pane_id : undefined,
-    openAgent: zoomedOpenAgent, openScreen: zoomedOpenScreen, openFile: zoomedOpenFile, openFolder: zoomedOpenFolder,
+    openAgent: zoomedOpenAgent, openFile: zoomedOpenFile, openFolder: zoomedOpenFolder,
     onLens: view.kind === 'lens',
     aloneAgent: view.kind === 'alone' ? view.agent : undefined,
     crumb: spacesRuntime.store && view.kind !== 'lens' ? crumbParts(view, spaces.find((space) => space.id === activeSpaceID), activeParams?.kind === 'agent' ? activeParams.name : undefined) : null,

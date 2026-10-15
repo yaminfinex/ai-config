@@ -1,4 +1,4 @@
-import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTreeRead, GitDiffRead, GitFileRead, GitHubRead, GitLogRead, GitStatusRead, LifecycleResult, PaneHistory, Refusal, ResolveResponse } from '../types'
+import type { AgentDetail, BacklogResponse, Board, EntriesPage, FileRead, FileTreeRead, GitDiffRead, GitFileRead, GitHubRead, GitLogRead, GitStatusRead, LifecycleResult, Refusal, ResolveResponse } from '../types'
 import type { GitBase } from '../features/git/gitViewModel'
 
 export type Fetcher = typeof fetch
@@ -18,7 +18,6 @@ export const queryKeys = {
   entries: (name: string) => ['entries', name] as const,
   stream: ['stream'] as const,
   screen: (paneID: string) => ['screen', paneID] as const,
-  paneHistory: (paneID: string) => ['pane-history', paneID] as const,
   resolve: (query: string, context?: ResolveContext) => typeof context === 'object'
     ? ['resolve', query, 'file', context.root, context.path] as const
     : ['resolve', query, context ?? ''] as const,
@@ -92,18 +91,6 @@ export function upsertState(namespace: string, rows: StateRow[], fetcher?: Fetch
 
 export function getAgent(name: string, fetcher?: Fetcher) {
   return requestJSON<AgentDetail>(`/api/agents/${encodeURIComponent(name)}`, undefined, fetcher)
-}
-
-export function getPaneHistory(paneID: string, fetcher?: Fetcher) {
-  return requestJSON<PaneHistory>(`/api/panes/${encodeURIComponent(paneID)}/history`, undefined, fetcher)
-}
-
-export function sendPaneInput(paneID: string, input: { text: string } | { keys: string[] }, fetcher?: Fetcher) {
-  return requestJSON<{ sent: boolean, pane_id: string, viewer: string }>(`/api/panes/${encodeURIComponent(paneID)}/input`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-  }, fetcher)
 }
 
 export function getEntries(name: string, options: { from?: number, limit: number, sessionId?: string }, fetcher?: Fetcher) {

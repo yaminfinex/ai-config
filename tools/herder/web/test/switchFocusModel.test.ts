@@ -21,7 +21,7 @@ test('a read-only composer, or one that never mounts, hands the keys to the pane
 
 test('focus stays put for a non-agent panel or an empty space', () => {
   assert.equal(decide({ activePanelKind: 'file' }), 'leave')
-  assert.equal(decide({ activePanelKind: 'screen', composer: null }), 'leave', 'no waiting for a composer that never comes')
+  assert.equal(decide({ activePanelKind: 'changes', composer: null }), 'leave', 'no waiting for a composer that never comes')
   assert.equal(decide({ activePanelKind: undefined, composer: null }), 'leave')
 })
 

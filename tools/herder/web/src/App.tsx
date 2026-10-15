@@ -103,18 +103,18 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const workspace = useWorkspaceController(initialRoute)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const {
-    openAgent, openScreen, openFile, openFolder,
+    openAgent, openFile, openFolder,
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
     knownManagerItems, setKnownManagerItems, fleetView, setFleetView, pendingGroups, setPendingGroups,
   } = workspace
   // Stable handlers let the memoised sidebar and notes rail skip Shell renders their props did not cause.
   const previewAgent = useCallback((name: string, placement?: OpenPlacement) => openAgent(name, true, placement, true), [openAgent])
   const pinAgent = useCallback((name: string, placement?: OpenPlacement) => openAgent(name, false, placement, true), [openAgent])
-  const previewPane = useCallback((pane: Pane, placement?: OpenPlacement) => openScreen(pane, true, placement), [openScreen])
-  const pinPane = useCallback((pane: Pane, placement?: OpenPlacement) => openScreen(pane, false, placement), [openScreen])
   const herdr = useHerdrView()
+  const { showTerminal } = herdr
+  const openTerminal = useCallback((pane: Pane) => showTerminal(pane.pane_id), [showTerminal])
   const lensAgent = workspace.onLens ? workspace.lens.rows.flatMap((row) => row.cards).find((card) => card.id === workspace.lens.selected)?.agent : undefined
-  const followPane = followTarget(workspace.board, { onLens: workspace.onLens, lensAgent, aloneAgent: workspace.aloneAgent, activeAgent: workspace.activeAgent, activePane: workspace.activePane })
+  const followPane = followTarget(workspace.board, { onLens: workspace.onLens, lensAgent, aloneAgent: workspace.aloneAgent, activeAgent: workspace.activeAgent, terminal: herdr.terminal })
   return <WorkspaceProviders actions={workspace.actions} data={workspace.data}><FileWatchContext.Provider value={workspace.fileWatchRegister}><div className="app-shell"><div className="shell-body">
     <QuickOpen open={workspace.quickOpen} mode={workspace.quickOpenMode} agent={workspace.quickOpenAgent} groupID={workspace.quickOpenGroup} board={workspace.board}
       spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)}
@@ -130,8 +130,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       subheading={<FleetViewToggle view={fleetView} onView={setFleetView} />}
       width={fleetRail.width} collapsed={fleetRail.collapsed || workspace.onLens}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
-      <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent} activePane={workspace.activePane}
-        onPreviewAgent={previewAgent} onPinAgent={pinAgent} onPreviewPane={previewPane} onPinPane={pinPane}
+      <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent}
+        onPreviewAgent={previewAgent} onPinAgent={pinAgent} onOpenTerminal={openTerminal}
         onOpenGroupAsSpace={workspace.spaces.openGroup} pendingGroups={pendingGroups} onPendingGroups={setPendingGroups}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems}
         knownManagerItems={knownManagerItems} onKnownManagerItems={setKnownManagerItems} />

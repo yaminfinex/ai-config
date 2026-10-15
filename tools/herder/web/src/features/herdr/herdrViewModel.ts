@@ -13,9 +13,9 @@ export const herdrTermPath = '/api/herdr/term'
 export const leaveGraceMs = 60_000
 export const resizeDebounceMs = 120
 
-// The screen panels hide xterm's cursor (it is the background colour) since
-// they only show a pane; in the herdr view the owner types, so the caret is
-// a bright block with the character under it in the background colour.
+// The base terminal palette hides xterm's cursor (it is the background
+// colour); in the herdr view the owner types, so the caret is a bright block
+// with the character under it in the background colour.
 export const herdrTerminalTheme = {
   ...terminalTheme,
   cursor: terminalTheme.brightWhite,
@@ -77,13 +77,13 @@ export function connectionLabel(connection: HerdrConnection, retryInMs?: number)
 }
 
 // followTarget is the pane of the agent the web is on: the lens's selected
-// card's visible agent, an agent opened alone, the zoom's active agent, or
-// the active terminal panel's own pane.
+// card's visible agent, an agent opened alone, or the zoom's active agent. A
+// terminal the view was opened on (terminal) is followed over all of them.
 // The board writes "-" for an agent with no visible pane.
 const realPane = (pane: string | undefined) => pane && pane !== '-' ? pane : null
 
-export function followTarget(board: Board | undefined, view: { onLens: boolean, lensAgent?: string, aloneAgent?: string, activeAgent?: string, activePane?: string }): string | null {
-  if (!view.onLens && !view.aloneAgent && view.activePane) return realPane(view.activePane)
+export function followTarget(board: Board | undefined, view: { onLens: boolean, lensAgent?: string, aloneAgent?: string, activeAgent?: string, terminal?: string }): string | null {
+  if (view.terminal) return realPane(view.terminal)
   const agent = view.onLens ? view.lensAgent : view.aloneAgent ?? view.activeAgent
   if (!agent) return null
   return realPane(findAgentRow(board, agent)?.pane_id)

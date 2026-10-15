@@ -1,5 +1,5 @@
 import { createElement, type CSSProperties } from 'react'
-import type { ScreenFrame } from '../../types.ts'
+import type { AgentDetail, ScreenFrame } from '../../types.ts'
 
 // The live tail shows this many trailing non-empty screen rows under the
 // transcript while the agent is working. Also the CSS block height.
@@ -23,11 +23,16 @@ export function screenTailRows(frame: ScreenFrame | undefined, n = liveTailRowCo
 }
 
 // The tail exists only while the operator can see it forming: the panel is
-// visible in the dock, the agent is working now, and the transcript (not the
-// screen) is the view. Each condition leaving unmounts the region, which also
-// drops the pane's screen subscription.
-export function liveTailShown({ visible, status, screenMode }: { visible: boolean, status: string, screenMode: boolean }) {
-  return visible && status === 'active' && !screenMode
+// visible in the dock and the agent is working now. Either condition leaving
+// unmounts the region, which also drops the pane's screen subscription.
+export function liveTailShown({ visible, status }: { visible: boolean, status: string }) {
+  return visible && status === 'active'
+}
+
+// The pane the tail reads: the agent's live herdr pane. A retired agent, or
+// one herdr places in no pane, has none.
+export function liveTailPaneID(agent: AgentDetail | undefined) {
+  return agent && agent.bus_status !== 'retired' ? agent.pane?.pane_id || undefined : undefined
 }
 
 export function liveTailNotice(frame: ScreenFrame | undefined) {

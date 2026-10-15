@@ -1,4 +1,3 @@
-import type { Pane } from '../../types.ts'
 import { agentTabID } from '../../previewTabs.ts'
 import { fileTabID, initialFileViewMode } from '../files/fileTabs.ts'
 import { rootLabel } from '../files/fileResolution.ts'
@@ -10,8 +9,6 @@ import type {
   DockPanelParams,
   FilePanelParams,
   FolderPanelParams,
-  ScreenIdentity,
-  ScreenPanelParams,
 } from '../layout/dockLayout.ts'
 
 type UnknownRecord = Record<string, unknown>
@@ -51,18 +48,6 @@ type RegisteredPanelModel = {
 
 function record(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
-function validPane(value: unknown): value is Pane {
-  return record(value) && typeof value.pane_id === 'string' && typeof value.agent === 'string' &&
-    typeof value.tool === 'string' && typeof value.herdr_status === 'string' &&
-    typeof value.bus_status === 'string' && typeof value.gap === 'string'
-}
-
-function validIdentity(value: unknown): value is ScreenIdentity {
-  return record(value) && typeof value.paneID === 'string' && typeof value.workspaceID === 'string' &&
-    typeof value.tabID === 'string' && typeof value.agent === 'string' &&
-    (value.sessionID === undefined || typeof value.sessionID === 'string')
 }
 
 function definePanel<P extends DockPanelParams>(model: PanelModel<P>): RegisteredPanelModel {
@@ -119,21 +104,6 @@ const panelModels: Record<PanelKind, RegisteredPanelModel> = {
         } catch {
           return null
         }
-      },
-    },
-  }),
-  screen: definePanel<ScreenPanelParams>({
-    validate: (value) => validPane(value.pane) && validIdentity(value.identity)
-      ? { kind: 'screen', pane: value.pane, identity: value.identity, preview: value.preview as boolean }
-      : null,
-    id: (params) => `screen:${params.pane.pane_id}`,
-    presentation: (params) => ({ title: params.pane.label || params.pane.pane_id, icon: '▣ ', meta: 'terminal' }),
-    route: {
-      path: () => '/',
-      subject: (params) => ({ kind: 'screen', pane: params.pane, identity: params.identity }),
-      parse: (input) => {
-        const subject = stateSubject(input, 'screen')
-        return subject ? { kind: 'screen', pane: subject.pane, identity: subject.identity, preview: true } : undefined
       },
     },
   }),
@@ -247,6 +217,18 @@ export function panelParamsFromRouteLocation(pathname: string, search: string) {
     const parsed = model.route.parse(input)
     if (parsed !== undefined) return parsed
   }
+}
+
+// A retired kind: the standalone terminal tab (kind 'screen') was dropped
+// when the herdr view replaced it. A saved one reopens as its agent's
+// transcript; a terminal herdr could not attribute to an agent is dropped.
+// undefined means the value is not a legacy screen panel at all.
+export function legacyScreenPanelParams(value: unknown): AgentPanelParams | null | undefined {
+  if (!record(value) || value.kind !== 'screen') return undefined
+  const identity = record(value.identity) ? value.identity.agent : undefined
+  const pane = record(value.pane) ? value.pane.agent : undefined
+  const name = [identity, pane].find((candidate): candidate is string => typeof candidate === 'string' && candidate !== '' && candidate !== '-')
+  return name ? { kind: 'agent', name, preview: typeof value.preview === 'boolean' ? value.preview : true } : null
 }
 
 export function panelParamsFromHistorySubject(subject: unknown) {

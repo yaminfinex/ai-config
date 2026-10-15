@@ -17,8 +17,7 @@ test('DOM subscriptions deliver through one disposer', () => {
 test('size observers use the shared lifecycle hook', () => {
   const follow = readFileSync(new URL('../src/shared/useFollowScroll.tsx', import.meta.url), 'utf8')
   const strip = readFileSync(new URL('../src/features/transcript/AgentContextStrip.tsx', import.meta.url), 'utf8')
-  const screen = readFileSync(new URL('../src/features/screen/ScreenPanel.tsx', import.meta.url), 'utf8')
-  for (const source of [follow, strip, screen]) {
+  for (const source of [follow, strip]) {
     assert.match(source, /useSizeObserver\(/)
     assert.doesNotMatch(source, /new ResizeObserver/)
   }

@@ -8,10 +8,8 @@ import {
 } from '../src/features/workspace/panelRegistryModel.ts'
 import { parseStoredLayout } from '../src/features/layout/dockLayout.ts'
 
-const panes = [{ pane_id: 'pane-1', agent: 'mavu', tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '' }]
 const cases = [
   [{ kind: 'agent', name: 'mavu', preview: false }, 'agent:mavu', { title: 'mavu', icon: '', meta: 'unknown' }],
-  [{ kind: 'screen', pane: panes[0], identity: { paneID: 'pane-1', workspaceID: 'workspace-1', tabID: 'tab-1', agent: 'mavu' }, preview: true }, 'screen:pane-1', { title: 'pane-1', icon: '▣ ', meta: 'terminal' }],
   [{ kind: 'file', root: '/repo', path: 'README.md', preview: true, viewMode: 'rendered' }, 'file:%2Frepo:README.md', { title: 'README.md', icon: '◇ ', meta: 'file · read-only' }],
   [{ kind: 'folder', root: '/repo', path: 'src', preview: true }, 'folder:%2Frepo:src', { title: 'src', icon: '▰ ', meta: 'folder · read-only' }],
   [{ kind: 'changes', root: '/repo', preview: true }, 'changes:%2Frepo', { title: 'Changes · repo', icon: '± ', meta: 'git · read-only' }],
@@ -28,7 +26,8 @@ test('the registry validates, identifies, and presents every panel kind', () => 
 
 test('registry validation rejects malformed and unknown panel params', () => {
   assert.equal(panelParams({ kind: 'agent', name: '', preview: false }), null)
-  assert.equal(panelParams({ kind: 'screen', pane: panes[0], identity: {}, preview: false }), null)
+  // The retired standalone terminal kind is no longer a live panel kind.
+  assert.equal(panelParams({ kind: 'screen', pane: { pane_id: 'pane-1', agent: 'mavu', tool: 'codex', herdr_status: 'active', bus_status: 'active', gap: '' }, identity: { paneID: 'pane-1', workspaceID: 'workspace-1', tabID: 'tab-1', agent: 'mavu' }, preview: false }), null)
   assert.equal(panelParams({ kind: 'file', root: '/repo', path: 'README.md', line: 0, preview: true, viewMode: 'source' }), null)
   assert.equal(panelParams({ kind: 'folder', root: '', path: 'src', preview: true }), null)
   assert.equal(panelParams({ kind: 'changes', root: '', preview: true }), null)

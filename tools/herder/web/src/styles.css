@@ -29,7 +29,7 @@
   --diff-add-bg: #dafbe1; --diff-add-emphasis: #aceebb; --diff-delete-bg: #ffebe9; --diff-delete-emphasis: #ffcecb; --diff-selection: #dbeafe;
   --note-card: #ffffff; --note-card-border: #d0d7de; --note-anchor: #0969da; --note-selected: #dbeafe; --note-selected-border: #0969da; --note-selector-bg: #ffffff; --note-hint-bg: #eaeef2; --note-source: #5d6670; --note-count-text: #57606a;
   --jump-text: #ffffff; --floating-shadow: rgba(31,35,40,.25);
-  --terminal-bg: #0d0f12; --terminal-text: #d3d8e2; --terminal-dim: #8b949e;
+  --terminal-dim: #8b949e;
   --scrollbar-thumb: #afb8c1; --scrollbar-thumb-hover: #8c959f;
   --lens-card: #ffffff; --lens-rule: #d0d7de; --lens-hover-border: #8c959f; --lens-ink: #1f2328; --lens-slate: #57606a;
   --lens-needs-bg: #e8f0ff; --lens-needs-border: #0969da; --lens-selected-border: #9a6700;
@@ -66,7 +66,7 @@
   --diff-add-bg: #152519; --diff-add-emphasis: #1f3b26; --diff-delete-bg: #301d21; --diff-delete-emphasis: #49252b; --diff-selection: #31406b;
   --note-card: #212228; --note-card-border: #3a3c45; --note-anchor: #5b93ff; --note-selected: #31406b; --note-selected-border: #5b93ff; --note-selector-bg: #212228; --note-hint-bg: #26272e; --note-source: #b0b4bf; --note-count-text: #9da1ad;
   --jump-text: #ffffff; --floating-shadow: rgba(0,0,0,.4);
-  --terminal-bg: #0d0f12; --terminal-text: #d3d8e2; --terminal-dim: #6a6d78;
+  --terminal-dim: #6a6d78;
   --scrollbar-thumb: #3a3c45; --scrollbar-thumb-hover: #565a66;
   --lens-card: #212228; --lens-rule: #2e3037; --lens-hover-border: #565a66; --lens-ink: #d6d8df; --lens-slate: #8e919c;
   --lens-needs-bg: #1a2745; --lens-needs-border: #86a8ff; --lens-selected-border: #f2b51c;
@@ -609,20 +609,6 @@ h2, h3, p { margin-top: 0; }
 .agent-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; }
 /* A zoom hands the keys to the panel: a quiet ring, like a focused rail. */
 .agent-page:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
-.screen-page { display: flex; height: 100%; min-height: 0; flex-direction: column; overflow: hidden; background: var(--terminal-bg); }
-.screen-header { display: flex; min-height: 38px; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--dim); font-size: 10px; }
-.screen-header strong { overflow: hidden; color: var(--text); font: 600 13px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
-.screen-viewport { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; background: var(--terminal-bg); }
-.screen-notice { position: absolute; z-index: 1; top: 0; right: 0; left: 0; }
-.screen-input-notice { position: absolute; z-index: 2; right: 0; bottom: 0; left: 0; }
-.terminal-size { position: absolute; z-index: 1; right: 12px; bottom: 8px; padding: 2px 5px; border: 1px solid var(--border2); border-radius: 8px; background: var(--bg2); color: var(--dim); font: 8px var(--mono); pointer-events: none; }
-.terminal-host { flex: 1; min-width: 0; min-height: 0; padding: 8px 10px; outline: none; background: var(--terminal-bg); }
-.terminal-host:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
-.terminal-host .xterm, .terminal-host .xterm-screen { width: 100%; height: 100%; }
-.terminal-host .xterm-cursor-layer { display: none; }
-.screen-actions { display: flex; gap: 5px; margin-left: auto; }
-.screen-actions button { padding: 3px 7px; border: 1px solid var(--border2); background: var(--bg); color: var(--text); font-size: 9px; }
-.screen-history { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; background: var(--terminal-bg); }
 .history-meta { flex: 0 0 auto; padding: 5px 10px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--dimmer); font: 9px var(--mono); }
 .agent-header { display: flex; flex: 0 0 38px; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--bg2); }
 .agent-identity { display: flex; min-width: 0; align-items: baseline; gap: 7px; }
@@ -635,8 +621,6 @@ h2, h3, p { margin-top: 0; }
 .detail-toggle { display: flex; padding: 2px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); }
 .detail-toggle button { padding: 2px 7px; border: 0; background: transparent; color: var(--dim); font-size: 10px; }
 .detail-toggle button.active { background: var(--accent-dim); color: var(--text); }
-.agent-view-toggle { flex: 0 0 auto; }
-.view-reason { color: var(--dimmer); font-size: 9px; white-space: nowrap; }
 .transcript-viewport { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; }
 /* The viewport sizes the transcript, so contain: strict makes it a layout boundary: a composer keystroke no longer lays out every entry. */
 .transcript { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overflow-anchor: none; padding: 8px 14px 14px; contain: strict; }

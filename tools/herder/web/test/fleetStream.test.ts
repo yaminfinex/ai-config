@@ -27,18 +27,20 @@ test('one stream URL de-duplicates and sorts every open agent', () => {
   const watches = [{ kind: 'file' as const, root: '/repo', path: 'README.md' }, { kind: 'folder' as const, root: '/repo', path: 'docs' }]
   const url = new URL(eventStreamURL([], [], watches), 'http://fixture')
   assert.deepEqual(JSON.parse(url.searchParams.get('watches') ?? ''), watches)
-  const focused = new URL(eventStreamURL([], ['w1:p1'], watches, 'w1:p1'), 'http://fixture')
-  assert.equal(focused.searchParams.get('focused_screen'), 'w1:p1')
-  assert.deepEqual(JSON.parse(focused.searchParams.get('watches') ?? ''), watches)
+  const tailed = new URL(eventStreamURL([], ['w1:p1'], watches), 'http://fixture')
+  assert.equal(tailed.searchParams.get('screens'), 'w1:p1')
+  // No web surface focuses a screen any more: the stream never asks for one.
+  assert.equal(tailed.searchParams.has('focused_screen'), false)
+  assert.deepEqual(JSON.parse(tailed.searchParams.get('watches') ?? ''), watches)
 })
 
 test('a subscription update names the live stream and the same targets a connection would', () => {
-  const targets = { agents: ['zeta', 'alpha'], screens: ['w1:p1'], focusedScreen: 'w1:p1' }
+  const targets = { agents: ['zeta', 'alpha'], screens: ['w1:p1'] }
   const url = new URL(subscriptionUpdateURL('stream-1', targets), 'http://fixture')
   assert.equal(url.pathname, '/api/events/subscription')
   assert.equal(url.searchParams.get('stream'), 'stream-1')
   assert.equal(url.searchParams.get('agents'), 'alpha,zeta')
-  assert.equal(url.searchParams.get('focused_screen'), 'w1:p1')
+  assert.equal(url.searchParams.get('screens'), 'w1:p1')
   assert.equal(fleetTargetsKey({ agents: ['alpha', 'zeta', 'alpha'] }), fleetTargetsKey({ agents: ['zeta', 'alpha'], screens: [], watches: [] }))
 })
 

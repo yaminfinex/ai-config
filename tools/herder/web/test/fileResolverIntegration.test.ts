@@ -7,7 +7,7 @@ const agentPanel = readFileSync(new URL('../src/features/transcript/AgentPanel.t
 const resolver = readFileSync(new URL('../src/features/files/TranscriptFileResolver.tsx', import.meta.url), 'utf8')
 
 test('file and transcript panels share one double-click resolver', () => {
-  assert.match(agentPanel, /useTranscriptFileResolver\(name, active && !screenMode, onOpenFile, onOpenFolder\)/u)
+  assert.match(agentPanel, /useTranscriptFileResolver\(name, active, onOpenFile, onOpenFolder\)/u)
   assert.match(filePanel, /useTranscriptFileResolver\(resolverContext, active && gitState\.mode === 'current', onOpenFile, onOpenFolder\)/u)
   assert.match(filePanel, /className="file-content"[^>]+onDoubleClick=\{fileResolver\.onDoubleClick\}/u)
   assert.match(filePanel, /<Markdown components=\{fileMarkdownComponents\}>/u)

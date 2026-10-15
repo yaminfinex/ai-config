@@ -6,8 +6,8 @@
 // Focus never moves out of a text field the owner was typing in (a space
 // rename). The quick-open search is not such a field: it says so with the
 // 'quick-open' origin, since the palette closes on the choice. A composer
-// counts as ours, so ⌥Tab from one composer lands in the next. A file or
-// screen panel keeps focus where it is. Focus alone never marks anything
+// counts as ours, so ⌥Tab from one composer lands in the next. A file,
+// folder or changes panel keeps focus where it is. Focus alone never marks anything
 // read: viewing still follows the dwell rule.
 
 export type ArriveInput = {

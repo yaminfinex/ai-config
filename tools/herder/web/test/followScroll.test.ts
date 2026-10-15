@@ -81,20 +81,18 @@ test('a transcript remembers its scroll by panel and a close forgets it', () => 
   const agentPanel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
   const registry = readFileSync(new URL('../src/features/workspace/panelRegistry.tsx', import.meta.url), 'utf8')
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
-  assert.match(agentPanel, /useFollowScroll<HTMLElement>\(entries, viewMode, active && !screenMode, panelID\)/)
+  assert.match(agentPanel, /useFollowScroll<HTMLElement>\(entries, viewMode, active, panelID\)/)
   assert.match(registry, /<AgentPanel name=\{name\} panelID=\{api\.id\}/)
   assert.match(controller, /if \(!historySuppressor\.active\(\)\) forgetFollowScroll\(panel\.id\)/)
 })
 
-test('transcript and screen use the centered jump-to-bottom control (top is shortcut-only)', () => {
+test('the transcript uses the centered jump-to-bottom control (top is shortcut-only)', () => {
   const agentPanel = readFileSync(new URL('../src/features/transcript/AgentPanel.tsx', import.meta.url), 'utf8')
-  const screenPanel = readFileSync(new URL('../src/features/screen/ScreenPanel.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
 
   const jumpControls = readFileSync(new URL('../src/shared/useFollowScroll.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(agentPanel, /follow-chip/)
   assert.match(agentPanel, /<ScrollJumpButtons/)
-  assert.match(screenPanel, /<ScrollJumpButtons/)
   assert.doesNotMatch(jumpControls, /Go to top/)
   assert.match(css, /\.scroll-jump-buttons \{[^}]*position: absolute;[^}]*left: 50%;[^}]*translateX\(-50%\)/s)
 })

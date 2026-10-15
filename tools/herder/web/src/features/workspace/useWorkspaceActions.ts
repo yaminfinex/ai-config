@@ -1,11 +1,11 @@
 import { useCallback, useRef, type MutableRefObject } from 'react'
 import type { QueryClient } from '@tanstack/react-query'
 import type { DockviewApi } from 'dockview-react'
-import type { Board, FileTarget, FolderTarget, Pane } from '../../types'
+import type { FileTarget, FolderTarget } from '../../types'
 import { fileTabID, initialFileViewMode, type FileViewMode } from '../files/fileTabs'
 import { gitStateForFileOpen, type GitBase, type GitFileState } from '../git/gitViewModel'
 import { dockOpenTarget, type OpenPlacement } from '../layout/openPlacement'
-import { screenPanelParams, type DockPanelParams } from '../layout/dockLayout'
+import type { DockPanelParams } from '../layout/dockLayout'
 import type { PanelRecordUpdate } from './usePanelRecords'
 import type { Arrive } from './useArrive'
 import { folderTabID } from '../folders/folderModel'
@@ -39,7 +39,6 @@ export function panelFromAPI(api: DockviewApi, id: string) {
 
 type WorkspaceActionOptions = {
   apiRef: MutableRefObject<DockviewApi | undefined>
-  board?: Board
   queryClient: QueryClient
   quickOpenGroup?: string
   setQuickOpenGroup: (groupID?: string) => void
@@ -56,7 +55,6 @@ type WorkspaceActionOptions = {
 
 export function useWorkspaceActions({
   apiRef,
-  board,
   queryClient,
   quickOpenGroup,
   setQuickOpenGroup,
@@ -68,9 +66,7 @@ export function useWorkspaceActions({
   onActivePanelParamsChanged,
   arrive,
 }: WorkspaceActionOptions) {
-  const boardRef = useRef(board)
   const quickOpenGroupRef = useRef(quickOpenGroup)
-  boardRef.current = board
   quickOpenGroupRef.current = quickOpenGroup
 
   const openPanel = useCallback((params: DockPanelParams, placement?: OpenPlacement, focus = false) => {
@@ -119,12 +115,6 @@ export function useWorkspaceActions({
 
   const openAgent = useCallback((name: string, preview: boolean, placement?: OpenPlacement, focus = false) => {
     openPanel({ kind: 'agent', name, preview }, placement, focus)
-  }, [openPanel])
-
-  const openScreen = useCallback((pane: Pane, preview: boolean, placement?: OpenPlacement) => {
-    if (!boardRef.current) return
-    const params = screenPanelParams(boardRef.current, pane, preview)
-    if (params) openPanel(params, placement)
   }, [openPanel])
 
   const openFile = useCallback((target: FileTarget, placement?: OpenPlacement) => {
@@ -184,5 +174,5 @@ export function useWorkspaceActions({
     syncDock()
   }, [apiRef, resetPersistedLayout, syncDock, withHistorySuppressed])
 
-  return { openPanel, openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, resetLayout }
+  return { openPanel, openAgent, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, resetLayout }
 }

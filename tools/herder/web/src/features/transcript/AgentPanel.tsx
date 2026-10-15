@@ -15,9 +15,7 @@ import { QueuedMessages } from './QueuedMessages'
 import { visibleQueuedMessages } from './queuedMessagesModel'
 import { TranscriptEntries } from './TranscriptEntries'
 import { transcriptUnavailable } from './transcriptUnavailable'
-import { ScreenViewport } from '../screen/ScreenPanel'
-import { agentScreenChoice } from '../screen/screenPresentation'
-import { liveTailShown } from './liveTail'
+import { liveTailPaneID, liveTailShown } from './liveTail'
 import { TranscriptLiveTail } from './TranscriptLiveTail'
 import { useTranscriptFileResolver } from '../files/TranscriptFileResolver'
 import type { FileTarget, FolderTarget } from '../../types'
@@ -43,7 +41,7 @@ export function AgentHeaderIdentity({ name }: { name: string }) {
 
 // Memoised: the dock re-renders every panel on a draft flip or a fleet
 // refresh; a panel whose own props are unchanged skips the render.
-export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, active, liveStatus, screenPaneID, mentionMatcher, onOpenAgent, onScreenPane, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onTerminalFocus, onMarkUnread, unread, onMarkRead, onFileBack }: { name: string, panelID: string, agents: string[], active: boolean, liveStatus: string, screenPaneID?: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onScreenPane: (paneID?: string) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onTerminalFocus: (paneID?: string) => void, onMarkUnread: (index?: number) => void, unread: boolean, onMarkRead: () => void, onFileBack?: () => () => void }) {
+export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, active, liveStatus, mentionMatcher, onOpenAgent, onTailPane, onOpenFile, onOpenFolder, onOpenChanges, onViewer, identityReadOnly, onSend, onStatus, onMarkUnread, unread, onMarkRead, onFileBack }: { name: string, panelID: string, agents: string[], active: boolean, liveStatus: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string, placement?: OpenPlacement) => void, onTailPane: (paneID?: string) => void, onOpenFile: (target: FileTarget, placement?: OpenPlacement) => void, onOpenFolder: (target: FolderTarget, placement?: OpenPlacement) => void, onOpenChanges: (root: string, placement?: OpenPlacement) => void, onViewer: (viewer: string) => void, identityReadOnly: string, onSend: () => void, onStatus: (name: string, status: string) => void, onMarkUnread: (index?: number) => void, unread: boolean, onMarkRead: () => void, onFileBack?: () => () => void }) {
   const queryClient = useQueryClient()
   const agentQuery = useQuery({ queryKey: queryKeys.agent(name), queryFn: () => getAgent(name), staleTime: 30_000, retry: false })
   const entriesQuery = useQuery(entriesQueryOptions(queryClient, name))
@@ -56,10 +54,8 @@ export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, acti
   const unavailable = transcriptUnavailable(entriesQuery.error, agent?.parent_agent)
   const unavailableParent = unavailable?.parent
   const entriesNotice = transcriptNotice(entriesQuery.isPending, unavailable ? '' : entriesQuery.error?.message ?? '')
-  const screenChoice = agentScreenChoice(agentQuery.data, screenPaneID)
-  const screenMode = screenChoice.active
-  const liveTailPaneID = liveTailShown({ visible: active, status: liveStatus, screenMode }) ? screenChoice.paneID : undefined
-  const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode, active && !screenMode, panelID)
+  const tailPaneID = liveTailShown({ visible: active, status: liveStatus }) ? liveTailPaneID(agent) : undefined
+  const transcriptFollow = useFollowScroll<HTMLElement>(entries, viewMode, active, panelID)
   // A tab hidden behind another mounts its entries when first shown: a space
   // switch rebuilds every tab, and a hidden one is out of the DOM anyway.
   const [shown, setShown] = useState(active)
@@ -72,13 +68,13 @@ export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, acti
     setViewMode(mode)
     persistTranscriptViewMode(name, mode)
   }
-  const fileResolver = useTranscriptFileResolver(name, active && !screenMode, onOpenFile, onOpenFolder)
+  const fileResolver = useTranscriptFileResolver(name, active, onOpenFile, onOpenFolder)
   const retired = agent?.bus_status === 'retired'
   const composerReadOnly = retired ? 'This agent is retired. Its retained transcript is read-only.' : identityReadOnly
   const hasNotes = useGroupNotes(name).length > 0
   const marker = useReadMarker(name)
   const [divider, setDivider] = useState(initialDividerSnapshot)
-  const nextDivider = nextDividerSnapshot(divider, active && !screenMode, marker)
+  const nextDivider = nextDividerSnapshot(divider, active, marker)
   if (nextDivider !== divider) setDivider(nextDivider)
   const dividerAt = dividerIndex(entries, entriesQuery.data?.sessionId, divider.pos)
   const blockMenu = usePositionedMenu()
@@ -113,20 +109,13 @@ export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, acti
       return result.ok ? { ok: true as const } : result
     },
   }), [identityReadOnly, onOpenAgent, onSend, queryClient])
-  const noteCapture = useNoteCapture({ active: active && !screenMode, source: { kind: 'transcript', agent: name }, agents, quickSend })
+  const noteCapture = useNoteCapture({ active: active, source: { kind: 'transcript', agent: name }, agents, quickSend })
   const { store: notesStore, announce: announceNote } = useNotes()
 
   useEffect(() => {
     if (agentQuery.data) onStatus(name, agentQuery.data.bus_status)
     else if (agentQuery.error && 'response' in agentQuery.error && (agentQuery.error.response as Response)?.status === 404) onStatus(name, 'unknown')
   }, [agentQuery.data, agentQuery.error, name, onStatus])
-
-  useEffect(() => {
-    if (!screenPaneID || !agentQuery.data) return
-    const currentPaneID = agentScreenChoice(agentQuery.data, screenPaneID).paneID
-    if (!currentPaneID) onScreenPane(undefined)
-    else if (currentPaneID !== screenPaneID) onScreenPane(currentPaneID)
-  }, [agentQuery.data, onScreenPane, screenPaneID])
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000)
@@ -142,11 +131,6 @@ export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, acti
       <AgentHeaderIdentity name={name} />
       <ToolBadge tool={agent?.tool} />
       <div className="agent-actions">
-        <div className="detail-toggle agent-view-toggle" aria-label="Agent view">
-          <button type="button" className={screenMode ? '' : 'active'} aria-pressed={!screenMode} onClick={() => onScreenPane(undefined)}>Transcript</button>
-          <button type="button" className={screenMode ? 'active' : ''} aria-pressed={screenMode} disabled={!screenChoice.enabled} title={screenChoice.reason || 'Show the live terminal'} onClick={() => { if (screenChoice.paneID) onScreenPane(screenChoice.paneID) }}>Screen</button>
-        </div>
-        {screenChoice.reason && <span className="view-reason">{screenChoice.reason}</span>}
         <div className="detail-toggle transcript-mode-toggle" aria-label="Transcript detail">
           <button type="button" className={viewMode === 'compact' ? 'active' : ''} aria-pressed={viewMode === 'compact'} title="Compact conversation with activity pills" onClick={() => selectViewMode('compact')}>Compact</button>
           <button type="button" className={viewMode === 'normal' ? 'active' : ''} aria-pressed={viewMode === 'normal'} title="Full transcript without system entries" onClick={() => selectViewMode('normal')}>Normal</button>
@@ -157,7 +141,7 @@ export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, acti
     {agentQuery.error && <Banner source="agent" detail={agentQuery.error.message} />}
     {entriesNotice && <Banner source="transcript" detail={entriesNotice.detail} tone={entriesNotice.tone} />}
     {sendProblem && <Banner source="send" detail={sendProblem} />}
-    {screenMode && screenPaneID ? <ScreenViewport paneID={screenPaneID} active={active} onFocus={() => onTerminalFocus(screenPaneID)} onBlur={() => onTerminalFocus(undefined)} /> : <div className="transcript-viewport">
+    <div className="transcript-viewport">
       <section className="transcript" data-follow-scroll aria-label="Transcript" ref={transcriptFollow.viewportRef} onScroll={transcriptFollow.onScroll} onDoubleClick={fileResolver.onDoubleClick} onContextMenu={onTranscriptContextMenu} onClickCapture={onTranscriptClickCapture}>
         {unavailable ? <PanelState className="transcript-unavailable" title={unavailable.title} detail={unavailable.detail}>
           {unavailableParent && <button type="button" onClick={() => onOpenAgent(unavailableParent)}>Open parent</button>}
@@ -178,8 +162,8 @@ export const AgentPanel = memo(function AgentPanel({ name, panelID, agents, acti
         <button type="button" role="menuitem" title={`Shortcut: ${openInSideKeys(navigator.userAgent)} the entry`} onClick={() => { blockMenu.close(false); onMarkUnread(blockMenuEntry) }}>Mark unread from here</button>
       </div>, document.body)}
       <ScrollJumpButtons bottomVisible={!transcriptFollow.following} onBottom={transcriptFollow.jumpToBottom} />
-    </div>}
-    {liveTailPaneID && <TranscriptLiveTail paneID={liveTailPaneID} status={liveStatus} onTailPane={onTailPane} />}
+    </div>
+    {tailPaneID && <TranscriptLiveTail paneID={tailPaneID} status={liveStatus} onTailPane={onTailPane} />}
     {!retired && <div className="queued-dock"><QueuedMessages messages={queued} now={now} /></div>}
     <AgentContextStrip agent={agent} liveStatus={liveStatus} onOpenFolder={onOpenFolder} onOpenChanges={onOpenChanges} />
     {agent && <AgentNotesStrip agent={name} agents={agents} focusRequest={notesFocusRequest} />}

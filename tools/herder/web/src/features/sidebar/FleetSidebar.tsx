@@ -24,15 +24,14 @@ import { useDraftMarks } from '../drafts/useDraftMarks.ts'
 const emptyExpandedItems: string[] = []
 
 // Memoised: Shell renders for dock and quick-open state the tree does not show.
-export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgent, activePane, onPreviewAgent, onPinAgent, onPreviewPane, onPinPane, onOpenGroupAsSpace, pendingGroups, onPendingGroups, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
+export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgent, onPreviewAgent, onPinAgent, onOpenTerminal, onOpenGroupAsSpace, pendingGroups, onPendingGroups, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
   board: Board | undefined
   view: FleetView
   activeAgent?: string
-  activePane?: string
   onPreviewAgent: (name: string, placement?: OpenPlacement) => void
   onPinAgent: (name: string, placement?: OpenPlacement) => void
-  onPreviewPane: (pane: Pane, placement?: OpenPlacement) => void
-  onPinPane: (pane: Pane, placement?: OpenPlacement) => void
+  // A terminal herdr cannot attribute to an agent opens in the herdr view.
+  onOpenTerminal: (pane: Pane) => void
   // Groups view only: jump to the space named after a group, creating it once.
   onOpenGroupAsSpace: (group: string, members: string[]) => void
   // Groups created on the web that no frame has shown yet (shell preferences).
@@ -130,15 +129,15 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
   }
 
   useEffect(() => {
-    if (!activeAgent && !activePane) {
+    if (!activeAgent) {
       setSelectedItems([])
       return
     }
-    const matches = (node: SidebarNode | undefined) => !!node && agentKinds.has(node.kind) && (activeAgent ? node.pane?.agent === activeAgent : node.pane?.pane_id === activePane)
-    const first = activeAgent && view === 'supervision' ? nodes.get(agentNodeID(activeAgent)) : [...nodes.values()].find(matches)
+    const matches = (node: SidebarNode | undefined) => !!node && agentKinds.has(node.kind) && node.pane?.agent === activeAgent
+    const first = view === 'supervision' ? nodes.get(agentNodeID(activeAgent)) : [...nodes.values()].find(matches)
     // Every view draws an agent once, so its one row is the selection.
     setSelectedItems(first ? [first.id] : [])
-  }, [activeAgent, activePane, nodes, view])
+  }, [activeAgent, nodes, view])
 
   const tree = useTree<SidebarNode>({
     rootItemId: 'tree-root',
@@ -154,7 +153,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
     onPrimaryAction: (item) => {
       const node = item.getItemData()
       if (node.pane?.agent && node.pane.agent !== '-') onPreviewAgent(node.pane.agent)
-      else if (node.kind === 'pane' && node.pane?.agent === '-') onPreviewPane(node.pane as Pane)
+      else if (node.kind === 'pane' && node.pane?.agent === '-') onOpenTerminal(node.pane as Pane)
     },
     hotkeys: {
       customPrimaryActionEnter: { hotkey: 'Enter', preventDefault: true, handler: (_event, currentTree) => currentTree.getFocusedItem()?.primaryAction() },
@@ -251,13 +250,12 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
               event.stopPropagation()
               const placement = placementFromModifiers(event)
               if (pane?.agent && pane.agent !== '-') onPreviewAgent(pane.agent, placement)
-              else if (node.kind === 'pane' && pane?.agent === '-') onPreviewPane(pane as Pane, placement)
+              else if (node.kind === 'pane' && pane?.agent === '-') onOpenTerminal(pane as Pane)
             },
             onDoubleClick: (event) => {
               if (editing || (event.target as Element).closest(treeClickGuardSelector)) return
               const placement = placementFromModifiers(event)
               if (pane?.agent && pane.agent !== '-') onPinAgent(pane.agent, placement)
-              else if (node.kind === 'pane' && pane?.agent === '-') onPinPane(pane as Pane, placement)
             },
             onKeyDown: (event) => {
               if (event.key === 'F2' && pane?.agent && pane.agent !== '-') {
