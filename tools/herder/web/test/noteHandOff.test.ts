@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { appendComposerDraft } from '../src/composerState.ts'
 import { createNoteHandOffGuard, handOffSelectedNotes } from '../src/features/notes/noteHandOff.ts'
-import { selectionAfterClick, selectionAfterRemoval, type NoteSelection } from '../src/features/notes/notesListModel.ts'
-import type { Note, NotesStatus } from '../src/features/notes/notesStore.ts'
+import { selectionAfterClick, selectionAfterRemoval, selectionAll, type NoteSelection } from '../src/features/notes/notesListModel.ts'
+import { noteTransferText } from '../src/features/notes/notesPresentation.ts'
+import { createNotesStore, type Note, type NotesStatus } from '../src/features/notes/notesStore.ts'
 
 const note: Note = { id: 'note-1', group: 'general', text: 'owner text', created: 1, updated: 1 }
 const unavailable: NotesStatus = { persistent: false, recovered: false, problem: 'Notes are not saved between browser sessions.' }
@@ -90,4 +92,32 @@ test('append or removal refusal leaves selection in place', () => {
     assert.equal(selection.anchor, note.id)
     assert.equal(selection.cursor, note.id)
   }
+})
+
+test('⌘↵ hands notes to the draft top to bottom, oldest first, as the list shows them (reddens: newest first)', () => {
+  let now = 1_000
+  let sequence = 0
+  const store = createNotesStore({ storage: null, events: null, now: () => now, randomID: () => `id-${++sequence}`, schedule: () => 0, cancel: () => {} })
+  const first = store.add({ group: 'kilo', text: 'first' })
+  now = 2_000
+  store.add({ group: 'kilo', text: 'second' })
+  now = 3_000
+  store.add({ group: 'kilo', text: 'third' })
+  now = 4_000
+  assert.ok(first.ok)
+  if (!first.ok) return
+  store.edit(first.value.id, { text: 'first, edited' })
+
+  // As NotesList does: select every note in list order, hand off the selected ones in list order.
+  const listed = store.listGroup('kilo')
+  const selection = selectionAll({ selected: new Set() }, listed.map((entry) => entry.id))
+  const drafts = new Map<string, string>()
+  const draftStorage = { getItem: (key: string) => drafts.get(key) ?? null, setItem: (key: string, value: string) => { drafts.set(key, value) } }
+  const result = handOffSelectedNotes({
+    target: 'kilo', notes: listed.filter((entry) => selection.selected.has(entry.id)), guard: createNoteHandOffGuard(),
+    append: (target, handed) => appendComposerDraft(target, handed.map(noteTransferText), draftStorage),
+    remove: store.delete, flush: store.flush, status: () => ({ persistent: true, recovered: false, problem: '' }),
+  })
+  assert.equal(result.ok, true)
+  assert.deepEqual([...drafts.values()], ['first, edited\n\nsecond\n\nthird'])
 })

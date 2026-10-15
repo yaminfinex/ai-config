@@ -74,7 +74,7 @@ function harness(overrides: Partial<Parameters<typeof createNotesStore>[0]> = {}
   }
 }
 
-test('notes list by group, sort by recent update, notify subscribers, and debounce persistence', () => {
+test('notes list by group, oldest first, notify subscribers, and debounce persistence', () => {
   const subject = harness()
   let notifications = 0
   subject.store.subscribe(() => { notifications += 1 })
@@ -84,12 +84,44 @@ test('notes list by group, sort by recent update, notify subscribers, and deboun
   const second = subject.store.add({ group: 'kilo', text: 'second' })
   assert.equal(first.ok, true)
   assert.equal(second.ok, true)
-  assert.deepEqual(subject.store.listGroup('kilo').map((note) => note.text), ['second', 'first'])
+  assert.deepEqual(subject.store.listGroup('kilo').map((note) => note.text), ['first', 'second'])
   assert.equal(notifications, 2)
   assert.equal((subject.storage as FakeStorage).writes.length, 0)
 
   subject.flushScheduled()
   assert.equal((subject.storage as FakeStorage).writes.filter((key) => key.includes(':record:')).length, 2)
+})
+
+test('a new note lands at the bottom and an edit or a move keeps its place (reddens: sorted by updated, newest first)', () => {
+  const subject = harness()
+  const texts = () => subject.store.list().map((note) => note.text)
+  const first = subject.store.add({ group: 'kilo', text: 'first' })
+  subject.setNow(2_000)
+  subject.store.add({ group: 'lima', text: 'second' })
+  subject.setNow(3_000)
+  subject.store.add({ group: 'kilo', text: 'third' })
+  assert.deepEqual(texts(), ['first', 'second', 'third'])
+  assert.ok(first.ok)
+  if (!first.ok) return
+
+  subject.setNow(4_000)
+  assert.equal(subject.store.edit(first.value.id, { text: 'first, edited' }).ok, true)
+  assert.deepEqual(texts(), ['first, edited', 'second', 'third'], 'an edit never moves a note')
+  subject.setNow(5_000)
+  assert.equal(subject.store.edit(first.value.id, { group: 'lima' }).ok, true)
+  assert.deepEqual(subject.store.listGroup('lima').map((note) => note.text), ['first, edited', 'second'], 'a move keeps its created place in the new group')
+
+  subject.setNow(6_000)
+  subject.store.add({ group: 'kilo', text: 'fourth' })
+  assert.deepEqual(texts(), ['first, edited', 'second', 'third', 'fourth'])
+})
+
+test('notes created in the same millisecond keep a stable id order', () => {
+  const subject = harness()
+  subject.store.add({ group: 'kilo', text: 'one' })
+  subject.store.add({ group: 'kilo', text: 'two' })
+  const ids = subject.store.list().map((note) => note.id)
+  assert.deepEqual(ids, [...ids].sort((left, right) => left.localeCompare(right)))
 })
 
 test('captured quote is immutable provenance while only its comment is edited', () => {

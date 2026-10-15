@@ -3,6 +3,7 @@ import { copyPath } from '../../shared/pathCopyModel.ts'
 import { copyWithHiddenTextarea } from '../../shared/PathCopyButton.tsx'
 import { handOffSelectedNotes } from './noteHandOff.ts'
 import {
+  arrivedNoteID,
   dragNoteIDs,
   handOffRoute,
   noteListAction,
@@ -65,6 +66,14 @@ export function NotesList({ groups, agents, onHandOff, onEditingChange, focusReq
   const notesByGroup = useMemo(() => new Map(displayGroups.map(({ group }) => [group, displayNotes.filter((note) => note.group === group)])), [displayGroups, displayNotes])
 
   useEffect(() => { setSelection((current) => pruneNoteSelection(current, ids)) }, [ids])
+  // A new note lands at the bottom: bring it into view without taking focus.
+  const shownIDs = useRef<string[]>(undefined)
+  const scheduleReveal = useScheduledFrame()
+  useEffect(() => {
+    const arrived = arrivedNoteID(shownIDs.current, ids)
+    shownIDs.current = ids
+    if (arrived) scheduleReveal(() => listRef.current?.querySelector(`[data-note-id="${CSS.escape(arrived)}"]`)?.scrollIntoView({ block: 'nearest' }))
+  }, [ids, scheduleReveal])
   // A focus request (ArrowUp from the strip's composer) selects every note and lands on the last-focused card, else that agent's first note, else the first card.
   // The effect runs on mount too, so a list mounted by the request lands without a second one.
   useEffect(() => {
