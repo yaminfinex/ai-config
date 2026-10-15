@@ -151,6 +151,7 @@ function renderOnDemand(terminal: Terminal, internals: Internals): Renders {
   const painter = internals.renderer
   const buffer = internals.wasmTerm
   let count = 0
+  readViewportOnce(painter, buffer)
   // Counted either way, so the tests can see the stock loop too.
   if (typeof painter?.render === 'function') {
     const render = painter.render.bind(painter)
@@ -248,6 +249,33 @@ function renderOnDemand(terminal: Terminal, internals: Internals): Renders {
       scrolled.dispose()
       resized.dispose()
     },
+  }
+}
+
+// readViewportOnce makes a render read the screen out of WASM once. A render
+// reads each row it repaints with getLine, and ghostty-web 0.4.0's getLine
+// copies and parses the whole viewport for every row, so repainting a full
+// screen cost rows times the screen. Nothing writes during a render, so the
+// first read stands until it ends; outside a render getLine reads afresh.
+function readViewportOnce(painter: Partial<Painter> | undefined, buffer: { getViewport?: () => unknown } | undefined) {
+  if (!buffer || typeof buffer.getViewport !== 'function' || typeof painter?.render !== 'function') return
+  const read = buffer.getViewport.bind(buffer)
+  const render = painter.render.bind(painter)
+  let rendering = false
+  let viewport: unknown
+  buffer.getViewport = () => {
+    if (!rendering) return read()
+    viewport ??= read()
+    return viewport
+  }
+  painter.render = (...args) => {
+    rendering = true
+    try {
+      render(...args)
+    } finally {
+      rendering = false
+      viewport = undefined
+    }
   }
 }
 
