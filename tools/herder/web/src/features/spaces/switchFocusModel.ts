@@ -1,34 +1,42 @@
-// After a space switch the owner usually wants to type to the agent they
-// were last talking to there, so a deliberate switch (a rail click, the ⌥Tab
-// switcher, ⇧⌥←/→, a space chosen in ⌘K) lands the caret at the end of that
-// agent's composer draft: ⌘K, the space name, Enter, then type. Focus only
-// moves when the new space's active panel is an agent whose composer is
-// visible and enabled, and never out of a text field the owner was typing in
-// (a space rename). The quick-open search is not such a field: it says so
-// with the 'quick-open' origin, since the palette closes on the choice. A
-// composer counts as ours, so ⌥Tab from one composer lands in the next.
-// Focus alone never marks anything read: viewing still follows the dwell rule.
+// Arriving at an agent means "I want to talk to it" (owner #463121): every
+// way of landing on one (a zoom from the lens, [ ] and n/N, ⇧⌥←/→, ⌥Tab,
+// ⌘K, the Spaces list, a sidebar or notes agent, a tab, ⌥←/→, a mention,
+// back/forward) puts the caret at the end of its composer draft when the
+// agent is writable, else focuses its panel, so the keys are the panel's.
+// Focus never moves out of a text field the owner was typing in (a space
+// rename). The quick-open search is not such a field: it says so with the
+// 'quick-open' origin, since the palette closes on the choice. A composer
+// counts as ours, so ⌥Tab from one composer lands in the next. A file or
+// screen panel keeps focus where it is. Focus alone never marks anything
+// read: viewing still follows the dwell rule.
 
-export type SwitchFocusInput = {
-  // The element that had focus when the switch began, or 'quick-open' when
-  // the space was chosen in the ⌘K palette.
+export type ArriveInput = {
+  // The element that had focus when the arrival began, or 'quick-open' when
+  // it was chosen in the ⌘K palette.
   origin: 'composer' | 'text-field' | 'quick-open' | 'other'
   activePanelKind: string | undefined
-  // The active group's composer once rendered; null until it mounts.
-  composer: { disabled: boolean, visible: boolean } | null
+  // The arriving agent's composer once rendered; null until it mounts.
+  composer: { disabled: boolean } | null
+  // Whether the agent's panel is drawn to take focus instead.
+  panel: boolean
+  // The last try: a composer that has not mounted by now never will (a
+  // retired agent), so the panel takes the keys.
+  lastTry: boolean
 }
 
-export type SwitchFocusDecision = 'focus' | 'wait' | 'leave'
+export type ArriveDecision = 'composer' | 'panel' | 'wait' | 'leave'
 
-export function switchFocusDecision({ origin, activePanelKind, composer }: SwitchFocusInput): SwitchFocusDecision {
+export function arriveDecision({ origin, activePanelKind, composer, panel, lastTry }: ArriveInput): ArriveDecision {
   if (origin === 'text-field' || activePanelKind !== 'agent') return 'leave'
-  if (!composer) return 'wait'
-  return composer.visible && !composer.disabled ? 'focus' : 'leave'
+  if (composer && !composer.disabled) return 'composer'
+  if (composer && panel) return 'panel'
+  if (!lastTry) return 'wait'
+  return panel ? 'panel' : 'leave'
 }
 
 const textField = 'input:not([type=button], [type=checkbox], [type=radio], [type=range], [type=submit], [type=reset]), textarea, select, [contenteditable]:not([contenteditable=false])'
 
-export function focusOrigin(element: Pick<Element, 'matches'> | null): Exclude<SwitchFocusInput['origin'], 'quick-open'> {
+export function focusOrigin(element: Pick<Element, 'matches'> | null): Exclude<ArriveInput['origin'], 'quick-open'> {
   if (!element) return 'other'
   if (element.matches('textarea[data-composer]')) return 'composer'
   return element.matches(textField) ? 'text-field' : 'other'

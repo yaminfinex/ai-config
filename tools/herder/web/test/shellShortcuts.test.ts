@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { bindShellShortcuts, bindSpaceSwitcher, isEditableShortcutTarget, shortcutLabels, switcherKeyIntent, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
+import { bindLensShortcuts, bindShellShortcuts, bindSpaceSwitcher, isEditableShortcutTarget, shortcutLabels, switcherKeyIntent, type ShellShortcutActions } from '../src/features/layout/shellShortcuts.ts'
 import { idleSwitcher, reduceSwitcher, type SwitcherEvent, type SwitcherState } from '../src/features/spaces/spaceSwitcherModel.ts'
 
 type KeyboardInit = {
@@ -260,6 +260,32 @@ test('unclaimed actions do not prevent browser defaults', () => {
   try {
     assert.equal(dispatch(target, { key: '∑', code: 'KeyW', altKey: true }).defaultPrevented, false)
     assert.equal(dispatch(target, { key: 'ArrowLeft', code: 'ArrowLeft', altKey: true }).defaultPrevented, false)
+  } finally {
+    unsubscribe()
+  }
+})
+
+test('lens arrows: ← → step cards, ↓ ↑ step rows like j k; a key the view refuses stays the browser\'s', () => {
+  const target = new EventTarget()
+  const calls: string[] = []
+  let onLens = true
+  const lensKey = (call: string) => () => { if (!onLens) return false; calls.push(call) }
+  const unsubscribe = bindLensShortcuts(target as unknown as Window, {
+    step: (by) => lensKey(`step:${by}`)(),
+    stepRow: (by) => lensKey(`row:${by}`)(),
+    zoomIn: lensKey('zoom'), zoomOut: lensKey('out'), nextNeeding: () => false, place: () => false,
+    cycleVisible: () => false, markRead: () => false, markUnread: () => false, stepSpace: () => false,
+  })
+  try {
+    for (const [key, code] of [['ArrowLeft', 'ArrowLeft'], ['ArrowRight', 'ArrowRight'], ['ArrowDown', 'ArrowDown'], ['ArrowUp', 'ArrowUp'], ['j', 'KeyJ'], ['k', 'KeyK']]) {
+      assert.equal(dispatch(target, { key: key!, code: code! }).defaultPrevented, true, key)
+    }
+    assert.deepEqual(calls, ['step:-1', 'step:1', 'row:1', 'row:-1', 'row:1', 'row:-1'])
+    // In a zoom the arrows scroll the transcript as before.
+    onLens = false
+    assert.equal(dispatch(target, { key: 'ArrowDown', code: 'ArrowDown' }).defaultPrevented, false)
+    assert.equal(dispatch(target, { key: 'ArrowUp', code: 'ArrowUp' }).defaultPrevented, false)
+    assert.equal(calls.length, 6)
   } finally {
     unsubscribe()
   }

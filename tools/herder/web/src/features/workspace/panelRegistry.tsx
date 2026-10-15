@@ -185,6 +185,8 @@ export function DockTab({ params, api }: IDockviewPanelHeaderProps<DockPanelPara
   const drafts = useDraftMarks()
   return <><div ref={tabRef} className={`herder-dock-tab${params.preview ? ' preview' : ''}`} title={params.preview ? 'Preview — double-click to pin' : undefined}
     onContextMenu={tabMenu.onContextMenu}
+    // Dockview shows the tab on pointer-down; the click arrives at it.
+    onClick={(event) => { if (!(event.target as Element).closest('.dock-tab-close')) actions.arrive() }}
     onDoubleClick={(event) => { if (params.preview) actions.pinPanel(api.id); event.stopPropagation() }}
     onAuxClick={(event) => { if (event.button === 1) actions.closePanel(api.id) }}>
     <span className="dock-tab-label">{params.preview && <span className="preview-dot" aria-hidden="true" />}{presentation.icon}{title}</span>

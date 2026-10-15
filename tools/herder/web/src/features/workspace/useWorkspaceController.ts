@@ -31,13 +31,14 @@ import {
   type HistoryCause,
 } from '../layout/historyModel'
 import { crumbParts, useLens, type LensView } from '../lens/index.ts'
-import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, writePanelToStoredSpace, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
+import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, storedSpaceActivePanel, writePanelToStoredSpace, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import { panelID } from './panelRegistry'
 import { panelFromAPI, useWorkspaceActions } from './useWorkspaceActions'
 import { usePanelRecords } from './usePanelRecords'
 import { screenSubscriptionPaneIDs } from './screenSubscriptions'
 import { subscribeToDock } from './subscribeToDock'
 import { useWorkspaceShortcuts } from './useWorkspaceShortcuts'
+import { useArrive } from './useArrive'
 import { useSpaceAgents } from './useSpaceAgents'
 import { useSpaceAttention } from './useSpaceAttention'
 import { useSpaceSwitcher } from './useSpaceSwitcher'
@@ -218,6 +219,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setRevision((value) => value + 1)
   }, [layout.markDirty])
 
+  // Every arrival at an agent (a zoom, a switch, a tab, a mention, an open
+  // from the sidebar or ⌘K) lands the same way: see useArrive.
+  const aloneAgent = useCallback(() => viewRef.current.kind === 'alone' ? viewRef.current.agent : undefined, [])
+  const arrive = useArrive(apiRef, aloneAgent)
+
   const workspaceActions = useWorkspaceActions({
     apiRef,
     board: boardQuery.data,
@@ -230,6 +236,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     resetPersistedLayout: layout.resetPersistedLayout,
     withHistorySuppressed: historySuppressor.run,
     onActivePanelParamsChanged,
+    arrive,
   })
   const { openPanel, openAgent, openScreen, openFile, openFileInDiff, openChanges, openFolder, closePanel, pinPanel, setFileViewMode, resetLayout } = workspaceActions
 
@@ -282,16 +289,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     })
   }, [historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
 
-  // focusZoom hands the keys to the zoom's panel, not its composer, so
-  // the zoom's bare keys work at once.
-  const focusZoom = useCallback(() => window.requestAnimationFrame(() => {
-    const page = document.querySelector<HTMLElement>('.dv-active-group .agent-page, .alone-agent .agent-page')
-    if (page) page.focus({ preventScroll: true })
-    else if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
-  }), [])
-  // zoomInto shows a space's dock with agent's panel active. From the lens
-  // (or alone) it pushes the zoom's own entry, so back returns there; from
-  // a zoom it is a space switch like any other.
+  // zoomInto shows a space's dock with agent's panel active (none: the
+  // layout's focused panel as it is) and arrives there. From the lens (or
+  // alone) it pushes the zoom's own entry, so back returns there; from a
+  // zoom it is a space switch like any other.
   const zoomInto = useCallback((spaceID: string, agent?: string, focus = true) => {
     const store = spacesRuntime.store
     const api = apiRef.current
@@ -309,13 +310,14 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         const params = panelParams(candidate.params)
         return params?.kind === 'agent' && params.name === agent
       })
-      if (panel) panel.api.setActive()
-      else openAgent(agent, true)
+      // Never setActive on the already-active panel (see openPanel).
+      if (panel && api.activePanel?.id !== panel.id) panel.api.setActive()
+      else if (!panel) openAgent(agent, true)
     })
     updateHistory(panelParams(api.activePanel?.params) ?? undefined, 'stamp')
-    if (focus) focusZoom()
+    if (focus) arrive()
     return true
-  }, [focusZoom, historySuppressor, openAgent, setView, spacesRuntime.store, switchSpace, updateHistory])
+  }, [arrive, historySuppressor, openAgent, setView, spacesRuntime.store, switchSpace, updateHistory])
   // zoomOut returns to the lens with the zoomed space still selected.
   const zoomOut = useCallback(() => {
     const current = viewRef.current
@@ -334,8 +336,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setView({ kind: 'alone', agent })
     const entry = aloneHistoryEntry(agent)
     window.history.pushState(entry.state, '', entry.path)
-    focusZoom()
-  }, [focusZoom, setView, spacesRuntime.store])
+    arrive()
+  }, [arrive, setView, spacesRuntime.store])
   // From the lens or an agent alone, opening anything zooms into the active
   // space first; the open joins the zoom's history entry.
   const inZoom = useCallback(<A extends unknown[], R>(open: (...args: A) => R) => (...args: A): R => {
@@ -443,22 +445,27 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     if (restoreFailed) setSpaceProblem('This space could not be fully restored. Its unreadable layout was kept for recovery; other spaces were not changed.')
     setActivePanelID(event.api.activePanel?.id ?? '')
     setRevision((value) => value + 1)
-  }, [activeSpaceID, applyRoute, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneAgentTailPane, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
+    // A page loaded on a zoom or an agent alone arrives there.
+    if (viewRef.current.kind !== 'lens') arrive()
+  }, [activeSpaceID, applyRoute, arrive, historySuppressor, initialRoute, layout.completeRestore, layout.initial, layout.noteBackupRecovery, openAgent, pruneAgentScreenPane, pruneAgentStatus, pruneAgentTailPane, pruneFileGitState, pruneFolderSelectionHint, syncDock, updateHistory])
 
   useEffect(() => () => disposeDock.current(), [])
   useDOMEvent(window, 'popstate', () => {
     const next = viewFromLocation(routeFromLocation(window.location.pathname, window.location.search), window.location.search, spacesRuntime.store !== null)
     if (next.kind === 'lens' && activeSpaceIDRef.current && viewRef.current.kind === 'zoom') setLensSelected(activeSpaceIDRef.current)
     setView(next)
-    if (next.kind !== 'zoom') return
-    const route = routeFromHistory(window.location.pathname, window.location.search, window.history.state)
-    historySuppressor.run(() => replayHistoryRoute(
-      route,
-      activeSpaceIDRef.current,
-      (spaceID) => Boolean(spacesRuntime.store?.list().some((space) => space.id === spaceID)),
-      (params) => Boolean(apiRef.current?.getPanel(panelID(params))),
-      { switchSpace, applyRoute },
-    ))
+    if (next.kind === 'lens') return
+    if (next.kind === 'zoom') {
+      const route = routeFromHistory(window.location.pathname, window.location.search, window.history.state)
+      historySuppressor.run(() => replayHistoryRoute(
+        route,
+        activeSpaceIDRef.current,
+        (spaceID) => Boolean(spacesRuntime.store?.list().some((space) => space.id === spaceID)),
+        (params) => Boolean(apiRef.current?.getPanel(panelID(params))),
+        { switchSpace, applyRoute },
+      ))
+    }
+    arrive()
   })
 
   const restoredPanels = layout.initial.stored?.dock ? Object.values(layout.initial.stored.dock.panels).flatMap((panel) => {
@@ -654,21 +661,26 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       window.requestAnimationFrame(() => target?.isConnected && target.focus())
     }
   }, [layout.notesRail.collapsed, layout.setNotesRail])
-  // Deliberate switches (rail, ⌥Tab, ⇧⌥←/→, ⌘K) land in the new space's composer.
+  // Switches inside a zoom (the Spaces list, ⌥Tab, ⌘K) arrive at the new space's focused agent.
   const readActiveSpaceID = useCallback(() => activeSpaceIDRef.current, [])
-  const switchSpaceFocusing = useSwitchSpaceFocusing(apiRef, switchSpace, readActiveSpaceID)
+  const switchSpaceFocusing = useSwitchSpaceFocusing(switchSpace, readActiveSpaceID, arrive)
+  // A space's last focused panel: the live dock's for the active space, the
+  // saved layout's for the others. A zoom returns there.
+  const lastPanel = useCallback((spaceID: string) => spaceID === activeSpaceIDRef.current
+    ? panelParams(apiRef.current?.activePanel?.params) ?? undefined
+    : storedSpaceActivePanel(localStorage, spaceID), [])
   const spaceAttention = useSpaceAttention({ apiRef, board: boardQuery.data, openBySpace, membersBySpace, view })
   const { markUnread, markRead, toggleRead } = spaceAttention
   const lens = useLens({
     enabled: spacesRuntime.store !== null, spaces, membersBySpace, board: boardQuery.data,
     attention: spaceAttention.attention, total: spaceAttention.total, view, activeSpaceID,
-    selected: lensSelected, setSelected: setLensSelected, zoomInto, zoomOut, openAlone,
+    selected: lensSelected, setSelected: setLensSelected, lastPanel, zoomInto, zoomOut, openAlone,
     markSpaceRead: spaceAttention.markSpaceRead, markSpaceUnread: spaceAttention.markSpaceUnread,
   })
   // A space chosen anywhere but a zoom (⌥Tab or ⌘K on the lens) zooms into it.
   const switchSpaceAnywhere = useCallback((id: string, from?: 'quick-open') => viewRef.current.kind === 'zoom' ? switchSpaceFocusing(id, from) : lens.zoomCard(id), [lens.zoomCard, switchSpaceFocusing])
   const docked = useCallback(() => viewRef.current.kind === 'zoom', [])
-  useWorkspaceShortcuts({ apiRef, docked, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, stepSpace: lens.stepSpace, toggleRead })
+  useWorkspaceShortcuts({ apiRef, docked, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, stepSpace: lens.stepSpace, toggleRead, arrive })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceAnywhere })
   const zoomedOpenAgent = useMemo(() => inZoom(openAgent), [inZoom, openAgent])
   const zoomedOpenScreen = useMemo(() => inZoom(openScreen), [inZoom, openScreen])
@@ -689,8 +701,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     openAgent: zoomedOpenAgent, openFile: zoomedOpenFile, openFileInDiff: zoomedOpenFileInDiff, openChanges: zoomedOpenChanges, openFolder: zoomedOpenFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
     setAgentScreenPane, setAgentTailPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
-    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread, markRead,
-  }), [closePanel, markRead, markUnread, onViewer, zoomedOpenAgent, zoomedOpenChanges, zoomedOpenFile, zoomedOpenFileInDiff, zoomedOpenFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
+    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread, markRead, arrive,
+  }), [arrive, closePanel, markRead, markUnread, onViewer, zoomedOpenAgent, zoomedOpenChanges, zoomedOpenFile, zoomedOpenFileInDiff, zoomedOpenFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
   // Panel params are read afresh from Dockview each render; the key keeps
   // the active panel's identity, and so the data context's, while it is unchanged.
   const activePanelKey = activeParams ? JSON.stringify(activeParams) : ''

@@ -424,6 +424,38 @@ function groupIDs(node: GridNode): Set<string> {
   return new Set((node.data as GridNode[]).flatMap((child) => [...groupIDs(child)]))
 }
 
+function leafByID(node: GridNode, id: string): UnknownRecord | undefined {
+  if (node.type === 'leaf') return (node.data as UnknownRecord).id === id ? node.data as UnknownRecord : undefined
+  for (const child of node.data as GridNode[]) {
+    const leaf = leafByID(child, id)
+    if (leaf) return leaf
+  }
+}
+
+// activePanelInDock is a serialized dock's focused panel: its active
+// group's shown tab, the panel a restore makes active.
+export function activePanelInDock(dock: SerializedDockview | null | undefined): DockPanelParams | undefined {
+  const value: unknown = dock
+  if (!record(value) || !record(value.grid) || !record(value.grid.root) || !record(value.panels)) return undefined
+  const root = value.grid.root as GridNode
+  const groupID = typeof value.activeGroup === 'string' ? value.activeGroup : firstGroupID(root)
+  const leaf = groupID === undefined ? undefined : leafByID(root, groupID)
+  const view = leaf && typeof leaf.activeView === 'string' ? leaf.activeView : undefined
+  const panel = view === undefined ? undefined : value.panels[view]
+  return record(panel) ? panelParams(panel.params) ?? undefined : undefined
+}
+
+// storedSpaceActivePanel reads another space's focused panel from its saved
+// layout, without the recovery write readStoredSpaceLayout performs when
+// handed a setItem.
+export function storedSpaceActivePanel(storage: Pick<Storage, 'getItem'>, spaceID: string): DockPanelParams | undefined {
+  try {
+    return activePanelInDock(readStoredSpaceLayout({ getItem: (key) => storage.getItem(key) }, spaceID).stored?.dock)
+  } catch {
+    return undefined
+  }
+}
+
 export function pinMovedPreview(panel: { params: unknown, api: { updateParameters: (params: DockPanelParams) => void } }) {
   const params = panelParams(panel.params)
   if (!params?.preview) return false

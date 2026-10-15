@@ -3,6 +3,7 @@ import type { DockviewApi } from 'dockview-react'
 import { followScrollCommandEvent, type FollowScrollCommand } from '../../shared/useFollowScroll'
 import { panelParams } from '../layout/dockLayout'
 import { bindShellShortcuts } from '../layout/shellShortcuts'
+import type { Arrive } from './useArrive'
 
 export function useWorkspaceShortcuts({
   apiRef,
@@ -14,6 +15,7 @@ export function useWorkspaceShortcuts({
   toggleNotesRail,
   stepSpace,
   toggleRead,
+  arrive,
 }: {
   apiRef: MutableRefObject<DockviewApi | undefined>
   // docked answers whether a dock is on screen: on the lens the dock keys are inert.
@@ -26,6 +28,8 @@ export function useWorkspaceShortcuts({
   // ⇧⌥←/→ is the zoom's [ ]: the previous or next space in lens order.
   stepSpace: (by: -1 | 1) => boolean
   toggleRead: (name: string) => void
+  // ⌥←/→ arrives at the tab it shows, as a click on it does.
+  arrive: Arrive
 }) {
   useEffect(() => {
     const scrollActivePanel = (command: FollowScrollCommand) => {
@@ -41,6 +45,7 @@ export function useWorkspaceShortcuts({
       const panels = api.activeGroup.panels
       const index = panels.findIndex((panel) => panel.id === api.activeGroup?.activePanel?.id)
       panels[(index + (direction === 'next' ? 1 : -1) + panels.length) % panels.length]?.api.setActive()
+      arrive()
       return true
     }
     return bindShellShortcuts(window, {
@@ -90,5 +95,5 @@ export function useWorkspaceShortcuts({
         return true
       },
     }, navigator.userAgent)
-  }, [apiRef, closePanel, docked, setShortcutReference, shortcutReference, showQuickOpen, stepSpace, toggleNotesRail, toggleRead])
+  }, [apiRef, arrive, closePanel, docked, setShortcutReference, shortcutReference, showQuickOpen, stepSpace, toggleNotesRail, toggleRead])
 }

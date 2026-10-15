@@ -25,7 +25,7 @@ export { dwelledAgents, nextDwellDelay, nextViewing, viewedAgents, viewDwellMs, 
 export { highlightedSpace, idleSwitcher, reduceSwitcher, type SwitcherEvent, type SwitcherState } from './spaceSwitcherModel.ts'
 export { SpacesSection } from './SpacesSection.tsx'
 export { SpaceSwitcher } from './SpaceSwitcher.tsx'
-export { focusAtEnd, focusOrigin, switchFocusDecision, type SwitchFocusDecision, type SwitchFocusInput } from './switchFocusModel.ts'
+export { arriveDecision, focusAtEnd, focusOrigin, type ArriveDecision, type ArriveInput } from './switchFocusModel.ts'
 export { memberParams, membersFromDock, parseMembersRow, reconcileSpaceMembers, sameMembers, storedSpaceMembers, type SpaceMember, type SpaceMembersRow } from './spaceMembersModel.ts'
 export { createSpaceMembersStore, type SpaceMembersStore } from './spaceMembersStore.ts'
 export { browserSpaceMembersTransport, createSpaceMembersSync, createSpaceMembersSyncPersistence, spaceMembersNamespace, spaceMembersStoreSyncAdapter } from './spaceMembersSync.ts'

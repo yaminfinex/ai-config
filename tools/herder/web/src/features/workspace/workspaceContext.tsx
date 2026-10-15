@@ -37,6 +37,9 @@ export type WorkspaceActionsValue = {
   markUnread: (name: string, index?: number) => void
   // markRead marks agents read now, as a dwell read would.
   markRead: (names: readonly string[]) => void
+  // arrive lands on the zoom's focused agent: its composer when writable,
+  // else its panel (useArrive).
+  arrive: () => void
 }
 
 // WorkspaceDataValue holds no fleet board: a fleet event changes the board,
