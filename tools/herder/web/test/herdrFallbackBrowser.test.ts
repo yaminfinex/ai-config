@@ -43,3 +43,25 @@ test('a herdr view whose ghostty-web WASM fails to load says "loading terminalâ€
   assert.deepEqual(await term.typed(), ['n'])
   await waitFor(`(() => { const caret = document.querySelector('.herdr-view .xterm-rows.xterm-focus .xterm-cursor.xterm-cursor-block'); return Boolean(caret) && getComputedStyle(caret).backgroundColor === 'rgb(247, 249, 252)' })()`)
 })
+
+// Without the opt-in the herdr view runs on xterm.js and never loads
+// ghostty-web, whose every-frame repaint kept the owner's tab busy.
+test('a herdr view in a browser that has not opted into ghostty-web runs on xterm.js, with no note and no ghostty-web load', { timeout: 120_000 }, async (context) => {
+  const api = fixtureAPI(['alpha'])
+  const term = await herdrTermFixture(context)
+  const { url, browser, evaluate, waitFor } = await startBrowser(context, 'herdr-default-xterm', [api.plugin, term.plugin])
+
+  await browser(['open', url])
+  await browser(['set', 'viewport', '1200', '800'])
+  await waitFor(`document.querySelectorAll('.lens-card').length === 1`)
+  await evaluate(herdrSurfaceProbe)
+  await evaluate(`localStorage.removeItem('herder.web.herdrTerminal.v1'), true`)
+  await browser(['press', 'Control+`'])
+  await waitFor(`${viewOpen} && ${viewState} === 'live' && window.__surface()?.kind === 'xterm'`)
+  assert.equal(await evaluate(`document.querySelectorAll('.herdr-view-note').length`), 0, 'no fallback note')
+  assert.equal(await evaluate(`performance.getEntriesByType('resource').some((entry) => /ghostty-web|ghosttySurface/.test(entry.name))`), false, 'ghostty-web is never fetched')
+  await waitFor(`${screenText}.includes('hello from herdr')`)
+  await browser(['press', 'n'])
+  await waitFor(`${screenText}.includes('in 6e')`)
+  assert.deepEqual(await term.typed(), ['n'])
+})

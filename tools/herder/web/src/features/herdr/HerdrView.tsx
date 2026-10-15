@@ -3,7 +3,7 @@ import { isHerdrViewChord } from '../layout/shellShortcuts.ts'
 import { useSizeObserver } from '../../shared/lifecycle.ts'
 import { HerdrSocket } from './herdrSocket.ts'
 import { connectionLabel, herdrTermURL, resizeDebounceMs, shouldFollow, type HerdrConnection } from './herdrViewModel.ts'
-import { createGhosttySurface, openTerminalSurface, type TerminalSurface, type TerminalSurfaceFactory } from './terminalSurface.ts'
+import { openTerminalSurface, preferredSurface, type TerminalSurface, type TerminalSurfaceFactory } from './terminalSurface.ts'
 import { terminalTheme } from '../screen/terminalTheme.ts'
 import './herdrView.css'
 
@@ -11,7 +11,7 @@ import './herdrView.css'
 // browser, following the agent the web is on. It stays mounted once opened
 // (hidden while away) so the screen and, for leaveGraceMs, the client are
 // still there when the owner flips back.
-export function HerdrView({ open, followPane, leaveLabel, onLeave, surface = createGhosttySurface }: {
+export function HerdrView({ open, followPane, leaveLabel, onLeave, surface = preferredSurface }: {
   open: boolean
   followPane: string | null
   leaveLabel: string
