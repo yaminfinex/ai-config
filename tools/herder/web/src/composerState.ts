@@ -100,6 +100,11 @@ export function isComposerSendShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlK
   return event.key === 'Enter' && !event.shiftKey && (event.ctrlKey || event.metaKey)
 }
 
+// ⌘⇧⏎ (Ctrl+Shift+Enter): send, then back to the lens.
+export function isComposerFileBackShortcut(event: Pick<KeyboardEvent, 'key' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>) {
+  return event.key === 'Enter' && event.shiftKey && !event.altKey && (event.ctrlKey || event.metaKey)
+}
+
 export function isComposerQueueShortcut(event: Pick<KeyboardEvent, 'key' | 'code' | 'altKey' | 'ctrlKey' | 'metaKey' | 'shiftKey'>) {
   return event.code === 'Enter' && event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey
 }

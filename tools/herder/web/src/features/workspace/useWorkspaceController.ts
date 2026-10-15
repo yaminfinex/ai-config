@@ -30,7 +30,7 @@ import {
   viewFromLocation,
   type HistoryCause,
 } from '../layout/historyModel'
-import { crumbParts, useLens, type LensView } from '../lens/index.ts'
+import { cardBounds, crumbParts, morphIn, morphOut, swipe, useLens, type LensView } from '../lens/index.ts'
 import { panelParams, pinMovedPreview, restoreDockLayout, screenIdentityState, storedSpaceActivePanel, writePanelToStoredSpace, type AgentPanelParams, type DockPanelParams } from '../layout/dockLayout'
 import { panelID } from './panelRegistry'
 import { panelFromAPI, useWorkspaceActions } from './useWorkspaceActions'
@@ -292,12 +292,17 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   // zoomInto shows a space's dock with agent's panel active (none: the
   // layout's focused panel as it is) and arrives there. From the lens (or
   // alone) it pushes the zoom's own entry, so back returns there; from a
-  // zoom it is a space switch like any other.
-  const zoomInto = useCallback((spaceID: string, agent?: string, focus = true) => {
+  // zoom it is a space switch like any other. From the lens it grows out of
+  // the space's card; from a zoom or an agent alone it swipes in from the
+  // side of by.
+  const zoomInto = useCallback((spaceID: string, agent?: string, focus = true, by: -1 | 1 = 1) => {
     const store = spacesRuntime.store
     const api = apiRef.current
     if (!store?.list().some((space) => space.id === spaceID) || !api) return false
     const fromZoom = viewRef.current.kind === 'zoom'
+    const fromLens = viewRef.current.kind === 'lens'
+    const card = fromLens ? cardBounds(spaceID) : null
+    const moving = fromLens || activeSpaceIDRef.current !== spaceID
     if (activeSpaceIDRef.current !== spaceID && !(fromZoom ? switchSpace(spaceID) : historySuppressor.run(() => switchSpace(spaceID)))) return false
     setLensSelected(spaceID)
     if (!fromZoom) {
@@ -316,6 +321,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     })
     updateHistory(panelParams(api.activePanel?.params) ?? undefined, 'stamp')
     if (focus) arrive()
+    if (fromLens) morphIn(card)
+    else if (moving) swipe(by)
     return true
   }, [arrive, historySuppressor, openAgent, setView, spacesRuntime.store, switchSpace, updateHistory])
   // zoomOut returns to the lens with the zoomed space still selected.
@@ -326,6 +333,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setView({ kind: 'lens' })
     window.history.pushState(lensHistoryEntry.state, '', lensHistoryEntry.path)
     window.requestAnimationFrame(() => document.querySelector<HTMLElement>('.lens')?.focus({ preventScroll: true }))
+    if (current.kind === 'zoom' && activeSpaceIDRef.current) morphOut(activeSpaceIDRef.current)
     return true
   }, [setView])
   // openAlone opens an agent in no space by itself, with no dock around it.
@@ -337,6 +345,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     const entry = aloneHistoryEntry(agent)
     window.history.pushState(entry.state, '', entry.path)
     arrive()
+    if (current.kind !== 'lens') swipe(1)
   }, [arrive, setView, spacesRuntime.store])
   // From the lens or an agent alone, opening anything zooms into the active
   // space first; the open joins the zoom's history entry.
@@ -670,7 +679,14 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     ? panelParams(apiRef.current?.activePanel?.params) ?? undefined
     : storedSpaceActivePanel(localStorage, spaceID), [])
   const spaceAttention = useSpaceAttention({ apiRef, board: boardQuery.data, openBySpace, membersBySpace, view })
-  const { markUnread, markRead, toggleRead } = spaceAttention
+  const { markUnread, markRead, toggleRead, seenNow, readThroughSeen } = spaceAttention
+  const fileBack = useCallback((name: string) => {
+    const seen = seenNow(name)
+    return () => {
+      readThroughSeen(name, seen)
+      zoomOut()
+    }
+  }, [readThroughSeen, seenNow, zoomOut])
   const lens = useLens({
     enabled: spacesRuntime.store !== null, spaces, membersBySpace, board: boardQuery.data,
     attention: spaceAttention.attention, total: spaceAttention.total, view, activeSpaceID,
@@ -701,8 +717,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     openAgent: zoomedOpenAgent, openFile: zoomedOpenFile, openFileInDiff: zoomedOpenFileInDiff, openChanges: zoomedOpenChanges, openFolder: zoomedOpenFolder, closePanel, pinPanel, setFileViewMode, setFileGitState,
     consumeFolderSelectionHint: pruneFolderSelectionHint,
     setAgentScreenPane, setAgentTailPane, onTerminalFocus: setFocusedScreenPaneID, onViewer, onAgentStatus: setAgentStatus,
-    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread, markRead, arrive,
-  }), [arrive, closePanel, markRead, markUnread, onViewer, zoomedOpenAgent, zoomedOpenChanges, zoomedOpenFile, zoomedOpenFileInDiff, zoomedOpenFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
+    resetLayout, showQuickOpen, sendPanelToSpace, sendPanelToNewSpace, markUnread, markRead, arrive, fileBack,
+  }), [arrive, closePanel, fileBack, markRead, markUnread, onViewer, zoomedOpenAgent, zoomedOpenChanges, zoomedOpenFile, zoomedOpenFileInDiff, zoomedOpenFolder, pinPanel, pruneFolderSelectionHint, resetLayout, sendPanelToNewSpace, sendPanelToSpace, setAgentScreenPane, setAgentStatus, setAgentTailPane, setFileGitState, setFileViewMode, showQuickOpen])
   // Panel params are read afresh from Dockview each render; the key keeps
   // the active panel's identity, and so the data context's, while it is unchanged.
   const activePanelKey = activeParams ? JSON.stringify(activeParams) : ''

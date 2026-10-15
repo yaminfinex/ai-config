@@ -3,7 +3,7 @@ import test from 'node:test'
 
 import { fixtureAPI, startBrowser } from './browserFixture.ts'
 
-test('home is the lens: zoom in and out, [ ] across spaces, N to an agent alone, keys inert while typing', { timeout: 180_000 }, async (context) => {
+test('home is the lens: zoom in and out, ⇧⌥←/→ across spaces, N to an agent alone, keys inert while typing', { timeout: 180_000 }, async (context) => {
   // lone is on the board in no space, and blocked: it needs the owner.
   const api = fixtureAPI(['alpha', 'bravo', 'lone'])
   const lone = api.board.workspaces[0]!.tabs[0]!.panes.find((pane) => pane.agent === 'lone')!
@@ -67,20 +67,23 @@ test('home is the lens: zoom in and out, [ ] across spaces, N to an agent alone,
   assert.equal(await evaluate(selected), order[1])
   assert.equal(await evaluate('location.pathname + location.search'), '/')
 
-  // Double-click zooms; [ ] cross spaces in lens order, wrapping. Each lands in a composer, so esc hands the keys back first.
+  // Double-click zooms; ⇧⌥←/→ cross spaces in lens order, wrapping, and bare [ ] do nothing (owner #463844). Each lands in a composer, so esc hands the keys back first.
   await evaluate(`document.querySelector('.lens-card[data-space-id="${order[0]}"]').dispatchEvent(new MouseEvent('dblclick', { bubbles: true })), true`)
   await waitFor(`!${onLens} && document.activeElement === ${composer('alpha')}`)
   await press('Escape')
   await press(']')
+  await press('[')
+  assert.match(await evaluate(crumb) as string, /alpha/, 'bare [ ] are no zoom keys')
+  await press('Shift+Alt+ArrowRight')
   await waitFor(`document.activeElement === ${composer('bravo')} && (${crumb}).includes('bravo')`)
   await press('Escape')
-  await press(']')
+  await press('Shift+Alt+ArrowRight')
   await waitFor(`document.activeElement === ${composer('alpha')} && (${crumb}).includes('alpha')`)
   await press('Escape')
-  await press('[')
+  await press('Shift+Alt+ArrowLeft')
   await waitFor(`document.activeElement === ${composer('bravo')}`)
   await press('Escape')
-  await press('[')
+  await press('Shift+Alt+ArrowLeft')
   await waitFor(`document.activeElement === ${composer('alpha')}`)
 
   // Typing in the composer: no lens or zoom key fires; esc returns to the panel, the next esc to the lens.

@@ -21,9 +21,11 @@ import {
   nextDwellDelay,
   nextViewedBlocks,
   nextViewing,
+  readThrough,
   readUpdates,
   seedUpdates,
   spaceAttention,
+  turnEnd,
   useReadMarkers,
   useReadMarkersContext,
   viewedAgents,
@@ -41,6 +43,8 @@ function documentVisible() {
 // transcriptEnd is the newest entry a viewed agent's transcript has
 // rendered: undefined while it is still loading, null when it has none or
 // cannot load (reading then advances the turn alone).
+export type SeenAgent = { turn: number | null, position: ReadPosition | null }
+
 function transcriptEnd(queryClient: QueryClient, name: string): ReadPosition | null | undefined {
   const page = queryClient.getQueryData<EntriesPage>(queryKeys.entries(name))
   if (page) return latestPosition(page)
@@ -163,6 +167,18 @@ export function useSpaceAttention({ apiRef, board, openBySpace, membersBySpace, 
     else markUnread(name)
   }, [markRead, markUnread, queryClient, store])
 
+  // seenNow is what the owner has seen of an agent: its latest turn and its
+  // transcript's end. readThroughSeen reads up to that and no further, so
+  // a turn the send itself wakes stays to be read (⌘⇧⏎).
+  const seenNow = useCallback((name: string): SeenAgent => ({
+    turn: turnEnd(findAgentRow(queryClient.getQueryData<Board>(queryKeys.fleet), name)),
+    position: transcriptEnd(queryClient, name) ?? null,
+  }), [queryClient])
+  const readThroughSeen = useCallback((name: string, seen: SeenAgent) => {
+    const next = readThrough(store.markers()[name], seen.turn, seen.position, Date.now())
+    if (next) store.apply({ [name]: next })
+  }, [store])
+
   const attention = useMemo(() => Object.fromEntries(Object.entries(membersBySpace)
     .map(([id, members]) => [id, spaceAttention(board, liveMembers(members, board), markers, drafts, viewedBlocks)])) as Record<string, SpaceAttention>, [board, drafts, markers, membersBySpace, viewedBlocks])
   const total = useMemo(() => boardAttention(board, markers, drafts, viewedBlocks), [board, drafts, markers, viewedBlocks])
@@ -183,5 +199,5 @@ export function useSpaceAttention({ apiRef, board, openBySpace, membersBySpace, 
   const markSpaceUnread = useCallback((spaceID: string) => {
     for (const name of liveMembers(membersBySpace[spaceID] ?? [], queryClient.getQueryData<Board>(queryKeys.fleet))) markUnread(name)
   }, [markUnread, membersBySpace, queryClient])
-  return { attention, total, viewedBlocks, markUnread, markRead, toggleRead, markSpaceRead, markSpaceUnread }
+  return { attention, total, viewedBlocks, markUnread, markRead, toggleRead, markSpaceRead, markSpaceUnread, seenNow, readThroughSeen }
 }

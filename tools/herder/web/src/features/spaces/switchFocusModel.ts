@@ -1,5 +1,5 @@
 // Arriving at an agent means "I want to talk to it" (owner #463121): every
-// way of landing on one (a zoom from the lens, [ ] and n/N, ⇧⌥←/→, ⌥Tab,
+// way of landing on one (a zoom from the lens, n/N, ⇧⌥←/→, ⌥Tab,
 // ⌘K, the Spaces list, a sidebar or notes agent, a tab, ⌥←/→, a mention,
 // back/forward) puts the caret at the end of its composer draft when the
 // agent is writable, else focuses its panel, so the keys are the panel's.

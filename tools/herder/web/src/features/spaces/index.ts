@@ -17,7 +17,7 @@ export {
 } from './spacesModel.ts'
 export { agentBlocked, agentsInDock, agentUnread, attentionLabel, boardAgents, boardAttention, markerKeepSet, markReadUpdates, needsYou, nextViewedBlocks, quietAttention, readUpdates, seedUpdates, spaceAttention, spaceMenuItems, spaceStreamAgents, storedSpaceAgents, streamAgentLimit, turnEnd, type SpaceAttention } from './spaceAttentionModel.ts'
 export { nextArmed, type ReadMarker, type ReadMarkers, type ReadPosition } from './readMarkerModel.ts'
-export { dividerIndex, latestPosition, markLastTurnUnread, markUnreadAt, viewedAtLabel } from './readPositionModel.ts'
+export { dividerIndex, latestPosition, markLastTurnUnread, markUnreadAt, readThrough, viewedAtLabel } from './readPositionModel.ts'
 export { ReadMarkersProvider, useReadMarker, useReadMarkers, useReadMarkersContext } from './ReadMarkersProvider.tsx'
 export { readMarkersNamespace } from './readMarkerSync.ts'
 export { mruSpaceIDs, readSpaceMRU, touchSpaceMRU, writeSpaceMRU } from './spaceMRU.ts'

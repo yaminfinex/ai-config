@@ -23,7 +23,9 @@ export type FixturePost = { namespace: string, bytes: number, keys: string[], st
 // fleet event is sent. Every stream's hello names it; a subscription update
 // retargets it. With live set, a stream behaves like the serve's: after
 // firstBoardDelayMs it sends the board and announces its agents subscribed,
-// and an update announces the agents it adds.
+// and an update announces the agents it adds. A message to an agent is
+// recorded in messages and lands, or with failSends(reason) set is refused
+// with a 500 saying reason.
 export function fixtureAPI(agents: string[], options: {
   maxWriteBytes?: number
   entries?: (agent: string) => unknown[]
@@ -33,8 +35,10 @@ export function fixtureAPI(agents: string[], options: {
   const streamIDs = new Map<string, { response: ServerResponse, agents: string[] }>()
   const state = new Map<string, Map<string, { rev: number, row: StoredRow }>>()
   const posts: FixturePost[] = []
-  const entryRequests: { agent: string, from: number | null, bytes: number }[] = []
+  const entryRequests: { agent: string, from: number | null, limit: number | null, bytes: number }[] = []
   const subscriptionUpdates: string[][] = []
+  const messages: { agent: string, text: string }[] = []
+  let sendFailure: string | null = null
   const held: (() => void)[] = []
   let holding = false
   let opens = 0
@@ -118,6 +122,17 @@ export function fixtureAPI(agents: string[], options: {
           })
           return
         }
+        const message = url.pathname.match(/^\/api\/agents\/([^/]+)\/message$/)
+        if (message && request.method === 'POST' && agents.includes(message[1])) {
+          let body = ''
+          request.on('data', (chunk) => { body += chunk })
+          request.on('end', () => {
+            if (sendFailure) return json({ error: 'send failed', detail: sendFailure }, 500)
+            messages.push({ agent: message[1], text: (JSON.parse(body) as { text: string }).text })
+            json({ sent: true, to: message[1], from: 'web-owner' })
+          })
+          return
+        }
         const agent = url.pathname.match(/^\/api\/agents\/([^/]+)(\/entries)?$/)
         if (agent && agents.includes(agent[1])) {
           if (agent[2]) {
@@ -127,7 +142,7 @@ export function fixtureAPI(agents: string[], options: {
             const end = all.reduce((latest, entry) => Math.max(latest, (entry.byteOffset ?? 0) + 1), 0)
             const body = JSON.stringify({ sessionId: `session-${agent[1]}`, window: { mode: 'tail', from: 0, limit: 50 }, entries, nextOffset: end })
             const answer = () => {
-              entryRequests.push({ agent: agent[1], from, bytes: Buffer.byteLength(body) })
+              entryRequests.push({ agent: agent[1], from, limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : null, bytes: Buffer.byteLength(body) })
               response.setHeader('Content-Type', 'application/json')
               response.end(body)
             }
@@ -149,7 +164,8 @@ export function fixtureAPI(agents: string[], options: {
     holding = on
     if (!on) held.splice(0).forEach((answer) => answer())
   }
-  return { plugin, state, posts, board, send, entryRequests, subscriptionUpdates, holdEntries, opens: () => opens, heldEntries: () => held.length }
+  const failSends = (reason: string | null) => { sendFailure = reason }
+  return { plugin, state, posts, board, send, entryRequests, subscriptionUpdates, holdEntries, messages, failSends, opens: () => opens, heldEntries: () => held.length }
 }
 
 // A minimal React devtools hook, installed before React loads, that counts

@@ -71,7 +71,7 @@ const actions = readFileSync(new URL('../src/features/workspace/useWorkspaceActi
 const shortcuts = readFileSync(new URL('../src/features/workspace/useWorkspaceShortcuts.ts', import.meta.url), 'utf8')
 const registry = readFileSync(new URL('../src/features/workspace/panelRegistry.tsx', import.meta.url), 'utf8')
 
-test('in a zoom the rail, ⌥Tab and ⌘K switch through the focusing wrapper; ⇧⌥←/→ is the zoom\'s [ ]', () => {
+test('in a zoom the rail, ⌥Tab and ⌘K switch through the focusing wrapper; ⇧⌥←/→ steps spaces', () => {
   assert.match(controller, /const switchSpaceFocusing = useSwitchSpaceFocusing\(switchSpace, readActiveSpaceID, arrive\)/)
   assert.match(controller, /const switchSpaceAnywhere = useCallback\(\(id: string, from\?: 'quick-open'\) => viewRef\.current\.kind === 'zoom' \? switchSpaceFocusing\(id, from\) : lens\.zoomCard\(id\)/)
   assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*stepSpace: lens\.stepSpace, toggleRead, arrive \}\)/)

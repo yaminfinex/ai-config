@@ -1,8 +1,9 @@
 import { plainRecord, readBrowserRecord, writeBrowserRecord, type BrowserRecordState } from '../spaces/browserRecord.ts'
-import { emptyLensPrefs, lensRows, type LensPrefs, type LensRow } from './lensModel.ts'
+import { cardTextModes, type CardTextMode } from './cardTextModel.ts'
+import { emptyLensPrefs, focusSizes, lensRows, type LensPrefs, type LensRow } from './lensModel.ts'
 
-// The lens rows and visible agents are this browser's (owner ruling,
-// 2026-10-15), like the other web prefs: a versioned record with a
+// The lens rows, visible agents, card text and size are this browser's
+// (owner ruling, 2026-10-15), like the other web prefs: a versioned record with a
 // last-good backup.
 export const lensPrefsKey = 'herder.web.lens.v1'
 
@@ -24,7 +25,10 @@ export function parseLensPrefs(raw: string | null): LensPrefs | null {
     if (!plainRecord(value) || value.version !== 1) return null
     const rows = stringMap(value.rows, isRow)
     const visible = stringMap(value.visible, isName)
-    return rows && visible ? { rows, visible } : null
+    if (!rows || !visible) return null
+    const text = cardTextModes.includes(value.text as CardTextMode) ? value.text as CardTextMode : undefined
+    const size = Number.isInteger(value.size) && (value.size as number) >= 0 && (value.size as number) < focusSizes.length ? value.size as number : undefined
+    return { rows, visible, ...(text ? { text } : {}), ...(size !== undefined ? { size } : {}) }
   } catch {
     return null
   }
@@ -36,7 +40,7 @@ export function readLensPrefs(storage: Pick<Storage, 'getItem'>) {
 }
 
 export function writeLensPrefs(storage: Pick<Storage, 'setItem'>, prefs: LensPrefs, state: BrowserRecordState) {
-  return writeBrowserRecord(storage, lensPrefsKey, JSON.stringify({ version: 1, rows: prefs.rows, visible: prefs.visible }), state)
+  return writeBrowserRecord(storage, lensPrefsKey, JSON.stringify({ version: 1, rows: prefs.rows, visible: prefs.visible, text: prefs.text, size: prefs.size }), state)
 }
 
 // The viewed blocks: agents whose current block the owner has viewed. Local

@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiProblem, viewerReadOnlyMessage } from '../../api/client'
-import { blurComposerOnEscape, composerArrowUpAction, composerFieldId, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
+import { blurComposerOnEscape, composerArrowUpAction, composerFieldId, isComposerFileBackShortcut, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
 import { sendWithRefresh } from '../../sendRefresh'
 
-export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocus, onViewer, onProblem, onSend, onQueue }: {
+export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocus, onViewer, onProblem, onSend, onFileBack, onQueue }: {
   name: string
   identityReadOnly: string
   hasNotes?: boolean
@@ -12,6 +12,8 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
   onViewer: (viewer: string) => void
   onProblem: (detail: string) => void
   onSend: () => void
+  // onFileBack is ⌘⇧⏎: called as the send starts, its answer once it lands.
+  onFileBack?: () => () => void
   onQueue: (text: string) => { ok: true } | { ok: false, reason: string }
 }) {
   const [message, setMessage] = useState(() => readComposerDraft(name))
@@ -34,9 +36,10 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
     resizeComposerFromMirror(composer, mirror)
   }, [message, name])
 
-  const send = async (event: React.FormEvent) => {
-    event.preventDefault()
+  // send sends the draft; landed runs once it has (⌘⇧⏎). A failure stays here and says why.
+  const send = async (fileBack = false) => {
     if (!message.trim() || mutation.isPending || effectiveReadOnly) return
+    const landed = fileBack ? onFileBack?.() : undefined
     onSend()
     setSendProblem('')
     try {
@@ -45,6 +48,7 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
       persistComposerDraft(name, '')
       setMessage('')
       onProblem('')
+      landed?.()
     } catch (error: unknown) {
       const { response, problem } = apiProblem(error)
       if (response?.status === 409 && (problem.error === 'attribution required' || problem.error === 'sender refused')) setReadOnly(viewerReadOnlyMessage(problem, response.status))
@@ -53,7 +57,7 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
     }
   }
 
-  return <form className="send-box" onSubmit={(event) => void send(event)}>
+  return <form className="send-box" onSubmit={(event) => { event.preventDefault(); void send() }}>
     {effectiveReadOnly && <div className="read-only" role="alert"><strong>Read-only</strong><span>{effectiveReadOnly}</span></div>}
     <textarea
       id={fieldId}
@@ -81,6 +85,11 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
           setSendProblem('')
           return
         }
+        if (onFileBack && isComposerFileBackShortcut(event) && !event.nativeEvent.isComposing) {
+          event.preventDefault()
+          void send(true)
+          return
+        }
         if (!isComposerSendShortcut(event) || event.nativeEvent.isComposing) return
         event.preventDefault()
         event.currentTarget.form?.requestSubmit()
@@ -98,7 +107,7 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
     />
     <div className="send-footer">
       <div>{sendProblem && <p className="inline-error" role="alert">{sendProblem}</p>}</div>
-      <span className="composer-key-hints"><span><kbd>⌘⏎</kbd> send</span><span><kbd>⌥⏎</kbd> queue as note</span></span>
+      <span className="composer-key-hints"><span><kbd>⌘⏎</kbd> send</span>{onFileBack && <span><kbd>⌘⇧⏎</kbd> send, back to lens</span>}<span><kbd>⌥⏎</kbd> queue as note</span></span>
       <button type="submit" disabled={!message.trim() || mutation.isPending || Boolean(effectiveReadOnly)}>{mutation.isPending ? 'Sending…' : 'Send request'}</button>
     </div>
   </form>

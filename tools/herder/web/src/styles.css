@@ -232,7 +232,7 @@ h2, h3, p { margin-top: 0; }
 .tree-state strong { color: inherit; font: inherit; font-weight: 500; }
 .tree-state p { margin: 2px 0 0; }
 .tree-state[role='alert'] { border: 1px solid var(--error-border); border-radius: 4px; background: var(--error-bg); color: var(--error-text); }
-.shell-main { display: flex; flex: 1; min-width: 200px; flex-direction: column; }
+.shell-main { display: flex; flex: 1; min-width: 200px; flex-direction: column; overflow: hidden; }
 .error-boundary { display: grid; height: 100%; place-content: center; justify-items: center; padding: 24px; background: var(--error-bg); color: var(--error-text); text-align: center; }
 .error-boundary p { max-width: 560px; margin: 0 0 14px; overflow-wrap: anywhere; }
 .error-boundary strong { margin-bottom: 7px; font: 600 14px var(--mono); }
@@ -240,6 +240,8 @@ h2, h3, p { margin-top: 0; }
 .dock-host { position: relative; flex: 1; min-height: 0; min-width: 0; }
 /* The lens and an agent alone cover the dock, which stays laid out beneath. */
 .dock-host[data-covered='true'] > :not(.lens, .alone-agent) { visibility: hidden; }
+/* Zooming out, the dock shrinks back into its card over the lens (lensMotion), never taking a pointer. */
+.dock-host[data-morph='out'] > :not(.lens, .alone-agent) { position: relative; z-index: 2; visibility: visible; pointer-events: none; }
 .alone-agent { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
 .dockview-theme-herder {
   --dv-paneview-active-outline-color: var(--accent); --dv-tabs-and-actions-container-font-size: 12px; --dv-tabs-and-actions-container-height: 32px;

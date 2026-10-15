@@ -12,10 +12,11 @@ const lensKeys = [
   ['v', 'Show the next agent on the selected card'],
   ['m', 'Mark the selected space read'],
   ['u', 'Mark the selected space’s agents unread'],
+  ['t', 'Card text: last answer, status or folder'],
+  ['s', 'Card size: the next of four'],
 ] as const
 const zoomKeys = [
   ['Esc', 'Back to the lens'],
-  ['[ / ]', 'Previous or next space in lens order'],
   ['n / N', 'Next space (N: or agent in no space) that needs you'],
 ] as const
 
@@ -27,12 +28,13 @@ export function ShortcutReference({ open, lens, onClose }: { open: boolean, lens
     [labels.closePanel, 'Close active pane'],
     [labels.quickOpen, 'Open spaces, agents, files, or folders'],
     [labels.switchTabs, 'Switch tabs'],
-    [labels.switchSpaces, 'Previous or next space in lens order, as [ ]'],
+    [labels.switchSpaces, 'Previous or next space in lens order'],
     [labels.spaceSwitcher, 'Switch to recent spaces (hold ⌥/Alt to choose)'],
     [labels.focusFleet, 'Focus fleet sidebar'],
     [labels.toggleNotesRail, 'Toggle notes rail'],
     [labels.focusComposer, 'Focus active composer'],
     [labels.sendRequest, 'Send request'],
+    [labels.fileBack, 'Send, then back to the lens with the agent read'],
     [labels.leaveComposer, 'Leave text box'],
     [labels.goToTop, 'Go to top'],
     [labels.goToBottom, 'Go to bottom and resume follow'],

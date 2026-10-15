@@ -98,13 +98,13 @@ test('every way of arriving at an agent lands in its composer; a zoom returns to
   await arrived('mavu', 'enter on the lens')
   assert.match(await evaluate(crumb) as string, /›mavu$/, 'the zoom returns to the agent last had in the space')
 
-  // [ ] and ⇧⌥←/→: each space on its last agent.
+  // ⇧⌥←/→: each space on its last agent.
   await press('Escape')
-  await press(']')
-  await arrived('alpha', ']')
+  await press('Shift+Alt+ArrowRight')
+  await arrived('alpha', '⇧⌥→')
   await press('Escape')
-  await press('[')
-  await arrived('mavu', '[')
+  await press('Shift+Alt+ArrowLeft')
+  await arrived('mavu', '⇧⌥←')
   await press('Escape')
   await press('Shift+Alt+ArrowRight')
   await arrived('alpha', '⇧⌥→')

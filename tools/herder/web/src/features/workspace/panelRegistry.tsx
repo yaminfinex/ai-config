@@ -74,6 +74,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
   const onSend = useCallback(() => workspace.pinPanel(api.id), [api, workspace])
   const onMarkUnread = useCallback((index?: number) => workspace.markUnread(name, index), [name, workspace])
   const onMarkRead = useCallback(() => workspace.markRead([name]), [name, workspace])
+  const onFileBack = useCallback(() => workspace.fileBack(name), [name, workspace])
   return <AgentPanel name={name} panelID={api.id} agents={agents} active={visible} liveStatus={liveStatus} screenPaneID={data.agentScreenPanes[name]}
     mentionMatcher={data.mentionMatcher} onOpenAgent={onOpenAgent}
     onScreenPane={onScreenPane} onTailPane={onTailPane} onOpenFile={onOpenFile}
@@ -81,7 +82,7 @@ function AgentDockPanel({ params, api }: IDockviewPanelProps<AgentPanelParams>) 
     onOpenChanges={onOpenChanges}
     identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={onSend} onStatus={workspace.onAgentStatus}
     onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={onMarkUnread}
-    unread={unread} onMarkRead={onMarkRead} />
+    unread={unread} onMarkRead={onMarkRead} onFileBack={onFileBack} />
 }
 
 function ScreenDockPanel({ params, api }: IDockviewPanelProps<ScreenPanelParams>) {
@@ -212,6 +213,7 @@ export function AloneAgentPanel({ name, onOpenAgent }: { name: string, onOpenAge
   const onTailPane = useCallback((paneID?: string) => workspace.setAgentTailPane(name, paneID), [name, workspace])
   const onMarkUnread = useCallback((index?: number) => workspace.markUnread(name, index), [name, workspace])
   const onMarkRead = useCallback(() => workspace.markRead([name]), [name, workspace])
+  const onFileBack = useCallback(() => workspace.fileBack(name), [name, workspace])
   const noop = useCallback(() => undefined, [])
   return <div className="alone-agent"><ErrorBoundary><AgentPanel name={name} panelID={`alone:${name}`} agents={agents} active liveStatus={liveStatus} screenPaneID={data.agentScreenPanes[name]}
     mentionMatcher={data.mentionMatcher} onOpenAgent={onOpen}
@@ -219,5 +221,5 @@ export function AloneAgentPanel({ name, onOpenAgent }: { name: string, onOpenAge
     onOpenFolder={workspace.openFolder} onOpenChanges={workspace.openChanges}
     identityReadOnly={data.identityReadOnly} onViewer={workspace.onViewer} onSend={noop} onStatus={workspace.onAgentStatus}
     onTerminalFocus={workspace.onTerminalFocus} onMarkUnread={onMarkUnread}
-    unread={unread} onMarkRead={onMarkRead} /></ErrorBoundary></div>
+    unread={unread} onMarkRead={onMarkRead} onFileBack={onFileBack} /></ErrorBoundary></div>
 }
