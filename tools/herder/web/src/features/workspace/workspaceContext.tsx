@@ -42,7 +42,7 @@ export type WorkspaceActionsValue = {
   arrive: () => void
   // fileBack is ⌘⇧⏎, called as the send starts: it notes what the owner
   // has seen of the agent and answers what to do once the send lands (read
-  // up to that, back to the lens with the space selected).
+  // up to that, its current block viewed, back to the lens with the space selected).
   fileBack: (name: string) => () => void
 }
 

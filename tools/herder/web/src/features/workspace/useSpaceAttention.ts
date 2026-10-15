@@ -199,5 +199,5 @@ export function useSpaceAttention({ apiRef, board, openBySpace, membersBySpace, 
   const markSpaceUnread = useCallback((spaceID: string) => {
     for (const name of liveMembers(membersBySpace[spaceID] ?? [], queryClient.getQueryData<Board>(queryKeys.fleet))) markUnread(name)
   }, [markUnread, membersBySpace, queryClient])
-  return { attention, total, viewedBlocks, markUnread, markRead, toggleRead, markSpaceRead, markSpaceUnread, seenNow, readThroughSeen }
+  return { attention, total, viewedBlocks, viewBlocks, markUnread, markRead, toggleRead, markSpaceRead, markSpaceUnread, seenNow, readThroughSeen }
 }

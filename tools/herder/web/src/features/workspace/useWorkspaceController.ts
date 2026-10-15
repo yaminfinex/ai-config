@@ -678,14 +678,17 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     ? panelParams(apiRef.current?.activePanel?.params) ?? undefined
     : storedSpaceActivePanel(localStorage, spaceID), [])
   const spaceAttention = useSpaceAttention({ apiRef, board: boardQuery.data, openBySpace, membersBySpace, view })
-  const { markUnread, markRead, toggleRead, seenNow, readThroughSeen } = spaceAttention
+  const { markUnread, markRead, toggleRead, seenNow, readThroughSeen, viewBlocks } = spaceAttention
+  // A landed ⌘⇧⏎ has answered the agent: read up to what was seen, and its
+  // current block viewed as zooming in on it would.
   const fileBack = useCallback((name: string) => {
     const seen = seenNow(name)
     return () => {
       readThroughSeen(name, seen)
+      viewBlocks([name])
       zoomOut()
     }
-  }, [readThroughSeen, seenNow, zoomOut])
+  }, [readThroughSeen, seenNow, viewBlocks, zoomOut])
   const lens = useLens({
     enabled: spacesRuntime.store !== null, spaces, membersBySpace, board: boardQuery.data,
     attention: spaceAttention.attention, total: spaceAttention.total, view, activeSpaceID,

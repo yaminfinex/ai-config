@@ -272,9 +272,11 @@ export function createNotesStore(options: Options = {}): NotesStore {
     }
   }
 
+  // Oldest first, as the owner reads top to bottom: a new note lands at the
+  // bottom, and an edit or a move never changes a note's place.
   const currentNotes = () => liveNotes ??= [...records.values()]
     .flatMap((stored) => active(stored.record) ? [stored.record] : [])
-    .sort((left, right) => right.updated - left.updated || left.id.localeCompare(right.id))
+    .sort((left, right) => left.created - right.created || left.id.localeCompare(right.id))
 
   const totalWith = (candidate: StoredNoteRecord) => liveTotal - (liveBytes.get(candidate.record.id) ?? 0) + (active(candidate.record) ? storedBytes(candidate) : 0)
   const refuseCandidate = (candidate: StoredNoteRecord, adding: boolean): string => {
