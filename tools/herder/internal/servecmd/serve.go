@@ -93,6 +93,8 @@ type dependencies struct {
 	transcriptSafety     time.Duration
 	listeners            func(int) ([]net.Listener, []string, error)
 	screens              func() (screenSource, error)
+	termArgv             func() []string    // The herdr view's client argv; see herdrterm.go.
+	focusPane            func(string) error // Herdr pane.focus for the herdr view's follow.
 	configuredRoots      []string
 	roots                func(context.Context, []string, []hcomidentity.Row) (fileroots.Set, error)
 	fileResolver         fileresolver.Resolver
@@ -260,6 +262,14 @@ var liveDependencies = dependencies{
 	listeners:            liveListeners,
 	screens: func() (screenSource, error) {
 		return herdrcli.NewLiveScreens()
+	},
+	termArgv: liveTermArgv,
+	focusPane: func(paneID string) error {
+		screens, err := herdrcli.NewLiveScreens()
+		if err != nil {
+			return err
+		}
+		return screens.FocusPane(paneID)
 	},
 	roots:             buildRootSet,
 	fileResolver:      fileresolver.New(fileindex.New(fileindex.Options{})),
@@ -758,12 +768,16 @@ type drainingHandler struct {
 	idle     chan struct{}
 	nextSSE  uint64
 	sse      map[uint64]context.CancelFunc
+	// terms are the herdr view's PTY sockets: cancelled with the SSE streams
+	// on drain, and hung up (their clients reaped) before a plain stop.
+	terms     map[uint64]context.CancelFunc
+	termsLive sync.WaitGroup
 }
 
 func newDrainingHandler(handler http.Handler) *drainingHandler {
 	idle := make(chan struct{})
 	close(idle)
-	return &drainingHandler{handler: handler, idle: idle, sse: make(map[uint64]context.CancelFunc)}
+	return &drainingHandler{handler: handler, idle: idle, sse: make(map[uint64]context.CancelFunc), terms: make(map[uint64]context.CancelFunc)}
 }
 
 func (d *drainingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -779,17 +793,23 @@ func (d *drainingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	d.active++
 	var sseID uint64
-	if r.URL.Path == "/api/events" {
+	if r.URL.Path == "/api/events" || r.URL.Path == herdrTermPath {
 		d.nextSSE++
 		sseID = d.nextSSE
 		ctx, cancel := context.WithCancel(r.Context())
 		d.sse[sseID] = cancel
+		if r.URL.Path == herdrTermPath {
+			d.terms[sseID] = cancel
+			d.termsLive.Add(1)
+			defer d.termsLive.Done()
+		}
 		r = r.WithContext(ctx)
 	}
 	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
 		delete(d.sse, sseID)
+		delete(d.terms, sseID)
 		d.active--
 		if d.active == 0 {
 			close(d.idle)
@@ -814,6 +834,26 @@ func (d *drainingHandler) beginDrain() <-chan struct{} {
 	return idle
 }
 
+// hangUpTerms ends every herdr view client and waits (bounded) until they
+// are reaped: server.Close does not reach hijacked WebSocket connections.
+func (d *drainingHandler) hangUpTerms(timeout time.Duration) {
+	d.mu.Lock()
+	d.draining = true
+	for _, cancel := range d.terms {
+		cancel()
+	}
+	d.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		d.termsLive.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+	}
+}
+
 // beforeExec runs right before a --watch re-exec replaces the process (the
 // socket is unlinked there because deferred closes never run after Exec).
 func serve(listeners []net.Listener, handler http.Handler, reload <-chan watchConfig, drainTimeout time.Duration, beforeExec func(), stdout, stderr io.Writer) int {
@@ -832,6 +872,7 @@ func serve(listeners []net.Listener, handler http.Handler, reload <-chan watchCo
 		// instead of waiting for graceful drain. Closing cancels their request
 		// contexts and reaps the blocking hcom subscription subprocesses.
 		_ = server.Close()
+		drainer.hangUpTerms(3 * termHangupGrace)
 		return 0
 	case config := <-reload:
 		idle := drainer.beginDrain()
@@ -1140,6 +1181,9 @@ func newHandler(deps dependencies) http.Handler {
 			return
 		}
 		serveSpawn(w, r, deps)
+	})
+	mux.HandleFunc(herdrTermPath, func(w http.ResponseWriter, r *http.Request) {
+		serveHerdrTerm(w, r, deps)
 	})
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		refuse(w, http.StatusNotFound, "not found", "unknown endpoint")

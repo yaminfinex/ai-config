@@ -1,0 +1,17 @@
+/* The herdr view covers the whole app; every color is a theme token. */
+.herdr-view { position: fixed; z-index: 80; inset: 0; display: flex; flex-direction: column; background: var(--bg); }
+.herdr-view[hidden] { display: none; }
+.herdr-view-header { display: flex; flex: 0 0 auto; align-items: center; gap: 10px; min-height: 28px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--bg2); color: var(--text); font: 11px var(--mono); }
+.herdr-view-header strong { font-weight: 600; }
+.herdr-view-state { color: var(--dim); }
+.herdr-view-state.herdr-live { color: var(--green); }
+.herdr-view-state.herdr-reconnecting, .herdr-view-state.herdr-ended { color: var(--amber); }
+.herdr-view-follow { display: inline-flex; align-items: center; gap: 4px; color: var(--text); cursor: pointer; }
+.herdr-view-pane { color: var(--dim); }
+.herdr-view-problem { color: var(--red); }
+.herdr-view-header button { padding: 1px 8px; font: 11px var(--mono); }
+.herdr-view-keys { margin-left: auto; color: var(--dim); }
+.herdr-view-keys kbd { color: var(--text); font: inherit; }
+.herdr-view-header .herdr-view-leave { width: 22px; height: 22px; padding: 0; border: 0; background: transparent; color: var(--dim); font-size: 15px; }
+.herdr-view-terminal { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.herdr-view-terminal .xterm { height: 100%; padding: 4px 6px; }

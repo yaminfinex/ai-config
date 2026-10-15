@@ -35,6 +35,7 @@ export type ShortcutLabels = {
   toggleMaximize: string
   toggleRead: string
   browserClose: string
+  herdrView: string
 }
 
 export function isMacPlatform(userAgent: string) {
@@ -59,6 +60,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     toggleMaximize: '⌥⏎',
     toggleRead: '⌥U',
     browserClose: '⌘W',
+    herdrView: '⌃`',
   } : {
     closePanel: 'Alt+W',
     quickOpen: 'Ctrl+K',
@@ -76,6 +78,7 @@ export function shortcutLabels(userAgent: string): ShortcutLabels {
     toggleMaximize: 'Alt+Enter',
     toggleRead: 'Alt+U',
     browserClose: 'Ctrl+W',
+    herdrView: 'Ctrl+`',
   }
 }
 
@@ -88,8 +91,16 @@ export function isEditableShortcutTarget(target: EventTarget | null) {
 // field or terminal, the notes list, a popover, menu, picker or dialog.
 const ownKeysSelector = '.xterm, .notes-list, [role="dialog"], [role="menu"], [role="listbox"], .note-quick-add-popover, .quick-open'
 
+// While the herdr view is open every key is herdr's (but its leave chord),
+// whether the terminal, the view's header or nothing at all has focus.
+export function herdrViewOwnsKeys(target: EventTarget | null) {
+  if (typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && target.closest('.herdr-view:not([hidden])')) return true
+  if (typeof document === 'undefined') return false
+  return (target === document.body || target === document.documentElement || target === document || target === window) && Boolean(document.querySelector('.herdr-view:not([hidden])'))
+}
+
 export function isOwnKeysTarget(target: EventTarget | null) {
-  return isEditableShortcutTarget(target) ||
+  return isEditableShortcutTarget(target) || herdrViewOwnsKeys(target) ||
     (typeof HTMLElement !== 'undefined' && target instanceof HTMLElement && Boolean(target.closest(ownKeysSelector)))
 }
 
@@ -153,6 +164,7 @@ export function bindLensShortcuts(target: Window | HTMLElement, actions: LensKey
 
 function claimed(action: () => boolean | void, guarded = false): KeybindingHandler {
   return (event) => {
+    if (herdrViewOwnsKeys(event.target)) return
     if (guarded && isEditableShortcutTarget(event.target)) return
     if (action() === false) return
     event.preventDefault()
@@ -186,6 +198,24 @@ export function bindShellShortcuts(target: Window | HTMLElement, actions: ShellS
     // Target guards are deliberately owned by our individual callbacks.
     ignore: (event) => event.repeat || event.isComposing,
   })
+}
+
+// isHerdrViewChord is ⌃` (Ctrl+`) on every platform: no browser takes it,
+// and in a terminal it is only NUL, which ⌃Space and ⌃@ still send.
+export function isHerdrViewChord(event: Pick<KeyboardEvent, 'code' | 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey'>) {
+  return event.code === 'Backquote' && event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey
+}
+
+// bindHerdrViewChord claims ⌃` in the window's capture phase, ahead of the
+// terminal: it opens the herdr view from anywhere and leaves it from inside.
+export function bindHerdrViewChord(target: Window, toggle: () => void) {
+  return tinykeys(target, {
+    'Control+Backquote': (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      toggle()
+    },
+  }, { capture: true, ignore: (event) => event.repeat || event.isComposing })
 }
 
 export type SwitcherIntent = 'forward' | 'backward' | 'release' | 'cancel'

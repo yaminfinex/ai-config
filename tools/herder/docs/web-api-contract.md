@@ -1471,9 +1471,60 @@ outside this web API are unchanged.
   privilege levels: attributed (full v1 surface) and unattributed
   (reads only).
 
+### AMENDMENT (owner #464369/#464505, 2026-10-15) — the herdr view: one herdr client over a WebSocket
+
+The owner cannot always SSH to the machine; the web gets herdr itself. This
+is the single WebSocket in the API and the single process the serve starts
+for a web peer. It adds no other terminal surface: new shells are made inside
+herdr.
+
+`GET /api/herdr/term[?cols=C&rows=R]` upgraded to a WebSocket starts one
+herdr client (`herdr`, attaching to the default persistent session) in a PTY
+of C×R (default 80×24, each clamped to 2..1000) and streams it both ways:
+
+- server → browser binary frames are raw PTY output, byte for byte;
+- browser → server binary frames are raw input bytes written to the PTY;
+- browser → server text frames are JSON control:
+  `{"type":"resize","cols":C,"rows":R}` sets the PTY size (2..1000, else an
+  `error` notice), and `{"type":"focus","pane_id":"<id>"}` asks herdr to show
+  that pane (Herdr socket `pane.focus`, the pane-level form of
+  `herdr agent focus`); the pane must be in the current Herdr snapshot.
+- server → browser text frames are JSON notices: `focused` / `focus_failed`
+  (with `pane_id`, `detail`), `error` (`detail`), and `exit` (`code` when the
+  client exited by itself) just before the socket closes.
+
+Herdr's focus moves the attached clients' view, so following an agent in
+the web may move the owner's other herdr clients (accepted, #464505).
+
+**Gating.** This is a full shell for whoever reaches it. Before anything
+starts: a non-GET is 400; a request that is not a WebSocket upgrade is 400;
+an `Origin` that is missing, not http(s), or whose host is not the request's
+own `Host` is 403 `origin refused`; then the same tailnet attribution as
+every write (409 `attribution required` / `sender refused`, 502 when
+tailscale is unreachable). Loopback without a tailnet identity is therefore
+refused, like every other write. Each open, focus and close is audited with
+time, viewer and pid (never terminal content).
+
+**Process lifetime.** One PTY and one client per connection. The client is
+the leader of its own session and process group. When the socket closes (or
+the serve drains for `--watch` re-exec, or stops) the group gets SIGHUP, then
+after 1 s SIGKILL, and the client is reaped: nothing it started inside its
+group outlives the socket. The herdr server, its session and its panes are
+herdr's and are never signalled.
+
+**Environment.** The client inherits the serve's environment minus
+`HERDR_*` (inside a herdr pane `HERDR_ENV`/`HERDR_PANE_ID` make herdr refuse a
+nested launch and retarget its CLI), the outer terminal's identity
+(`TERM_PROGRAM*`, `GHOSTTY_*`, `KITTY_*`, `WEZTERM_*`, `TMUX*`, `STY`,
+`VTE_VERSION`, `LC_TERMINAL*`, `COLUMNS`, `LINES`), with
+`TERM=xterm-256color` and `COLORTERM=truecolor` for xterm.js.
+`HERDER_TERM_COMMAND`, when set in the serve's environment, replaces the
+client with `sh -c "$HERDER_TERM_COMMAND"`; tests and scratch serves use it so
+nothing attaches to a real session.
+
 ## Explicitly absent (ruled)
 
-No WebSocket. No pane injection other than the attributed, bounded Herdr
+No WebSocket other than the herdr view above. No pane injection other than the attributed, bounded Herdr
 `pane.send_input` terminal endpoint defined by TASK-73 above. No cull/kill. No resume or fork, no
 retired-session lifecycle controls beyond the retained read-only transcript
 amendment, no sesh. No blank-form/global spawn, no new-workspace
