@@ -12,6 +12,7 @@ const lensKeys = [
   ['v', 'Show the next agent on the selected card'],
   ['m', 'Mark the selected space read / unread'],
   ['u', 'Mark the selected space’s agents unread'],
+  ['/', 'Reply to the peeked agent: ⌘⏎ sends and marks it read, Esc keeps the draft'],
   ['t', 'Card text: last answer, status or folder'],
   ['s', 'Card size: the next of four'],
 ] as const

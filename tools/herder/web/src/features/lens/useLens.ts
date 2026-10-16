@@ -36,7 +36,7 @@ import {
 import { readLensPrefs, writeLensPrefs } from './lensPrefs.ts'
 import { agentFolder, nextCardSize, nextCardText, type CardRead } from './cardTextModel.ts'
 import { useCardText } from './useCardText.ts'
-import { leavePeek, type PeekTarget } from './LensPeek.tsx'
+import { focusLens, leavePeek, type PeekTarget } from './LensPeek.tsx'
 import { clampPeekWidth, peekWidth } from './peekModel.ts'
 
 // LensCard is everything one card draws. text is the body: by t, the
@@ -62,7 +62,7 @@ const quiet: SpaceAttention = { unread: [], blocked: [], drafts: [] }
 // useLens owns the lens: its rows and visible agents (this browser's
 // prefs), the selection, the cards and every lens and zoom key. The
 // workspace controller owns the view and the zoom itself.
-export function useLens({ enabled, spaces, membersBySpace, board, attention, total, view, activeSpaceID, selected, setSelected, lastPanel, zoomInto, zoomOut, openAlone, markSpaceRead, markSpaceUnread }: {
+export function useLens({ enabled, spaces, membersBySpace, board, attention, total, view, activeSpaceID, selected, setSelected, lastPanel, zoomInto, zoomOut, openAlone, markSpaceRead, markSpaceUnread, readSeen }: {
   enabled: boolean
   spaces: SpaceDefinition[]
   membersBySpace: Record<string, SpaceMember[]>
@@ -81,6 +81,9 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   openAlone: (agent: string) => void
   markSpaceRead: (spaceID: string) => void
   markSpaceUnread: (spaceID: string) => void
+  // readSeen is called as a reply's send starts; its answer, once it lands,
+  // marks the agent read up to what the owner had seen.
+  readSeen: (agent: string) => () => void
 }) {
   const [initial] = useState(() => readLensPrefs(localStorage))
   const [prefs, setPrefs] = useState<LensPrefs>(initial.prefs)
@@ -137,6 +140,32 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     if (!agent || !agentRow) return { space: space.name, agent: null, status: null, title: '' }
     return { space: space.name, agent, status: lensStatus(agentRow), title: agentRow.title ?? '' }
   }, [board, chosen, live, prefs.visible, spaces])
+  // The peek's reply (/): a composer for the peeked agent, open while its
+  // card stays selected and shows that agent. focus asks it for the keys.
+  const onLens = enabled && view.kind === 'lens'
+  const [replying, setReplying] = useState<{ space: string, agent: string, focus: number } | null>(null)
+  if (replying && (!onLens || replying.space !== chosen || replying.agent !== peek?.agent)) setReplying(null)
+  const reply = useRef<() => boolean>(() => false)
+  reply.current = () => {
+    if (!onLens || !chosen || !peek?.agent) return false
+    const target = { space: chosen, agent: peek.agent }
+    setReplying((current) => ({ ...target, focus: (current?.focus ?? 0) + 1 }))
+    return true
+  }
+  const startReply = useCallback(() => reply.current(), [])
+  // leaveReply closes the reply (esc, or its send landed) and gives the keys
+  // back to the cards; the selection stays and the draft is kept.
+  const leaveReply = useCallback(() => {
+    setReplying(null)
+    focusLens()
+  }, [])
+  const replySent = useCallback((agent: string) => {
+    const landed = readSeen(agent)
+    return () => {
+      landed()
+      leaveReply()
+    }
+  }, [leaveReply, readSeen])
   const setPeekWidth = useCallback((width: number) => setPrefs((current) => ({ ...current, peek: clampPeekWidth(width) })), [])
 
   const select = useCallback((id: string) => {
@@ -157,7 +186,6 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   }, [activeSpaceID, order, view.kind, zoomCard])
 
   const latest = useRef<LensKeyActions | null>(null)
-  const onLens = enabled && view.kind === 'lens'
   const lensKey = (action: (id: string) => void) => () => {
     if (!onLens || !chosen) return false
     action(chosen)
@@ -219,5 +247,6 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     else openAlone(agent)
   }, [membersBySpace, openAlone, order, zoomInto])
 
-  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total), peek, peekWidth: prefs.peek ?? peekWidth, setPeekWidth }
+  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total), peek, peekWidth: prefs.peek ?? peekWidth, setPeekWidth,
+    reply: replying ? { agent: replying.agent, focus: replying.focus } : null, startReply, replySent, leaveReply }
 }

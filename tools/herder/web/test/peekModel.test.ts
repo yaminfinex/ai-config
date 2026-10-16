@@ -39,11 +39,22 @@ test('the peek draws the newest entries, its unread line moved into the window',
   assert.deepEqual(peekWindow(all.slice(0, 3), 1), { entries: all.slice(0, 3), dividerAt: 1 })
 })
 
-test('peeking is not viewing: no read, no block viewed, no composer, the stream it already has, the keys left with the lens', () => {
+test('peeking is not viewing: no read, no block viewed, no composer until /, the stream it already has, the keys left with the lens', () => {
   const peek = readFileSync(new URL('../src/features/lens/LensPeek.tsx', import.meta.url), 'utf8')
   assert.match(peek, /useQuery\(entriesQueryOptions\(queryClient, agent\)\)/, 'the shared entries cache')
-  assert.doesNotMatch(peek, /EventSource|useFleetStream|markRead|readThrough|viewBlocks|useSpaceAttention|Composer|DockviewReact|\.focus\(\)/)
+  assert.doesNotMatch(peek, /EventSource|useFleetStream|markRead|readThrough|viewBlocks|useSpaceAttention|DockviewReact/)
   assert.doesNotMatch(peek, /autoFocus|tabIndex=\{-1\}/, 'the peek never takes focus on its own')
+  // The one composer is the reply (owner #475682): mounted only by /, and the
+  // only focus it takes is the one / asks for.
+  const replyStart = peek.indexOf('// ReplyComposer is')
+  const replyEnd = peek.indexOf('\n}\n', replyStart)
+  const reply = peek.slice(replyStart, replyEnd)
+  const rest = peek.slice(0, replyStart) + peek.slice(replyEnd)
+  assert.ok(replyStart > 0 && replyEnd > replyStart)
+  assert.doesNotMatch(rest.replace("import { Composer } from '../composer/Composer'", ''), /\bComposer\b|\.focus\(\)/, 'no composer and no focus outside the reply')
+  assert.match(rest, /\{reply\?\.agent === target\.agent && <ReplyComposer key=\{reply\.agent\}/, 'the reply only for the peeked agent, after /')
+  assert.match(reply, /useEffect\(\(\) => \{ box\.current\?\.querySelector<HTMLTextAreaElement>\('textarea\[data-composer\]'\)\?\.focus\(\) \}, \[focus\]\)/, 'it takes the keys when / asks')
+  assert.match(reply, /<Composer name=\{agent\}/, 'the zoom\'s own Composer')
   const lens = readFileSync(new URL('../src/features/lens/LensView.tsx', import.meta.url), 'utf8')
   assert.match(lens, /<section className="lens"[^>]*onClick=\{focusLens\}>[\s\S]*<LensPeek /, 'a click in the peek leaves the keys with the lens')
   const hook = readFileSync(new URL('../src/features/lens/useLens.ts', import.meta.url), 'utf8')

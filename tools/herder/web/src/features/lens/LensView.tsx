@@ -4,7 +4,7 @@ import { useSizeObserver } from '../../shared/lifecycle'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
 import { headerLine, revealScroll } from './lensModel.ts'
 import { LensGlyph } from './LensGlyph.tsx'
-import { LensPeek, type PeekTarget } from './LensPeek.tsx'
+import { LensPeek, type PeekReply, type PeekTarget } from './LensPeek.tsx'
 import type { LensCard, LensRowView } from './useLens.ts'
 
 function Card({ card, onSelect, onZoom }: { card: LensCard, onSelect: (id: string) => void, onZoom: (id: string) => void }) {
@@ -23,7 +23,7 @@ function Card({ card, onSelect, onZoom }: { card: LensCard, onSelect: (id: strin
 // with the peek on their right. A click selects, a double-click zooms; the
 // keys live in useLens. The selection is kept in view with the least scroll
 // after every lens key and every resize.
-export function LensView({ rows, spaces, needYou, selected, revealTick, onSelect, onZoom, peek, peekWidth, onPeekWidth, mentionMatcher, onOpenAgent }: {
+export function LensView({ rows, spaces, needYou, selected, revealTick, onSelect, onZoom, peek, peekWidth, onPeekWidth, mentionMatcher, onOpenAgent, reply, identityReadOnly, onViewer, onReplySent, onLeaveReply }: {
   rows: LensRowView[]
   spaces: number
   needYou: number
@@ -36,6 +36,11 @@ export function LensView({ rows, spaces, needYou, selected, revealTick, onSelect
   onPeekWidth: (width: number) => void
   mentionMatcher: AgentMentionMatcher
   onOpenAgent: (name: string) => void
+  reply: PeekReply | null
+  identityReadOnly: string
+  onViewer: (viewer: string) => void
+  onReplySent: (agent: string) => () => void
+  onLeaveReply: () => void
 }) {
   const stream = useStreamAlerts()
   const scroller = useRef<HTMLDivElement | null>(null)
@@ -48,8 +53,12 @@ export function LensView({ rows, spaces, needYou, selected, revealTick, onSelect
   // reveal reads the DOM the selection just drew.
   useEffect(reveal, [revealTick, selected])
   useSizeObserver(scroller, reveal)
-  // A click on a card, or in the peek, leaves the keys with the lens.
-  const focusLens = (event: React.MouseEvent) => (event.currentTarget as HTMLElement).focus({ preventScroll: true })
+  // A click on a card, or in the peek, leaves the keys with the lens; one in
+  // the reply leaves them there.
+  const focusLens = (event: React.MouseEvent<HTMLElement>) => {
+    if (event.target instanceof Element && event.target.closest('.lens-peek-reply')) return
+    event.currentTarget.focus({ preventScroll: true })
+  }
   return <section className="lens" aria-label="Lens" tabIndex={-1} onClick={focusLens}>
     <div className="lens-rows" ref={scroller}>
       <div className="lens-header">{headerLine({ live: !stream.problems.stream, spaces, needYou, serverUpdated: stream.serverUpdated })}</div>
@@ -60,6 +69,7 @@ export function LensView({ rows, spaces, needYou, selected, revealTick, onSelect
         </div>
       </section>)}
     </div>
-    <LensPeek target={peek} width={peekWidth} onWidth={onPeekWidth} mentionMatcher={mentionMatcher} onOpenAgent={onOpenAgent} />
+    <LensPeek target={peek} width={peekWidth} onWidth={onPeekWidth} mentionMatcher={mentionMatcher} onOpenAgent={onOpenAgent}
+      reply={reply} identityReadOnly={identityReadOnly} onViewer={onViewer} onReplySent={onReplySent} onLeaveReply={onLeaveReply} />
   </section>
 }

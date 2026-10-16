@@ -4,7 +4,7 @@ import { apiProblem, viewerReadOnlyMessage } from '../../api/client'
 import { blurComposerOnEscape, composerArrowUpAction, composerFieldId, isComposerFileBackShortcut, isComposerQueueShortcut, isComposerSendShortcut, persistComposerDraft, readComposerDraft, resizeComposerFromMirror, subscribeComposerDraft } from '../../composerState'
 import { sendWithRefresh } from '../../sendRefresh'
 
-export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocus, onViewer, onProblem, onSend, onFileBack, onQueue }: {
+export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocus, onViewer, onProblem, onSend, onSent, onFileBack, onQueue }: {
   name: string
   identityReadOnly: string
   hasNotes?: boolean
@@ -12,6 +12,8 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
   onViewer: (viewer: string) => void
   onProblem: (detail: string) => void
   onSend: () => void
+  // onSent is any other send (⌘⏎): called as it starts, its answer once it lands.
+  onSent?: () => () => void
   // onFileBack is ⌘⇧⏎: called as the send starts, its answer once it lands.
   onFileBack?: () => () => void
   onQueue: (text: string) => { ok: true } | { ok: false, reason: string }
@@ -36,10 +38,10 @@ export function Composer({ name, identityReadOnly, hasNotes = false, onNotesFocu
     resizeComposerFromMirror(composer, mirror)
   }, [message, name])
 
-  // send sends the draft; landed runs once it has (⌘⇧⏎). A failure stays here and says why.
+  // send sends the draft; landed runs once it has (⌘⇧⏎, or onSent's). A failure stays here and says why.
   const send = async (fileBack = false) => {
     if (!message.trim() || mutation.isPending || effectiveReadOnly) return
-    const landed = fileBack ? onFileBack?.() : undefined
+    const landed = fileBack ? onFileBack?.() : onSent?.()
     onSend()
     setSendProblem('')
     try {

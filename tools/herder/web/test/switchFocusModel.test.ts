@@ -74,7 +74,7 @@ const registry = readFileSync(new URL('../src/features/workspace/panelRegistry.t
 test('in a zoom the rail, ⌥Tab and ⌘K switch through the focusing wrapper; ⇧⌥←/→ steps spaces', () => {
   assert.match(controller, /const switchSpaceFocusing = useSwitchSpaceFocusing\(switchSpace, readActiveSpaceID, arrive\)/)
   assert.match(controller, /const switchSpaceAnywhere = useCallback\(\(id: string, from\?: 'quick-open'\) => viewRef\.current\.kind === 'zoom' \? switchSpaceFocusing\(id, from\) : lens\.zoomCard\(id\)/)
-  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*stepSpace: lens\.stepSpace, toggleRead, arrive \}\)/)
+  assert.match(controller, /useWorkspaceShortcuts\(\{[^}]*stepSpace: lens\.stepSpace, reply: lens\.startReply, toggleRead, arrive \}\)/)
   assert.match(controller, /useSpaceSwitcher\(\{[^}]*switchSpace: switchSpaceAnywhere \}\)/)
   assert.match(controller, /switch: switchSpaceAnywhere,/)
 })

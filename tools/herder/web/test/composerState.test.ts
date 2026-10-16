@@ -321,11 +321,16 @@ test('⌘⇧⏎ sends and files back; plain ⌘⏎ only sends, and lands where i
   assert.equal(isComposerSendShortcut(key({ metaKey: true, shiftKey: true })), false, '⌘⇧⏎ is not a plain send')
   const composer = readFileSync(new URL('../src/features/composer/Composer.tsx', import.meta.url), 'utf8')
   // What the owner saw is taken as the send starts; filing back runs only once it lands.
-  assert.match(composer, /const landed = fileBack \? onFileBack\?\.\(\) : undefined/)
+  // A plain send only lands where it is, unless its composer asks (the lens's reply, onSent).
+  assert.match(composer, /const landed = fileBack \? onFileBack\?\.\(\) : onSent\?\.\(\)/)
   assert.match(composer, /onProblem\(''\)\n {6}landed\?\.\(\)\n {4}\} catch/)
   const controller = readFileSync(new URL('../src/features/workspace/useWorkspaceController.ts', import.meta.url), 'utf8')
   // Landing also views the agent's current block, as zooming in on it would.
-  assert.match(controller, /const seen = seenNow\(name\)\n {4}return \(\) => \{\n {6}readThroughSeen\(name, seen\)\n {6}viewBlocks\(\[name\]\)\n {6}zoomOut\(\)/)
+  assert.match(controller, /const readSeen = useCallback\(\(name: string\) => \{\n {4}const seen = seenNow\(name\)\n {4}return \(\) => \{\n {6}readThroughSeen\(name, seen\)\n {6}viewBlocks\(\[name\]\)\n {4}\}/)
+  assert.match(controller, /const fileBack = useCallback\(\(name: string\) => \{\n {4}const landed = readSeen\(name\)\n {4}return \(\) => \{\n {6}landed\(\)\n {6}zoomOut\(\)/)
+  // The lens's reply reads the same way as it lands, then gives the keys back to the cards.
+  const lens = readFileSync(new URL('../src/features/lens/useLens.ts', import.meta.url), 'utf8')
+  assert.match(lens, /const landed = readSeen\(agent\)\n {4}return \(\) => \{\n {6}landed\(\)\n {6}leaveReply\(\)/)
   const attention = readFileSync(new URL('../src/features/workspace/useSpaceAttention.ts', import.meta.url), 'utf8')
   assert.match(attention, /readThrough\(store\.markers\(\)\[name\], seen\.turn, seen\.position, Date\.now\(\)\)/)
 })

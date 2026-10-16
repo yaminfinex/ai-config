@@ -14,6 +14,7 @@ export function useWorkspaceShortcuts({
   closePanel,
   toggleNotesRail,
   stepSpace,
+  reply,
   toggleRead,
   arrive,
 }: {
@@ -27,6 +28,8 @@ export function useWorkspaceShortcuts({
   toggleNotesRail: () => void
   // ⇧⌥←/→ in a zoom: the previous or next space in lens order.
   stepSpace: (by: -1 | 1) => boolean
+  // / on the lens: a reply to the peeked agent, false with none.
+  reply: () => boolean
   toggleRead: (name: string) => void
   // ⌥←/→ arrives at the tab it shows, as a click on it does.
   arrive: Arrive
@@ -73,7 +76,7 @@ export function useWorkspaceShortcuts({
       },
       toggleNotesRail,
       focusComposer: () => {
-        if (!docked()) return false
+        if (!docked()) return reply()
         const composer = document.querySelector<HTMLTextAreaElement>('.dv-active-group textarea[data-composer]')
         if (!composer) return false
         composer.focus()
@@ -95,5 +98,5 @@ export function useWorkspaceShortcuts({
         return true
       },
     }, navigator.userAgent)
-  }, [apiRef, arrive, closePanel, docked, setShortcutReference, shortcutReference, showQuickOpen, stepSpace, toggleNotesRail, toggleRead])
+  }, [apiRef, arrive, closePanel, docked, setShortcutReference, shortcutReference, showQuickOpen, reply, stepSpace, toggleNotesRail, toggleRead])
 }

@@ -58,3 +58,73 @@ test('m marks the selected card unread, then read, then unread again', { timeout
   assert.equal(await evaluate(pill('bravo')), null, 'only the selected card')
   assert.equal(await evaluate(selectedAgent), 'alpha')
 })
+
+test('/ replies to the peeked agent: typing stays in the reply, ⌘↵ sends and marks it read, esc keeps the draft, a failure says so', { timeout: 180_000 }, async (context) => {
+  const { api, browser, evaluate, waitFor, press } = await spaces(['alpha', 'bravo'], 'lens-keys-reply', context)
+  const panes = api.board.workspaces[0]!.tabs[0]!.panes
+  const pane = (agent: string) => panes.find((item) => item.agent === agent)!
+  const reply = `document.querySelector('.lens-peek-reply textarea[data-composer]')`
+  const replyFocused = `document.activeElement === ${reply} && document.activeElement !== null`
+  const lensFocused = `document.activeElement?.classList.contains('lens')`
+  const peekAgent = `(document.querySelector('.lens-peek-agent')?.textContent ?? null)`
+  const draft = `localStorage.getItem('herder.web.messageDraft.v1:alpha')`
+
+  // alpha has a new turn: unread, its card counts it.
+  pane('alpha').turn_end_id = 2
+  api.send('fleet', api.board)
+  await evaluate(`${cardOf('alpha')}.click(), true`)
+  await waitFor(`${selectedAgent} === 'alpha' && ${peekAgent} === 'alpha' && ${pill('alpha')} === '1'`)
+  assert.equal(await evaluate(`Boolean(${reply})`), false, 'no reply until /')
+
+  // / opens the reply at the peek's foot with the keys; card keys type into it.
+  await press('/')
+  await waitFor(replyFocused)
+  assert.equal(await evaluate(`${reply}.value`), '', 'the / itself is not typed')
+  assert.equal(await evaluate(`document.querySelector('.lens-peek').lastElementChild.classList.contains('lens-peek-reply')`), true, 'at the foot of the peek')
+  await browser(['keyboard', 'type', 'ok jkm 12 v'])
+  await press('ArrowDown')
+  await press('ArrowRight')
+  assert.equal(await evaluate(`${reply}.value`), 'ok jkm 12 v')
+  assert.equal(await evaluate(selectedAgent), 'alpha', 'typing and arrows move no selection')
+  assert.equal(await evaluate(pill('alpha')), '1', 'm typed is no mark')
+  assert.equal(await evaluate(`document.querySelector('.lens-row-focus .lens-card') === null`), true, '1 typed places nothing')
+
+  // esc: the reply closes, the draft is kept, the keys are the cards'.
+  await press('Escape')
+  await waitFor(`!${reply} && ${lensFocused}`)
+  assert.equal(await evaluate(draft), 'ok jkm 12 v', 'the draft is stored')
+  assert.equal(await evaluate('Boolean(document.querySelector(".lens"))'), true, 'esc in the reply does not leave the lens')
+  await press('/')
+  await waitFor(replyFocused)
+  assert.equal(await evaluate(`${reply}.value`), 'ok jkm 12 v', '/ brings the draft back')
+
+  // A failed send keeps the text, says so, and marks nothing read.
+  api.failSends('the bus is down')
+  await press('Control+Enter')
+  await waitFor(`Boolean(document.querySelector('.lens-peek-reply [role="alert"]')?.textContent.includes('the bus is down'))`)
+  assert.equal(await evaluate(`${reply}.value`), 'ok jkm 12 v')
+  assert.equal(await evaluate(pill('alpha')), '1', 'still unread')
+  assert.equal(api.messages.length, 0)
+
+  // ⌘↵ sends to alpha; once it lands alpha is read, the reply closes and the cards have the keys on alpha still.
+  api.failSends(null)
+  await evaluate(`${reply}.focus(), true`)
+  await press('Control+Enter')
+  await waitFor(`!${reply} && ${pill('alpha')} === null`)
+  assert.deepEqual(api.messages, [{ agent: 'alpha', text: 'ok jkm 12 v' }])
+  assert.equal(await evaluate(selectedAgent), 'alpha', 'the same card stays selected')
+  assert.equal(await evaluate(lensFocused), true, 'the keys are the cards\'')
+  assert.equal(await evaluate(`${draft} ?? ''`), '', 'the sent draft is cleared')
+  await press('ArrowRight')
+  await waitFor(`${selectedAgent} === 'bravo'`)
+
+  // With no agent on the peek, / is what it was: nothing on the lens.
+  api.board.workspaces[0]!.tabs[0]!.panes = panes.filter((item) => item.agent !== 'bravo')
+  api.send('fleet', api.board)
+  await waitFor(`(document.querySelector('.lens-peek')?.textContent ?? '').includes('No agent on the board')`)
+  await evaluate(`document.querySelector('.lens').focus(), true`)
+  await press('/')
+  assert.equal(await evaluate(`Boolean(document.querySelector('.lens-peek textarea'))`), false, 'no reply without an agent')
+  assert.equal(await evaluate(lensFocused), true, 'the keys stay with the cards')
+  assert.equal(await evaluate('Boolean(document.querySelector(".lens"))'), true)
+})

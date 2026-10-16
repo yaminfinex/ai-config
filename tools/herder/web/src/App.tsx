@@ -147,7 +147,9 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
         {workspace.onLens && <LensHome rows={workspace.lens.rows} spaces={workspace.lensSpaces} needYou={workspace.lens.needYou} selected={workspace.lens.selected}
           revealTick={workspace.lens.revealTick} onSelect={workspace.lens.select} onZoom={workspace.lens.zoomCard}
           peek={workspace.lens.peek} peekWidth={workspace.lens.peekWidth} onPeekWidth={workspace.lens.setPeekWidth}
-          mentionMatcher={workspace.data.mentionMatcher} onOpenAgent={workspace.lens.summon} />}
+          mentionMatcher={workspace.data.mentionMatcher} onOpenAgent={workspace.lens.summon}
+          reply={workspace.lens.reply} identityReadOnly={workspace.data.identityReadOnly} onViewer={workspace.actions.onViewer}
+          onReplySent={workspace.lens.replySent} onLeaveReply={workspace.lens.leaveReply} />}
         {workspace.aloneAgent && <AloneAgentPanel name={workspace.aloneAgent} onOpenAgent={workspace.lens.summon} />}
       </div>
     </section>
