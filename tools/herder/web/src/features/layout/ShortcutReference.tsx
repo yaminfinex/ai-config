@@ -10,7 +10,7 @@ const lensKeys = [
   ['N', 'Open the next space, or agent in no space, that needs you'],
   ['1 / 2 / 3', 'Put the selected space in focus, watch or background'],
   ['v', 'Show the next agent on the selected card'],
-  ['m', 'Mark the selected space read'],
+  ['m', 'Mark the selected space read / unread'],
   ['u', 'Mark the selected space’s agents unread'],
   ['t', 'Card text: last answer, status or folder'],
   ['s', 'Card size: the next of four'],

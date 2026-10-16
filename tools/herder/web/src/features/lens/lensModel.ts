@@ -69,6 +69,12 @@ export function stepRow(spaces: readonly SpaceLike[], prefs: LensPrefs, selected
   return selected
 }
 
+// readToggle is m: a card with anything needing the owner (its badge's
+// count) is marked read, else unread.
+export function readToggle(needs: number): 'read' | 'unread' {
+  return needs > 0 ? 'read' : 'unread'
+}
+
 // spaceStep is ⇧⌥←/→ in a zoom: the previous or next space in lens order,
 // wrapping.
 export function spaceStep(order: readonly string[], from: string | null, by: -1 | 1): string | null {

@@ -17,6 +17,7 @@ import {
   liveMembers,
   looseAgents,
   nextNeeding,
+  readToggle,
   rowHeads,
   selectedSpace,
   spaceStep,
@@ -191,7 +192,7 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
       const next = cycleVisible(live(id), prefs.visible[id])
       if (next) setPrefs((current) => ({ ...current, visible: { ...current.visible, [id]: next } }))
     })(),
-    markRead: () => lensKey(markSpaceRead)(),
+    toggleRead: () => lensKey((id) => readToggle(needsYou(attention[id] ?? quiet)) === 'read' ? markSpaceRead(id) : markSpaceUnread(id))(),
     markUnread: () => lensKey(markSpaceUnread)(),
     cycleText: () => lensKey(() => setPrefs((current) => ({ ...current, text: nextCardText(current.text ?? 'answer') })))(),
     cycleSize: () => lensKey(() => setPrefs((current) => ({ ...current, size: nextCardSize(current.size ?? 0, focusSizes.length) })))(),
@@ -204,7 +205,7 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     nextNeeding: (zoom) => latest.current?.nextNeeding(zoom),
     place: (row) => latest.current?.place(row),
     cycleVisible: () => latest.current?.cycleVisible(),
-    markRead: () => latest.current?.markRead(),
+    toggleRead: () => latest.current?.toggleRead(),
     markUnread: () => latest.current?.markUnread(),
     cycleText: () => latest.current?.cycleText(),
     cycleSize: () => latest.current?.cycleSize(),

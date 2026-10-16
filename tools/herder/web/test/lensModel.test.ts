@@ -13,6 +13,7 @@ import {
   liveMembers,
   looseAgents,
   nextNeeding,
+  readToggle,
   revealScroll,
   selectedSpace,
   spaceStep,
@@ -82,6 +83,12 @@ test('j k keep the column, else take the row\'s last card, skip empty rows and s
   assert.equal(stepRow(spaces, prefs, 'b', -1), 'b')
   const noWatch: LensPrefs = { rows: { a: 'focus', b: 'background' }, visible: {} }
   assert.equal(stepRow([{ id: 'a' }, { id: 'b' }], noWatch, 'a', 1), 'b', 'an empty row is skipped')
+})
+
+test('m marks a card read while it needs the owner, else unread', () => {
+  assert.equal(readToggle(1), 'read', 'one unread or blocked')
+  assert.equal(readToggle(3), 'read')
+  assert.equal(readToggle(0), 'unread', 'nothing needs the owner')
 })
 
 test('⇧⌥←/→ step through spaces in lens order and wrap', () => {
