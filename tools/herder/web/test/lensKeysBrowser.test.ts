@@ -128,3 +128,31 @@ test('/ replies to the peeked agent: typing stays in the reply, ⌘↵ sends and
   assert.equal(await evaluate(lensFocused), true, 'the keys stay with the cards')
   assert.equal(await evaluate('Boolean(document.querySelector(".lens"))'), true)
 })
+
+test('the peek is half the lens, even for a browser that stored the old width; resizing still persists', { timeout: 180_000 }, async (context) => {
+  const { browser, evaluate, waitFor, press } = await spaces(['alpha', 'bravo'], 'lens-keys-peek', context)
+  const share = `document.querySelector('.lens-peek').getBoundingClientRect().width / document.querySelector('.lens').getBoundingClientRect().width`
+  // A record from before: the old peek field at 32%, its rows and text kept.
+  await evaluate(`localStorage.setItem('herder.web.lens.v1', JSON.stringify({ version: 1, rows: {}, visible: {}, text: 'status', peek: 0.32 })), true`)
+  await browser(['reload'])
+  await waitFor(`document.querySelectorAll('.lens-card').length === 2 && Boolean(document.querySelector('.lens-peek'))`)
+  assert.equal(await evaluate(`document.querySelector('.lens-peek').style.width`), '50%')
+  assert.ok(Math.abs(await evaluate(share) as number - 0.5) < 0.01, 'half the lens')
+  assert.match(await evaluate(`document.querySelector('.lens-card .lens-body').textContent`) as string, /^(your turn|idle)/, 'the rest of the record is kept')
+  assert.equal(JSON.parse(await evaluate(`localStorage.getItem('herder.web.lens.v1')`) as string).peek, undefined, 'the old field is gone once written')
+  // At half the cards beside it still fit the widest focus card (440).
+  const room = `document.querySelector('.lens-grid').getBoundingClientRect().width`
+  assert.ok(await evaluate(room) as number >= 440, `room for the cards at 50%: ${await evaluate(room)}`)
+  // The edge's keys still resize it, and it persists.
+  await evaluate(`document.querySelector('.lens-peek-resizer').focus(), true`)
+  await press('ArrowLeft')
+  assert.equal(await evaluate(`document.querySelector('.lens-peek').style.width`), '52%')
+  await press('Escape')
+  await browser(['reload'])
+  await waitFor(`document.querySelector('.lens-peek')?.style.width === '52%'`)
+  // At the 60% most they still fit the default focus card (284).
+  await evaluate(`document.querySelector('.lens-peek-resizer').focus(), true`)
+  for (let step = 0; step < 6; step += 1) await press('ArrowLeft')
+  assert.equal(await evaluate(`document.querySelector('.lens-peek').style.width`), '60%')
+  assert.ok(await evaluate(room) as number >= 284, `room for the cards at 60%: ${await evaluate(room)}`)
+})

@@ -5,8 +5,9 @@ import type { TranscriptEntry } from '../../types.ts'
 // the shared entries cache, no composer and no dock. Peeking is not
 // viewing: it reads nothing, views no block and is never the focused panel.
 
-// The peek's share of the lens width, this browser's (herder.web.lens.v1).
-export const peekWidth = 0.3
+// The peek's share of the lens width, this browser's (herder.web.lens.v1):
+// half the lens by default (owner #475682).
+export const peekWidth = 0.5
 export const minPeekWidth = 0.2
 export const maxPeekWidth = 0.6
 const peekKeyStep = 0.02
