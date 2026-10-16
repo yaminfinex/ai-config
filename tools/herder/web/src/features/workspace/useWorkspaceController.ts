@@ -673,21 +673,28 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     : storedSpaceActivePanel(localStorage, spaceID), [])
   const spaceAttention = useSpaceAttention({ apiRef, board: boardQuery.data, openBySpace, membersBySpace, view })
   const { markUnread, markRead, toggleRead, seenNow, readThroughSeen, viewBlocks } = spaceAttention
-  // A landed ⌘⇧⏎ has answered the agent: read up to what was seen, and its
-  // current block viewed as zooming in on it would.
-  const fileBack = useCallback((name: string) => {
+  // A landed send that answers the agent (⌘⇧⏎, or ⌘⏎ from the peek): read up
+  // to what was seen as it started, and its current block viewed as zooming
+  // in on it would.
+  const readSeen = useCallback((name: string) => {
     const seen = seenNow(name)
     return () => {
       readThroughSeen(name, seen)
       viewBlocks([name])
+    }
+  }, [readThroughSeen, seenNow, viewBlocks])
+  const fileBack = useCallback((name: string) => {
+    const landed = readSeen(name)
+    return () => {
+      landed()
       zoomOut()
     }
-  }, [readThroughSeen, seenNow, viewBlocks, zoomOut])
+  }, [readSeen, zoomOut])
   const lens = useLens({
     enabled: spacesRuntime.store !== null, spaces, membersBySpace, board: boardQuery.data,
     attention: spaceAttention.attention, total: spaceAttention.total, view, activeSpaceID,
     selected: lensSelected, setSelected: setLensSelected, lastPanel, zoomInto, zoomOut, openAlone,
-    markSpaceRead: spaceAttention.markSpaceRead, markSpaceUnread: spaceAttention.markSpaceUnread,
+    markSpaceRead: spaceAttention.markSpaceRead, markSpaceUnread: spaceAttention.markSpaceUnread, readSeen,
   })
   // The stream keeps the open panels' transcripts live, and the peeked agent's on the lens.
   const peeked = view.kind === 'lens' && lens.peek?.agent ? [lens.peek.agent] : []
@@ -695,7 +702,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   // A space chosen anywhere but a zoom (⌥Tab or ⌘K on the lens) zooms into it.
   const switchSpaceAnywhere = useCallback((id: string, from?: 'quick-open') => viewRef.current.kind === 'zoom' ? switchSpaceFocusing(id, from) : lens.zoomCard(id), [lens.zoomCard, switchSpaceFocusing])
   const docked = useCallback(() => viewRef.current.kind === 'zoom', [])
-  useWorkspaceShortcuts({ apiRef, docked, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, stepSpace: lens.stepSpace, toggleRead, arrive })
+  useWorkspaceShortcuts({ apiRef, docked, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, stepSpace: lens.stepSpace, reply: lens.startReply, toggleRead, arrive })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceAnywhere })
   const zoomedOpenAgent = useMemo(() => inZoom(openAgent), [inZoom, openAgent])
   const zoomedOpenFile = useMemo(() => inZoom(openFile), [inZoom, openFile])

@@ -119,7 +119,7 @@ export type LensKeyActions = {
   nextNeeding: (zoom: boolean) => boolean | void
   place: (row: 0 | 1 | 2) => boolean | void
   cycleVisible: () => boolean | void
-  markRead: () => boolean | void
+  toggleRead: () => boolean | void
   markUnread: () => boolean | void
   cycleText: () => boolean | void
   cycleSize: () => boolean | void
@@ -155,7 +155,7 @@ export function bindLensShortcuts(target: Window | HTMLElement, actions: LensKey
     '2': bare(() => actions.place(1)),
     '3': bare(() => actions.place(2)),
     'v': bare(actions.cycleVisible),
-    'm': bare(actions.markRead),
+    'm': bare(actions.toggleRead),
     'u': bare(actions.markUnread),
     't': bare(actions.cycleText),
     's': bare(actions.cycleSize),

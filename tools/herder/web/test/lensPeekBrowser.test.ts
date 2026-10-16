@@ -49,7 +49,7 @@ test('the peek follows the selection and the stream, reads nothing, views no blo
   assert.equal((await marker('alpha'))?.turn, 1, 'alpha seeded read at turn 1')
   const lensWidth = await evaluate(`document.querySelector('.lens').getBoundingClientRect().width`) as number
   const peekWidth = await evaluate(`document.querySelector('.lens-peek').getBoundingClientRect().width`) as number
-  assert.ok(Math.abs(peekWidth / lensWidth - 0.3) < 0.01, `the peek takes 30% of the lens: ${peekWidth}/${lensWidth}`)
+  assert.ok(Math.abs(peekWidth / lensWidth - 0.5) < 0.01, `the peek takes half the lens: ${peekWidth}/${lensWidth}`)
   assert.equal(await evaluate(`document.querySelector('.lens-peek').getBoundingClientRect().left >= document.querySelector('.lens-rows').getBoundingClientRect().right`), true, 'on the right of the cards')
   assert.equal(await evaluate(`document.querySelector('.lens-peek').getBoundingClientRect().right <= document.querySelector('.utility-rail-right').getBoundingClientRect().left`), true, 'the notes rail stays outermost')
   assert.equal(await evaluate(`Boolean(document.querySelector('.lens-peek textarea, .lens-peek .dv-tab, .lens-peek [data-composer]'))`), false, 'no composer, no dock chrome')
@@ -102,16 +102,16 @@ test('the peek follows the selection and the stream, reads nothing, views no blo
   // The resize edge: its arrows resize, esc gives the keys back, and the width persists.
   await evaluate(`document.querySelector('.lens-peek-resizer').focus(), true`)
   await press('ArrowLeft')
-  assert.equal(await evaluate(`document.querySelector('.lens-peek').style.width`), '32%')
+  assert.equal(await evaluate(`document.querySelector('.lens-peek').style.width`), '52%')
   assert.equal(await evaluate(peekAgent), 'bravo', 'the edge keeps its arrows from the cards')
   await press('Escape')
   assert.equal(await evaluate(lensFocused), true, 'esc returns the keys to the cards')
   await press('ArrowLeft')
   await waitFor(`${peekAgent} === 'alpha'`)
-  const stored = JSON.parse(await evaluate(`localStorage.getItem('herder.web.lens.v1')`) as string) as { peek: number }
-  assert.equal(stored.peek, 0.32)
+  const stored = JSON.parse(await evaluate(`localStorage.getItem('herder.web.lens.v1')`) as string) as { peekWidth: number }
+  assert.equal(stored.peekWidth, 0.52)
   await browser(['reload'])
-  await waitFor(`document.querySelector('.lens-peek')?.style.width === '32%' && Boolean(${peekAgent})`)
+  await waitFor(`document.querySelector('.lens-peek')?.style.width === '52%' && Boolean(${peekAgent})`)
   await evaluate(`${cardOf('alpha')}.click(), true`)
   await waitFor(`${peekAgent} === 'alpha'`)
   assert.equal((await marker('alpha'))?.turn, 1, 'still unread after the reload')

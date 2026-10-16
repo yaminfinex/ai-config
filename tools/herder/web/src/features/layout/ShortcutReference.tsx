@@ -4,14 +4,15 @@ import { openInSideKeys } from './openPlacement'
 // The lens's bare keys, and the zoom's. Neither fires from a text box.
 const lensKeys = [
   ['← → / h l', 'Select the previous or next space'],
-  ['↓ ↑ / j k', 'Select in the row below or above'],
+  ['↓ ↑ / j k', 'Select the closest card on the line below or above'],
   ['Enter / double-click', 'Zoom into the selected space'],
   ['n', 'Select the next space that needs you'],
   ['N', 'Open the next space, or agent in no space, that needs you'],
   ['1 / 2 / 3', 'Put the selected space in focus, watch or background'],
   ['v', 'Show the next agent on the selected card'],
-  ['m', 'Mark the selected space read'],
+  ['m', 'Mark the selected space read / unread'],
   ['u', 'Mark the selected space’s agents unread'],
+  ['/', 'Reply to the peeked agent: ⌘⏎ sends and marks it read, Esc keeps the draft'],
   ['t', 'Card text: last answer, status or folder'],
   ['s', 'Card size: the next of four'],
 ] as const

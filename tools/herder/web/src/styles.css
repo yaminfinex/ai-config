@@ -876,6 +876,8 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 /* The peek's transcript reads as a panel's does, not in the lens's mono. */
 .lens-peek-body { color: var(--text); font: 13px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; }
 .lens-peek-none { margin: 20px 14px; color: var(--lens-slate); }
+.lens-peek-reply { flex: 0 0 auto; font: 13px/1.5 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.lens-peek-problem { margin: 0; padding: 5px 14px; border-top: 1px solid var(--border); font-size: 11px; }
 .lens-header, .lens-head { color: var(--lens-slate); }
 .lens-head { margin-bottom: 8px; font-size: 11px; letter-spacing: .06em; }
 .lens-grid { display: flex; flex-wrap: wrap; gap: 10px; }

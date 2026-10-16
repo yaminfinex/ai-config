@@ -55,8 +55,9 @@ export function stepCard(order: readonly string[], selected: string, by: -1 | 1)
   return order[Math.max(0, Math.min(order.length - 1, (at < 0 ? 0 : at) + by))] ?? selected
 }
 
-// stepRow is ↓ ↑ (j k): the same column in the next or previous row that has
-// cards, else that row's last card; at the edge the selection stays.
+// stepRow is ↓ ↑ (j k) with no cards drawn: the same column in the next or
+// previous row that has cards, else that row's last card; at the edge the
+// selection stays. stepLine is the step on the page.
 export function stepRow(spaces: readonly SpaceLike[], prefs: LensPrefs, selected: string, by: -1 | 1): string {
   const rows = lensRowsOf(spaces, prefs)
   const here = lensRows.indexOf(rowOf(prefs, selected))
@@ -67,6 +68,39 @@ export function stepRow(spaces: readonly SpaceLike[], prefs: LensPrefs, selected
     if (target) return target.id
   }
   return selected
+}
+
+// CardRect is a drawn card's box on the page.
+export type CardRect = { id: string, left: number, right: number, top: number, bottom: number }
+
+// Boxes a subpixel apart are on the same line, or the same distance away.
+const slack = 1
+
+// stepLine is ↓ ↑ (j k) on the drawn cards (owner #475682): the card on the
+// next line down (or up) closest to the selection's centre, the left one on
+// a tie. The next line is the nearest one wholly below the selection's
+// bottom (above its top), a row's wrapped lines included. At the edge the
+// selection stays; null when the selection is not drawn.
+export function stepLine(rects: readonly CardRect[], selected: string, by: -1 | 1): string | null {
+  const from = rects.find((rect) => rect.id === selected)
+  if (!from) return null
+  const beyond = rects.filter((rect) => by > 0 ? rect.top >= from.bottom - slack : rect.bottom <= from.top + slack)
+  if (beyond.length === 0) return selected
+  // The line is the nearest card beyond and every card level with it.
+  const nearest = beyond.reduce((best, rect) => by > 0 ? (rect.top < best.top ? rect : best) : (rect.bottom > best.bottom ? rect : best))
+  const line = beyond.filter((rect) => by > 0 ? rect.top < nearest.bottom : rect.bottom > nearest.top)
+  const centre = (rect: CardRect) => (rect.left + rect.right) / 2
+  const distance = (rect: CardRect) => Math.abs(centre(rect) - centre(from))
+  return line.reduce((best, rect) => {
+    const gap = distance(rect) - distance(best)
+    return gap < -slack || (Math.abs(gap) <= slack && rect.left < best.left) ? rect : best
+  }).id
+}
+
+// readToggle is m: a card with anything needing the owner (its badge's
+// count) is marked read, else unread.
+export function readToggle(needs: number): 'read' | 'unread' {
+  return needs > 0 ? 'read' : 'unread'
 }
 
 // spaceStep is ⇧⌥←/→ in a zoom: the previous or next space in lens order,

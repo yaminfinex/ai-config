@@ -274,7 +274,7 @@ test('lens arrows: ← → step cards, ↓ ↑ step rows like j k; a key the vie
     step: (by) => lensKey(`step:${by}`)(),
     stepRow: (by) => lensKey(`row:${by}`)(),
     zoomIn: lensKey('zoom'), zoomOut: lensKey('out'), nextNeeding: () => false, place: () => false,
-    cycleVisible: () => false, markRead: () => false, markUnread: () => false,
+    cycleVisible: () => false, toggleRead: lensKey('toggle'), markUnread: lensKey('unread'),
     cycleText: lensKey('text'), cycleSize: lensKey('size'),
   })
   try {
@@ -288,6 +288,10 @@ test('lens arrows: ← → step cards, ↓ ↑ step rows like j k; a key the vie
     assert.equal(dispatch(target, { key: '[', code: 'BracketLeft' }).defaultPrevented, false)
     assert.equal(dispatch(target, { key: ']', code: 'BracketRight' }).defaultPrevented, false)
     assert.deepEqual(calls.splice(6), ['text', 'size'])
+    // m toggles read and unread (owner #475682); u still marks unread.
+    assert.equal(dispatch(target, { key: 'm', code: 'KeyM' }).defaultPrevented, true)
+    assert.equal(dispatch(target, { key: 'u', code: 'KeyU' }).defaultPrevented, true)
+    assert.deepEqual(calls.splice(6), ['toggle', 'unread'])
     // In a zoom the arrows scroll the transcript as before.
     onLens = false
     assert.equal(dispatch(target, { key: 'ArrowDown', code: 'ArrowDown' }).defaultPrevented, false)

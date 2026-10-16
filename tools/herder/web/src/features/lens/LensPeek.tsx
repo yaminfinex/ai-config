@@ -8,6 +8,9 @@ import type { AgentMentionMatcher } from '../../shared/agentMentions'
 import { dividerIndex, useReadMarker } from '../spaces/index.ts'
 import { TranscriptEntries } from '../transcript/TranscriptEntries'
 import { openInSideLabel } from '../layout/openPlacement'
+import { Composer } from '../composer/Composer'
+import { useNotes } from '../notes/NotesProvider'
+import { queueComposerNote } from '../notes/noteQueue'
 import { LensGlyph } from './LensGlyph.tsx'
 import type { LensStatus } from './lensModel.ts'
 import { maxPeekWidth, minPeekWidth, peekWidthFromKey, peekWindow, resizedPeekWidth } from './peekModel.ts'
@@ -16,13 +19,51 @@ import { maxPeekWidth, minPeekWidth, peekWidthFromKey, peekWindow, resizedPeekWi
 // visible agent, null when the card has none on the board.
 export type PeekTarget = { space: string, agent: string | null, status: LensStatus | null, title: string }
 
+// PeekReply is the peek's reply to its agent: / opens it, focus asks it
+// for the keys again.
+export type PeekReply = { agent: string, focus: number }
+
+// focusLens gives the keys to the cards.
+export function focusLens() {
+  document.querySelector<HTMLElement>('.lens')?.focus({ preventScroll: true })
+}
+
 // leavePeek gives the keys back to the cards when they are in the peek or
 // on its resize edge (esc).
 export function leavePeek() {
-  const lens = document.querySelector<HTMLElement>('.lens')
-  if (!lens || !document.activeElement?.closest('.lens-peek, .lens-peek-resizer')) return false
-  lens.focus({ preventScroll: true })
+  if (!document.querySelector('.lens') || !document.activeElement?.closest('.lens-peek, .lens-peek-resizer')) return false
+  focusLens()
   return true
+}
+
+const noop = () => undefined
+
+// ReplyComposer is the zoom's Composer at the foot of the peek: the same
+// draft, send and note queue. ⌘⏎ sends, and once it lands onSent's answer
+// marks the agent read and closes it; esc closes it with the draft kept. A
+// failed send keeps the text open here and says why.
+function ReplyComposer({ reply, identityReadOnly, onViewer, onSent, onLeave }: {
+  reply: PeekReply
+  identityReadOnly: string
+  onViewer: (viewer: string) => void
+  onSent: (agent: string) => () => void
+  onLeave: () => void
+}) {
+  const { agent, focus } = reply
+  const box = useRef<HTMLDivElement | null>(null)
+  const [problem, setProblem] = useState('')
+  const { store, announce } = useNotes()
+  useEffect(() => { box.current?.querySelector<HTMLTextAreaElement>('textarea[data-composer]')?.focus() }, [focus])
+  return <div className="lens-peek-reply" ref={box} onKeyDown={(event) => { if (event.key === 'Escape') onLeave() }}>
+    {problem && <p className="inline-error lens-peek-problem" role="alert">{problem}</p>}
+    <Composer name={agent} identityReadOnly={identityReadOnly} onNotesFocus={noop} onViewer={onViewer} onProblem={setProblem} onSend={noop}
+      onSent={() => onSent(agent)} onQueue={(text) => {
+        const result = queueComposerNote(store, agent, text)
+        if (!result.ok) return result
+        announce(`Queued a note for ${agent}.`)
+        return { ok: true }
+      }} />
+  </div>
 }
 
 function PeekTranscript({ agent, mentionMatcher, onOpenAgent }: { agent: string, mentionMatcher: AgentMentionMatcher, onOpenAgent: (name: string) => void }) {
@@ -52,16 +93,22 @@ function PeekTranscript({ agent, mentionMatcher, onOpenAgent }: { agent: string,
   </div>
 }
 
-// LensPeek is the lens's right pane: a read-only look at the selected card's
-// visible agent. It never takes focus on its own; a click inside still
-// leaves the keys with the lens, and esc brings them back from a link or
-// button tabbed to. Its left edge resizes it.
-export function LensPeek({ target, width, onWidth, mentionMatcher, onOpenAgent }: {
+// LensPeek is the lens's right pane: a look at the selected card's visible
+// agent, read-only but for the reply / opens at its foot. It never takes
+// focus on its own; a click inside still leaves the keys with the lens, and
+// esc brings them back from a link or button tabbed to. Its left edge
+// resizes it.
+export function LensPeek({ target, width, onWidth, mentionMatcher, onOpenAgent, reply, identityReadOnly, onViewer, onReplySent, onLeaveReply }: {
   target: PeekTarget | null
   width: number
   onWidth: (width: number) => void
   mentionMatcher: AgentMentionMatcher
   onOpenAgent: (name: string) => void
+  reply: PeekReply | null
+  identityReadOnly: string
+  onViewer: (viewer: string) => void
+  onReplySent: (agent: string) => () => void
+  onLeaveReply: () => void
 }) {
   const disposeDrag = useRef<(() => void) | null>(null)
   useEffect(() => () => disposeDrag.current?.(), [])
@@ -88,6 +135,7 @@ export function LensPeek({ target, width, onWidth, mentionMatcher, onOpenAgent }
           {target.title && <span className="lens-peek-title">{target.title}</span>}
         </header>
         <PeekTranscript key={target.agent} agent={target.agent} mentionMatcher={mentionMatcher} onOpenAgent={onOpenAgent} />
+        {reply?.agent === target.agent && <ReplyComposer key={reply.agent} reply={reply} identityReadOnly={identityReadOnly} onViewer={onViewer} onSent={onReplySent} onLeave={onLeaveReply} />}
       </> : <p className="lens-peek-none">{target ? 'No agent on the board' : 'No space selected'}</p>}
     </aside>
   </>
