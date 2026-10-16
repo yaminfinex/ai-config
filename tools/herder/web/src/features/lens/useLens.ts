@@ -23,6 +23,7 @@ import {
   spaceStep,
   statusText,
   stepCard,
+  stepLine,
   stepRow,
   visibleAgent,
   whoLine,
@@ -36,6 +37,7 @@ import {
 import { readLensPrefs, writeLensPrefs } from './lensPrefs.ts'
 import { agentFolder, nextCardSize, nextCardText, type CardRead } from './cardTextModel.ts'
 import { useCardText } from './useCardText.ts'
+import { cardRects } from './LensView.tsx'
 import { focusLens, leavePeek, type PeekTarget } from './LensPeek.tsx'
 import { clampPeekWidth, peekWidth } from './peekModel.ts'
 
@@ -194,7 +196,7 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   }
   latest.current = {
     step: (by) => lensKey((id) => setSelected(stepCard(order, id, by)))(),
-    stepRow: (by) => lensKey((id) => setSelected(stepRow(spaces, prefs, id, by)))(),
+    stepRow: (by) => lensKey((id) => setSelected(stepLine(cardRects(), id, by) ?? stepRow(spaces, prefs, id, by)))(),
     zoomIn: () => onLens && chosen ? zoomCard(chosen) : false,
     zoomOut: () => !enabled ? false : view.kind !== 'lens' ? zoomOut() : leavePeek(),
     nextNeeding: (zoom) => {

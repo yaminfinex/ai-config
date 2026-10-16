@@ -156,3 +156,38 @@ test('the peek is half the lens, even for a browser that stored the old width; r
   assert.equal(await evaluate(`document.querySelector('.lens-peek').style.width`), '60%')
   assert.ok(await evaluate(room) as number >= 284, `room for the cards at 60%: ${await evaluate(room)}`)
 })
+
+test('↓ ↑ go to the closest card on the next drawn line, the watch row\'s wrapped line included', { timeout: 240_000 }, async (context) => {
+  const { browser, evaluate, waitFor, press } = await spaces(['alpha', 'bravo', 'charlie', 'delta'], 'lens-keys-arrows', context)
+  // alpha in focus; bravo, charlie and delta in watch, the peek at 30% so watch wraps two to a line.
+  await evaluate(`${cardOf('alpha')}.click(), true`)
+  await press('1')
+  await waitFor(`document.querySelector('.lens-row-focus .lens-agent')?.textContent === 'alpha'`)
+  await evaluate(`localStorage.setItem('herder.web.lens.v1', JSON.stringify({ ...JSON.parse(localStorage.getItem('herder.web.lens.v1')), peekWidth: 0.3 })), true`)
+  await browser(['reload'])
+  await waitFor(`document.querySelector('.lens-peek')?.style.width === '30%' && document.querySelectorAll('.lens-card').length === 4`)
+  const top = (agent: string) => `Math.round(${cardOf(agent)}.getBoundingClientRect().top)`
+  const left = (agent: string) => `Math.round(${cardOf(agent)}.getBoundingClientRect().left)`
+  assert.equal(await evaluate(top('bravo')), await evaluate(top('charlie')), 'bravo and charlie share watch\'s first line')
+  assert.ok(await evaluate(top('delta')) as number > (await evaluate(top('charlie')) as number), 'delta wraps onto a second')
+  assert.equal(await evaluate(left('delta')), await evaluate(left('bravo')), 'under bravo')
+
+  const select = async (agent: string) => {
+    await evaluate(`${cardOf(agent)}.click(), true`)
+    await waitFor(`${selectedAgent} === '${agent}'`)
+  }
+  const step = async (key: string, from: string, to: string, why: string) => {
+    await select(from)
+    await press(key)
+    assert.equal(await evaluate(selectedAgent), to, `${key} from ${from}: ${why}`)
+  }
+  await step('ArrowDown', 'charlie', 'delta', 'the wrapped line, not the empty background row')
+  await step('ArrowUp', 'delta', 'bravo', 'the line above in the same row, not the focus row')
+  await step('ArrowUp', 'charlie', 'alpha', 'the only card on the focus line')
+  await step('ArrowDown', 'alpha', 'bravo', 'the closest by centre')
+  await step('j', 'bravo', 'delta', 'j is ↓')
+  await step('k', 'bravo', 'alpha', 'k is ↑')
+  await step('ArrowDown', 'delta', 'delta', 'the bottom edge stays')
+  await step('ArrowUp', 'alpha', 'alpha', 'the top edge stays')
+  await step('ArrowRight', 'bravo', 'charlie', '→ is unchanged')
+})

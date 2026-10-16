@@ -4,7 +4,7 @@ import { openInSideKeys } from './openPlacement'
 // The lens's bare keys, and the zoom's. Neither fires from a text box.
 const lensKeys = [
   ['← → / h l', 'Select the previous or next space'],
-  ['↓ ↑ / j k', 'Select in the row below or above'],
+  ['↓ ↑ / j k', 'Select the closest card on the line below or above'],
   ['Enter / double-click', 'Zoom into the selected space'],
   ['n', 'Select the next space that needs you'],
   ['N', 'Open the next space, or agent in no space, that needs you'],

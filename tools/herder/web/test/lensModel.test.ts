@@ -19,10 +19,12 @@ import {
   spaceStep,
   statusText,
   stepCard,
+  stepLine,
   stepRow,
   visibleAgent,
   whoLine,
   zoomLanding,
+  type CardRect,
   type LensPrefs,
 } from '../src/features/lens/lensModel.ts'
 import { lensPrefsKey, parseLensPrefs, parseViewedBlocks, readLensPrefs, readViewedBlocks, writeLensPrefs, writeViewedBlocks } from '../src/features/lens/lensPrefs.ts'
@@ -89,6 +91,47 @@ test('m marks a card read while it needs the owner, else unread', () => {
   assert.equal(readToggle(1), 'read', 'one unread or blocked')
   assert.equal(readToggle(3), 'read')
   assert.equal(readToggle(0), 'unread', 'nothing needs the owner')
+})
+
+const box = (id: string, left: number, width: number, top: number, height = 120): CardRect => ({ id, left, right: left + width, top, bottom: top + height })
+
+test('↓ ↑ go to the closest card on the next drawn line, a wrapped row\'s lines included', () => {
+  // focus wraps: f1 f2 on its first line, f3 alone on its second; watch is one line of narrower cards.
+  const rects = [
+    box('f1', 0, 440, 0), box('f2', 450, 440, 0), box('f3', 0, 440, 130),
+    box('w1', 0, 284, 300, 60), box('w2', 294, 284, 300, 60), box('w3', 588, 284, 300, 60),
+  ]
+  assert.equal(stepLine(rects, 'f2', 1), 'f3', 'the wrapped line of the same row is the next line')
+  assert.equal(stepLine(rects, 'f1', 1), 'f3')
+  assert.equal(stepLine(rects, 'f3', 1), 'w1', 'centre 220: w1 (142) over w2 (436)')
+  assert.equal(stepLine(rects, 'w3', -1), 'f3', 'the line above is the wrapped one, however far its card')
+  assert.equal(stepLine(rects, 'f3', -1), 'f1')
+  assert.equal(stepLine(rects, 'w2', -1), 'f3')
+})
+
+test('↓ ↑ pick by centre across unequal widths, the left one on a tie', () => {
+  const rects = [box('f1', 0, 440, 0), box('f2', 450, 440, 0), box('w1', 0, 284, 200, 60), box('w2', 294, 284, 200, 60), box('w3', 588, 284, 200, 60)]
+  assert.equal(stepLine(rects, 'f2', 1), 'w3', 'centre 670: w3 (730), not the second column')
+  assert.equal(stepLine(rects, 'w2', -1), 'f1', 'centre 436: f1 (220) over f2 (670)')
+  assert.equal(stepLine(rects, 'w3', -1), 'f2')
+  // s is centred at 289, 147 from both a (142) and b (436).
+  const tie = [box('s', 189, 200, 0), box('a', 0, 284, 200), box('b', 294, 284, 200)]
+  assert.equal(stepLine(tie, 's', 1), 'a', 'the left one wins a tie')
+  const tieUp = [box('a', 0, 284, 0), box('b', 294, 284, 0), box('s', 189, 200, 200)]
+  assert.equal(stepLine(tieUp, 's', -1), 'a')
+  // A line's cards a subpixel apart are still one line.
+  const ragged = [box('s', 0, 284, 0), box('a', 0, 284, 200.4), box('b', 294, 284, 199.8)]
+  assert.equal(stepLine(ragged, 's', 1), 'a', 'b, a hair higher, does not make a line of its own')
+})
+
+test('↓ ↑ stay at the edges, and fall back to the rows when nothing is drawn', () => {
+  const rects = [box('a', 0, 284, 0), box('b', 294, 284, 0), box('c', 0, 240, 200, 50)]
+  assert.equal(stepLine(rects, 'a', -1), 'a', 'the top line')
+  assert.equal(stepLine(rects, 'b', -1), 'b')
+  assert.equal(stepLine(rects, 'c', 1), 'c', 'the bottom line')
+  assert.equal(stepLine(rects, 'b', 1), 'c')
+  assert.equal(stepLine([], 'a', 1), null, 'not drawn')
+  assert.equal(stepLine(rects, 'gone', 1), null, 'the selection not drawn')
 })
 
 test('⇧⌥←/→ step through spaces in lens order and wrap', () => {

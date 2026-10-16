@@ -2,10 +2,18 @@ import { useEffect, useRef } from 'react'
 import { useStreamAlerts } from '../../stream/useFleetStream'
 import { useSizeObserver } from '../../shared/lifecycle'
 import type { AgentMentionMatcher } from '../../shared/agentMentions'
-import { headerLine, revealScroll } from './lensModel.ts'
+import { headerLine, revealScroll, type CardRect } from './lensModel.ts'
 import { LensGlyph } from './LensGlyph.tsx'
 import { LensPeek, type PeekReply, type PeekTarget } from './LensPeek.tsx'
 import type { LensCard, LensRowView } from './useLens.ts'
+
+// cardRects are the drawn cards' boxes, for ↓ ↑ (stepLine).
+export function cardRects(): CardRect[] {
+  return [...document.querySelectorAll<HTMLElement>('.lens .lens-card[data-space-id]')].map((card) => {
+    const { left, right, top, bottom } = card.getBoundingClientRect()
+    return { id: card.dataset.spaceId!, left, right, top, bottom }
+  })
+}
 
 function Card({ card, onSelect, onZoom }: { card: LensCard, onSelect: (id: string) => void, onZoom: (id: string) => void }) {
   const label = `${card.name}${card.needs > 0 ? `, ${card.needs} need you` : ''}${card.look.selected ? ', selected' : ''}`
