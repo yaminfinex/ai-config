@@ -208,7 +208,7 @@ printf ' %q' "$@" >>"$FLEET_TEST_CALLS"
 printf '\n' >>"$FLEET_TEST_CALLS"
 if [[ ${1:-} == list && ${2:-} == self && ${3:-} == --json ]]; then
   case ${FLEET_TEST_SELF_MODE:-} in
-    name) printf '%s\n' '{"name":"ziru"}' ;;
+    name) printf '{"name":"%s"}\n' "${FLEET_TEST_SELF_NAME:-ziru}" ;;
     fail) exit 1 ;;
     forbid) exit 99 ;;
     *) exit 64 ;;
@@ -236,7 +236,7 @@ if [[ -n ${FLEET_TEST_CULL_MODE:-} ]]; then
   exit 0
 fi
 if [[ ${1:-} == 1 ]]; then
-  printf '%s\n' 'Started the launch process' 'Names: vava' 'Batch id: batch-test'
+  printf '%s\n' 'Started the launch process' "Names: ${FLEET_TEST_LAUNCH_NAME:-vava}" 'Batch id: batch-test'
   case ${FLEET_TEST_LAUNCH_MODE:-} in
     descendant-stdout) /bin/sleep 3 & ;;
     blocking) /bin/sleep 5 ;;
@@ -293,7 +293,7 @@ if [[ ${1:-} == list && ${3:-} == status ]]; then
 fi
 case "${1:-} ${2:-}" in
   'events launch')
-    printf '%s\n' '{"batch_id":"batch-test","blocked":0,"expected":1,"failed":0,"instances":["vava"],"ready":1,"status":"ready"}'
+    printf '{"batch_id":"batch-test","blocked":0,"expected":1,"failed":0,"instances":["%s"],"ready":1,"status":"ready"}\n' "${FLEET_TEST_LAUNCH_NAME:-vava}"
     ;;
   'list --json')
     hooks_bound=${FLEET_TEST_HOOKS_BOUND:-1}
@@ -303,11 +303,9 @@ case "${1:-} ${2:-}" in
       printf '%s\n' "$count" >"$FLEET_TEST_HOOKS_COUNT"
       ((count >= 2)) && hooks_bound=1 || hooks_bound=0
     fi
-    if [[ $hooks_bound == 1 ]]; then
-      printf '%s\n' '[{"base_name":"vava","hooks_bound":true,"name":"gate-vava","session_id":"session-test"}]'
-    else
-      printf '%s\n' '[{"base_name":"vava","hooks_bound":false,"name":"gate-vava","session_id":"session-test"}]'
-    fi
+    [[ $hooks_bound == 1 ]] && hooks_bound=true || hooks_bound=false
+    launched=${FLEET_TEST_LAUNCH_NAME:-vava}
+    printf '[{"base_name":"%s","hooks_bound":%s,"name":"gate-%s","session_id":"session-test"}]\n' "$launched" "$hooks_bound" "$launched"
     ;;
 esac
 EOF
@@ -326,7 +324,20 @@ if [[ ${1:-} == show && ${3:-} == --json ]]; then
     printf 'store unavailable\n' >&2
     exit 3
   fi
-  printf '%s\n' '{"name":"'"${2:-}"'","assignment":{"group":"'"${FLEET_TEST_PARENT_GROUP:-}"'"}}'
+  if [[ -n ${FLEET_TEST_PARENT_LANE:-} ]]; then
+    printf '%s\n' '{"name":"'"${2:-}"'","lane":{"id":"'"$FLEET_TEST_PARENT_LANE"'"}}'
+  else
+    printf '%s\n' '{"name":"'"${2:-}"'"}'
+  fi
+  exit 0
+fi
+if [[ ${1:-} == lane && ${2:-} == show && ${4:-} == --json ]]; then
+  case ${FLEET_TEST_LANE_MODE:-} in
+    unknown) printf 'herder lane show: no lane "%s"\n' "$3" >&2; exit 1 ;;
+    down) printf 'store unavailable\n' >&2; exit 3 ;;
+    live) printf '{"id":"018f0000-0000-7000-8000-00000000000a","name":"%s","members":["gate-kemo"]}\n' "$3" ;;
+    *) printf '{"id":"018f0000-0000-7000-8000-00000000000a","name":"%s","members":[]}\n' "$3" ;;
+  esac
   exit 0
 fi
 if [[ ${1:-} == register && ${2:-} == launch-requested ]]; then
@@ -369,84 +380,110 @@ pass "spawn pins placement, cwd, readiness, and Codex autonomy"
 : >"$FLEET_TEST_CALLS"
 env -u FLEET_LAUNCHER -u FLEET_LAUNCHER_KIND HCOM_PROCESS_ID=seat-test \
   FLEET_TEST_SELF_MODE=name PATH="$TEST_ROOT/bin:$PATH" \
-  "$FLEET/spawn.sh" codex --tag gate --pane p-test --group '  builders  ' \
-  --title '  payload builder  ' >"$TEST_ROOT/spawn-group-title.out"
-grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --group builders --by ziru --by-kind agent' \
-  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact explicit group assignment"
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test --lane '  builders  ' \
+  --title '  payload builder  ' >"$TEST_ROOT/spawn-lane-title.out"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' lane show builders --json' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not resolve the named lane"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --lane 018f0000-0000-7000-8000-00000000000a --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact explicit lane assignment"
 grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' register annotate --name gate-vava --title payload\ builder --by ziru --by-kind agent' \
   "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact title annotation"
 requested_line=$(grep -n 'herder .*register launch-requested' "$FLEET_TEST_CALLS" | cut -d: -f1)
 launch_line=$(grep -n 'hcom .* 1 codex' "$FLEET_TEST_CALLS" | cut -d: -f1)
-assign_line=$(grep -n 'herder .* assign gate-vava --group builders' "$FLEET_TEST_CALLS" | cut -d: -f1)
+assign_line=$(grep -n 'herder .* assign gate-vava --lane ' "$FLEET_TEST_CALLS" | cut -d: -f1)
 annotate_line=$(grep -n 'herder .* register annotate --name gate-vava' "$FLEET_TEST_CALLS" | cut -d: -f1)
 ready_line=$(grep -n 'herder .*register launch-ready' "$FLEET_TEST_CALLS" | cut -d: -f1)
 [[ $requested_line -lt $launch_line && $launch_line -lt $assign_line && $assign_line -lt $annotate_line && $annotate_line -lt $ready_line ]] \
-  || fail "spawn group/title events are misordered"
-pass "spawn writes explicit group and title before launch-ready"
+  || fail "spawn lane/title events are misordered"
+pass "spawn writes explicit lane and title before launch-ready"
 
 : >"$FLEET_TEST_CALLS"
-HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_PARENT_GROUP=builders \
+env -u FLEET_LAUNCHER -u FLEET_LAUNCHER_KIND HCOM_PROCESS_ID=seat-test \
+  FLEET_TEST_SELF_MODE=name PATH="$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --pane p-test --new-lane gate >"$TEST_ROOT/spawn-new-lane.out"
+grep -E 'hcom .* 1 codex --tag gate ' "$FLEET_TEST_CALLS" >/dev/null || fail "--new-lane did not default the tag"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' lane new gate --lead gate-vava --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not create the new lane with the seat as lead"
+! grep -F ' assign gate-vava ' "$FLEET_TEST_CALLS" >/dev/null || fail "--new-lane also wrote an assignment"
+pass "spawn --new-lane creates the lane with the seat as lead and defaults the tag"
+
+: >"$FLEET_TEST_CALLS"
+HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_PARENT_LANE=018f0000-0000-7000-8000-00000000000b \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
-  >"$TEST_ROOT/spawn-inherited-group.out"
-grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --group builders --by ziru --by-kind agent' \
-  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact inherited group assignment"
+  >"$TEST_ROOT/spawn-inherited-lane.out"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --lane 018f0000-0000-7000-8000-00000000000b --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "spawn did not write the exact inherited lane assignment"
 [[ $(grep -c 'herder .* show impl-ziru --json' "$FLEET_TEST_CALLS") -eq 1 ]] \
-  || fail "spawn did not query its own group exactly once"
-pass "spawn inherits its launching agent's group once"
+  || fail "spawn did not query its own lane exactly once"
+pass "spawn inherits its launching agent's lane once"
 
 : >"$FLEET_TEST_CALLS"
-HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_PARENT_GROUP=builders \
-  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --group '' \
-  >"$TEST_ROOT/spawn-empty-group.out"
-! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --group ' >/dev/null \
-  || fail "explicit empty group wrote an assignment"
-! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' show impl-ziru --json' >/dev/null \
-  || fail "explicit empty group queried inheritance"
-pass "explicit empty group suppresses assignment and inheritance"
+HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_PARENT_LANE=018f0000-0000-7000-8000-00000000000b \
+  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test --lane '' \
+  >"$TEST_ROOT/spawn-empty-lane.out"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --lane ' >/dev/null \
+  || fail "explicit empty lane wrote an assignment"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -E ' show impl-ziru --json| lane show ' >/dev/null \
+  || fail "explicit empty lane queried a lane"
+pass "explicit empty lane suppresses assignment and inheritance"
 
 : >"$FLEET_TEST_CALLS"
 env -u HCOM_PROCESS_ID -u FLEET_LAUNCHER -u FLEET_LAUNCHER_KIND HCOM_TAG=impl \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
-  >"$TEST_ROOT/spawn-human-group.out"
-! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --group ' >/dev/null \
-  || fail "human launch wrote a group assignment"
+  >"$TEST_ROOT/spawn-human-lane.out"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --lane ' >/dev/null \
+  || fail "human launch wrote a lane assignment"
 ! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' show ' >/dev/null \
-  || fail "human launch queried group inheritance"
-pass "human launch inherits and writes no group"
+  || fail "human launch queried lane inheritance"
+pass "human launch inherits and writes no lane"
 
 : >"$FLEET_TEST_CALLS"
 env -u HCOM_TAG HCOM_PROCESS_ID=seat-test FLEET_TEST_SELF_MODE=name \
-  FLEET_TEST_PARENT_GROUP=builders \
+  FLEET_TEST_PARENT_LANE=018f0000-0000-7000-8000-00000000000b \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
   >"$TEST_ROOT/spawn-no-self-tag.out" 2>"$TEST_ROOT/spawn-no-self-tag.err"
 [[ $(grep -c 'herder .* show ziru --json' "$FLEET_TEST_CALLS") -eq 1 ]] \
-  || fail "untagged launcher did not query its own group exactly once"
-grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --group builders --by ziru --by-kind agent' \
-  "$FLEET_TEST_CALLS" >/dev/null || fail "untagged launcher did not inherit its group"
-pass "untagged launcher inherits its group"
+  || fail "untagged launcher did not query its own lane exactly once"
+grep -Fx 'herder FLEET_LAUNCHER='"''"' FLEET_LAUNCHER_KIND='"''"' assign gate-vava --lane 018f0000-0000-7000-8000-00000000000b --by ziru --by-kind agent' \
+  "$FLEET_TEST_CALLS" >/dev/null || fail "untagged launcher did not inherit its lane"
+pass "untagged launcher inherits its lane"
 
 : >"$FLEET_TEST_CALLS"
 HCOM_PROCESS_ID=seat-test HCOM_TAG=impl FLEET_TEST_SELF_MODE=name FLEET_TEST_SHOW_MODE=fail \
   PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
   >"$TEST_ROOT/spawn-inherit-fail.out" 2>"$TEST_ROOT/spawn-inherit-fail.err"
-[[ $(grep -c 'fleet spawn: group inheritance skipped: store unavailable' "$TEST_ROOT/spawn-inherit-fail.err") -eq 1 ]] \
+[[ $(grep -c 'fleet spawn: lane inheritance skipped: store unavailable' "$TEST_ROOT/spawn-inherit-fail.err") -eq 1 ]] \
   || fail "failed inheritance lookup did not warn exactly once"
-! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --group ' >/dev/null \
-  || fail "failed inheritance lookup wrote a group"
-pass "failed group inheritance is warned and fail-open"
+! grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' assign gate-vava --lane ' >/dev/null \
+  || fail "failed inheritance lookup wrote a lane"
+pass "failed lane inheritance is warned and fail-open"
 
-for validation_case in group-long group-control title-empty title-long title-control; do
+: >"$FLEET_TEST_CALLS"
+FLEET_TEST_LANE_MODE=down PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  --lane builders >"$TEST_ROOT/spawn-lane-down.out" 2>"$TEST_ROOT/spawn-lane-down.err"
+grep -F 'fleet spawn: lane builders skipped: store unavailable' "$TEST_ROOT/spawn-lane-down.err" >/dev/null \
+  || fail "unavailable lane lookup did not warn"
+grep -F 'hcom ' "$FLEET_TEST_CALLS" | grep -F ' 1 codex' >/dev/null || fail "unavailable lane lookup did not launch"
+! grep -F ' assign gate-vava --lane ' "$FLEET_TEST_CALLS" >/dev/null || fail "unavailable lane lookup wrote a lane"
+pass "an unavailable lane lookup warns and launches without a lane"
+
+for validation_case in group lane-unknown lane-and-new new-lane-live new-lane-long new-lane-control title-empty title-long title-control; do
   : >"$FLEET_TEST_CALLS"
   validation_args=()
+  validation_env=()
   case $validation_case in
-    group-long) validation_args=(--group "$(printf 'g%.0s' {1..81})") ;;
-    group-control) validation_args=(--group $'bad\tgroup') ;;
+    group) validation_args=(--group builders) ;;
+    lane-unknown) validation_args=(--lane bulders) validation_env=(FLEET_TEST_LANE_MODE=unknown) ;;
+    lane-and-new) validation_args=(--lane builders --new-lane other) ;;
+    new-lane-live) validation_args=(--new-lane builders) validation_env=(FLEET_TEST_LANE_MODE=live) ;;
+    new-lane-long) validation_args=(--new-lane "$(printf 'g%.0s' {1..81})") ;;
+    new-lane-control) validation_args=(--new-lane $'bad\tlane') ;;
     title-empty) validation_args=(--title '   ') ;;
     title-long) validation_args=(--title "$(printf 't%.0s' {1..81})") ;;
     title-control) validation_args=(--title $'bad\ntitle') ;;
   esac
   set +e
-  PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  env ${validation_env[@]+"${validation_env[@]}"} PATH="$TEST_ROOT/bin:$PATH" "$FLEET/spawn.sh" codex --tag gate --pane p-test \
     "${validation_args[@]}" >"$TEST_ROOT/validation-$validation_case.out" \
     2>"$TEST_ROOT/validation-$validation_case.err"
   validation_rc=$?
@@ -455,7 +492,11 @@ for validation_case in group-long group-control title-empty title-long title-con
   ! grep -F 'hcom ' "$FLEET_TEST_CALLS" | grep -F ' 1 codex' >/dev/null \
     || fail "$validation_case validation launched an agent"
 done
-pass "group and title validation refuse before launch"
+grep -Fx 'fleet spawn: --group is retired; use --lane or --new-lane' "$TEST_ROOT/validation-group.err" >/dev/null \
+  || fail "--group refusal did not point at --lane"
+grep -F 'fleet spawn: unknown lane bulders:' "$TEST_ROOT/validation-lane-unknown.err" >/dev/null \
+  || fail "unknown lane refusal was unclear"
+pass "retired --group, unknown or conflicting lanes, and bad titles refuse before launch"
 
 : >"$FLEET_TEST_CALLS"
 HERDR_WORKSPACE_ID=w-current FLEET_TEST_DEFAULT_PLACEMENT=1 PATH="$TEST_ROOT/bin:$PATH" \
@@ -518,7 +559,7 @@ for mode in exit3 absent sleep; do
     mv "$TEST_ROOT/bin/herder" "$TEST_ROOT/bin/herder.off"
     test_path="$TEST_ROOT/bin:/usr/bin:/bin"
   elif [[ $mode == exit3 ]]; then
-    register_args=(--group builders --title 'payload builder')
+    register_args=(--new-lane builders --title 'payload builder')
   fi
   FLEET_TEST_REGISTER_MODE=$mode PATH="$test_path" \
     "$FLEET/spawn.sh" codex --tag gate --pane p-test "${register_args[@]}" \
@@ -528,8 +569,8 @@ for mode in exit3 absent sleep; do
   [[ $(grep -c 'fleet spawn: register launch-requested skipped:' "$TEST_ROOT/spawn-$mode.err") -eq 1 ]] \
     || fail "register $mode did not emit exactly one warning"
   if [[ $mode == exit3 ]]; then
-    grep -F 'fleet spawn: assign gate-vava --group builders skipped:' "$TEST_ROOT/spawn-$mode.err" >/dev/null \
-      || fail "assign refusal warning omitted the seat or group"
+    grep -F 'fleet spawn: lane new builders --lead gate-vava skipped:' "$TEST_ROOT/spawn-$mode.err" >/dev/null \
+      || fail "lane refusal warning omitted the seat or lane"
     grep -F 'fleet spawn: annotate gate-vava --title skipped:' "$TEST_ROOT/spawn-$mode.err" >/dev/null \
       || fail "annotate refusal warning omitted the seat"
     grep -F 'herder ' "$FLEET_TEST_CALLS" | grep -F ' register launch-ready ' >/dev/null \
@@ -583,6 +624,35 @@ HERDER_STATE_DIR="$web_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
   "$TEST_ROOT/real-bin/herder" show gate-vava --json | jq -e '.provenance.launcher == "web-x" and .provenance.launcher_kind == "web"' >/dev/null \
   || fail "real register lost web launcher attribution"
 pass "real spawn and register validate requested, ready, projection, and web attribution end to end"
+
+lane_state=$TEST_ROOT/real-lane-state
+mkdir -p "$lane_state"
+env -u FLEET_LAUNCHER -u FLEET_LAUNCHER_KIND HCOM_PROCESS_ID=seat-test FLEET_TEST_SELF_MODE=name \
+  HERDER_STATE_DIR="$lane_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test --new-lane t \
+  >"$TEST_ROOT/real-lane-new.out" 2>"$TEST_ROOT/real-lane-new.err" || fail "real --new-lane spawn exited non-zero"
+lane_json=$(HERDER_STATE_DIR="$lane_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$TEST_ROOT/real-bin/herder" lane show t --json 2>/dev/null) \
+  || { cat "$TEST_ROOT/real-lane-new.err" >&2; fail "real --new-lane created no lane t"; }
+jq -e '.name == "t" and .lead == "gate-vava" and .members == ["gate-vava"]' <<<"$lane_json" >/dev/null \
+  || fail "real --new-lane lane t does not have the seat as lead: $lane_json"
+env -u FLEET_LAUNCHER -u FLEET_LAUNCHER_KIND HCOM_PROCESS_ID=seat-test HCOM_TAG=gate FLEET_TEST_SELF_MODE=name \
+  FLEET_TEST_SELF_NAME=vava FLEET_TEST_LAUNCH_NAME=kemo \
+  HERDER_STATE_DIR="$lane_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test \
+  >"$TEST_ROOT/real-lane-inherit.out" 2>"$TEST_ROOT/real-lane-inherit.err" || fail "real inheriting spawn exited non-zero"
+HERDER_STATE_DIR="$lane_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$TEST_ROOT/real-bin/herder" show gate-kemo --json \
+  | jq -e --arg id "$(jq -r .id <<<"$lane_json")" '.lane.id == $id and .lane.name == "t" and .lane.lead == "gate-vava"' >/dev/null \
+  || { cat "$TEST_ROOT/real-lane-inherit.err" >&2; fail "a spawn from inside lane t did not inherit it"; }
+set +e
+HERDER_STATE_DIR="$lane_state" PATH="$TEST_ROOT/real-bin:$TEST_ROOT/bin:$PATH" \
+  "$FLEET/spawn.sh" codex --tag gate --pane p-test --lane nope >/dev/null 2>"$TEST_ROOT/real-lane-unknown.err"
+unknown_rc=$?
+set -e
+[[ $unknown_rc -eq 2 ]] && grep -F 'fleet spawn: unknown lane nope:' "$TEST_ROOT/real-lane-unknown.err" >/dev/null \
+  || fail "real unknown --lane did not refuse (rc=$unknown_rc)"
+pass "real spawn: --new-lane makes the seat lead, a seat inside inherits the lane, an unknown --lane refuses"
 
 : >"$FLEET_TEST_CALLS"
 if ! timeout 2 env FLEET_TEST_LAUNCH_MODE=descendant-stdout PATH="$TEST_ROOT/bin:$PATH" \

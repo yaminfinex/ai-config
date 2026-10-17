@@ -1439,7 +1439,9 @@ POST `/api/agents/{bus-name}/assignment`
 POST `/api/spawn`
   Body: `{"tool": "claude" | "codex", "model": "<optional>",
   "effort": "<optional>",
-  "tag": "<optional, default impl>", "workspace": "<live Herdr workspace ID>"}`.
+  "tag": "<optional, default impl>", "workspace": "<live Herdr workspace ID>",
+  "lane": "<optional lane id>"}`. A non-blank lane must be an existing lane id
+  (400 otherwise) and is passed to spawn.sh as `--lane`.
   The workspace is required and is validated against the same in-process
   Herdr snapshot path used by the fleet view. Every request delegates to
   `tools/fleet/spawn.sh` with `--workspace`; the web server never owns the

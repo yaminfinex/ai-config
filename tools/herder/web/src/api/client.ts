@@ -223,6 +223,7 @@ export type SpawnRequest = {
   effort?: string
   tag: string
   workspace: string
+  lane?: string
 }
 
 export async function spawnAgent(body: SpawnRequest, fetcher?: Fetcher, timeoutMs = 160_000) {

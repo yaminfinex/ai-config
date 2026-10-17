@@ -434,6 +434,7 @@ type spawnRequest struct {
 	Effort    *string `json:"effort"`
 	Tag       *string `json:"tag"`
 	Workspace *string `json:"workspace"`
+	Lane      *string `json:"lane"`
 }
 
 type launchResponse struct {
@@ -1913,6 +1914,14 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		return
 	}
 	workspace := strings.TrimSpace(*request.Workspace)
+	lane := ""
+	if request.Lane != nil {
+		lane = strings.TrimSpace(*request.Lane)
+		if proj := readProjection(deps); lane != "" && (proj == nil || proj.Lanes[lane] == nil) {
+			refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("lane %q is not a lane id", lane))
+			return
+		}
+	}
 	snapshot, err := deps.snapshot()
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
@@ -1947,6 +1956,9 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		args = append(args, "--effort", effort)
 	}
 	args = append(args, "--tag", tag, "--workspace", workspace)
+	if lane != "" {
+		args = append(args, "--lane", lane)
+	}
 	result, err := deps.spawn(r.Context(), args, launcher)
 	// Even a refused launch may have joined a name; the board must not
 	// answer from a roster cached before it.
