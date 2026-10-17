@@ -181,13 +181,15 @@ GET `/api/fleet`
     well-formed `<internal>` and one-line `<status>` fences are dropped (the
     web's `parseAssistantFencing` rule; malformed fencing is literal text).
     A turn ending with only fences, or with no text, leaves it where it was.
-    The serve judges each new turn end once, from the transcript tail, when
-    a board first carries it; while the turn's end marker (Claude
-    `turn_duration`, Codex `task_complete`) has not landed it keeps the
-    previous value and judges again on the next board. A tool with no
-    transcript reader, or a failed read, counts every turn. Same session
-    rule and placement as `turn_end_id`; absent until a plain-text turn is
-    seen. Unread reads it; the lens card text keys on `turn_end_id`.
+    The serve keeps each incarnation's last 16 turn ends with hcom's event
+    time and judges each once, oldest first, when a board first carries it:
+    its end marker (Claude `turn_duration`, Codex `task_complete`) is the
+    first one in the transcript tail at or after the event time and after
+    the previous turn's marker. Until that marker lands the turn, and every
+    later one, waits for the next board; a turn older than the whole tail is
+    judged no reply. A tool with no transcript reader, or a failed read,
+    counts every turn. Same session rule and placement as `turn_end_id`;
+    absent until a plain-text turn is seen. Unread reads it; the lens card text keys on `turn_end_id`.
 
   `created_at` is hcom-mastered: it is the roster's own creation time,
   passed through unchanged. `manager`, `manager_state` and `title` are

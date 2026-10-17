@@ -44,6 +44,7 @@ type Life struct {
 // Session is the agent session that wrote it, empty on very old events.
 type Status struct {
 	ID        int64
+	TS        string // hcom's event time, UTC to the second.
 	Instance  string
 	OldStatus string
 	NewStatus string
@@ -292,7 +293,7 @@ func projectStatus(parsed event) (Status, error) {
 	if newStatus == "" {
 		newStatus = parsed.Data.StatusValue
 	}
-	return Status{ID: id, Instance: parsed.Instance, OldStatus: parsed.Data.OldStatus,
+	return Status{ID: id, TS: parsed.TS, Instance: parsed.Instance, OldStatus: parsed.Data.OldStatus,
 		NewStatus: newStatus, Session: parsed.Data.Session}, nil
 }
 

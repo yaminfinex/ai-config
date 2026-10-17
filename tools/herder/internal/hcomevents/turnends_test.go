@@ -73,3 +73,20 @@ func TestTurnEndsNeedsTheExactSession(t *testing.T) {
 		}
 	}
 }
+
+func TestTurnEndsKeepTheLatestTurnsForSince(t *testing.T) {
+	ends := NewTurnEnds()
+	for id := int64(1); id <= 20; id++ {
+		ends.Apply(Status{ID: id, TS: "2026-10-17T11:10:39", Instance: "mole", OldStatus: "active", NewStatus: "listening", Session: "s1"})
+	}
+	turns := ends.Since("mole", "s1", 0)
+	if len(turns) != 16 || turns[0].ID != 5 || turns[15].ID != 20 || turns[0].At.Format("15:04:05") != "11:10:39" {
+		t.Fatalf("kept = %#v", turns)
+	}
+	if turns := ends.Since("mole", "s1", 18); len(turns) != 2 || turns[0].ID != 19 {
+		t.Fatalf("since 18 = %#v", turns)
+	}
+	if turns := ends.Since("mole", "other", 0); turns != nil {
+		t.Fatalf("another session = %#v", turns)
+	}
+}

@@ -1354,7 +1354,7 @@ func foldBoardTurnEnds(board *fleetview.Board, roster []hcomidentity.Row, ends *
 			instance = row.Name
 		}
 		id, _ := ends.Lookup(instance, row.SessionID)
-		return id, replies.lookup(row, instance, id)
+		return id, replies.lookup(row, instance, ends)
 	}
 	var foldRows func([]fleetview.Row)
 	foldRows = func(rows []fleetview.Row) {

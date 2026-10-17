@@ -252,8 +252,8 @@ esac
 		t.Fatal(err)
 	}
 	want := []Status{
-		{ID: 41, Instance: "moma", OldStatus: "active", NewStatus: "listening", Session: "s1"},
-		{ID: 44, Instance: "riko", OldStatus: "blocked", NewStatus: "listening"},
+		{ID: 41, TS: "2026-09-29T06:21:47Z", Instance: "moma", OldStatus: "active", NewStatus: "listening", Session: "s1"},
+		{ID: 44, TS: "2026-09-29T06:22:00Z", Instance: "riko", OldStatus: "blocked", NewStatus: "listening"},
 	}
 	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] || cursor.ID != 44 {
 		t.Fatalf("got=%#v cursor=%d", got, cursor.ID)

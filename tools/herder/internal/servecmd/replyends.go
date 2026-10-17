@@ -2,11 +2,14 @@ package servecmd
 
 import (
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"ai-config/tools/herder/internal/claudesession"
+	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 )
 
@@ -17,9 +20,10 @@ const replyTailEntries = 40
 
 // replyEnds stamps reply_end_id: the turn-end id of the agent's latest turn
 // that ended with plain text, so a turn ending with only <status> or
-// <internal> leaves it where it was. Each turn end is judged once, from the
-// transcript tail, the first time a board sees it; a turn whose end has not
-// landed in the transcript yet is judged again on the next board.
+// <internal> leaves it where it was. Every turn end the status subscriber
+// kept is judged once, oldest first, against its own end marker in the
+// transcript tail; one whose marker has not landed yet waits, with every
+// later one, for the next board.
 type replyEnds struct {
 	tail   func(hcomidentity.Row) ([]claudesession.Entry, error)
 	mu     sync.Mutex
@@ -27,8 +31,8 @@ type replyEnds struct {
 }
 
 type replyEnd struct {
-	turn  int64 // The turn end last judged.
-	reply int64 // The latest turn end judged plain text.
+	judged int64 // The newest turn end judged.
+	reply  int64 // The newest turn end judged plain text.
 }
 
 func newReplyEnds(tail func(hcomidentity.Row) ([]claudesession.Entry, error)) *replyEnds {
@@ -44,33 +48,31 @@ func readReplyTail(row hcomidentity.Row) ([]claudesession.Entry, error) {
 	return read.Entries, err
 }
 
-// lookup returns the reply end for the row's incarnation given its current
-// turn end. A tool with no transcript reader, or a failed read, counts the
-// turn as a reply, as every turn counted before.
-func (r *replyEnds) lookup(row hcomidentity.Row, instance string, turn int64) int64 {
-	if r == nil || turn <= 0 {
+// lookup judges the row's incarnation's turn ends not judged yet and
+// returns its reply end. A tool with no transcript reader, or a failed
+// read, counts every turn as a reply, as every turn counted before.
+func (r *replyEnds) lookup(row hcomidentity.Row, instance string, ends *hcomevents.TurnEnds) int64 {
+	if r == nil {
 		return 0
 	}
 	key := instance + "\x00" + row.SessionID
 	r.mu.Lock()
 	current := r.agents[key]
 	r.mu.Unlock()
-	if current.turn == turn {
+	turns := ends.Since(instance, row.SessionID, current.judged)
+	if len(turns) == 0 {
 		return current.reply
 	}
-	plain, landed := true, true
+	var entries []claudesession.Entry
+	err := errNoReader
 	if row.Tool == "claude" || row.Tool == "codex" {
-		entries, err := r.tail(row)
-		if err == nil {
-			plain, landed = turnReply(entries, row.Status == "listening")
-		}
+		entries, err = r.tail(row)
 	}
-	if !landed {
-		return current.reply
-	}
-	current.turn = turn
-	if plain {
-		current.reply = turn
+	if err != nil {
+		last := turns[len(turns)-1].ID
+		current = replyEnd{judged: last, reply: last}
+	} else {
+		current = judgeTurns(entries, turns, current)
 	}
 	r.mu.Lock()
 	r.agents[key] = current
@@ -78,38 +80,58 @@ func (r *replyEnds) lookup(row hcomidentity.Row, instance string, turn int64) in
 	return current.reply
 }
 
-// turnReply judges the turn that ended last in a transcript tail: plain is
-// whether its final assistant text keeps visible text once fences are
-// dropped; landed is false while its end marker (Claude turn_duration,
-// Codex task_complete) is not written yet. While the agent is listening,
-// activity after the newest end marker is the ended turn still landing;
-// otherwise it is the next turn begun, and the marker before it ends ours
-// (out of the tail's reach, the turn counts as no reply rather than being
-// read again on every board while the next one runs).
-func turnReply(entries []claudesession.Entry, listening bool) (plain, landed bool) {
-	index := len(entries) - 1
-	for ; index >= 0; index-- {
-		kind := entries[index].Kind
-		if kind == claudesession.KindTurnDuration {
+var errNoReader = errors.New("no transcript reader")
+
+// judgeTurns matches turn ends, oldest first, to end markers (Claude
+// turn_duration, Codex task_complete): each turn's marker is the first one
+// at or after its event time and after the previous turn's marker, and the
+// turn is a reply when its final assistant text keeps visible text. A turn
+// whose marker is not in the tail stops the walk (not landed yet); one older
+// than the whole tail is out of reach and judged no reply.
+// hcom times are to the second, so two turns ending within one second can match one marker off.
+func judgeTurns(entries []claudesession.Entry, turns []hcomevents.Turn, current replyEnd) replyEnd {
+	next := 0
+	for _, turn := range turns {
+		if len(entries) > 0 && !entryTime(entries[0]).Before(turn.At) {
+			current.judged = turn.ID
+			continue
+		}
+		marker := -1
+		for index := next; index < len(entries); index++ {
+			if entries[index].Kind == claudesession.KindTurnDuration && !entryTime(entries[index]).Before(turn.At) {
+				marker = index
+				break
+			}
+		}
+		if marker < 0 {
 			break
 		}
-		if listening && turnActivity(kind) {
-			return false, false
+		if finalText(entries[:marker]) {
+			current.reply = turn.ID
 		}
+		current.judged, next = turn.ID, marker+1
 	}
-	if index < 0 {
-		return false, !listening
-	}
-	for index--; index >= 0; index-- {
+	return current
+}
+
+// finalText is whether the turn ending at the end of entries ended with
+// plain text: its last assistant text, with nothing but chips after it.
+func finalText(entries []claudesession.Entry) bool {
+	for index := len(entries) - 1; index >= 0; index-- {
 		kind := entries[index].Kind
 		if kind == claudesession.KindAssistantText {
-			return hasVisibleText(assistantText(entries[index].Payload)), true
+			return hasVisibleText(assistantText(entries[index].Payload))
 		}
 		if kind == claudesession.KindTurnDuration || turnActivity(kind) {
-			return false, true
+			return false
 		}
 	}
-	return false, true
+	return false
+}
+
+func entryTime(entry claudesession.Entry) time.Time {
+	at, _ := time.Parse(time.RFC3339Nano, entry.Timestamp)
+	return at
 }
 
 func turnActivity(kind claudesession.Kind) bool {

@@ -1,6 +1,9 @@
 package hcomevents
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // TurnEnds folds listening entries into each agent's latest completed turn:
 // the id of the newest status event where that agent went from active or
@@ -17,7 +20,17 @@ type TurnEnds struct {
 type turnEnd struct {
 	session string
 	id      int64
+	recent  []Turn // The latest recentTurns turn ends, oldest first.
 }
+
+// Turn is one completed turn: its event id and hcom's time for it.
+type Turn struct {
+	ID int64
+	At time.Time
+}
+
+// recentTurns bounds the turn ends kept per agent for Since.
+const recentTurns = 16
 
 func NewTurnEnds() *TurnEnds {
 	return &TurnEnds{agents: map[string]turnEnd{}}
@@ -35,6 +48,10 @@ func (t *TurnEnds) Apply(status Status) {
 	}
 	if (status.OldStatus == "active" || status.OldStatus == "blocked") && status.ID > current.id {
 		current.id = status.ID
+		current.recent = append(current.recent, Turn{ID: status.ID, At: eventTime(status.TS)})
+		if len(current.recent) > recentTurns {
+			current.recent = current.recent[len(current.recent)-recentTurns:]
+		}
 	}
 	t.agents[status.Instance] = current
 }
@@ -53,4 +70,34 @@ func (t *TurnEnds) Lookup(instance, session string) (int64, bool) {
 		return 0, false
 	}
 	return current.id, true
+}
+
+// Since returns the incarnation's kept turn ends newer than after, oldest
+// first; like Lookup, only for exactly the given session.
+func (t *TurnEnds) Since(instance, session string, after int64) []Turn {
+	if t == nil || session == "" {
+		return nil
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	current, ok := t.agents[instance]
+	if !ok || current.session != session {
+		return nil
+	}
+	var turns []Turn
+	for _, turn := range current.recent {
+		if turn.ID > after {
+			turns = append(turns, turn)
+		}
+	}
+	return turns
+}
+
+// eventTime reads hcom's event ts: UTC, with or without a zone suffix.
+func eventTime(ts string) time.Time {
+	if at, err := time.Parse(time.RFC3339, ts); err == nil {
+		return at
+	}
+	at, _ := time.Parse("2006-01-02T15:04:05", ts)
+	return at
 }
