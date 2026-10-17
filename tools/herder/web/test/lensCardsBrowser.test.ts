@@ -44,7 +44,7 @@ const motion = `document.getAnimations().filter((animation) => animation.effect?
 
 test('a card shows its agent\'s last answer, read once per turn; t and s cycle and persist', { timeout: 180_000 }, async (context) => {
   const api = fixtureAPI(['alpha', 'bravo'], { entries })
-  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = 1
+  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = pane.reply_end_id = 1
   const { url, browser, evaluate, waitFor } = await twoSpaces(api, 'lens-cards', context)
   const press = async (key: string) => { await browser(['press', key]); await browser(['wait', '80']) }
 
@@ -65,7 +65,8 @@ test('a card shows its agent\'s last answer, read once per turn; t and s cycle a
   await browser(['wait', '400'])
   assert.equal(tails('alpha'), 1, 'a board without a new turn reads nothing')
   answers.alpha!.push('Second **turn** done.')
-  api.board.workspaces[0]!.tabs[0]!.panes.find((pane) => pane.agent === 'alpha')!.turn_end_id = 2
+  const alpha = api.board.workspaces[0]!.tabs[0]!.panes.find((pane) => pane.agent === 'alpha')!
+  alpha.turn_end_id = alpha.reply_end_id = 2
   api.send('fleet', api.board)
   await waitFor(`(${body('alpha')}) === 'Second turn done.'`)
   assert.equal(tails('alpha'), 2)
@@ -178,7 +179,7 @@ test('the zoom morphs from its card and back, n and ⇧⌥←/→ swipe, none of
 
 test('⌘⇧⏎ sends, reads the agent up to the turn the owner saw, and files back to the lens; a failure stays and says why; ⌘⏎ stays', { timeout: 180_000 }, async (context) => {
   const api = fixtureAPI(['alpha', 'bravo'], { entries })
-  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = 1
+  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = pane.reply_end_id = 1
   const { browser, evaluate, waitFor } = await twoSpaces(api, 'lens-file-back', context)
   const composer = `document.querySelector('textarea[data-composer][aria-label="Message alpha"]')`
   // alpha's read marker as this browser holds it.
@@ -193,7 +194,8 @@ test('⌘⇧⏎ sends, reads the agent up to the turn the owner saw, and files b
   for (let tries = 0; tries < 40 && (await marker())?.turn !== 1; tries += 1) await browser(['wait', '100'])
   assert.equal((await marker())?.turn, 1, 'alpha seeded read at turn 1')
   await evaluate(`Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' }), document.dispatchEvent(new Event('visibilitychange')), true`)
-  api.board.workspaces[0]!.tabs[0]!.panes.find((pane) => pane.agent === 'alpha')!.turn_end_id = 2
+  const alpha = api.board.workspaces[0]!.tabs[0]!.panes.find((pane) => pane.agent === 'alpha')!
+  alpha.turn_end_id = alpha.reply_end_id = 2
   api.send('fleet', api.board)
   await browser(['wait', '1500'])
   assert.equal((await marker())?.turn, 1, 'unseen: the turn-2 answer stays unread')
@@ -231,7 +233,7 @@ test('⌘⇧⏎ sends, reads the agent up to the turn the owner saw, and files b
 
 test('⌘⇧⏎ from a blocked agent views its block: the card goes quiet and it leaves "need you"; a failed send changes nothing; a later block needs you again', { timeout: 180_000 }, async (context) => {
   const api = fixtureAPI(['alpha', 'bravo'], { entries })
-  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = 1
+  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = pane.reply_end_id = 1
   const pane = (agent: string) => api.board.workspaces[0]!.tabs[0]!.panes.find((row) => row.agent === agent)!
   const { browser, evaluate, waitFor } = await twoSpaces(api, 'lens-file-back-block', context)
   const composer = `document.querySelector('textarea[data-composer][aria-label="Message alpha"]')`

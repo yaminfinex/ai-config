@@ -30,7 +30,7 @@ func TestFoldBoardTurnEndsStampsPlacedUnplacedAndSubagentsByBaseName(t *testing.
 		}}}}},
 		Unplaced: []fleetview.Row{{Agent: "vava", Subagents: &subagents}, {Agent: "quiet"}},
 	}
-	foldBoardTurnEnds(&board, roster, ends)
+	foldBoardTurnEnds(&board, roster, ends, nil)
 	panes := board.Workspaces[0].Tabs[0].Panes
 	if panes[0].TurnEndID != 41 || panes[0].Subagents[0].TurnEndID != 43 || panes[1].TurnEndID != 0 {
 		t.Fatalf("placed = %#v", panes)
@@ -45,7 +45,7 @@ func TestFoldBoardTurnEndsStampsPlacedUnplacedAndSubagentsByBaseName(t *testing.
 	if !strings.Contains(string(raw), `"turn_end_id":41`) || strings.Count(string(raw), "turn_end_id") != 4 {
 		t.Fatalf("json = %s", raw)
 	}
-	foldBoardTurnEnds(&board, roster, nil)
+	foldBoardTurnEnds(&board, roster, nil, nil)
 }
 
 func TestStartTurnEndsFoldsTheSubscriptionIntoTheBoard(t *testing.T) {
@@ -95,12 +95,12 @@ func TestFoldBoardTurnEndsBelongToTheCurrentRosterIncarnation(t *testing.T) {
 	ends.Apply(hcomevents.Status{ID: 41, Instance: "mole", OldStatus: "active", NewStatus: "listening", Session: "old-session"})
 	roster := []hcomidentity.Row{{Name: "impl-mole", BaseName: "mole", SessionID: "new-session", Status: "active"}}
 	board := fleetview.Board{Unplaced: []fleetview.Row{{Agent: "impl-mole", BusStatus: "active"}}}
-	foldBoardTurnEnds(&board, roster, ends)
+	foldBoardTurnEnds(&board, roster, ends, nil)
 	if got := board.Unplaced[0].TurnEndID; got != 0 {
 		t.Fatalf("new-session received old-session turn_end_id=%d", got)
 	}
 	ends.Apply(hcomevents.Status{ID: 60, Instance: "mole", OldStatus: "active", NewStatus: "listening", Session: "new-session"})
-	foldBoardTurnEnds(&board, roster, ends)
+	foldBoardTurnEnds(&board, roster, ends, nil)
 	if got := board.Unplaced[0].TurnEndID; got != 60 {
 		t.Fatalf("new-session's own turn = %d, want 60", got)
 	}
@@ -114,7 +114,7 @@ func TestFoldBoardTurnEndsDistinctSessionsSharingABaseNameDoNotShare(t *testing.
 		{Name: "review-mole", BaseName: "mole", SessionID: "session-two"},
 	}
 	board := fleetview.Board{Unplaced: []fleetview.Row{{Agent: "impl-mole"}, {Agent: "review-mole"}, {Agent: "not-in-roster"}}}
-	foldBoardTurnEnds(&board, roster, ends)
+	foldBoardTurnEnds(&board, roster, ends, nil)
 	if got := board.Unplaced[0].TurnEndID; got != 41 {
 		t.Fatalf("session-one = %d, want 41", got)
 	}

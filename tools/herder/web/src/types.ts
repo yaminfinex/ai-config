@@ -9,6 +9,9 @@ export interface Row {
   // turn_end_id is the hcom status event id of the agent's latest completed
   // turn (monotonic); absent until the serve has seen one.
   turn_end_id?: number
+  // reply_end_id is the turn_end_id of the agent's latest turn that ended
+  // with plain text, not only <status> or <internal>; unread reads it.
+  reply_end_id?: number
   parent_agent?: string
   subagents?: Row[]
   // Supervision edge (herder-mastered augmenting data, never lifecycle

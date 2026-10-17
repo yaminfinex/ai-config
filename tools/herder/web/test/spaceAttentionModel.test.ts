@@ -94,46 +94,46 @@ test('the stream follows each space\'s open agents once, the active ones first, 
 })
 
 test('the turn end is the serve-stamped id, placed or not; nothing without one, never for retired or stopped', () => {
-  assert.equal(turnEnd(pane('a', 'listening', { turn_end_id: 41 })), 41)
-  assert.equal(turnEnd(pane('a', 'active', { turn_end_id: 41 })), 41, 'a new turn running does not hide the last one')
-  assert.equal(turnEnd({ ...pane('a', 'listening', { turn_end_id: 41 }), pane_id: '' }), 41, 'an unplaced row carries it too')
+  assert.equal(turnEnd(pane('a', 'listening', { reply_end_id: 41 })), 41)
+  assert.equal(turnEnd(pane('a', 'active', { reply_end_id: 41 })), 41, 'a new turn running does not hide the last one')
+  assert.equal(turnEnd({ ...pane('a', 'listening', { reply_end_id: 41 }), pane_id: '' }), 41, 'an unplaced row carries it too')
   assert.equal(turnEnd(pane('a', 'listening', { context_used: 1200, agent_session: 's1' })), null, 'context is a gauge, not a turn')
-  assert.equal(turnEnd(pane('a', 'listening', { turn_end_id: 0 })), null)
-  assert.equal(turnEnd(pane('a', 'retired', { turn_end_id: 41 })), null)
-  assert.equal(turnEnd(pane('a', 'stopped', { turn_end_id: 41 })), null)
+  assert.equal(turnEnd(pane('a', 'listening', { reply_end_id: 0 })), null)
+  assert.equal(turnEnd(pane('a', 'retired', { reply_end_id: 41 })), null)
+  assert.equal(turnEnd(pane('a', 'stopped', { reply_end_id: 41 })), null)
   assert.equal(turnEnd(undefined), null)
 })
 
 test('an agent is unread only when a turn ended after the marker this browser holds', () => {
-  assert.equal(agentAttention(pane('a', 'listening', { turn_end_id: 50 }), m(41)), 'unread')
-  assert.equal(agentAttention(pane('a', 'active', { turn_end_id: 50 }), m(41)), 'unread', 'woken again before it was seen')
-  assert.equal(agentAttention(pane('a', 'listening', { turn_end_id: 50 }), m(50)), null)
-  assert.equal(agentAttention(pane('a', 'listening', { turn_end_id: 41 }), m(50)), null, 'an older id (a reset incarnation) is not new')
-  assert.equal(agentAttention(pane('a', 'listening', { turn_end_id: 50 }), undefined), null, 'no marker: seeding decides, not the first render')
-  assert.equal(agentAttention(pane('a', 'listening', { context_used: 900 }), m(41)), null, 'no turn_end_id: never unread')
+  assert.equal(agentAttention(pane('a', 'listening', { reply_end_id: 50 }), m(41)), 'unread')
+  assert.equal(agentAttention(pane('a', 'active', { reply_end_id: 50 }), m(41)), 'unread', 'woken again before it was seen')
+  assert.equal(agentAttention(pane('a', 'listening', { reply_end_id: 50 }), m(50)), null)
+  assert.equal(agentAttention(pane('a', 'listening', { reply_end_id: 41 }), m(50)), null, 'an older id (a reset incarnation) is not new')
+  assert.equal(agentAttention(pane('a', 'listening', { reply_end_id: 50 }), undefined), null, 'no marker: seeding decides, not the first render')
+  assert.equal(agentAttention(pane('a', 'listening', { context_used: 900 }), m(41)), null, 'no reply_end_id: never unread')
 })
 
 test('blocked always shows, read or not and with or without a turn end', () => {
   assert.equal(agentAttention(pane('a', 'blocked'), undefined), 'blocked')
   assert.equal(agentAttention(pane('a', 'blocked'), m(12)), 'blocked')
-  assert.equal(agentAttention(pane('a', 'blocked', { turn_end_id: 5 }), m(5)), 'blocked')
+  assert.equal(agentAttention(pane('a', 'blocked', { reply_end_id: 5 }), m(5)), 'blocked')
   assert.equal(agentAttention(undefined, m(1)), null)
 })
 
 test('unread is allow-listed to listening and active; every other status with a newer turn never counts', () => {
-  assert.equal(agentAttention(pane('a', 'listening', { turn_end_id: 110 }), m(100)), 'unread')
-  assert.equal(agentAttention(pane('a', 'active', { turn_end_id: 110 }), m(100)), 'unread', 'an unviewed turn stays unread while the next one runs')
+  assert.equal(agentAttention(pane('a', 'listening', { reply_end_id: 110 }), m(100)), 'unread')
+  assert.equal(agentAttention(pane('a', 'active', { reply_end_id: 110 }), m(100)), 'unread', 'an unviewed turn stays unread while the next one runs')
   for (const status of ['unknown', '-', 'inactive', 'pending', 'retired', 'stopped', '']) {
-    assert.equal(agentAttention(pane('a', status, { turn_end_id: 110 }), m(100)), null, status)
+    assert.equal(agentAttention(pane('a', status, { reply_end_id: 110 }), m(100)), null, status)
   }
 })
 
 test('space attention collects unread and blocked open agents from the board, subagents and unplaced included', () => {
   const board = boardOf([
-    pane('mavu', 'listening', { turn_end_id: 10 }),
+    pane('mavu', 'listening', { reply_end_id: 10 }),
     pane('ziru', 'blocked'),
-    pane('kobe', 'listening', { turn_end_id: 3, subagents: [pane('kobe-sub', 'blocked'), pane('kobe-two', 'listening', { turn_end_id: 9 })] }),
-  ], [pane('lone', 'listening', { turn_end_id: 8 })])
+    pane('kobe', 'listening', { reply_end_id: 3, subagents: [pane('kobe-sub', 'blocked'), pane('kobe-two', 'listening', { reply_end_id: 9 })] }),
+  ], [pane('lone', 'listening', { reply_end_id: 8 })])
   const markers = marks({ mavu: 1, ziru: 1, kobe: 3, 'kobe-two': 2, lone: 1 })
   assert.deepEqual(spaceAttention(board, ['mavu', 'ziru', 'kobe', 'kobe-sub', 'kobe-two', 'lone', 'ghost'], markers), {
     unread: ['mavu', 'kobe-two', 'lone'], blocked: ['ziru', 'kobe-sub'], drafts: [],
@@ -143,29 +143,29 @@ test('space attention collects unread and blocked open agents from the board, su
 
 test('a deliberate mark unread is quiet unread; blocked stays loud', () => {
   const marked: ReadMarker = { ...m(50), unread: true }
-  assert.equal(agentAttention(pane('a', 'listening', { turn_end_id: 50 }), marked), 'unread')
+  assert.equal(agentAttention(pane('a', 'listening', { reply_end_id: 50 }), marked), 'unread')
   assert.equal(agentAttention(pane('a', 'listening'), marked), 'unread', 'with no turn end yet')
-  assert.equal(agentAttention(pane('a', 'blocked', { turn_end_id: 50 }), marked), 'blocked')
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 50 }), pane('ziru', 'blocked')])
+  assert.equal(agentAttention(pane('a', 'blocked', { reply_end_id: 50 }), marked), 'blocked')
+  const board = boardOf([pane('mavu', 'listening', { reply_end_id: 50 }), pane('ziru', 'blocked')])
   assert.deepEqual(spaceAttention(board, ['mavu', 'ziru'], { mavu: marked, ziru: { ...m(1), unread: true } }), { unread: ['mavu'], blocked: ['ziru'], drafts: [] })
 })
 
 test('markers follow the agent name, not its placement: placed to unplaced and back keeps read and unread', () => {
-  const placed = boardOf([pane('mavu', 'listening', { turn_end_id: 20 })])
-  const unplaced = boardOf([], [{ ...pane('mavu', 'listening', { turn_end_id: 20 }), pane_id: '' }])
+  const placed = boardOf([pane('mavu', 'listening', { turn_end_id: 20, reply_end_id: 20 })])
+  const unplaced = boardOf([], [{ ...pane('mavu', 'listening', { turn_end_id: 20, reply_end_id: 20 }), pane_id: '' }])
   const seeded = seed({}, placed, ['mavu'])
   assert.deepEqual(seeded, { mavu: m(20) })
   assert.deepEqual(seedUpdates(seeded, unplaced, ['mavu']), {}, 'moving out of its pane re-seeds nothing')
   assert.deepEqual(spaceAttention(unplaced, ['mavu'], seeded), { unread: [], blocked: [], drafts: [] }, 'moving does not invent a completion')
-  const finishedUnplaced = boardOf([], [{ ...pane('mavu', 'listening', { turn_end_id: 27 }), pane_id: '' }])
+  const finishedUnplaced = boardOf([], [{ ...pane('mavu', 'listening', { turn_end_id: 27, reply_end_id: 27 }), pane_id: '' }])
   assert.deepEqual(spaceAttention(finishedUnplaced, ['mavu'], seeded).unread, ['mavu'], 'a turn ended while unplaced')
-  const backInPlace = boardOf([pane('mavu', 'listening', { turn_end_id: 27 })])
+  const backInPlace = boardOf([pane('mavu', 'listening', { turn_end_id: 27, reply_end_id: 27 })])
   assert.deepEqual(spaceAttention(backInPlace, ['mavu'], seeded).unread, ['mavu'], 'still unread once placed again')
   assert.deepEqual(spaceAttention(backInPlace, ['mavu'], read(seeded, finishedUnplaced, ['mavu'])).unread, [], 'read while unplaced stays read')
 })
 
 test('seeding records never-seen open agents at their current turn end, silently, and waits for an id', () => {
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 10 }), pane('ziru', 'active')])
+  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 10, reply_end_id: 10 }), pane('ziru', 'active')])
   assert.deepEqual(seedUpdates({}, undefined, ['mavu']), {}, 'no board: nothing to seed against')
   const seeded = seed({}, board, ['mavu', 'ziru', 'ghost'])
   assert.deepEqual(seeded, { mavu: m(10) }, 'no turn end yet: no marker, not a zero baseline')
@@ -178,15 +178,24 @@ test('a first turn end that arrives late is an unknown baseline, seeded silently
   const before = boardOf([pane('ziru', 'listening')])
   const markers = seed({}, before, ['ziru'])
   assert.deepEqual(markers, {})
-  const late = boardOf([pane('ziru', 'listening', { turn_end_id: 300 })])
+  const late = boardOf([pane('ziru', 'listening', { turn_end_id: 300, reply_end_id: 300 })])
   assert.equal(spaceAttention(late, ['ziru'], markers).unread.length, 0, 'unmarked is never unread')
   const seeded = seed(markers, late, ['ziru'])
   assert.deepEqual(seeded, { ziru: m(300) })
   assert.deepEqual(spaceAttention(late, ['ziru'], seeded).unread, [])
-  assert.deepEqual(spaceAttention(boardOf([pane('ziru', 'listening', { turn_end_id: 310 })]), ['ziru'], seeded).unread, ['ziru'], 'the next turn is new')
+  assert.deepEqual(spaceAttention(boardOf([pane('ziru', 'listening', { turn_end_id: 310, reply_end_id: 310 })]), ['ziru'], seeded).unread, ['ziru'], 'the next turn is new')
 })
 
-test('a missing turn_end_id keeps the marker and is never unread; blocked still shows', () => {
+test('a turn ending with only status is not new; the first reply after it is, even for an agent seeded mid-way', () => {
+  const markers = seed({}, boardOf([pane('mavu', 'listening', { turn_end_id: 10, reply_end_id: 10 })]), ['mavu'])
+  assert.deepEqual(spaceAttention(boardOf([pane('mavu', 'listening', { turn_end_id: 12, reply_end_id: 10 })]), ['mavu'], markers).unread, [], 'status-only turns')
+  assert.deepEqual(spaceAttention(boardOf([pane('mavu', 'listening', { turn_end_id: 14, reply_end_id: 14 })]), ['mavu'], markers).unread, ['mavu'], 'a plain-text turn')
+  const fresh = seed({}, boardOf([pane('ziru', 'listening', { turn_end_id: 20 })]), ['ziru'])
+  assert.deepEqual(fresh, { ziru: m(20) }, 'seeded at its latest turn before any reply')
+  assert.deepEqual(spaceAttention(boardOf([pane('ziru', 'listening', { turn_end_id: 22, reply_end_id: 22 })]), ['ziru'], fresh).unread, ['ziru'], 'its first reply is new')
+})
+
+test('a missing reply_end_id keeps the marker and is never unread; blocked still shows', () => {
   const markers = { mavu: { ...m(40), at: 1000 } }
   const missing = boardOf([pane('mavu', 'listening')])
   assert.deepEqual(spaceAttention(missing, ['mavu'], markers), { unread: [], blocked: [], drafts: [] })
@@ -196,7 +205,7 @@ test('a missing turn_end_id keeps the marker and is never unread; blocked still 
 })
 
 test('viewing records the latest turn end and never moves a marker backwards', () => {
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 10 }), pane('ziru', 'active', { turn_end_id: 1 })])
+  const board = boardOf([pane('mavu', 'listening', { reply_end_id: 10 }), pane('ziru', 'active', { reply_end_id: 1 })])
   const markers = marks({ mavu: 1, ziru: 1 })
   const after = read(markers, board, ['mavu', 'ziru'])
   assert.deepEqual(turns(after), { mavu: 10, ziru: 1 })
@@ -208,7 +217,7 @@ test('viewing records the latest turn end and never moves a marker backwards', (
 })
 
 test('reading waits for a transcript end that is still loading', () => {
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 10 })])
+  const board = boardOf([pane('mavu', 'listening', { reply_end_id: 10 })])
   const markers = marks({ mavu: 1 })
   assert.deepEqual(readUpdates({ markers, board, viewed: ['mavu'], positions: { mavu: undefined }, armed: new Set(), now: 1000 }), {})
   const pos = { session: 's1', offset: 400, ts: 't' }
@@ -216,14 +225,14 @@ test('reading waits for a transcript end that is still loading', () => {
 })
 
 test('a manual unread is held while viewed and cleared by the dwell only once armed', () => {
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 10 })])
+  const board = boardOf([pane('mavu', 'listening', { reply_end_id: 10 })])
   const markers = { mavu: { ...m(10), unread: true } }
   assert.deepEqual(read(markers, board, ['mavu']), markers, 'staying on it holds the mark')
   assert.deepEqual(read(markers, board, ['mavu'], { armed: new Set(['mavu']) }).mavu, { turn: 10, pos: null, at: 1000, unread: false }, 'left and come back: the dwell clears it')
 })
 
 test('pruning keeps agents open or on the board, and waits for a board', () => {
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 10, subagents: [pane('sub', 'listening')] })], [pane('lone', 'listening')])
+  const board = boardOf([pane('mavu', 'listening', { reply_end_id: 10, subagents: [pane('sub', 'listening')] })], [pane('lone', 'listening')])
   assert.deepEqual([...boardAgents(board)].sort(), ['lone', 'mavu', 'sub'])
   assert.deepEqual([...markerKeepSet(board, ['open']) ?? []].sort(), ['lone', 'mavu', 'open', 'sub'])
   assert.equal(markerKeepSet(undefined, ['open']), null, 'no board: nothing is known gone')
@@ -240,10 +249,10 @@ test('labels read naturally for every count combination', () => {
 
 test('the header total counts every board agent once, in two spaces or in none; the cards count per space', () => {
   const board = boardOf([
-    pane('mavu', 'listening', { turn_end_id: 9 }),
+    pane('mavu', 'listening', { reply_end_id: 9 }),
     pane('ziru', 'blocked'),
-    pane('kelo', 'listening', { turn_end_id: 4 }),
-  ], [pane('lone', 'listening', { turn_end_id: 8 }), pane('-', 'blocked')])
+    pane('kelo', 'listening', { reply_end_id: 4 }),
+  ], [pane('lone', 'listening', { reply_end_id: 8 }), pane('-', 'blocked')])
   const markers = marks({ mavu: 1, ziru: 1, kelo: 4, lone: 1 })
   // mavu sits in both spaces; lone sits in none.
   const alpha = spaceAttention(board, ['mavu', 'ziru'], markers)
@@ -264,7 +273,7 @@ test('blocked is the bus or herdr saying so', () => {
 })
 
 test('a viewed block stops needing you; unblocking drops the mark, so re-blocking needs you again', () => {
-  const blocked = boardOf([pane('mavu', 'blocked', { turn_end_id: 5 }), pane('ziru', 'listening', { turn_end_id: 3 })])
+  const blocked = boardOf([pane('mavu', 'blocked', { reply_end_id: 5 }), pane('ziru', 'listening', { reply_end_id: 3 })])
   const markers = marks({ mavu: 5, ziru: 3 })
   assert.deepEqual(spaceAttention(blocked, ['mavu'], markers).blocked, ['mavu'], 'blocked needs you')
   // Viewing it (the focused panel) views the block at once.
@@ -274,7 +283,7 @@ test('a viewed block stops needing you; unblocking drops the mark, so re-blockin
   assert.equal(nextViewedBlocks(viewed, blocked, []), viewed, 'looking away keeps the mark, and the same set')
   assert.deepEqual([...nextViewedBlocks(new Set(), blocked, ['ziru'])], [], 'viewing an agent that is not blocked marks nothing')
   // Unblocked: the mark lapses.
-  const unblocked = boardOf([pane('mavu', 'listening', { turn_end_id: 5 }), pane('ziru', 'listening', { turn_end_id: 3 })])
+  const unblocked = boardOf([pane('mavu', 'listening', { reply_end_id: 5 }), pane('ziru', 'listening', { reply_end_id: 3 })])
   viewed = nextViewedBlocks(viewed, unblocked, [])
   assert.deepEqual([...viewed], [])
   // Blocked again: needs you again.
@@ -293,17 +302,17 @@ test('a viewed block stops needing you; unblocking drops the mark, so re-blockin
 const at = (offset: number) => ({ session: 's1', offset, ts: `t${offset}` })
 
 test('an agent can be marked read while marked unread (blocked too) or a newer turn ended, never otherwise', () => {
-  const listening = pane('mavu', 'listening', { turn_end_id: 5 })
+  const listening = pane('mavu', 'listening', { reply_end_id: 5 })
   assert.equal(agentUnread(listening, m(4)), true, 'a new turn')
   assert.equal(agentUnread(listening, m(5)), false, 'read')
   assert.equal(agentUnread(listening, { ...m(5), unread: true }), true, 'a mark unread')
-  assert.equal(agentUnread(pane('mavu', 'blocked', { turn_end_id: 5 }), { ...m(5), unread: true }), true, 'a mark unread while blocked')
+  assert.equal(agentUnread(pane('mavu', 'blocked', { reply_end_id: 5 }), { ...m(5), unread: true }), true, 'a mark unread while blocked')
   assert.equal(agentUnread(pane('mavu', 'listening'), m(0)), false, 'no turn end')
   assert.equal(agentUnread(listening, undefined), false, 'no baseline yet')
 })
 
 test('mark read writes what a dwell read would, at once, and skips agents already read', () => {
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 7 }), pane('ziru', 'listening', { turn_end_id: 3 })])
+  const board = boardOf([pane('mavu', 'listening', { reply_end_id: 7 }), pane('ziru', 'listening', { reply_end_id: 3 })])
   const markers: ReadMarkers = { mavu: { turn: 5, pos: at(100), at: 10, unread: false }, ziru: { turn: 3, pos: at(50), at: 10, unread: false } }
   assert.deepEqual(markReadUpdates({ markers, board, names: ['mavu', 'ziru'], positions: { mavu: at(900) }, now: 2000 }),
     { mavu: { turn: 7, pos: at(900), at: 2000, unread: false } }, 'the tail where loaded; ziru is already read')
@@ -317,7 +326,7 @@ test('mark read writes what a dwell read would, at once, and skips agents alread
 })
 
 test('the read toggle flips an agent between read and unread', () => {
-  const board = boardOf([pane('mavu', 'listening', { turn_end_id: 7 })])
+  const board = boardOf([pane('mavu', 'listening', { reply_end_id: 7 })])
   const row = board.workspaces[0]!.tabs[0]!.panes[0]
   let markers: ReadMarkers = { mavu: m(6) }
   const toggle = () => {
@@ -334,11 +343,11 @@ test('the read toggle flips an agent between read and unread', () => {
 
 test('a space marks read exactly the agents its badge counts, over unread, read and no-turn agents', () => {
   const board = boardOf([
-    pane('mavu', 'listening', { turn_end_id: 7 }),
-    pane('ziru', 'listening', { turn_end_id: 3 }),
+    pane('mavu', 'listening', { reply_end_id: 7 }),
+    pane('ziru', 'listening', { reply_end_id: 3 }),
     pane('kelo', 'listening'),
     pane('pira', 'listening'),
-    pane('tano', 'blocked', { turn_end_id: 9 }),
+    pane('tano', 'blocked', { reply_end_id: 9 }),
   ])
   const markers: ReadMarkers = { mavu: m(5), ziru: m(3), kelo: m(0), pira: { ...m(0), unread: true }, tano: m(2) }
   const agents = ['mavu', 'ziru', 'kelo', 'pira', 'tano']

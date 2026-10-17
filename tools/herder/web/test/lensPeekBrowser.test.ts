@@ -24,7 +24,7 @@ test('the peek follows the selection and the stream, reads nothing, views no blo
   const api = fixtureAPI(['alpha', 'bravo'], { entries })
   const panes = api.board.workspaces[0]!.tabs[0]!.panes
   const pane = (agent: string) => panes.find((item) => item.agent === agent)!
-  for (const item of panes) item.turn_end_id = 1
+  for (const item of panes) item.turn_end_id = item.reply_end_id = 1
   const { url, browser, evaluate, waitFor } = await startBrowser(context, 'lens-peek', api.plugin)
   const press = async (key: string) => { await browser(['press', key]); await browser(['wait', '80']) }
   const marker = async (agent: string) => await evaluate(`(JSON.parse(localStorage.getItem('herder.web.read-markers.v3:rows') ?? '[]').find((row) => row.key === '${agent}')?.value ?? null)`) as { turn?: number } | null
@@ -71,7 +71,7 @@ test('the peek follows the selection and the stream, reads nothing, views no blo
   await waitFor(`${peekText}.includes('A live line from alpha.')`)
 
   // A new turn makes alpha unread; peeking at it well past the dwell reads nothing.
-  pane('alpha').turn_end_id = 2
+  pane('alpha').turn_end_id = pane('alpha').reply_end_id = 2
   api.send('fleet', api.board)
   await waitFor(`${pill('alpha')} === '1'`)
   await press('ArrowRight')
