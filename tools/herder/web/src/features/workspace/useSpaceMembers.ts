@@ -26,6 +26,7 @@ type Options = {
   activeSpaceIDRef: MutableRefObject<string | null>
   revision: number
   spaces: SpaceDefinition[]
+  hold: boolean
   syncDock: () => void
   withHistorySuppressed: <T>(operation: () => T) => T
   onProblem: (problem: string) => void
@@ -35,9 +36,10 @@ type Options = {
 // spaces.members namespace and opens members another device or the native
 // client added. It never closes a panel because a member is missing. Lane
 // spaces are live spaces like the user's own while the board lists them.
-// ready turns true once the first pull has landed; moveMembers re-keys a
-// row (the one-time lane move).
-export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spaces, syncDock, withHistorySuppressed, onProblem }: Options) {
+// ready turns true once a full pull has landed; moveMembers re-keys a row
+// (the one-time lane move). hold keeps reconciliation off until that move
+// has run, so nothing writes a lane space's layout before it.
+export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spaces, hold, syncDock, withHistorySuppressed, onProblem }: Options) {
   const [members] = useState(() => store ? createSpaceMembersStore() : null)
   const syncRef = useRef<ReturnType<typeof createSpaceMembersSync> | null>(null)
   const started = useRef(false)
@@ -87,14 +89,14 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
   }, [activeSpaceIDRef, apiRef, syncDock, withHistorySuppressed])
 
   const reconcile = useCallback(() => {
-    if (!members || !store || !started.current) return
+    if (!members || !store || !started.current || hold) return
     reconcileSpaceMembers(members, {
       liveSpaceIDs: spacesRef.current.map(({ id }) => id),
       closedSpaceIDs: store.records().flatMap(({ record }) => record.deleted ? [record.id] : []),
       read,
       add,
     })
-  }, [add, members, read, store])
+  }, [add, hold, members, read, store])
   const reconcileRef = useRef(reconcile)
   reconcileRef.current = reconcile
 
@@ -119,9 +121,10 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
     })
     syncRef.current = sync
     let disposed = false
-    // The backfill waits for the first pull so a first run publishes the
+    // The backfill waits for a full pull so a first run publishes the
     // union of this browser's docks and what other devices already wrote.
-    void sync.start().finally(() => {
+    void sync.start()
+    void sync.pulled().then(() => {
       if (disposed) return
       started.current = true
       setReady(true)
@@ -139,7 +142,7 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
     }
   }, [members, schedule])
 
-  useEffect(() => { schedule() }, [revision, schedule, spaces])
+  useEffect(() => { schedule() }, [hold, revision, schedule, spaces])
 
   const stateChanged = useCallback((namespace: string, rev: number) => {
     void syncRef.current?.stateChanged(namespace, rev)

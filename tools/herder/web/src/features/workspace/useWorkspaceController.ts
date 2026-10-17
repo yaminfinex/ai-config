@@ -179,6 +179,10 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [spaceAnnouncement, setSpaceAnnouncement] = useState('')
   const [pendingLookupSwitchID, setPendingLookupSwitchID] = useState<string>()
   const [spacesPulled, setSpacesPulled] = useState(false)
+  // laneMoveDone holds the active-space fallback and member reconciliation
+  // until the one-time lane move has run (or found nothing to do), so no
+  // lane layout is written before this browser's own dock is moved there.
+  const [laneMoveDone, setLaneMoveDone] = useState(spacesRuntime.store === null)
   const [historySuppressor] = useState(() => createHistorySuppressor(
     (callback) => window.requestAnimationFrame(callback),
     (handle) => window.cancelAnimationFrame(handle),
@@ -414,10 +418,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         cancelTimeout: (handle) => window.clearTimeout(handle as number),
       })
     }
-    void sync.start().then(() => {
-      lookup?.firstPullCompleted(store.list().map(({ id }) => id))
-      setSpacesPulled(true)
-    })
+    void sync.start().then(() => lookup?.firstPullCompleted(store.list().map(({ id }) => id)))
+    void sync.pulled().then(() => setSpacesPulled(true))
     const online = () => { void sync.retryNow() }
     window.addEventListener('online', online)
     return () => {
@@ -435,11 +437,12 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   useEffect(() => {
     if (!spacesRuntime.store || !activeSpaceID || spaces.some((space) => space.id === activeSpaceID)) return
-    // A lane space waits for the board that lists it.
-    if (laneOfSpace(activeSpaceID) && !boardQuery.data) return
+    // A lane space waits for the board that lists it; an old space waits
+    // for the lane move.
+    if (!laneMoveDone || laneOfSpace(activeSpaceID) && !boardQuery.data) return
     const fallback = spaces[0]
     if (fallback) historySuppressor.run(() => switchSpace(fallback.id))
-  }, [activeSpaceID, boardQuery.data, historySuppressor, spaces, spacesRuntime.store, switchSpace])
+  }, [activeSpaceID, boardQuery.data, historySuppressor, laneMoveDone, spaces, spacesRuntime.store, switchSpace])
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     disposeDock.current()
@@ -528,6 +531,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     activeSpaceIDRef,
     revision,
     spaces,
+    hold: !laneMoveDone,
     syncDock,
     withHistorySuppressed: historySuppressor.run,
     onProblem: (problem) => setSpaceProblem(problem || spacesRuntime.store?.status().problem || ''),
@@ -752,12 +756,13 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     let cancelled = false
     laneMoves().then((moves) => {
       const { applied } = readLaneMovesApplied(localStorage)
-      if (cancelled || pendingLaneMoves(moves, applied).length === 0) return
+      if (cancelled) return
+      if (pendingLaneMoves(moves, applied).length === 0) { setLaneMoveDone(true); return }
       const wasActive = activeSpaceIDRef.current
       const enter = wasActive && moves[wasActive] ? laneSpaceID(moves[wasActive]) : null
       if (enter) {
         const aside = moveBeforeActiveClose(wasActive!, wasActive, store.list(), { create: store.create, rollbackCreate: store.rollbackCreate, switchTo: switchSpace })
-        if (!aside.ok) { setSpaceProblem(aside.reason); return }
+        if (!aside.ok) { setSpaceProblem(aside.reason); setLaneMoveDone(true); return }
       }
       writeLaneMovesApplied(localStorage, runLaneMoves(moves, applied, {
         hasSpace: (id) => store.list().some((space) => space.id === id),
@@ -767,8 +772,9 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         moveTier: rekeyLens,
       }))
       store.flush()
+      setLaneMoveDone(true)
       if (enter) historySuppressor.run(() => switchSpace(enter))
-    }, () => undefined)
+    }, () => { if (!cancelled) setLaneMoveDone(true) })
     return () => { cancelled = true }
   }, [boardIn, historySuppressor, membersReady, moveMembers, rekeyLens, spacesPulled, spacesRuntime.store, switchSpace])
   const openLaneRef = useRef<(laneID: string) => void>(() => undefined)

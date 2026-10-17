@@ -11,11 +11,18 @@ import { createServer, type Plugin } from 'vite'
 
 const execFileAsync = promisify(execFile)
 
-type StoredRow = { key: string }
+type StoredRow = { key: string, updated?: number, writeID?: string }
+
+function compareRows(left: StoredRow, right: StoredRow) {
+  const updated = (left.updated ?? 0) - (right.updated ?? 0)
+  if (updated !== 0) return updated
+  return (left.writeID ?? '') < (right.writeID ?? '') ? -1 : (left.writeID ?? '') > (right.writeID ?? '') ? 1 : 0
+}
 export type FixturePost = { namespace: string, bytes: number, keys: string[], status: number }
 
 // Just enough of the serve API for live idle agents with enabled composers.
-// Posted state rows are accepted under a rising rev, and a write body over
+// Posted state rows are accepted under a rising rev when they win on
+// (updated, writeID), as the serve's, and a write body over
 // maxWriteBytes is refused with 413 like the serve's decodeWriteBody.
 // entries gives each agent's transcript; an entries request with `from`
 // answers only the entries at or past that byte offset, as a delta. send
@@ -117,8 +124,14 @@ export function fixtureAPI(agents: string[], options: {
             const refused = Boolean(options.maxWriteBytes && bytes > options.maxWriteBytes)
             posts.push({ namespace, bytes, keys: posted.map((row) => row.key), status: refused ? 413 : 200 })
             if (refused) return json({ error: 'request too large', detail: `write body exceeds ${options.maxWriteBytes} bytes` }, 413)
-            for (const row of posted) rows.set(row.key, { rev: ++rev, row })
-            json({ accepted: posted.map((row) => row.key), rev })
+            // Last writer wins on (updated, writeID), as the serve's webstate.Upsert.
+            const accepted = posted.filter((row) => {
+              const current = rows.get(row.key)?.row
+              if (current && compareRows(row, current) <= 0) return false
+              rows.set(row.key, { rev: ++rev, row })
+              return true
+            })
+            json({ accepted: accepted.map((row) => row.key), rev })
           })
           return
         }

@@ -95,6 +95,10 @@ export function createStateSync(options: StateSyncOptions) {
   // Until one full pull lands, what the server holds is unknown: start's
   // first pull reads everything, so only the difference is sent.
   let catchUp = true
+  // pulled settles when that full pull lands, through a retry or a later
+  // pull if the first failed; start settles either way.
+  let markPulled = () => undefined as void
+  const pulled = new Promise<void>((resolve) => { markPulled = resolve })
   let disposed = false
   let retryHandle: unknown
   let backoff = 500
@@ -189,6 +193,7 @@ export function createStateSync(options: StateSyncOptions) {
       // purged while this browser was away; sending it would bring it back.
       // With no horizon nothing was purged, so a seeded row at updated 0 is sent.
       catchUp = false
+      markPulled()
       const horizon = result.horizon ?? 0
       const purged: string[] = []
       enqueueKeys(options.store.all().flatMap((row) => {
@@ -307,6 +312,7 @@ export function createStateSync(options: StateSyncOptions) {
       await sendQueue()
     },
     retryNow,
+    pulled: () => pulled,
     async stateChanged(namespace: string, rev: number) {
       if (namespace !== options.namespace || rev <= cursor) return
       await requestPull()

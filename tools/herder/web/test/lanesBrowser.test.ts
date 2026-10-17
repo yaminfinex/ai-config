@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
-import test from 'node:test'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import test, { type TestContext } from 'node:test'
+
+import type { Plugin } from 'vite'
 
 import { fixtureAPI, lanesAPI, startBrowser } from './browserFixture.ts'
 
@@ -104,14 +107,25 @@ test('lanes are spaces: they appear live in the sidebar and lens, rename the lan
   await waitFor(`!${spaceRow('lane:web1')} && !${row('web')}`)
 })
 
-test('the lane move re-keys the members row, layout and tier of an old space to its lane once, and never again', { timeout: 180_000 }, async (context) => {
-  const api = fixtureAPI(['alpha', 'bravo'])
+type Middleware = (request: IncomingMessage, response: ServerResponse, next: () => void) => void
+
+// oldSpace builds two own spaces, the second ("old") holding bravo (and,
+// with split, alpha beside it in a second group), gives old a lens tier,
+// and waits for its members row on the serve. before runs ahead of the
+// fixture on every request.
+async function oldSpace(context: TestContext, name: string, options: { agents?: string[], split?: boolean, before?: Middleware } = {}) {
+  const api = fixtureAPI(options.agents ?? ['alpha', 'bravo'])
   const lanes = lanesAPI(api, [{ id: 'pay1', name: 'payload', lead: 'bravo', members: ['bravo'] }])
-  const { url, browser, evaluate, waitFor } = await startBrowser(context, 'lanes-move', [lanes.plugin, api.plugin])
+  const before: Plugin = { name: 'lanes-before', configureServer(server) { if (options.before) server.middlewares.use(options.before) } }
+  const { url, browser, evaluate, waitFor } = await startBrowser(context, name, [before, lanes.plugin, api.plugin])
   const members = () => api.state.get('spaces.members')
   const spaces = () => api.state.get('spaces')
+  const open = (label: string, altKey = false) => evaluate(`(() => {
+    const row = [...document.querySelectorAll('[role="treeitem"]')].find((node) => node.querySelector('.tree-label')?.textContent.trim().startsWith(${JSON.stringify(label)}))
+    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, altKey: ${altKey} }))
+    return true
+  })()`)
 
-  // Two own spaces: the first holds alpha, the second ("old") holds bravo.
   await browser(['open', `${url}agents/alpha`])
   await browser(['set', 'viewport', '1280', '800'])
   await evaluate('localStorage.clear(), sessionStorage.clear(), true')
@@ -119,12 +133,12 @@ test('the lane move re-keys the members row, layout and tier of an old space to 
   await waitFor(`Boolean(${composer('alpha')})`)
   await evaluate(`document.querySelector('.space-create').click(), true`)
   await waitFor(`document.querySelectorAll('.spaces-list [data-space-id]:not([data-lane])').length === 2`)
-  await evaluate(`(() => {
-    const row = [...document.querySelectorAll('[role="treeitem"]')].find((node) => node.textContent.includes('bravo'))
-    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
-    return true
-  })()`)
+  await open('bravo')
   await waitFor(`Boolean(${composer('bravo')})`)
+  if (options.split) {
+    await open('alpha', true)
+    await waitFor(`document.querySelectorAll('.dv-groupview').length === 2`)
+  }
   const old = await evaluate(`new URLSearchParams(location.search).get('space')`) as string
   assert.ok(old && !old.startsWith('lane:'))
   await waitFor(`Boolean(localStorage.getItem(${JSON.stringify(layoutKey(old))}))`)
@@ -135,9 +149,16 @@ test('the lane move re-keys the members row, layout and tier of an old space to 
     localStorage.setItem('herder.web.lens.v1', JSON.stringify(prefs))
     return true
   })()`)
+  const want = options.split ? 2 : 1
   const deadline = Date.now() + 10_000
-  while (!members()?.has(old) && Date.now() < deadline) await browser(['wait', '200'])
-  assert.ok(members()?.has(old), 'the old space published its members row')
+  const published = () => ((members()?.get(old)?.row as unknown as { value?: { members?: unknown[] } } | undefined)?.value?.members?.length ?? 0) >= want
+  while (!published() && Date.now() < deadline) await browser(['wait', '200'])
+  assert.ok(published(), 'the old space published its members row')
+  return { api, lanes, url, browser, evaluate, waitFor, members, spaces, old }
+}
+
+test('the lane move re-keys the members row, layout and tier of an old space to its lane once, and never again', { timeout: 180_000 }, async (context) => {
+  const { api, lanes, browser, evaluate, waitFor, members, spaces, old } = await oldSpace(context, 'lanes-move')
 
   // The move script maps the old space to the payload lane; the reload applies it.
   assert.ok(lanes.requests.some((request) => request.path === '/api/lanes/moves'), 'the first load asked and found no moves')
@@ -158,8 +179,8 @@ test('the lane move re-keys the members row, layout and tier of an old space to 
   assert.deepEqual(moved?.value?.members?.map((member) => member.name), ['bravo'], 'the old space\'s members row is the lane space\'s')
   const oldMembers = members()?.get(old)?.row as unknown as { deleted?: boolean }
   assert.equal(oldMembers?.deleted, true, 'the old members row is removed')
-  const oldSpace = spaces()?.get(old)?.row as unknown as { deleted?: boolean }
-  assert.equal(oldSpace?.deleted, true, 'the old space row is tombstoned')
+  const oldRow = spaces()?.get(old)?.row as unknown as { deleted?: boolean }
+  assert.equal(oldRow?.deleted, true, 'the old space row is tombstoned')
   assert.ok(await evaluate(`Boolean(${composer('bravo')})`), 'the lane space opens on the moved dock')
 
   // Never again: a later reload with the same moves and a new own layout under the old id changes nothing.
@@ -172,4 +193,61 @@ test('the lane move re-keys the members row, layout and tier of an old space to 
   assert.equal(after.rows?.[old], 'watch', 'the tier under the old id is left alone')
   assert.equal(after.rows?.['lane:pay1'], 'focus')
   assert.equal(api.posts.slice(posted).some((post) => post.namespace === 'spaces' && post.keys.includes(old)), false, 'no second tombstone')
+})
+
+test('the lane move waits for a full members pull: pins another device added survive a failed first pull', { timeout: 180_000 }, async (context) => {
+  let failUntil = 0
+  const { lanes, browser, waitFor, members, old } = await oldSpace(context, 'lanes-move-retry', {
+    agents: ['alpha', 'bravo', 'charlie'],
+    before: (request, response, next) => {
+      if (Date.now() < failUntil && request.method === 'GET' && request.url?.startsWith('/api/state/spaces.members')) {
+        response.statusCode = 503
+        response.end('{}')
+      } else next()
+    },
+  })
+  // Another device pinned charlie in the old space; this browser's cache holds only bravo.
+  const previous = members()!.get(old)!
+  const row = previous.row as unknown as { value: { members: unknown[] } }
+  members()!.set(old, { rev: previous.rev + 1, row: { ...row, value: { ...row.value, members: [...row.value.members, { kind: 'agent', name: 'charlie' }] }, writeID: 'remote-add', updated: Date.now() } as never })
+  lanes.setMoves({ [old]: 'pay1' })
+  failUntil = Date.now() + 2000
+  await browser(['reload'])
+  await waitFor(`localStorage.getItem('herder.web.laneMove.v1')?.includes(${JSON.stringify(old)}) ?? false`)
+  assert.ok(Date.now() >= failUntil, 'the move ran only after the members pull recovered')
+  const deadline = Date.now() + 10_000
+  const names = () => ((members()?.get('lane:pay1')?.row as unknown as { value?: { members?: { name: string }[] } } | undefined)?.value?.members ?? []).map((member) => member.name)
+  const oldDeleted = () => (members()?.get(old)?.row as unknown as { deleted?: boolean }).deleted === true
+  while ((!names().includes('charlie') || !oldDeleted()) && Date.now() < deadline) await browser(['wait', '200'])
+  assert.deepEqual(names(), ['bravo', 'charlie'])
+  assert.equal(oldDeleted(), true, 'the old members row is removed')
+})
+
+test('a second browser moves its own dock even when another browser already moved the shared rows', { timeout: 180_000 }, async (context) => {
+  let slow = false
+  const { lanes, browser, evaluate, waitFor, members, spaces, old } = await oldSpace(context, 'lanes-move-second', {
+    split: true,
+    before: (request, _response, next) => {
+      if (slow && request.url?.startsWith('/api/lanes/moves')) setTimeout(next, 1800)
+      else next()
+    },
+  })
+  // Another browser already moved the members row and tombstoned the old
+  // space; this one still has its two-group dock under the old id.
+  const oldMembers = members()!.get(old)!
+  members()!.set('lane:pay1', { rev: oldMembers.rev + 10, row: { ...oldMembers.row, key: 'lane:pay1', writeID: 'remote-lane-members', updated: Date.now() + 100 } as never })
+  members()!.set(old, { rev: oldMembers.rev + 11, row: { ...oldMembers.row, deleted: true, writeID: 'remote-old-members', updated: Date.now() + 100 } as never })
+  const oldSpaceRow = spaces()!.get(old)!
+  spaces()!.set(old, { rev: oldSpaceRow.rev + 12, row: { ...oldSpaceRow.row, deleted: true, writeID: 'remote-old-space', updated: Date.now() + 100 } as never })
+  lanes.setMoves({ [old]: 'pay1' })
+  slow = true
+  const before = await evaluate(`localStorage.getItem(${JSON.stringify(layoutKey(old))})`) as string
+  assert.equal(JSON.parse(before).dock.grid.root.data.length, 2)
+  await browser(['reload'])
+  await waitFor(`localStorage.getItem('herder.web.laneMove.v1')?.includes(${JSON.stringify(old)}) ?? false`)
+  await waitFor(`new URLSearchParams(location.search).get('space') === 'lane:pay1'`)
+  assert.equal(await evaluate(`localStorage.getItem(${JSON.stringify(layoutKey(old))})`), null, 'the dock left the old key')
+  const moved = await evaluate(`localStorage.getItem(${JSON.stringify(layoutKey('lane:pay1'))})`) as string
+  assert.equal(JSON.parse(moved).dock.grid.root.data.length, 2, 'the lane space has this browser\'s two-group dock')
+  await waitFor(`document.querySelectorAll('.dv-groupview').length === 2 && Boolean(document.querySelector('textarea[data-composer][aria-label="Message bravo"]'))`)
 })
