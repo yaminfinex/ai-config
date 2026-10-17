@@ -292,7 +292,8 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
 	for _, e := range []agentstore.Event{
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", ByKind: "agent", Name: "mavu", Pane: "p1"},
-		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Group: "fleet-refit"},
+		{ID: agentstore.DerivedID([]byte("list-lane")), At: at, Kind: agentstore.KindLaneCreated, By: "ziru", LaneName: "fleet-refit", Lead: "mavu"},
+		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Lane: agentstore.DerivedID([]byte("list-lane"))},
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindAssign, By: "ziru", Name: "mavu", Manager: "vara"},
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindMirrorReady, By: "riko", ByKind: "mirror", Name: "vile"},
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", Name: "funa", Session: "claimed-session-1"},
@@ -320,7 +321,7 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 	text := stdout.String()
-	if !strings.Contains(text, "LAUNCHER") || !strings.Contains(text, "MANAGER") || !strings.Contains(text, "GROUP") || strings.Contains(text, "MISSION") || !strings.Contains(text, "BINDING") {
+	if !strings.Contains(text, "LAUNCHER") || !strings.Contains(text, "MANAGER") || !strings.Contains(text, "LANE") || strings.Contains(text, "GROUP") || strings.Contains(text, "MISSION") || !strings.Contains(text, "BINDING") {
 		t.Fatalf("columns missing:\n%s", text)
 	}
 	for _, row := range []struct{ agent, launcher, manager string }{
@@ -340,7 +341,7 @@ func TestRunFoldsStoreColumnsAndPrintsUnregistered(t *testing.T) {
 		}
 	}
 	if !strings.Contains(lineFor(text, "mavu"), "fleet-refit") {
-		t.Errorf("group missing from list: %q", lineFor(text, "mavu"))
+		t.Errorf("lane missing from list: %q", lineFor(text, "mavu"))
 	}
 	if line := lineFor(text, "p9"); !strings.Contains(line, "no bus row") || strings.Contains(line, "unregistered") {
 		t.Errorf("pane without a bus row must not print unregistered: %q", line)

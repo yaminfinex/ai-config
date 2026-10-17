@@ -130,10 +130,10 @@ func TestFiftyRealRegisterProcessesAppendAtomically(t *testing.T) {
 
 func TestReplayingAnIDReturnsSameReceiptAndNoSecondLine(t *testing.T) {
 	state, s := scratch(t)
-	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Group = "fleet-refit" })
+	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Lane = laneID("fleet-refit") })
 	first := mustAppend(t, s, e)
 	second := mustAppend(t, s, e)
-	if !second.Replayed || second.Offset != first.Offset || second.Event.Group != "fleet-refit" {
+	if !second.Replayed || second.Offset != first.Offset || second.Event.Lane != laneID("fleet-refit") {
 		t.Fatalf("replay receipt = %#v, first = %#v", second, first)
 	}
 	if n := len(lines(t, filepath.Join(state, "agents", "events.jsonl"))); n != 1 {
@@ -158,7 +158,7 @@ func TestReplayingAnIDReturnsSameReceiptAndNoSecondLine(t *testing.T) {
 
 func TestHasReportsAbsentPresentAndUnavailable(t *testing.T) {
 	_, s := scratch(t)
-	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Group = "fleet-refit" })
+	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Lane = laneID("fleet-refit") })
 	if found, err := s.Has(e.ID); err != nil || found {
 		t.Fatalf("absent: found=%v err=%v", found, err)
 	}
@@ -190,7 +190,7 @@ func TestSnapshotPlusTailEqualsFullReplayByteForByte(t *testing.T) {
 	})
 	mustAppend(t, s, req)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 2, func(e *Event) { e.Request, e.Pane, e.Session, e.Batch = req.ID, "w80:p1", "s-1", "b1" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Group = "fleet-refit" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Lane = laneID("fleet-refit") }))
 	snap, err := s.Load() // writes snapshot at offset after 3 events
 	if err != nil || snap.SnapshotErr != nil {
 		t.Fatalf("load: %v snapshotErr %v", err, snap.SnapshotErr)
@@ -478,7 +478,7 @@ func TestAnnotateTitleValidation(t *testing.T) {
 func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Pane = "w80:p1"; e.Tool = "codex" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "old-mission" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Lane = laneID("old-mission") }))
 	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Manager = "old-manager" }))
 	mustAppend(t, s, ev(KindCulled, "impl-gime", 4, func(e *Event) { e.Pane, e.Close = "w80:p1", "managed" }))
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 10, func(e *Event) { e.By = "vara"; e.Pane = "w81:p1" }))
@@ -489,7 +489,7 @@ func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 	old := proj.View("impl-gime", &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(0)})
 	fresh := proj.View("impl-gime", &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(9)})
 	latest := proj.View("impl-gime", &hcomidentity.Row{Name: "impl-gime"})
-	if old == nil || old.Assignment == nil || old.Assignment.Group != "old-mission" || old.Manager != "old-manager" || old.Closed == nil {
+	if old == nil || old.LaneID != laneID("old-mission") || old.Manager != "old-manager" || old.Closed == nil {
 		t.Fatalf("old incarnation = %+v", old)
 	}
 	if fresh == nil || fresh.Assignment != nil || fresh.Manager != "vara" || fresh.Provenance.Launcher != "vara" || fresh.Closed != nil || !fresh.Incarnation.Equal(at(9)) {
@@ -509,7 +509,7 @@ func TestReusedNameIsANewIncarnationThatInheritsNothing(t *testing.T) {
 func TestResumeKeepsManagerGroupAndTitleInTheSameIncarnation(t *testing.T) {
 	_, store := scratch(t)
 	mustAppend(t, store, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "session-a" }))
-	mustAppend(t, store, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Group = "ziru", "fleet-refit" }))
+	mustAppend(t, store, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Lane = "ziru", laneID("fleet-refit") }))
 	mustAppend(t, store, ev(KindAnnotate, "impl-gime", 3, func(e *Event) { e.Title = "payload builder" }))
 	mustAppend(t, store, ev(KindResume, "impl-gime", 4, func(e *Event) { e.FromSession, e.Pane = "session-a", "w80:p2" }))
 	projection, err := store.Replay()
@@ -517,7 +517,7 @@ func TestResumeKeepsManagerGroupAndTitleInTheSameIncarnation(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := projection.Latest("impl-gime")
-	if view == nil || view.Manager != "ziru" || view.Assignment == nil || view.Assignment.Group != "fleet-refit" || view.Annotation == nil || view.Annotation.Title != "payload builder" || view.Provenance.Pane != "w80:p2" {
+	if view == nil || view.Manager != "ziru" || view.LaneID != laneID("fleet-refit") || view.Annotation == nil || view.Annotation.Title != "payload builder" || view.Provenance.Pane != "w80:p2" {
 		t.Fatalf("resume dropped supervision metadata: %+v", view)
 	}
 }
@@ -527,29 +527,29 @@ func TestReusedNameWithoutACloseEventInheritsNothing(t *testing.T) {
 	// Roster creation after the record's first event is the newer evidence.
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "old-S" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Group = "old-mission" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Lane = laneID("old-mission") }))
 	mustAppend(t, s, ev(KindAssign, "impl-gime", 3, func(e *Event) { e.Manager = "old-manager" }))
 	proj, _ := s.Replay()
 	later := &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(10), SessionID: "new-S"}
 	if v := proj.View("impl-gime", later); v != nil {
-		t.Fatalf("reused name without a close event inherited manager %q mission %+v", v.Manager, v.Assignment)
+		t.Fatalf("reused name without a close event inherited manager %q lane %q", v.Manager, v.LaneID)
 	}
 	same := &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(10), SessionID: "old-S"}
 	if v := proj.View("impl-gime", same); v == nil || v.Manager != "old-manager" {
 		t.Fatalf("a matching open session proves the same incarnation across a late created_at: %+v", v)
 	}
 	before := &hcomidentity.Row{Name: "impl-gime", CreatedAt: at(0), SessionID: "new-S"}
-	if v := proj.View("impl-gime", before); v == nil || v.Assignment == nil {
+	if v := proj.View("impl-gime", before); v == nil || v.LaneID == "" {
 		t.Fatalf("created before the first event is the same life: %+v", v)
 	}
 }
 
 func TestSameIDWithDifferentPayloadIsRejectedNotReplayed(t *testing.T) {
 	state, s := scratch(t)
-	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Group = "fleet-refit" })
+	e := ev(KindAssign, "impl-lima", 1, func(e *Event) { e.Lane = laneID("fleet-refit") })
 	mustAppend(t, s, e)
 	changed := e
-	changed.Group = "corrected"
+	changed.Lane = laneID("corrected")
 	_, err := s.Append(changed)
 	if err == nil || errors.Is(err, ErrUnavailable) || !strings.Contains(err.Error(), "already has a different payload") {
 		t.Fatalf("err = %v", err)
@@ -558,7 +558,7 @@ func TestSameIDWithDifferentPayloadIsRejectedNotReplayed(t *testing.T) {
 		t.Fatalf("lines = %d, want 1", n)
 	}
 	// CLI: exit 2, no line, original retained.
-	cmd := exec.Command(herderBin, "register", "assign", "--name", "impl-lima", "--group", "corrected", "--id", e.ID)
+	cmd := exec.Command(herderBin, "register", "assign", "--name", "impl-lima", "--lane", laneID("corrected"), "--id", e.ID)
 	cmd.Env = append(os.Environ(), "HERDER_STATE_DIR="+state)
 	out, cliErr := cmd.CombinedOutput()
 	exit, ok := cliErr.(*exec.ExitError)
@@ -566,7 +566,7 @@ func TestSameIDWithDifferentPayloadIsRejectedNotReplayed(t *testing.T) {
 		t.Fatalf("cli: err=%v out=%s", cliErr, out)
 	}
 	proj, _ := s.Replay()
-	if proj.Latest("impl-lima").Assignment.Group != "fleet-refit" || len(lines(t, s.EventsPath())) != 1 {
+	if proj.Latest("impl-lima").LaneID != laneID("fleet-refit") || len(lines(t, s.EventsPath())) != 1 {
 		t.Fatal("conflicting payload changed the store")
 	}
 }
@@ -580,10 +580,16 @@ func TestPackageAppendEnforcesTheCLIContract(t *testing.T) {
 		"two placement targets":     ev(KindLaunchRequested, "", 1, func(e *Event) { e.Tool, e.Tag = "claude", "t"; e.Placement = &Placement{Workspace: "w", Pane: "p"} }),
 		"culled without pane":       ev(KindCulled, "a", 1, func(e *Event) { e.Close = "managed" }),
 		"annotate with manager":     ev(KindAnnotate, "a", 1, func(e *Event) { e.Title, e.Manager = "t", "m" }),
-		"invalid by_kind":           ev(KindAssign, "a", 1, func(e *Event) { e.Group, e.ByKind = "m", "browser" }),
+		"invalid by_kind":           ev(KindAssign, "a", 1, func(e *Event) { e.Lane, e.ByKind = laneID("m"), "browser" }),
 		"empty assignment":          ev(KindAssign, "a", 1),
-		"group and clear":           ev(KindAssign, "a", 1, func(e *Event) { e.Group, e.ClearGroup = "m", true }),
-		"long group":                ev(KindAssign, "a", 1, func(e *Event) { e.Group = strings.Repeat("界", 81) }),
+		"retired group":             ev(KindAssign, "a", 1, func(e *Event) { e.Group = "m" }),
+		"retired clear_group":       ev(KindAssign, "a", 1, func(e *Event) { e.ClearGroup = true }),
+		"lane not an id":            ev(KindAssign, "a", 1, func(e *Event) { e.Lane = "fleet-refit" }),
+		"long lane name":            ev(KindLaneCreated, "", 1, func(e *Event) { e.LaneName, e.Lead = strings.Repeat("界", 81), "a" }),
+		"lane name shaped as id":    ev(KindLaneCreated, "", 1, func(e *Event) { e.LaneName, e.Lead = laneID("x"), "a" }),
+		"lane update with nothing":  ev(KindLaneUpdated, "", 1, func(e *Event) { e.Lane = laneID("x") }),
+		"link with pr and repo":     ev(KindLaneLink, "", 1, func(e *Event) { e.Lane, e.PR, e.Repo = laneID("x"), "o/r#1", "o/r" }),
+		"link bad pr":               ev(KindLaneLink, "", 1, func(e *Event) { e.Lane, e.PR = laneID("x"), "o/r#x" }),
 		"negative steer_chars":      ev(KindCompactRequested, "a", 1, func(e *Event) { e.SteerChars = &steer }),
 		"top-level pane on request": ev(KindLaunchRequested, "", 1, func(e *Event) { e.Tool, e.Tag, e.Pane = "claude", "t", "p" }),
 	} {
@@ -869,7 +875,7 @@ func TestLockTimeoutIsBoundedAndExits3(t *testing.T) {
 
 func TestUnwritableSnapshotStillLoads(t *testing.T) {
 	state, s := scratch(t)
-	mustAppend(t, s, ev(KindAssign, "a", 1, func(e *Event) { e.Group = "m" }))
+	mustAppend(t, s, ev(KindAssign, "a", 1, func(e *Event) { e.Lane = laneID("m") }))
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
 	}
@@ -879,7 +885,7 @@ func TestUnwritableSnapshotStillLoads(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 	proj, err := s.Load()
-	if err != nil || proj.SnapshotErr == nil || proj.Latest("a") == nil || proj.Latest("a").Assignment.Group != "m" {
+	if err != nil || proj.SnapshotErr == nil || proj.Latest("a") == nil || proj.Latest("a").LaneID != laneID("m") {
 		t.Fatalf("load under read-only dir: err=%v snapshotErr=%v", err, proj.SnapshotErr)
 	}
 	if _, statErr := os.Stat(s.SnapshotPath()); statErr == nil {

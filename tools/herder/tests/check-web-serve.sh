@@ -507,16 +507,18 @@ fi
 
 assign_journal="$ROOT/home/.local/state/herder/agents/events.jsonl"
 assign_before="$(wc -l <"$assign_journal")"
-if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"manager":"vile","group":"fleet-refit"}' \
+if curl -fsS -X POST -H 'Content-Type: application/json' --data '{"manager":"vile"}' \
   "http://127.0.0.1:$port/api/agents/mavu/assignment" >"$ROOT/assignment.json" &&
-  jq -e '. == {name:"mavu",manager:"vile",group:"fleet-refit",by:"web-alice-example-com"}' "$ROOT/assignment.json" >/dev/null &&
+  jq -e '. == {name:"mavu",manager:"vile",lane:"",by:"web-alice-example-com"}' "$ROOT/assignment.json" >/dev/null &&
   curl -fsS -X POST -H 'Content-Type: application/json' --data '{"manager":"human"}' \
   "http://127.0.0.1:$port/api/agents/mavu/assignment" >"$ROOT/adopt.json" &&
-  jq -e '. == {name:"mavu",manager:"human",group:"",by:"web-alice-example-com"}' "$ROOT/adopt.json" >/dev/null &&
+  jq -e '. == {name:"mavu",manager:"human",lane:"",by:"web-alice-example-com"}' "$ROOT/adopt.json" >/dev/null &&
   [ "$(wc -l <"$assign_journal")" -eq "$((assign_before + 2))" ] &&
-  tail -n 2 "$assign_journal" | jq -s -e '.[0] | .kind == "assign" and .manager == "vile" and .group == "fleet-refit" and .by_kind == "web"' >/dev/null &&
-  tail -n 1 "$assign_journal" | jq -e '.kind == "assign" and .manager == "human" and .by_kind == "web"' >/dev/null; then
-  pass "assignment and human adoption append exactly two attributed assign events"
+  tail -n 2 "$assign_journal" | jq -s -e '.[0] | .kind == "assign" and .manager == "vile" and .by_kind == "web"' >/dev/null &&
+  tail -n 1 "$assign_journal" | jq -e '.kind == "assign" and .manager == "human" and .by_kind == "web"' >/dev/null &&
+  [ "$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data '{"group":"fleet-refit"}' "http://127.0.0.1:$port/api/agents/mavu/assignment")" = 400 ] &&
+  [ "$(wc -l <"$assign_journal")" -eq "$((assign_before + 2))" ]; then
+  pass "assignment and human adoption append exactly two attributed assign events; a group is refused"
 else
   bad "assignment writes" "assign=$(cat "$ROOT/assignment.json" 2>/dev/null || true) adopt=$(cat "$ROOT/adopt.json" 2>/dev/null || true) journal=$(tail -n 3 "$assign_journal" 2>/dev/null || true)"
 fi

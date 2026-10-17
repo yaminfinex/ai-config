@@ -403,13 +403,14 @@ type annotationResponse struct {
 
 type assignmentRequest struct {
 	Manager *string `json:"manager"`
-	Group   *string `json:"group"`
+	Lane    *string `json:"lane"`
+	Group   *string `json:"group"` // retired: refused with "use lane"
 }
 
 type assignmentResponse struct {
 	Name    string `json:"name"`
 	Manager string `json:"manager"`
-	Group   string `json:"group"`
+	Lane    string `json:"lane"`
 	By      string `json:"by"`
 }
 
@@ -1648,11 +1649,15 @@ func serveAssignment(w http.ResponseWriter, r *http.Request, deps dependencies, 
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
-	if request.Manager == nil && request.Group == nil {
-		refuse(w, http.StatusBadRequest, "bad request", "manager or group required")
+	if request.Group != nil {
+		refuse(w, http.StatusBadRequest, "bad request", "group is retired; use lane")
 		return
 	}
-	manager, group := "", ""
+	if request.Manager == nil && request.Lane == nil {
+		refuse(w, http.StatusBadRequest, "bad request", "manager or lane required")
+		return
+	}
+	manager, lane := "", ""
 	if request.Manager != nil {
 		manager = strings.TrimSpace(*request.Manager)
 		if manager == "" {
@@ -1677,21 +1682,25 @@ func serveAssignment(w http.ResponseWriter, r *http.Request, deps dependencies, 
 			}
 		}
 	}
-	if request.Group != nil {
-		group = strings.TrimSpace(*request.Group)
+	if request.Lane != nil {
+		lane = strings.TrimSpace(*request.Lane)
+		if proj := readProjection(deps); proj == nil || proj.Lanes[lane] == nil {
+			refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("lane %q is not a lane id", lane))
+			return
+		}
 	}
 	sender, ok := webSender(w, r, deps, roster)
 	if !ok {
 		return
 	}
 	now := deps.now().UTC()
-	event := agentstore.Event{Kind: agentstore.KindAssign, Name: name, Manager: manager, Group: group, ClearGroup: request.Group != nil && group == "", By: sender, ByKind: "web", At: now, ID: agentstore.NewID(now)}
+	event := agentstore.Event{Kind: agentstore.KindAssign, Name: name, Manager: manager, Lane: lane, By: sender, ByKind: "web", At: now, ID: agentstore.NewID(now)}
 	receipt, ok := appendWebEvent(w, deps, event)
 	if !ok {
 		return
 	}
-	deps.audit("assign time=%s viewer=%s name=%s manager=%q group=%q clear_group=%t", receipt.Event.At.UTC().Format(time.RFC3339Nano), receipt.Event.By, name, manager, group, event.ClearGroup)
-	writeJSON(w, http.StatusOK, assignmentResponse{Name: name, Manager: manager, Group: group, By: receipt.Event.By})
+	deps.audit("assign time=%s viewer=%s name=%s manager=%q lane=%q", receipt.Event.At.UTC().Format(time.RFC3339Nano), receipt.Event.By, name, manager, lane)
+	writeJSON(w, http.StatusOK, assignmentResponse{Name: name, Manager: manager, Lane: lane, By: receipt.Event.By})
 }
 
 func resolveLiveAgent(w http.ResponseWriter, deps dependencies, name string) ([]hcomidentity.Row, bool) {

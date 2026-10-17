@@ -67,9 +67,11 @@ func TestRegisterUsageErrorsExit2WithoutWriting(t *testing.T) {
 		{"launch-requested", "--tool", "codex", "--tag", "t", "--workspace", "w", "--pane", "p"},
 		{"annotate", "--name", "a"},
 		{"re" + "parent", "--name", "a", "--manager", "b"},
-		{"assign", "--name", "a", "--group", "m", "--id", "not-a-uuid"},
-		{"assign", "--name", "a", "--group", "m", "--at", "yesterday"},
-		{"assign", "--name", "a", "--group", "m", "extra"},
+		{"assign", "--name", "a", "--manager", "m", "--id", "not-a-uuid"},
+		{"assign", "--name", "a", "--manager", "m", "--at", "yesterday"},
+		{"assign", "--name", "a", "--manager", "m", "extra"},
+		{"assign", "--name", "a", "--group", "m"},
+		{"assign", "--name", "a", "--clear-group"},
 	} {
 		code, _, stderr := run(t, args...)
 		if code != 2 || stderr == "" && len(args) > 0 {
@@ -89,7 +91,7 @@ func TestRegisterStoreUnavailableExits3(t *testing.T) {
 	os.Chmod(state, 0o500)
 	t.Cleanup(func() { os.Chmod(state, 0o700) })
 	t.Setenv("HERDER_STATE_DIR", state)
-	code, _, stderr := run(t, "assign", "--name", "a", "--group", "m")
+	code, _, stderr := run(t, "assign", "--name", "a", "--manager", "m")
 	if code != 3 || !strings.Contains(stderr, "store unavailable") {
 		t.Fatalf("code=%d stderr=%q", code, stderr)
 	}
@@ -99,7 +101,7 @@ func TestRegisterStoreUnavailableExits3(t *testing.T) {
 	os.Chmod(state2, 0o500)
 	t.Cleanup(func() { os.Chmod(state2, 0o700) })
 	t.Setenv("HERDER_STATE_DIR", state2)
-	code, _, stderr = run(t, "assign", "--name", "a", "--group", "m")
+	code, _, stderr = run(t, "assign", "--name", "a", "--manager", "m")
 	if code != 3 || !strings.Contains(stderr, "store unavailable") {
 		t.Fatalf("import failure: code=%d stderr=%q", code, stderr)
 	}
