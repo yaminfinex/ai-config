@@ -291,6 +291,10 @@ if [[ ${1:-} == list && ${3:-} == status ]]; then
   esac
   exit 0
 fi
+if [[ -n ${FLEET_TEST_MOVE:-} && ${1:-} == list && ${2:-} == --json ]]; then
+  printf '%s\n' '[{"name":"gate-lagu","created_at":1},{"name":"gate-dele","created_at":3},{"name":"gate-seed","created_at":2},{"name":"sub","parent_name":"lagu","created_at":0}]'
+  exit 0
+fi
 case "${1:-} ${2:-}" in
   'events launch')
     printf '{"batch_id":"batch-test","blocked":0,"expected":1,"failed":0,"instances":["%s"],"ready":1,"status":"ready"}\n' "${FLEET_TEST_LAUNCH_NAME:-vava}"
@@ -319,6 +323,14 @@ case ${FLEET_TEST_REGISTER_MODE:-} in
   exit3) printf 'store unavailable\n' >&2; exit 3 ;;
   sleep) exec /bin/sleep 20 ;;
 esac
+if [[ -n ${FLEET_TEST_MOVE:-} && ${1:-} == show ]]; then
+  case ${2:-}:$FLEET_TEST_MOVE in
+    gate-dele:user) printf '%s\n' '{"assignment":{"group":"g"},"manager":"user","manager_at":"2026-10-17T00:00:00Z"}' ;;
+    gate-seed:seed) printf '%s\n' '{"assignment":{"group":"g"},"manager":"web-x","provenance":{"launcher_kind":"web"}}' ;;
+    *) printf '%s\n' '{"assignment":{"group":"g"},"manager":"lega","manager_at":"2026-10-17T00:00:00Z","provenance":{"launcher_kind":"agent"}}' ;;
+  esac
+  exit 0
+fi
 if [[ ${1:-} == show && ${3:-} == --json ]]; then
   if [[ ${FLEET_TEST_SHOW_MODE:-} == fail ]]; then
     printf 'store unavailable\n' >&2
@@ -497,6 +509,15 @@ grep -Fx 'fleet spawn: --group is retired; use --lane or --new-lane' "$TEST_ROOT
 grep -F 'fleet spawn: unknown lane bulders:' "$TEST_ROOT/validation-lane-unknown.err" >/dev/null \
   || fail "unknown lane refusal was unclear"
 pass "retired --group, unknown or conflicting lanes, and bad titles refuse before launch"
+
+for move_case in agent:gate-lagu user:gate-dele seed:gate-seed; do
+  FLEET_TEST_MOVE=${move_case%%:*} HERDER_STATE_DIR=$TEST_ROOT/no-state PATH="$TEST_ROOT/bin:$PATH" \
+    "$FLEET/lane-move.sh" >"$TEST_ROOT/lane-move-${move_case%%:*}.out"
+  grep -Fx "g | lead ${move_case#*:} | members gate-lagu, gate-seed, gate-dele | space -" \
+    "$TEST_ROOT/lane-move-${move_case%%:*}.out" >/dev/null \
+    || { cat "$TEST_ROOT/lane-move-${move_case%%:*}.out" >&2; fail "lane-move proposed the wrong lead for $move_case"; }
+done
+pass "lane-move proposes the operator-managed member (user, human, or a user/web seed) as lead, else the earliest"
 
 : >"$FLEET_TEST_CALLS"
 HERDR_WORKSPACE_ID=w-current FLEET_TEST_DEFAULT_PLACEMENT=1 PATH="$TEST_ROOT/bin:$PATH" \

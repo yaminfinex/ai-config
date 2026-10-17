@@ -93,12 +93,17 @@ if [[ -n $apply_file ]]; then
 fi
 
 # Live top-level seats (Task subagents follow their owner), each with its
-# group, manager and lane from herder. A seat already in a lane is left out.
+# group, lane and whether the operator manages it, by herder's own rule: manager
+# "human" or "user", or a user/web launch whose seeded manager was never
+# reassigned. A seat already in a lane is left out.
 seats='[]'
 while IFS=$'\t' read -r name created; do
   record=$(herder show "$name" --json 2>/dev/null) || continue
-  seats=$(jq -c --argjson s "$seats" --arg created "$created" \
-    '$s + [{name, group: (.assignment.group // ""), manager: (.manager // ""), lane: (.lane.id // ""), created: ($created | tonumber)}]' \
+  seats=$(jq -c --argjson s "$seats" --arg name "$name" --arg created "$created" \
+    '$s + [{name: $name, group: (.assignment.group // ""), lane: (.lane.id // ""), created: ($created | tonumber),
+      operator: (.manager == "human" or .manager == "user"
+        or ((.manager // "") != "" and .manager != "unknown" and .manager_at == null
+          and (.provenance.launcher_kind == "user" or .provenance.launcher_kind == "web")))}]' \
     <<<"$record")
 done < <(hcom list --json 2>/dev/null | jq -r '.[] | select(.parent_name == null) | [.name, (.created_at // 0)] | @tsv')
 
@@ -110,7 +115,7 @@ jq -rn --argjson seats "$seats" --argjson spaces "$spaces" --arg source "${space
     "# lead: the member managed by the operator, else the earliest created.",
     "# space: the owner space of the same name (spaces from \($source)).",
     ($groups[] | sort_by(.created) as $m
-      | (([$m[] | select(.manager == "human")] + $m)[0].name) as $lead
+      | (([$m[] | select(.operator)] + $m)[0].name) as $lead
       | .[0].group as $label
       | ([$spaces[].name | select(lower == ($label | lower))][0] // "-") as $space
       | "\($label) | lead \($lead) | members \([$m[].name] | join(", ")) | space \($space)"),
