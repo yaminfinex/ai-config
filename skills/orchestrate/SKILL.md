@@ -51,7 +51,7 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
 
 ## Lifecycle
 
-- **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh <claude|codex> --model M --tag T --group <unit> --title '<kebab-role>' --prompt 'read <playbook> in full, then execute <unit>'`. Every seat gets its own tab: with no placement flag it opens a new tab in your current herdr workspace. `--split-from`, and `--pane` into a shared tab, refuse unless `--force-split` is given; pass it only when the operator directs a split. The wrapper owns `--go`, cwd, autonomy, readiness, hook binding, pane stamping, group/title events, and failure coordinates.
+- **Spawn.** Use `$AI_CONFIG_ROOT/tools/fleet/spawn.sh <claude|codex> --model M --tag T --lane <lane> --title '<kebab-role>' --prompt 'read <playbook> in full, then execute <unit>'`. Every seat gets its own tab: with no placement flag it opens a new tab in your current herdr workspace. `--split-from`, and `--pane` into a shared tab, refuse unless `--force-split` is given; pass it only when the operator directs a split. The wrapper owns `--go`, cwd, autonomy, readiness, hook binding, pane stamping, lane/title events, and failure coordinates.
 - **Walkthrough seat.** When the operator wants to be walked through code (a PR, a branch, a scope), spawn a read-only seat whose prompt says to use the `code-walkthrough` skill with the scope and the tracker path. It reports start and stop to you and otherwise talks to the operator in its pane. Its hand-off is feedback, not a build brief: route it to a design, planning or build seat.
 - **Message.** Use `hcom send` with an intent and one thread per unit. A `queued` result is
   delivered work: send once. Resolve uncertain names with `hcom list`; inspect a screen with
@@ -75,7 +75,7 @@ history archives prior versions. In-run-log compaction-snapshot entries are reti
   running databases, agent browsers, background processes, large filesystem artifacts, the worktree
   itself. The run's playbook carries this project's specific teardown instructions; keep them
   current as you learn what gets left behind.
-- **Supervision.** The wrapper records you as manager of every seat you spawn. Spawn with `--group <unit>` (or rely on inheritance) so the groups view shows the unit together. To fix a group later, run `herder assign <seat> --group <unit>`. To fix or take over a seat, run `herder assign <seat> --manager <your-name>`; use `--manager human` to hand it to the operator. `herder assign --help` explains the event. Titles (`--title` at spawn, `herder register annotate --title` later) are short kebab-case and never repeat the seat's name; the name is already shown beside the title.
+- **Supervision.** The wrapper records you as manager of every seat you spawn. Spawn with `--lane <lane>` (or rely on inheritance; `--new-lane <name>` starts a lane with the new seat as lead) so the lanes view shows the work together. To fix a lane later, run `herder lane move <seat> <lane>`. To fix or take over a seat, run `herder assign <seat> --manager <your-name>`; use `--manager human` to hand it to the operator. `herder assign --help` explains the event. Titles (`--title` at spawn, `herder register annotate --title` later) are short kebab-case and never repeat the seat's name; the name is already shown beside the title.
 - **Resume / fork.** Create a verified idle target pane, then place the operation with
   `FLEET_PANE=<pane> HCOM_TERMINAL=fleet hcom r <name-or-uuid>` or the same form with `hcom f`.
   Resume keeps the hcom name; fork mints a new one.
