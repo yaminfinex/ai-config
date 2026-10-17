@@ -65,8 +65,10 @@ func TestLaneMembersFollowTheRosterIncarnation(t *testing.T) {
 		{Name: "impl-lima", CreatedAt: at(0)},
 		{Name: "impl-vara", CreatedAt: at(5)}, // a new life after the cull
 	}
+	roster[0].BaseName = "gime"
+	roster = append(roster, hcomidentity.Row{Name: "gime_explore_1", ParentName: "gime", CreatedAt: at(6)}) // a Task child follows its owner
 	got := proj.LaneMembers(roster)
-	if want := map[string][]string{created.ID: {"impl-gime", "impl-lima"}}; !reflect.DeepEqual(got, want) {
+	if want := map[string][]string{created.ID: {"impl-gime", "impl-lima", "gime_explore_1"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("members = %v, want %v", got, want)
 	}
 }

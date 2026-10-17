@@ -145,8 +145,8 @@ func TestBoardCarriesManager(t *testing.T) {
 	if len(got) != len(want) {
 		t.Fatalf("rows = %#v", got)
 	}
-	// The empty lane (no live member) is left out.
-	if wantLanes := []fleetview.Lane{{ID: supervisionLane, Name: "payload", Lead: "impl-kolo", Members: []string{"impl-kolo", "lone"}, Repos: []string{}, Branches: []string{}, PRs: []string{}}}; !reflect.DeepEqual(board.Lanes, wantLanes) {
+	// The empty lane (no live member) is left out; the Task child follows impl-kolo.
+	if wantLanes := []fleetview.Lane{{ID: supervisionLane, Name: "payload", Lead: "impl-kolo", Members: []string{"impl-kolo", "kolo_general_purpose_1", "lone"}, Repos: []string{}, Branches: []string{}, PRs: []string{}}}; !reflect.DeepEqual(board.Lanes, wantLanes) {
 		t.Fatalf("lanes = %#v", board.Lanes)
 	}
 	encoded, _ := json.Marshal(board)

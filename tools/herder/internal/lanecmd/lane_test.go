@@ -205,3 +205,33 @@ func TestUnavailableRosterStillWrites(t *testing.T) {
 		t.Fatal("lane not written")
 	}
 }
+
+// Review repro: a lead named by base name must not leave its lane by full name.
+func TestLeadRuleHoldsAcrossBaseAndFullNames(t *testing.T) {
+	h := newHarness(t)
+	h.roster = []hcomidentity.Row{{Name: "lanes-lagu", BaseName: "lagu"}, {Name: "lanes-lagi", BaseName: "lagi"}}
+	h.ok("new", "one", "--lead", "lagu")
+	h.ok("new", "two", "--lead", "lanes-lagi")
+	if one := h.show("one"); one.Lead != "lanes-lagu" || !reflect.DeepEqual(one.Members, []string{"lanes-lagu"}) {
+		t.Fatalf("base-name lead not resolved to the roster name: %+v", one)
+	}
+	h.refused(2, "leads lane one", "move", "lanes-lagu", "two")
+	h.refused(2, "leads lane one", "move", "lagu", "two")
+	h.refused(2, "leads lane one", "lead", "two", "lagu")
+}
+
+// Review repro: rejoining a dormant lane must not create a second live lane
+// with the same name.
+func TestRejoiningADormantLaneKeepsLiveNamesUnique(t *testing.T) {
+	h := newHarness(t, "lead-a", "lead-b", "seat-c")
+	oldID := strings.TrimSpace(strings.TrimPrefix(h.ok("new", "same", "--lead", "lead-b"), "lane="))
+	h.roster = []hcomidentity.Row{{Name: "lead-a"}, {Name: "seat-c"}} // old lane goes dormant
+	h.ok("new", "same", "--lead", "lead-a")
+	h.ok("move", "seat-c", "same") // seat-c is in the live same
+	h.roster = append(h.roster, hcomidentity.Row{Name: "seat-d"})
+	h.refused(2, "taken", "move", "seat-d", oldID)
+	h.refused(2, "taken", "lead", oldID, "seat-d")
+	if lane := h.show("same"); lane.ID == oldID {
+		t.Fatal("name resolved to the dormant lane")
+	}
+}

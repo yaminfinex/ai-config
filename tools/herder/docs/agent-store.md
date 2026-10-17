@@ -110,15 +110,19 @@ is reserved and nothing sets it. A later `lead` wins by event time; a
 Membership is not stored on the lane: each incarnation's latest `assign
 --lane` is its `lane_id`. `LaneMembers(roster)` lists, per lane, the live
 roster names whose own incarnation is in it, so a name reused after a close is
-not a member of its earlier life's lane. A lane with no live member is hidden
+not a member of its earlier life's lane. A Task subagent with a proved parent
+(`hcomidentity.Parent`) follows its owner's lane. A lane with no live member is hidden
 from `herder lane list` and the board; its record stays and `list --all`
 shows it. There is no close verb.
 
 `herder lane new|rename|lead|move|link|unlink|repo|list|show` (see `herder
 lane --help`) writes these events and `assign --lane`. `<lane>` is an id or a
 current name, case-insensitive; a name shared by several lanes resolves to
-the one with a live member, else the verb asks for an id. `new` refuses a
-name a live lane holds. `new` appends `lane.created` and the lead's `assign`;
+the one with a live member, else the verb asks for an id. A seat argument (and
+a stored lead when compared) is resolved once to its full roster name: an
+exact roster name stays, a unique roster base name becomes that row's name.
+`new` refuses a name a live lane holds, and `move`/`lead` refuse to bring a
+dormant lane back under a name another live lane now holds. `new` appends `lane.created` and the lead's `assign`;
 `lead` moves the seat in first when it is elsewhere. `move` and `lead` refuse
 to take a seat out of a lane it leads (exit 2, "set another lead first"), so a
 lane never loses its lead to a move. Any caller may run any verb; `--by` and

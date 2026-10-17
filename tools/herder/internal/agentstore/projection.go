@@ -462,11 +462,16 @@ func toggle(list []string, value string, remove bool) []string {
 
 // LaneMembers maps lane id to the live roster names in it, in roster order.
 // Membership is the roster row's own incarnation (ViewForRoster), so a name
-// reused after a close is not a member of its earlier life's lane.
+// reused after a close is not a member of its earlier life's lane. A Task
+// subagent with a proved parent (hcomidentity.Parent) follows its owner.
 func (p *Projection) LaneMembers(roster []hcomidentity.Row) map[string][]string {
 	members := map[string][]string{}
 	for i := range roster {
-		view := p.ViewForRoster(&roster[i], roster)
+		owner := &roster[i]
+		if parent, ok := hcomidentity.Parent(roster, roster[i]); ok {
+			owner = &parent
+		}
+		view := p.ViewForRoster(owner, roster)
 		if view == nil || view.LaneID == "" || p.Lanes[view.LaneID] == nil {
 			continue
 		}

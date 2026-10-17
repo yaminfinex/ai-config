@@ -221,6 +221,21 @@ func (s *session) nameTaken(name, except string) error {
 	return nil
 }
 
+// seat resolves a seat argument to its full roster name: an exact roster
+// name stays, a unique roster base name becomes that row's name, anything
+// else is kept as given. Every verb stores and compares this one identity.
+func (s *session) seat(name string) string {
+	for i := range s.roster {
+		if s.roster[i].Name == name {
+			return name
+		}
+	}
+	if row, ok := hcomidentity.ByUniqueBaseName(s.roster, name); ok {
+		return row.Name
+	}
+	return name
+}
+
 // seatView is the seat's current record: its live roster incarnation, else
 // its latest record.
 func (s *session) seatView(seat string) *agentstore.AgentView {
@@ -239,7 +254,7 @@ func (s *session) leaving(seat, target string) error {
 	if view == nil || view.LaneID == "" || view.LaneID == target {
 		return nil
 	}
-	if from := s.proj.Lanes[view.LaneID]; from != nil && from.Lead == seat {
+	if from := s.proj.Lanes[view.LaneID]; from != nil && s.seat(from.Lead) == seat {
 		return refusal{fmt.Errorf("%s leads lane %s (%s); set another lead first: herder lane lead %s <seat>", seat, from.Name, from.ID, from.Name)}
 	}
 	return nil
@@ -285,7 +300,7 @@ func (s *session) newLane() error {
 	if err := s.want(1, "new <name> --lead <seat>"); err != nil {
 		return err
 	}
-	name, lead := s.opts.positional[0], strings.TrimSpace(s.opts.lead)
+	name, lead := s.opts.positional[0], s.seat(strings.TrimSpace(s.opts.lead))
 	if lead == "" {
 		return refusal{errors.New("--lead <seat> is required")}
 	}
@@ -326,10 +341,13 @@ func (s *session) setLead() error {
 	if err != nil {
 		return err
 	}
-	seat := s.opts.positional[1]
+	seat := s.seat(s.opts.positional[1])
 	var events []agentstore.Event
 	if !s.inLane(seat, lane.ID) {
 		if err := s.leaving(seat, lane.ID); err != nil {
+			return err
+		}
+		if err := s.nameTaken(lane.Name, lane.ID); err != nil { // a dormant lane rejoining
 			return err
 		}
 		events = append(events, s.assign(seat, lane.ID))
@@ -342,12 +360,15 @@ func (s *session) move() error {
 	if err := s.want(2, "move <seat> <lane>"); err != nil {
 		return err
 	}
-	seat := s.opts.positional[0]
+	seat := s.seat(s.opts.positional[0])
 	lane, err := s.resolve(s.opts.positional[1])
 	if err != nil {
 		return err
 	}
 	if err := s.leaving(seat, lane.ID); err != nil {
+		return err
+	}
+	if err := s.nameTaken(lane.Name, lane.ID); err != nil { // a dormant lane rejoining
 		return err
 	}
 	return s.append(s.assign(seat, lane.ID))

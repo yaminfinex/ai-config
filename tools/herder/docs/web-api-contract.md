@@ -200,7 +200,8 @@ GET `/api/fleet`
   none), sorted by name case-insensitively:
   `{"id":"<lane id>","name":"<name>","lead":"<seat>","members":["<bus-name>",…],"repos":[],"branches":[],"prs":[]}`.
   `members` are the live roster names whose own incarnation's latest
-  `assign` put them in the lane, in roster order; the lead appears there only
+  `assign` put them in the lane (a Task subagent with a proved parent follows
+  its owner), in roster order; the lead appears there only
   when it is itself a live member. A lane with no live member is left out;
   its store record stays (`herder lane list --all`). `repos`, `branches` and
   `prs` are always empty arrays until the PR unit fills them. Rows carry no

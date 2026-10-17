@@ -185,7 +185,7 @@ func TestAssignmentAfterAnnotateOnClosedLifeShowsOnTheFleetRow(t *testing.T) {
 			t.Fatalf("fleet row missing %s: %s", want, row)
 		}
 	}
-	if !strings.Contains(body, `"members":["impl-kolo","lone","query-topo-guna"]`) {
+	if !strings.Contains(body, `"members":["impl-kolo","kolo_general_purpose_1","lone","query-topo-guna"]`) {
 		t.Fatalf("guna did not join the lane on the board: %s", body)
 	}
 }
