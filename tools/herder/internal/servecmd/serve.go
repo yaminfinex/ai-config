@@ -32,6 +32,7 @@ import (
 	"ai-config/tools/herder/internal/fileresolver"
 	"ai-config/tools/herder/internal/fileroots"
 	"ai-config/tools/herder/internal/fleetview"
+	"ai-config/tools/herder/internal/githubprs"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
@@ -110,7 +111,9 @@ type dependencies struct {
 	stateChanges         *stateChangeBroker
 	eventStreams         *eventStreams // Live SSE connections a subscription update can retarget.
 	rosterCache          *rosterCache
-	rootSets             *rootSetCache // Nil builds the root set per request.
+	rootSets             *rootSetCache     // Nil builds the root set per request.
+	laneRepos            *repoContextCache // Nil reads a lane member's git facts per board.
+	prs                  *githubprs.Poller // Nil: lanes carry no PRs.
 	// store is the agent store the serve opens once at Run: the life mirror
 	// appends to it and the board folds a read-only projection from it.
 	store *agentstore.Store
@@ -403,13 +406,14 @@ type annotationResponse struct {
 
 type assignmentRequest struct {
 	Manager *string `json:"manager"`
-	Group   *string `json:"group"`
+	Lane    *string `json:"lane"`
+	Group   *string `json:"group"` // retired: refused with "use lane"
 }
 
 type assignmentResponse struct {
 	Name    string `json:"name"`
 	Manager string `json:"manager"`
-	Group   string `json:"group"`
+	Lane    string `json:"lane"`
 	By      string `json:"by"`
 }
 
@@ -434,6 +438,7 @@ type spawnRequest struct {
 	Effort    *string `json:"effort"`
 	Tag       *string `json:"tag"`
 	Workspace *string `json:"workspace"`
+	Lane      *string `json:"lane"`
 }
 
 type launchResponse struct {
@@ -532,6 +537,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.stateChanges = newStateChangeBroker()
 	runtimeDependencies.rosterCache = &rosterCache{now: runtimeDependencies.now}
 	runtimeDependencies.rootSets = &rootSetCache{}
+	runtimeDependencies.laneRepos = &repoContextCache{}
+	runtimeDependencies.prs = startPRPoller(ctx, runtimeDependencies.audit)
 	runtimeDependencies.turnEnds = startTurnEnds(ctx, runtimeDependencies)
 	if runtimeDependencies.turnEnds != nil {
 		runtimeDependencies.replyEnds = newReplyEnds(readReplyTail)
@@ -1165,6 +1172,27 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveAssignment(w, r, deps, r.PathValue("busName"))
 	})
+	mux.HandleFunc("/api/lanes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveLaneNew(w, r, deps)
+	})
+	mux.HandleFunc("/api/lanes/moves", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveLaneMoves(w, deps)
+	})
+	mux.HandleFunc("/api/lanes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveLaneUpdate(w, r, deps, r.PathValue("id"))
+	})
 	mux.HandleFunc("/api/panes/{paneID}/history", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")
@@ -1245,9 +1273,11 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 		}
 	}
 	board := fleetview.Build(snapshot, roster, parents)
-	fleetview.FoldBoard(&board, roster, readProjection(deps))
+	proj := readProjection(deps)
+	fleetview.FoldBoard(&board, roster, proj)
 	foldBoardVitals(&board, roster, deps.boardVitals)
 	foldBoardTurnEnds(&board, roster, deps.turnEnds, deps.replyEnds)
+	foldBoardLanes(&board, roster, proj, deps.laneRepos.reader(ctx, deps.repoContext), deps.prs)
 	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace
@@ -1648,11 +1678,15 @@ func serveAssignment(w http.ResponseWriter, r *http.Request, deps dependencies, 
 		refuse(w, http.StatusBadRequest, "bad request", err.Error())
 		return
 	}
-	if request.Manager == nil && request.Group == nil {
-		refuse(w, http.StatusBadRequest, "bad request", "manager or group required")
+	if request.Group != nil {
+		refuse(w, http.StatusBadRequest, "bad request", "group is retired; use lane")
 		return
 	}
-	manager, group := "", ""
+	if request.Manager == nil && request.Lane == nil {
+		refuse(w, http.StatusBadRequest, "bad request", "manager or lane required")
+		return
+	}
+	manager, lane := "", ""
 	if request.Manager != nil {
 		manager = strings.TrimSpace(*request.Manager)
 		if manager == "" {
@@ -1677,21 +1711,25 @@ func serveAssignment(w http.ResponseWriter, r *http.Request, deps dependencies, 
 			}
 		}
 	}
-	if request.Group != nil {
-		group = strings.TrimSpace(*request.Group)
+	if request.Lane != nil {
+		lane = strings.TrimSpace(*request.Lane)
+		if proj := readProjection(deps); proj == nil || proj.Lanes[lane] == nil {
+			refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("lane %q is not a lane id", lane))
+			return
+		}
 	}
 	sender, ok := webSender(w, r, deps, roster)
 	if !ok {
 		return
 	}
 	now := deps.now().UTC()
-	event := agentstore.Event{Kind: agentstore.KindAssign, Name: name, Manager: manager, Group: group, ClearGroup: request.Group != nil && group == "", By: sender, ByKind: "web", At: now, ID: agentstore.NewID(now)}
+	event := agentstore.Event{Kind: agentstore.KindAssign, Name: name, Manager: manager, Lane: lane, By: sender, ByKind: "web", At: now, ID: agentstore.NewID(now)}
 	receipt, ok := appendWebEvent(w, deps, event)
 	if !ok {
 		return
 	}
-	deps.audit("assign time=%s viewer=%s name=%s manager=%q group=%q clear_group=%t", receipt.Event.At.UTC().Format(time.RFC3339Nano), receipt.Event.By, name, manager, group, event.ClearGroup)
-	writeJSON(w, http.StatusOK, assignmentResponse{Name: name, Manager: manager, Group: group, By: receipt.Event.By})
+	deps.audit("assign time=%s viewer=%s name=%s manager=%q lane=%q", receipt.Event.At.UTC().Format(time.RFC3339Nano), receipt.Event.By, name, manager, lane)
+	writeJSON(w, http.StatusOK, assignmentResponse{Name: name, Manager: manager, Lane: lane, By: receipt.Event.By})
 }
 
 func resolveLiveAgent(w http.ResponseWriter, deps dependencies, name string) ([]hcomidentity.Row, bool) {
@@ -1909,6 +1947,14 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		return
 	}
 	workspace := strings.TrimSpace(*request.Workspace)
+	lane := ""
+	if request.Lane != nil {
+		lane = strings.TrimSpace(*request.Lane)
+		if proj := readProjection(deps); lane != "" && (proj == nil || proj.Lanes[lane] == nil) {
+			refuse(w, http.StatusBadRequest, "bad request", fmt.Sprintf("lane %q is not a lane id", lane))
+			return
+		}
+	}
 	snapshot, err := deps.snapshot()
 	if err != nil {
 		refuse(w, http.StatusBadGateway, "substrate unreachable", err.Error())
@@ -1943,6 +1989,9 @@ func serveSpawn(w http.ResponseWriter, r *http.Request, deps dependencies) {
 		args = append(args, "--effort", effort)
 	}
 	args = append(args, "--tag", tag, "--workspace", workspace)
+	if lane != "" {
+		args = append(args, "--lane", lane)
+	}
 	result, err := deps.spawn(r.Context(), args, launcher)
 	// Even a refused launch may have joined a name; the board must not
 	// answer from a roster cached before it.

@@ -155,12 +155,7 @@ GET `/api/fleet`
     `ended` (the store holds a record for the manager that is closed or no
     longer on the roster), `operator`, or `unknown` (no manager, a name with
     neither a live roster row nor a store record, or an ambiguous base name).
-  - `group` — the current assignment group from the agent store, when set.
   - `title` — the annotation title from the agent store, when one is set.
-  - `group` — the agent's group label, the latest `assign` event's `group`
-    from the agent store, when one is set. Absent when none was ever set or
-    the last assign cleared it. Herder-mastered augmenting data, never
-    lifecycle authority; hcom tags are not groups.
   - `created_at` — hcom's roster creation time for the row, RFC3339 UTC.
   - `context_used` — used tokens from the serve's in-process observer. It is
     absent when the observer does not know the session and is never persisted;
@@ -206,22 +201,44 @@ GET `/api/fleet`
   `fleet` within the serve's debounce, with no herdr or hcom change required.
   The terminal `herder list` output is unchanged by this payload.
 
-  Groups view (sidebar). The third fleet view is its own client-side
-  builder over the same payload: one header per distinct `group` label
-  (alphabetical) and an "Ungrouped" header last, drawn only while it has
-  rows. Membership is the agent's own label (a Task subagent takes its
-  owning top-level agent's), so every agent appears under exactly one
-  header and a manager never joins a group through its reports; an agent
-  with no label is Ungrouped even when its reports are grouped. Under a
-  header the tree is the manager tree restricted to members, and a member
-  whose manager is not one is a root there. The supervision
-  view draws no group nodes. Dragging an agent row onto a header issues one
-  `POST /api/agents/{bus-name}/assignment` with `{"group":"<header>"}`
-  (the Ungrouped header sends `""`, which clears); the client updates
-  nothing optimistically and the next `fleet` frame re-groups. "Open group
-  as space" on a header switches to the space named exactly after the group
-  or creates one, then opens every member transcript pinned; it closes
-  nothing and stores no link between the group and the space.
+  ### Lanes on the board
+
+  The board carries a top-level `lanes` array (always present, `[]` when
+  none), sorted by name case-insensitively:
+  `{"id":"<lane id>","name":"<name>","lead":"<seat>","members":["<bus-name>",…],"repos":[],"branches":[],"prs":[]}`.
+  `members` are the live roster names whose own incarnation's latest
+  `assign` put them in the lane (a Task subagent with a proved parent follows
+  its owner), in roster order; the lead appears there only
+  when it is itself a live member. A lane with no live member is left out;
+  its store record stays (`herder lane list --all`). `repos`, `branches` and
+  `prs` are always empty arrays until the PR unit fills them. Rows carry no
+  lane field; `members` is the one membership source.
+
+  Rows and panes carry no `group`: groups are retired and the board no
+  longer folds the label old `assign` events journaled.
+
+  Lanes view (sidebar). The third fleet view is built client-side from
+  `lanes`: one header per lane in board order, reading the lane name and
+  `lead <seat>`, and a "No lane" header last, drawn only while it has rows.
+  Under a header the tree is the manager tree restricted to members (the
+  lead's subtree first, a Task subagent under its owner), and a member whose
+  manager is not one is a root there. Dragging an agent row onto a lane
+  header or any row under it issues one `POST /api/agents/{bus-name}/assignment`
+  with `{"lane":"<lane id>"}`. "+ lane" takes a name (checked as the serve
+  checks it, and unique among the board's lanes, case-insensitive) and
+  draws a local placeholder header; the first agent dropped on it issues
+  `POST /api/lanes` with that agent as lead. A row's context menu offers
+  "Make lead" (`POST /api/lanes/{id}` with `{"lead":…}`). The client updates
+  nothing optimistically; the next `fleet` frame redraws.
+
+  Lane spaces. Every board lane is also a space with id `lane:<id>` and the
+  lane's name, listed ahead of the user's own spaces in board order. Its
+  members are the lane's members, lead first, then any agents or files the
+  user pinned in it (`spaces.members`), so the lens shows the lead by
+  default. A lane space cannot be closed or dragged; it leaves with its last
+  live member. Renaming it sends `POST /api/lanes/{id}` with `{"name":…}`
+  and the name shown is the board's. The space row of a lane is never
+  written to the `spaces` namespace.
 
 GET `/api/agents/{bus-name}`
   One agent: pane coordinate, tool, statuses, launch context, gap
@@ -1418,24 +1435,54 @@ POST `/api/agents/{bus-name}/annotation`
   return 502.
 
 POST `/api/agents/{bus-name}/assignment`
-  Body: `{"manager":"<live bus-name>|human","group":"<name>"}`; either
-  field may be omitted, but at least one is required. Values are trimmed. An
-  empty group clears it; a non-empty group is limited to 80 Unicode code
-  points. A manager cannot be the target itself and must be `human` or an
+  Body: `{"manager":"<live bus-name>|human","lane":"<lane id>"}`; either
+  field may be omitted, but at least one is required. Values are trimmed. A
+  `group` field is refused with 400 "group is retired; use lane". A lane
+  must be the id of a lane in the agent store (a name is refused, 400). A
+  manager cannot be the target itself and must be `human` or an
   exact live roster name: unknown and tombstone manager targets return 400.
   The target agent itself must be live (404 unknown, 409 retired). Success
   appends exactly one `assign` event with the server-derived `by`,
   `by_kind: web`, and returns
-  `{"name":"<bus-name>","manager":"<set-or-empty>","group":"<set-or-empty>","by":"<web-sender>"}`.
-  The next ordinary fleet frame carries the new manager/group; `human` folds
-  to `manager_state: operator`. The client does not update optimistically.
+  `{"name":"<bus-name>","manager":"<set-or-empty>","lane":"<set-or-empty>","by":"<web-sender>"}`.
+  The next ordinary fleet frame carries the new manager and `lanes`; `human`
+  folds to `manager_state: operator`. The endpoint does not apply `herder
+  lane move`'s lead rule. The client does not update optimistically.
   Invalid input returns 400, missing attribution or collision 409, and
   unavailable identity/store or append failure 502.
+
+POST `/api/lanes`
+  Body: `{"name":"<name>","lead":"<live bus-name>"}`. Runs `herder lane new
+  <name> --lead <lead>` in process (the same verb code, appending the same
+  events) with the server-derived `by` and `by_kind: web`, and returns
+  `{"id":"<lane id>"}`. Values are trimmed; an empty value or one starting
+  with `-` is refused with 400, as is any refusal from the verb (a taken
+  name, a lead that is not live). Missing attribution or a sender collision
+  returns 409; unavailable identity or agent store, or an append failure,
+  returns 502.
+
+POST `/api/lanes/{id}`
+  Body: exactly one of `{"name":"<new name>"}` (`herder lane rename`) or
+  `{"lead":"<live bus-name>"}` (`herder lane lead`). Returns `{"id":"<lane id>"}`. An
+  unknown lane id is 404; a body with neither or both fields, or a verb
+  refusal, is 400; attribution and substrate failures as for `POST
+  /api/lanes`. The new name or lead arrives through the next fleet frame.
+
+GET `/api/lanes/moves`
+  The one-time space→lane map the lane move script writes to
+  `$HERDER_STATE/lane-move.json`: `{"<old space id>":"<lane id>",…}`, or
+  `{}` when the file is absent. Each browser applies every pair once
+  (localStorage `herder.web.laneMove.v1` keeps the applied ids): while the
+  old space row is live it moves the `spaces.members` row to `lane:<id>` and
+  tombstones the old space row; it moves the stored dock layout and the lens
+  tier to `lane:<id>` only when that key is empty. Nothing else is moved.
 
 POST `/api/spawn`
   Body: `{"tool": "claude" | "codex", "model": "<optional>",
   "effort": "<optional>",
-  "tag": "<optional, default impl>", "workspace": "<live Herdr workspace ID>"}`.
+  "tag": "<optional, default impl>", "workspace": "<live Herdr workspace ID>",
+  "lane": "<optional lane id>"}`. A non-blank lane must be an existing lane id
+  (400 otherwise) and is passed to spawn.sh as `--lane`.
   The workspace is required and is validated against the same in-process
   Herdr snapshot path used by the fleet view. Every request delegates to
   `tools/fleet/spawn.sh` with `--workspace`; the web server never owns the

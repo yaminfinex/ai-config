@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
+	"ai-config/tools/herder/internal/githubprs"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/repoctx"
@@ -34,7 +35,7 @@ type Row struct {
 	ReplyEndID int64 `json:"reply_end_id,omitempty"`
 	Subagents  *Rows `json:"subagents,omitempty"`
 	// Store-folded columns (FoldStore). Launcher is immutable provenance,
-	// Manager the mutable hierarchy pointer, Group the current assignment.
+	// Manager the mutable hierarchy pointer, Lane the current lane's name.
 	// A bus row with no store record prints "unregistered"; a pane with no
 	// bus row prints "-".
 	Launcher string `json:"launcher,omitempty"`
@@ -45,7 +46,7 @@ type Row struct {
 	// (no manager, or a name with no record and no roster row).
 	ManagerState string                 `json:"manager_state,omitempty"`
 	CreatedAt    string                 `json:"created_at,omitempty"` // roster created_at, RFC3339 UTC
-	Group        string                 `json:"group,omitempty"`
+	Lane         string                 `json:"lane,omitempty"`
 	Provenance   *ProvenanceSummary     `json:"provenance,omitempty"`
 	Binding      *agentstore.Binding    `json:"binding,omitempty"` // claimed vs roster session; never touches placement
 	Title        string                 `json:"title,omitempty"`
@@ -72,7 +73,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 	for i := range out {
 		row := &out[i]
 		if row.BusStatus == "-" {
-			row.Launcher, row.Manager, row.Group = "-", "-", "-"
+			row.Launcher, row.Manager, row.Lane = "-", "-", "-"
 			continue
 		}
 		var view *agentstore.AgentView
@@ -86,7 +87,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		}
 		if view == nil {
 			row.ManagerState = ManagerUnknown
-			row.Launcher, row.Manager, row.Group = "unregistered", "-", "-"
+			row.Launcher, row.Manager, row.Lane = "unregistered", "-", "-"
 			row.Provenance = &ProvenanceSummary{Kind: "unregistered"}
 			continue
 		}
@@ -103,9 +104,9 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		manager, state := managerEdge(view, roster, proj)
 		row.Manager, row.ManagerState = display(manager), state
 		row.Binding = view.Binding
-		row.Group = "-"
-		if view.Assignment != nil {
-			row.Group = display(view.Assignment.Group)
+		row.Lane = "-"
+		if lane := proj.Lanes[view.LaneID]; lane != nil {
+			row.Lane = lane.Name
 		}
 		if view.Annotation != nil {
 			row.Title = view.Annotation.Title
@@ -194,9 +195,6 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 		if folded.Manager == "-" || folded.Manager == "unknown" {
 			folded.Manager = ""
 		}
-		if folded.Group == "-" {
-			folded.Group = ""
-		}
 		return folded
 	}
 	var foldRows func(rows []Row)
@@ -206,7 +204,7 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 				continue
 			}
 			folded := fold(rows[i].Agent, rows[i].BusStatus)
-			rows[i].Manager, rows[i].ManagerState, rows[i].Group, rows[i].Title, rows[i].CreatedAt = folded.Manager, folded.ManagerState, folded.Group, folded.Title, folded.CreatedAt
+			rows[i].Manager, rows[i].ManagerState, rows[i].Title, rows[i].CreatedAt = folded.Manager, folded.ManagerState, folded.Title, folded.CreatedAt
 			if rows[i].Subagents != nil {
 				foldRows(*rows[i].Subagents)
 			}
@@ -220,12 +218,34 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 					continue
 				}
 				folded := fold(panes[p].Agent, panes[p].BusStatus)
-				panes[p].Manager, panes[p].ManagerState, panes[p].Group, panes[p].Title, panes[p].CreatedAt = folded.Manager, folded.ManagerState, folded.Group, folded.Title, folded.CreatedAt
+				panes[p].Manager, panes[p].ManagerState, panes[p].Title, panes[p].CreatedAt = folded.Manager, folded.ManagerState, folded.Title, folded.CreatedAt
 				foldRows(panes[p].Subagents)
 			}
 		}
 	}
 	foldRows(board.Unplaced)
+	board.Lanes = BoardLanes(roster, proj)
+}
+
+// BoardLanes lists every lane with a live member, by name. Members are live
+// roster names in roster order; a lane with none is left out (its record
+// stays). The serve fills repos, branches and PRs (servecmd/laneprs.go).
+func BoardLanes(roster []hcomidentity.Row, proj *agentstore.Projection) []Lane {
+	lanes := []Lane{}
+	if proj == nil {
+		return lanes
+	}
+	for id, members := range proj.LaneMembers(roster) {
+		lane := proj.Lanes[id]
+		lanes = append(lanes, Lane{ID: id, Name: lane.Name, Lead: lane.Lead, Members: members, Repos: []string{}, Branches: []string{}, PRs: []githubprs.PR{}})
+	}
+	sort.Slice(lanes, func(i, j int) bool {
+		if a, b := strings.ToLower(lanes[i].Name), strings.ToLower(lanes[j].Name); a != b {
+			return a < b
+		}
+		return lanes[i].ID < lanes[j].ID
+	})
+	return lanes
 }
 
 type Rows []Row
@@ -233,6 +253,20 @@ type Rows []Row
 type Board struct {
 	Workspaces []Workspace `json:"workspaces"`
 	Unplaced   []Row       `json:"unplaced"`
+	Lanes      []Lane      `json:"lanes"`
+}
+
+// Lane is one board lane: the record's name and lead plus its live members.
+type Lane struct {
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Lead     string         `json:"lead"`
+	Members  []string       `json:"members"`
+	Repos    []string       `json:"repos"`
+	Branches []string       `json:"branches"`
+	PRs      []githubprs.PR `json:"prs"`
+	// PRNote is the one line shown instead of PRs (no GitHub token).
+	PRNote string `json:"pr_note,omitempty"`
 }
 
 type Workspace struct {
@@ -272,7 +306,6 @@ type Pane struct {
 	Gap            string `json:"gap"`
 	Manager        string `json:"manager,omitempty"`
 	ManagerState   string `json:"manager_state,omitempty"`
-	Group          string `json:"group,omitempty"`
 	Title          string `json:"title,omitempty"`
 	CreatedAt      string `json:"created_at,omitempty"`
 	ContextUsed    int64  `json:"context_used,omitempty"`

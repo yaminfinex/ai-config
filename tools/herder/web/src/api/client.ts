@@ -207,14 +207,37 @@ export function renameAgent(name: string, title: string, fetcher?: Fetcher) {
   }, fetcher)
 }
 
-export type AssignmentPatch = { manager?: string, group?: string }
+export type AssignmentPatch = { manager?: string, lane?: string }
 
 export function assignAgent(name: string, assignment: AssignmentPatch, fetcher?: Fetcher) {
-  return requestJSON<{ name: string, manager: string, group: string, by: string }>(`/api/agents/${encodeURIComponent(name)}/assignment`, {
+  return requestJSON<{ name: string, manager: string, lane: string, by: string }>(`/api/agents/${encodeURIComponent(name)}/assignment`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(assignment),
   }, fetcher)
+}
+
+// createLane is `herder lane new <name> --lead <lead>`; updateLane is
+// `herder lane rename` ({name}) or `herder lane lead` ({lead}).
+export function createLane(name: string, lead: string, fetcher?: Fetcher) {
+  return requestJSON<{ id: string }>('/api/lanes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, lead }),
+  }, fetcher)
+}
+
+export function updateLane(id: string, patch: { name: string } | { lead: string }, fetcher?: Fetcher) {
+  return requestJSON<{ id: string }>(`/api/lanes/${encodeURIComponent(id)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  }, fetcher)
+}
+
+// laneMoves is the one-time move's {old space id: lane id}, {} before it ran.
+export function laneMoves(fetcher?: Fetcher) {
+  return requestJSON<Record<string, string>>('/api/lanes/moves', {}, fetcher)
 }
 
 export type SpawnRequest = {
@@ -223,6 +246,7 @@ export type SpawnRequest = {
   effort?: string
   tag: string
   workspace: string
+  lane?: string
 }
 
 export async function spawnAgent(body: SpawnRequest, fetcher?: Fetcher, timeoutMs = 160_000) {

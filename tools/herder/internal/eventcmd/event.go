@@ -23,6 +23,14 @@ func Parse(kind string, args []string) (agentstore.Event, bool, error) {
 	if !ok {
 		return agentstore.Event{}, false, fmt.Errorf("unknown kind %q", kind)
 	}
+	if kind == agentstore.KindAssign {
+		for _, arg := range args {
+			flagName := strings.SplitN(strings.TrimLeft(arg, "-"), "=", 2)[0]
+			if strings.HasPrefix(arg, "-") && (flagName == "group" || flagName == "clear-group") {
+				return agentstore.Event{}, false, fmt.Errorf("--%s is retired; use --lane", flagName)
+			}
+		}
+	}
 	fs := flag.NewFlagSet(kind, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	values := map[string]*string{}
@@ -77,17 +85,21 @@ func Parse(kind string, args []string) (agentstore.Event, bool, error) {
 		Tool: get("tool"), Model: get("model"), Effort: get("effort"), Tag: get("tag"), PromptRef: get("prompt-ref"),
 		LauncherKind: get("launcher-kind"), Batch: get("batch"), Pane: get("pane"), Cwd: get("cwd"), Session: get("session"),
 		Reason: get("reason"), Close: get("close"), FromSession: get("from-session"), FromName: get("from"),
-		Group: get("group"), Title: get("title"), Note: get("note"),
+		Title: get("title"), Note: get("note"),
+		Lane: get("lane"), LaneName: get("lane-name"), Lead: get("lead"), PR: get("pr"),
 		Manager: get("manager"), HcomEvent: get("hcom-event"), ParentName: get("parent-name"), Path: get("path"),
 	}
-	if clear := boolValues["clear-group"]; clear != nil {
-		e.ClearGroup = *clear
+	if remove := boolValues["remove"]; remove != nil {
+		e.Remove = *remove
 	}
 	if workspace, pane, split := get("workspace"), get("pane"), get("split-from"); kind == agentstore.KindLaunchRequested {
 		e.Pane = ""
 		e.Placement = &agentstore.Placement{Workspace: workspace, Pane: pane, SplitFrom: split, WorktreeBranch: get("worktree-branch"), Repo: get("repo")}
-	} else if workspace != "" {
-		e.Placement = &agentstore.Placement{Workspace: workspace}
+	} else {
+		e.Repo = get("repo")
+		if workspace != "" {
+			e.Placement = &agentstore.Placement{Workspace: workspace}
+		}
 	}
 	if text := get("steer-chars"); text != "" {
 		n, err := strconv.Atoi(text)

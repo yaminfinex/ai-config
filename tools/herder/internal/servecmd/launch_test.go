@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/webaction"
 	"ai-config/tools/herder/internal/webidentity"
 )
@@ -159,6 +160,37 @@ func TestLaunchPinsAttributionValidationAndInfrastructureRefusals(t *testing.T) 
 			newHandler(deps).ServeHTTP(response, request)
 			if response.Code != test.status || !bytes.Contains(response.Body.Bytes(), []byte(test.detail)) {
 				t.Fatalf("response=%d %s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestLaunchPassesALaneIDThrough(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		lane   string
+		status int
+		want   []string
+	}{
+		{name: "lane id", lane: " " + supervisionLane + " ", status: http.StatusOK, want: []string{"codex", "--tag", "impl", "--workspace", "w1", "--lane", supervisionLane}},
+		{name: "blank lane", lane: " ", status: http.StatusOK, want: []string{"codex", "--tag", "impl", "--workspace", "w1"}},
+		{name: "lane by name", lane: "payload", status: http.StatusBadRequest},
+		{name: "unknown lane", lane: agentstore.DerivedID([]byte("nope")), status: http.StatusBadRequest},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			deps := supervisionDeps(t)
+			var got []string
+			deps.spawn = func(_ context.Context, args []string, _ string) (webaction.Result, error) {
+				got = append([]string(nil), args...)
+				return webaction.Result{Name: "impl-vava", Pane: "p9"}, nil
+			}
+			body := fmt.Sprintf(`{"tool":"codex","tag":"impl","workspace":"w1","lane":%q}`, test.lane)
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/spawn", bytes.NewBufferString(body))
+			request.RemoteAddr = "100.64.0.8:4400"
+			newHandler(deps).ServeHTTP(response, request)
+			if response.Code != test.status || !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("response=%d %s argv=%q want %d %q", response.Code, response.Body.String(), got, test.status, test.want)
 			}
 		})
 	}

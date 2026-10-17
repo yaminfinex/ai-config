@@ -64,22 +64,24 @@ test('row click guard contains every trailing interactive control', () => {
 
 test('the fleet view persists through the real shell serializer and parser (default supervision)', () => {
   assert.equal(defaultFleetView, 'supervision')
-  const written = shellPreferencesValue({ ...rails, expandedItems: ['agent:ziru'], knownWorkspaceItems: null, knownManagerItems: ['agent:ziru'], fleetView: 'placement', pendingGroups: [] })
+  const written = shellPreferencesValue({ ...rails, expandedItems: ['agent:ziru'], knownWorkspaceItems: null, knownManagerItems: ['agent:ziru'], fleetView: 'placement' })
   const read = parseShellPreferences(JSON.stringify(written))
   assert.equal(read?.fleetView, 'placement')
   assert.deepEqual(read?.expandedItems, ['agent:ziru'])
   assert.deepEqual(read?.knownManagerItems, ['agent:ziru'])
   assert.equal(read?.knownWorkspaceItems, undefined)
-  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision', pendingGroups: [] })))?.fleetView, 'supervision')
-  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'groups', pendingGroups: [] })))?.fleetView, 'groups')
+  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision' })))?.fleetView, 'supervision')
+  assert.equal(parseShellPreferences(JSON.stringify(shellPreferencesValue({ ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'lanes' })))?.fleetView, 'lanes')
+  // A browser that stored the retired groups view opens the lanes view.
+  assert.equal(parseShellPreferences(JSON.stringify({ ...written, fleetView: 'groups' }))?.fleetView, 'lanes')
   // The hook writes through the serializer, so the field cannot be dropped on one path only.
   const hook = readFileSync(new URL('../src/features/layout/useLayoutPersistence.ts', import.meta.url), 'utf8')
-  assert.match(hook, /shellPreferencesValue\(\{ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, pendingGroups, spacesCollapsed \}\)/)
-  assert.equal((hook.match(/pendingGroups/g) ?? []).length >= 10, true, 'pendingGroups rides every preference path (initial, snapshot, flush, dirty, return)')
+  assert.match(hook, /shellPreferencesValue\(\{ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, spacesCollapsed \}\)/)
+  assert.doesNotMatch(hook, /pendingGroups/, 'the groups-only placeholder state is gone')
 })
 
 test('the Spaces section fold persists through the shell serializer and parser: written only while folded, rejected unless boolean', () => {
-  const base = { ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision' as const, pendingGroups: [] }
+  const base = { ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'supervision' as const }
   assert.equal('spacesCollapsed' in shellPreferencesValue(base), false)
   assert.equal('spacesCollapsed' in shellPreferencesValue({ ...base, spacesCollapsed: false }), false)
   const written = shellPreferencesValue({ ...base, spacesCollapsed: true })
@@ -90,27 +92,25 @@ test('the Spaces section fold persists through the shell serializer and parser: 
   assert.equal((hook.match(/spacesCollapsed/g) ?? []).length >= 8, true, 'spacesCollapsed rides every preference path (initial, snapshot, flush, dirty, return)')
 })
 
-test('pending groups persist through the shell serializer and parser: written only while non-empty, rejected unless string[]', () => {
-  const base = { ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'groups' as const }
-  assert.equal('pendingGroups' in shellPreferencesValue({ ...base, pendingGroups: [] }), false)
-  const written = shellPreferencesValue({ ...base, pendingGroups: ['unit-x', 'unit y'] })
-  assert.deepEqual(written.pendingGroups, ['unit-x', 'unit y'])
-  assert.deepEqual(parseShellPreferences(JSON.stringify(written))?.pendingGroups, ['unit-x', 'unit y'])
-  assert.equal(parseShellPreferences(JSON.stringify({ ...written, pendingGroups: undefined }))?.pendingGroups, undefined)
-  assert.equal(parseShellPreferences(JSON.stringify({ ...written, pendingGroups: 'unit-x' })), null)
-  assert.equal(parseShellPreferences(JSON.stringify({ ...written, pendingGroups: [1] })), null)
+test('a stored pendingGroups field from the groups view still parses and is dropped on the next write', () => {
+  const base = { ...rails, expandedItems: null, knownWorkspaceItems: null, knownManagerItems: null, fleetView: 'lanes' as const }
+  const written = shellPreferencesValue(base)
+  assert.equal('pendingGroups' in written, false)
+  const read = parseShellPreferences(JSON.stringify({ ...written, pendingGroups: ['unit-x'] }))
+  assert.equal(read?.fleetView, 'lanes')
+  assert.equal(read && 'pendingGroups' in read, false)
 })
 
-test('the toggle order is tree, groups, placement and the chip sits left of the name outside the groups view', () => {
+test('the toggle order is tree, lanes, placement and a lane row marks its lead after the name', () => {
   const toggle = readFileSync(new URL('../src/features/sidebar/FleetViewToggle.tsx', import.meta.url), 'utf8')
   const order = [...toggle.matchAll(/\{ view: '(\w+)'/g)].map((match) => match[1])
-  assert.deepEqual(order, ['supervision', 'groups', 'placement'])
+  assert.deepEqual(order, ['supervision', 'lanes', 'placement'])
   const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
-  assert.match(sidebar, /const groupChip = view !== 'groups' && pane\?\.group \? <span className="group-chip" title=\{`group: \$\{pane\.group\}`\}>\{pane\.group\}<\/span> : null/)
-  assert.match(sidebar, /<>\{groupChip\}<span className="tree-label"/, 'chip precedes the label span, so the ellipsis stays on the name')
+  assert.doesNotMatch(sidebar, /pane\??\.group\b|groupChip/, 'the retired group label is not drawn')
+  assert.match(sidebar, /const leadChip = node\.lead \? <span className="group-chip" title="lane lead">lead<\/span> : null/)
+  assert.match(sidebar, /\{summary && <span className="tree-summary"> \{summary\}<\/span>\}<\/span>\{leadChip\}/, 'the chip follows the label span, so the ellipsis stays on the name')
   const css = readFileSync(new URL('../src/styles.css', import.meta.url), 'utf8')
   assert.match(css, /\.tree-secondary, \.unknown-manager-marker, \.group-chip \{ color: var\(--dimmer\); font: 10px var\(--mono\); \}/, 'chip is in the marker token rule itself')
-  assert.doesNotMatch(css, /\.group-chip \{[^}]*max-width:/, 'group chip has no width cap, so the full label always shows')
 })
 
 test('the parser rejects an unknown fleet view and keeps it optional', () => {
@@ -143,13 +143,14 @@ test('expandedItems survive a view switch: the transition never runs on the view
   // The component applies only this transition: no expansion is computed in the component, and the view is not an effect input.
   const sidebar = readFileSync(new URL('../src/features/sidebar/FleetSidebar.tsx', import.meta.url), 'utf8')
   assert.doesNotMatch(sidebar, /defaultExpanded|managerItems\(/)
-  assert.equal((sidebar.match(/onExpandedItems\(/g) ?? []).length, 2, 'expected the tree setter wiring and the transition apply, nothing else')
+  assert.equal((sidebar.match(/onExpandedItems\(/g) ?? []).length, 3, 'expected the tree setter wiring, the transition apply and the active lane header, nothing else')
+  assert.match(sidebar, /if \(!activeLaneHeader \|\| !expandedItems \|\| expandedItems\.includes\(activeLaneHeader\)\) return\n {4}onExpandedItems\(\[\.\.\.expandedItems, activeLaneHeader\]\)/, 'entering a lane space only ever adds its header')
   const effects = [...sidebar.matchAll(/useEffect\([\s\S]*?\}, \[([^\]]*)\]\)/g)].map((match) => match[1])
   assert.equal(effects.filter((deps) => /\bview\b/.test(deps)).length, 1, 'only the selection effect depends on view')
-  assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : view === 'groups' \? groupNodes : supervisionNodes/)
-  // The groups map is one more input to the same single transition, never a separate expansion path.
+  assert.match(sidebar, /const nodes = view === 'placement' \? placementNodes : view === 'lanes' \? laneNodes : supervisionNodes/)
+  // The lanes map is one more input to the same single transition, never a separate expansion path.
   assert.equal((sidebar.match(/reconcileExpansion\(/g) ?? []).length, 1)
-  assert.match(sidebar, /reconcileExpansion\(placementNodes, supervisionNodes, \{ expandedItems, knownWorkspaceItems, knownManagerItems \}, groupNodes\)/)
+  assert.match(sidebar, /reconcileExpansion\(placementNodes, supervisionNodes, \{ expandedItems, knownWorkspaceItems, knownManagerItems \}, laneNodes\)/)
   assert.match(sidebar, /state: \{ expandedItems: expandedItems \?\? emptyExpandedItems, selectedItems \}/)
   assert.match(sidebar, /<ContextUsed value=\{node\.contextUsed\} \/>/)
   assert.match(sidebar, /\$\{contextUsedTooltip\(node\.contextUsed\)\}/)

@@ -93,7 +93,8 @@ test('the app mounts the switcher with the controller state and attention', () =
 test('the controller derives attention and the MRU switcher from the live workspace', () => {
   assert.match(controller, /const openBySpace = useSpaceAgents\(\{ revision, spaces, activeSpaceID, activeAgents: agentNames \}\)/)
   assert.match(controller, /useSpaceAttention\(\{ apiRef, board: boardQuery\.data, openBySpace, membersBySpace, view \}\)/)
-  assert.match(controller, /const \{ stateChanged: onMembersStateChanged, membersBySpace \} = useSpaceMembers\(/, 'cards count spaces.members')
+  assert.match(controller, /const \{ stateChanged: onMembersStateChanged, membersBySpace: pinnedBySpace, ready: membersReady, moveMembers \} = useSpaceMembers\(/, 'cards count spaces.members')
+  assert.match(controller, /const membersBySpace = useMemo\(\(\) => withLaneRosters\(pinnedBySpace, laneRosters\)/, 'a lane space counts its roster ahead of its pins')
   assert.match(controller, /useSpaceSwitcher\(\{ enabled: Boolean\(spacesRuntime\.store\), spaces, activeSpaceID, switchSpace: switchSpaceAnywhere \}\)/)
   assert.match(controller, /attention: spaceAttention\.attention/)
   assert.match(controller, /total: spaceAttention\.total,/, 'the collapsed Spaces total is the board-wide one')

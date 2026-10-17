@@ -15,7 +15,7 @@ import (
 
 const exitUnavailable = 3
 
-// Run assigns an agent's manager, group, or both.
+// Run assigns an agent's manager, lane, or both.
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage())
@@ -76,14 +76,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func usage() string {
-	return `herder assign — assign an agent's manager and/or group with one event.
+	return `herder assign — assign an agent's manager and/or lane with one event.
 
 Usage:
-  herder assign <agent> [--manager NAME|human] [--group NAME] [--clear-group] [--by WHO] [--by-kind KIND] [--at RFC3339] [--id UUID] [--json]
+  herder assign <agent> [--manager NAME|human] [--lane LANE-ID] [--by WHO] [--by-kind KIND] [--at RFC3339] [--id UUID] [--json]
 
-At least one of --manager, --group, or --clear-group is required. --manager human
-adopts the seat to the top level. --group replaces the group; --clear-group
-removes it. The low-level equivalent is herder register assign --name AGENT ….
+At least one of --manager or --lane is required. --manager human adopts the
+seat to the top level. --lane takes a lane id and moves the seat into that
+lane; herder lane move takes a name and keeps a lane's lead in it. --group is
+retired (exit 2, "use --lane").
+The low-level equivalent is herder register assign --name AGENT ….
 Later assignment events win by event time. Exit 0 appended or replayed, 2 usage,
 3 store unavailable.
 
@@ -92,7 +94,6 @@ Later assignment events win by event time. Exit 0 appended or replayed, 2 usage,
 Examples:
   herder assign impl-geni --manager ziru
   herder assign impl-geni --manager human
-  herder assign impl-geni --group fleet-refit
-  herder assign impl-geni --clear-group
+  herder assign impl-geni --lane 0190f000-0000-7000-8000-000000000001
 `
 }

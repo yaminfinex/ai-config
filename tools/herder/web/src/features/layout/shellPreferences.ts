@@ -3,11 +3,16 @@ import { defaultRailPreferences, type RailPreferences } from './utilityRailModel
 export const shellStorageKey = 'herder.web.shell.v1'
 export const shellStorageBackupKey = 'herder.web.shell.v1.last-good'
 
-export type FleetView = 'supervision' | 'placement' | 'groups'
+export type FleetView = 'supervision' | 'placement' | 'lanes'
 export const defaultFleetView: FleetView = 'supervision'
 
 export function isFleetView(value: unknown): value is FleetView {
-  return value === 'supervision' || value === 'placement' || value === 'groups'
+  return value === 'supervision' || value === 'placement' || value === 'lanes'
+}
+
+// The lanes view replaced the groups view: a stored 'groups' reads as lanes.
+function storedFleetView(value: unknown): FleetView | null {
+  return value === 'groups' ? 'lanes' : isFleetView(value) ? value : null
 }
 
 export type StoredShellPreferences = {
@@ -17,9 +22,6 @@ export type StoredShellPreferences = {
   knownWorkspaceItems?: string[]
   knownManagerItems?: string[]
   fleetView?: FleetView
-  // pendingGroups are groups created on the web that no fleet frame has
-  // shown yet: local placeholder headers, dropped once the label is real.
-  pendingGroups?: string[]
   // spacesCollapsed folds the Spaces section at the top of the fleet rail.
   spacesCollapsed?: boolean
 }
@@ -46,8 +48,7 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
       (value.expandedItems !== undefined && !strings(value.expandedItems)) ||
       (value.knownWorkspaceItems !== undefined && !strings(value.knownWorkspaceItems)) ||
       (value.knownManagerItems !== undefined && !strings(value.knownManagerItems)) ||
-      (value.fleetView !== undefined && !isFleetView(value.fleetView)) ||
-      (value.pendingGroups !== undefined && !strings(value.pendingGroups)) ||
+      (value.fleetView !== undefined && !storedFleetView(value.fleetView)) ||
       (value.spacesCollapsed !== undefined && typeof value.spacesCollapsed !== 'boolean')) return null
     const fleet = rail(value.rails.fleet)
     const notes = rail(value.rails.notes)
@@ -58,8 +59,7 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
       ...(value.expandedItems === undefined ? {} : { expandedItems: value.expandedItems }),
       ...(value.knownWorkspaceItems === undefined ? {} : { knownWorkspaceItems: value.knownWorkspaceItems }),
       ...(value.knownManagerItems === undefined ? {} : { knownManagerItems: value.knownManagerItems }),
-      ...(value.fleetView === undefined ? {} : { fleetView: value.fleetView }),
-      ...(value.pendingGroups === undefined ? {} : { pendingGroups: value.pendingGroups }),
+      ...(value.fleetView === undefined ? {} : { fleetView: storedFleetView(value.fleetView)! }),
       ...(value.spacesCollapsed === undefined ? {} : { spacesCollapsed: value.spacesCollapsed }),
     }
   } catch {
@@ -69,8 +69,8 @@ export function parseShellPreferences(raw: string | null): StoredShellPreference
 
 // shellPreferencesValue is the one shape the shell writes: rails always,
 // the tree state lists when known, the fleet view always (so a reload
-// lands on the view the operator last chose), pending groups while any and
-// the Spaces section fold only while folded.
+// lands on the view the operator last chose) and the Spaces section fold
+// only while folded.
 export function shellPreferencesValue(state: {
   fleetRail: RailPreferences['fleet']
   notesRail: RailPreferences['notes']
@@ -78,11 +78,9 @@ export function shellPreferencesValue(state: {
   knownWorkspaceItems: string[] | null
   knownManagerItems: string[] | null
   fleetView: FleetView
-  pendingGroups: string[]
   spacesCollapsed?: boolean
 }): StoredShellPreferences {
   const value: StoredShellPreferences = { version: 1, rails: { fleet: state.fleetRail, notes: state.notesRail }, fleetView: state.fleetView }
-  if (state.pendingGroups.length > 0) value.pendingGroups = state.pendingGroups
   if (state.spacesCollapsed) value.spacesCollapsed = true
   if (state.expandedItems !== null) value.expandedItems = state.expandedItems
   if (state.knownWorkspaceItems !== null) value.knownWorkspaceItems = state.knownWorkspaceItems

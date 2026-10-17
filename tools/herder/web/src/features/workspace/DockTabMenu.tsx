@@ -62,12 +62,16 @@ export function useAgentRowMenu() {
   const actions = useWorkspaceActionsContext()
   const markers = useReadMarkers()
   const [subject, setSubject] = useState('')
+  // extra is one more item the opener offers for this row (the lanes view's
+  // "make lead").
+  const [extra, setExtra] = useState<{ label: string, run: () => void } | null>(null)
   const row = useFleetSelect(useCallback((board: Board | undefined) => findAgentRow(board, subject), [subject]))
   const positioned = usePositionedMenu()
-  const open = useCallback((event: MouseEvent<HTMLElement>, nextSubject: string) => {
+  const open = useCallback((event: MouseEvent<HTMLElement>, nextSubject: string, nextExtra: { label: string, run: () => void } | null = null) => {
     event.preventDefault()
     event.stopPropagation()
     setSubject(nextSubject)
+    setExtra(nextExtra)
     positioned.open({ x: event.clientX, y: event.clientY }, event.currentTarget)
   }, [positioned.open])
 
@@ -83,6 +87,10 @@ export function useAgentRowMenu() {
       if (readItem.kind === 'read') actions.markRead([subject])
       else actions.markUnread(subject)
     }}>{readItem.label}</button>
+    {extra && <button type="button" role="menuitem" onClick={() => {
+      positioned.close()
+      extra.run()
+    }}>{extra.label}</button>}
   </div>, document.body) : null
   return { open, menu }
 }

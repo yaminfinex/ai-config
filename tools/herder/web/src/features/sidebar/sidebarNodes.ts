@@ -1,11 +1,12 @@
 import { workspaceName } from '../../shared/workspaceName.ts'
 import { screenPanePresentation } from '../screen/screenPresentation.ts'
-import type { Board, Pane, Row, Workspace } from '../../types.ts'
+import { prFacts, prLabel } from '../../shared/lanePRModel.ts'
+import type { Board, Lane, LanePR, Pane, Row, Workspace } from '../../types.ts'
 
 export type SidebarNodeKind =
   | 'root' | 'workspace' | 'pane' | 'subagent' | 'unplaced'
   | 'agent' | 'tombstone' | 'terminals' | 'terminals-workspace'
-  | 'group' | 'ungrouped'
+  | 'lane' | 'no-lane' | 'pr'
 
 export type SidebarNode = {
   id: string
@@ -24,12 +25,17 @@ export type SidebarNode = {
   workspaceLabel?: string
   summary?: SupervisionSummary
   marker?: 'unknown-manager'
-  // group is set on every groups-view node, header or row: the label a drop
-  // on it writes ('' under Ungrouped, which clears). Undefined elsewhere.
-  group?: string
-  // placeholder marks a header the operator created locally (pending group):
-  // zero members, no space, real once a drop assigns the label.
+  // lane is set on a lane header and every row under it: the lane id a drop
+  // on it assigns. Undefined under No lane and in the other views.
+  lane?: string
+  // lead marks the row of its lane's lead.
+  lead?: boolean
+  // placeholder marks the "+ lane" header: a name with no lane yet; the
+  // first agent dropped on it creates the lane with that agent as lead.
   placeholder?: boolean
+  // pr is a lane's pull request row (kind 'pr'); a 'pr' row without one is
+  // the lane's note that PRs cannot be read.
+  pr?: LanePR
 }
 
 export function buildSidebarNodes(board: Board | undefined): Map<string, SidebarNode> {
@@ -238,33 +244,25 @@ export function buildSupervisionNodes(board: Board | undefined): Map<string, Sid
   return result
 }
 
-// Groups view: the tree is the group label, one header per distinct label
-// (alphabetical) and Ungrouped last. Membership is the agent's own label
-// (a Task subagent takes its owning top-level agent's), so every agent sits
-// under exactly one header and a manager never joins a group through its
-// reports; an agent with no label is Ungrouped even when its reports are
-// grouped. Under a header the tree is the manager tree restricted to
+// Lanes view: one header per lane on the board (the board's order), then No
+// lane. Membership is the board's lane roster (a Task subagent follows its
+// owner, as the serve folds it), so every agent sits under exactly one
+// header. Under a header the tree is the manager tree restricted to
 // members: a member whose manager is not one roots there. Node ids are
-// `<header>/agent:<name>`, stable across frames. The label
-// component of a header id is URI-encoded, so a label containing "/" or
-// ":" can never collide with another header's row ids; the raw label stays
-// on the node for display and for the assignment a drop writes. Headers
-// exist only while they have members, except pending groups (created on the
-// web, kept in shell preferences) which are drawn as empty placeholder
-// headers after the real ones and before Ungrouped until a frame shows the
-// label with members; terminals are not shown. The supervision view never
-// draws these nodes.
-export const ungroupedID = 'group:'
+// `lane:<id>/agent:<name>`, stable across a rename; No lane is
+// `lane:/agent:<name>`. A drop on a lane header or any row under it moves the
+// agent into that lane; No lane takes no drop (a lane is left only by joining
+// another). The pending "+ lane" header, when given, is drawn after the lanes
+// with no members. Terminals are not shown.
+export const noLaneID = 'lane:'
 
-export function groupHeaderID(label: string) {
-  return `group:${encodeURIComponent(label)}`
+export function laneHeaderID(laneID: string) {
+  return `lane:${laneID}`
 }
 
-export function groupOf(row: Pick<Row, 'group'>) {
-  return row.group?.trim() ?? ''
-}
+export const pendingLaneID = 'lane-pending'
 
-export function buildGroupNodes(board: Board | undefined, pendingGroups: readonly string[] = []): Map<string, SidebarNode> {
+export function buildLaneNodes(board: Board | undefined, pendingLane: string | null = null): Map<string, SidebarNode> {
   const result = new Map<string, SidebarNode>()
   const root: SidebarNode = { id: 'tree-root', kind: 'root', name: 'Fleet', children: [] }
   result.set(root.id, root)
@@ -283,37 +281,18 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     const subagents = (rows.get(name)?.row.subagents ?? []).map((child) => rows.get(child.agent)).filter((flat): flat is FlatRow => flat !== undefined)
     return byCreation([...reports, ...subagents])
   }
-
   const parentOf = (flat: FlatRow): string | undefined => {
     const { row } = flat
     if (row.parent_agent && rows.has(row.parent_agent)) return row.parent_agent
     const manager = row.manager ?? ''
     return manager && manager !== row.agent && rows.has(manager) ? manager : undefined
   }
+  const laneOf = new Map<string, string>()
+  for (const lane of board.lanes ?? []) for (const member of lane.members) laneOf.set(member, lane.id)
 
-  // Task subagents inherit group membership from their owning top-level
-  // agent. Keep the structural parent_agent edge for rendering, but resolve
-  // labels from the nearest parent_agent ancestor that has no owner itself.
-  const ownerOf = (flat: FlatRow): FlatRow => {
-    let owner = flat
-    const seen = new Set<string>([flat.row.agent])
-    while (owner.row.parent_agent) {
-      const parent = rows.get(owner.row.parent_agent)
-      if (!parent || seen.has(parent.row.agent)) break
-      seen.add(parent.row.agent)
-      owner = parent
-    }
-    return owner
-  }
-
-  // labelOf(name) is the one label an agent is shown under: its own, or for
-  // a Task subagent its owner's. A report's label never reaches its manager.
-  const labelOf = new Map([...rows.values()].map((flat) => [flat.row.agent, groupOf(ownerOf(flat).row)]))
-  const distinct = new Set([...labelOf.values()].filter((label) => label !== ''))
-
-  // A row is a root under header X when it is a member and its manager or
+  // A row is a root under a header when it is a member and its manager or
   // parent is not (otherwise it hangs under that one).
-  const addHeader = (id: string, kind: 'group' | 'ungrouped', name: string, group: string, member: (agent: string) => boolean) => {
+  const addHeader = (id: string, kind: 'lane' | 'no-lane', name: string, lane: string | undefined, lead: string | undefined, member: (agent: string) => boolean, prs: string[] = []) => {
     const placed = new Set<string>()
     const addAgent = (flat: FlatRow): string => {
       const { row } = flat
@@ -327,7 +306,7 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
       result.set(nodeID, {
         id: nodeID, kind: row.parent_agent ? 'subagent' : 'agent', ...agentLabel(row), children, pane: row,
         workspaceLabel: flat.workspaceLabel, tabLabel: flat.tabLabel, summary: summarise(result, children),
-        contextUsed: row.context_used, group,
+        contextUsed: row.context_used, lane, ...(row.agent === lead ? { lead: true } : {}),
       })
       return nodeID
     }
@@ -336,6 +315,8 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
       const parent = parentOf(flat)
       return !parent || !member(parent)
     }))
+    // The lead's subtree comes first.
+    roots.sort((left, right) => Number(right.row.agent === lead) - Number(left.row.agent === lead))
     const children: string[] = []
     for (const flat of roots) {
       if (placed.has(flat.row.agent)) continue
@@ -349,34 +330,34 @@ export function buildGroupNodes(board: Board | undefined, pendingGroups: readonl
     }
     if (children.length === 0) return
     const summary = summarise(result, children)
-    result.set(id, { id, kind, name, children, group, summary, count: summary.total })
+    children.unshift(...prs)
+    result.set(id, { id, kind, name, children, lane, summary, count: summary.total, ...(lead ? { secondary: `lead ${lead}` } : {}) })
     root.children.push(id)
   }
-  for (const label of [...distinct].sort((left, right) => left.localeCompare(right))) {
-    addHeader(groupHeaderID(label), 'group', label, label, (agent) => labelOf.get(agent) === label)
+  // A lane's PR rows come first under its header, then its note.
+  const prRows = (header: string, lane: Lane): string[] => {
+    const ids = (lane.prs ?? []).map((pr) => {
+      const id = `${header}/pr:${pr.repo}#${pr.number}`
+      const facts = [...prFacts(pr), ...pr.holder ? [`${pr.holder} on ${pr.head}`] : []].join(', ')
+      result.set(id, { id, kind: 'pr', name: prLabel(pr), secondary: facts, children: [], lane: lane.id, pr })
+      return id
+    })
+    if (lane.pr_note) {
+      result.set(`${header}/pr-note`, { id: `${header}/pr-note`, kind: 'pr', name: lane.pr_note, children: [], lane: lane.id })
+      ids.push(`${header}/pr-note`)
+    }
+    return ids
   }
-  for (const label of new Set(pendingGroups)) {
-    if (!label || distinct.has(label)) continue
-    const id = groupHeaderID(label)
-    result.set(id, { id, kind: 'group', name: label, children: [], group: label, placeholder: true, summary: { total: 0, active: 0 }, count: 0 })
-    root.children.push(id)
+  for (const lane of board.lanes ?? []) {
+    const header = laneHeaderID(lane.id)
+    addHeader(header, 'lane', lane.name, lane.id, lane.lead, (agent) => laneOf.get(agent) === lane.id, prRows(header, lane))
   }
-  addHeader(ungroupedID, 'ungrouped', 'Ungrouped', '', (agent) => labelOf.get(agent) === '')
+  if (pendingLane) {
+    result.set(pendingLaneID, { id: pendingLaneID, kind: 'lane', name: pendingLane, children: [], placeholder: true, summary: { total: 0, active: 0 }, count: 0 })
+    root.children.push(pendingLaneID)
+  }
+  addHeader(noLaneID, 'no-lane', 'No lane', undefined, undefined, (agent) => !laneOf.has(agent))
   return result
-}
-
-// groupMembers lists the agents shown under a header, depth-first, each
-// once: what "open group as space" opens.
-export function groupMembers(nodes: Map<string, SidebarNode>, headerID: string): string[] {
-  const seen = new Set<string>()
-  const walk = (id: string) => {
-    const node = nodes.get(id)
-    if (!node) return
-    if (node.pane && node.pane.agent !== '-') seen.add(node.pane.agent)
-    node.children.forEach(walk)
-  }
-  nodes.get(headerID)?.children.forEach(walk)
-  return [...seen]
 }
 
 // expandedLabel is the row text in either state: identity plus its
@@ -386,13 +367,13 @@ export function expandedLabel(node: SidebarNode) {
   return node.secondary ? `${node.name} · ${node.secondary}` : node.name
 }
 
-// treeSummary is the parenthetical a row reads after its name. A group
+// treeSummary is the parenthetical a row reads after its name. A lane
 // header always reads its member count alone, `fleet-refit (3)`, folded or
 // open; a folded agent reads its descendant count, `ziru (4)`; any other
 // folded subtree adds its active count, `fimu · ended (3 · 1 active)`. An
 // open row other than a header reads nothing.
 export function treeSummary(node: SidebarNode, folded: boolean) {
-  if (node.kind === 'group' || node.kind === 'ungrouped') return `(${node.summary?.total ?? 0})`
+  if (node.kind === 'lane' || node.kind === 'no-lane') return `(${node.summary?.total ?? 0})`
   if (!folded || !node.summary || node.summary.total === 0) return ''
   if (node.kind === 'agent' || node.kind === 'subagent') return `(${node.summary.total})`
   return `(${node.summary.total} · ${node.summary.active} active)`

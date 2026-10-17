@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ai-config/tools/herder/internal/assigncmd"
+	"ai-config/tools/herder/internal/lanecmd"
 	"ai-config/tools/herder/internal/listcmd"
 	"ai-config/tools/herder/internal/registercmd"
 	"ai-config/tools/herder/internal/servecmd"
@@ -26,7 +27,8 @@ type command struct {
 var commands = []command{
 	{"list", "Join live placement, roster, provenance, model and context", listcmd.Run},
 	{"show", "Show one agent by name or current session, with live vitals", showcmd.Run},
-	{"assign", "Assign an agent's manager and/or group (one assign event; --manager human adopts)", assigncmd.Run},
+	{"assign", "Assign an agent's manager and/or lane (one assign event; --manager human adopts)", assigncmd.Run},
+	{"lane", "Create, rename, lead, move into and link lanes", lanecmd.Run},
 	{"register", "Record one lifecycle fact in the agent store", registercmd.Run},
 	{"serve", "Serve the live fleet API on loopback and tailscale", servecmd.Run},
 }

@@ -2,13 +2,13 @@ import type { FleetView } from '../layout/shellPreferences'
 
 const views: { view: FleetView, label: string, title: string }[] = [
   { view: 'supervision', label: 'tree', title: 'Supervision tree: who manages whom' },
-  { view: 'groups', label: 'groups', title: 'Groups: who works on what' },
+  { view: 'lanes', label: 'lanes', title: 'Lanes: who works on what' },
   { view: 'placement', label: 'placement', title: 'Placement: workspaces, tabs and panes' },
 ]
 
 // FleetViewToggle sits on its own row under the Fleet rail heading (three
 // choices plus the collapse control overflow a 200–250px rail) and switches the sidebar
-// between the supervision tree, the placement tree and the groups view. The choice persists
+// between the supervision tree, the placement tree and the lanes view. The choice persists
 // with the shell preferences; expanded state is shared, never reset.
 export function FleetViewToggle({ view, onView }: { view: FleetView, onView: (view: FleetView) => void }) {
   return <span className="fleet-view-toggle" role="group" aria-label="Fleet view">

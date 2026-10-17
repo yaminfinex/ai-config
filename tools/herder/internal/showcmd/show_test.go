@@ -17,6 +17,8 @@ import (
 	"ai-config/tools/herder/internal/sessionvitals"
 )
 
+var showLane = agentstore.DerivedID([]byte("show-lane"))
+
 func seed(t *testing.T) string {
 	t.Helper()
 	state := t.TempDir()
@@ -25,7 +27,8 @@ func seed(t *testing.T) string {
 	at := time.Date(2026, 9, 9, 5, 0, 0, 0, time.UTC)
 	for _, e := range []agentstore.Event{
 		{ID: agentstore.NewID(at), At: at, Kind: agentstore.KindLaunchReady, By: "ziru", ByKind: "agent", Name: "impl-gime", Tool: "codex", Pane: "w80:p1", Session: "claimed-S"},
-		{ID: agentstore.NewID(at), At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "impl-gime", Group: "fleet-refit"},
+		{ID: showLane, At: at, Kind: agentstore.KindLaneCreated, By: "ziru", ByKind: "agent", LaneName: "fleet-refit", Lead: "impl-gime"},
+		{ID: agentstore.NewID(at), At: at.Add(time.Second), Kind: agentstore.KindAssign, By: "ziru", Name: "impl-gime", Lane: showLane},
 		{ID: agentstore.NewID(at), At: at.Add(2 * time.Second), Kind: agentstore.KindAssign, By: "bigboss", Name: "impl-gime", Manager: "vara"},
 	} {
 		if _, err := s.Append(e); err != nil {
@@ -169,7 +172,7 @@ func TestShowTextAndJSONFoldRosterConflict(t *testing.T) {
 	if code := run([]string{"impl-gime"}, &out, &errBuf, deps); code != 0 || errBuf.Len() != 0 {
 		t.Fatalf("code=%d stderr=%q", code, errBuf.String())
 	}
-	for _, want := range []string{"launcher         ziru", "manager          vara", "group            fleet-refit", "binding          conflict {claimed: claimed-S, roster: roster-S-prime}", "session          roster-S-prime", "vitals:", "model            gpt-5.6-sol", "context_used     82k tokens", "context_window   258k tokens", "context_percent  32% used", "observed_at      2026-09-10T12:34:56Z", "session_file     /tmp/invented-session.jsonl", "incarnation      2026-09-09T04:59:00Z", "assign", "events (last 3 of 3)"} {
+	for _, want := range []string{"launcher         ziru", "manager          vara", "lane             fleet-refit (lead)", "binding          conflict {claimed: claimed-S, roster: roster-S-prime}", "session          roster-S-prime", "vitals:", "model            gpt-5.6-sol", "context_used     82k tokens", "context_window   258k tokens", "context_percent  32% used", "observed_at      2026-09-10T12:34:56Z", "session_file     /tmp/invented-session.jsonl", "incarnation      2026-09-09T04:59:00Z", "assign", "events (last 3 of 3)"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("text lacks %q:\n%s", want, out.String())
 		}
@@ -187,6 +190,12 @@ func TestShowTextAndJSONFoldRosterConflict(t *testing.T) {
 	}
 	if view.Binding == nil || view.Binding.State != "conflict" || view.Manager != "vara" || view.Provenance.Launcher != "ziru" || len(view.Events) != 3 || view.Session.SessionID != "roster-S-prime" {
 		t.Fatalf("json view = %+v", view)
+	}
+	var withLane struct {
+		Lane *laneRef `json:"lane"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &withLane); err != nil || withLane.Lane == nil || *withLane.Lane != (laneRef{ID: showLane, Name: "fleet-refit", Lead: "impl-gime"}) {
+		t.Fatalf("json lane = %+v err=%v", withLane.Lane, err)
 	}
 	var raw struct {
 		Vitals struct {

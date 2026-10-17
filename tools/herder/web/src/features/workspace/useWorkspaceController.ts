@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { DockviewApi, DockviewReadyEvent } from 'dockview-react'
-import { apiProblem, queryKeys, viewerReadOnlyMessage } from '../../api/client'
+import { apiProblem, laneMoves, mutationProblem, queryKeys, updateLane, viewerReadOnlyMessage } from '../../api/client'
 import { fleetQueryOptions, viewerQueryOptions } from '../../api/queries'
 import type { FileTarget } from '../../types'
 import { agentBusStatus } from '../../shared/agentStatus'
@@ -46,7 +46,6 @@ import { useSpaceMembers } from './useSpaceMembers'
 import { useSwitchSpaceFocusing } from './useSwitchSpaceFocusing'
 import type { WorkspaceActionsValue, WorkspaceDataValue } from './workspaceContext'
 import { useNotes } from '../notes/NotesProvider.tsx'
-import { planOpenGroupAsSpace, runOpenGroupAsSpace } from '../sidebar/groupDropModel.ts'
 import {
   createSpacesStore,
   browserSpacesTransport,
@@ -71,6 +70,17 @@ import {
   spaceStreamAgents,
   spacesStoreSyncAdapter,
   writeActiveSpace,
+  activeSpaceSessionKey,
+  lastActiveSpaceKey,
+  laneOfSpace,
+  laneSpaceID,
+  laneSpaces,
+  moveStoredLayout,
+  pendingLaneMoves,
+  readLaneMovesApplied,
+  runLaneMoves,
+  withLaneRosters,
+  writeLaneMovesApplied,
   type SpaceDefinition,
   type SpacesStatus,
   type SpacesStore,
@@ -115,7 +125,11 @@ function initializeBrowserSpaces(): SpacesRuntime {
     const store = createSpacesStore({ onPurge: (id) => { removeLayoutRecovery(localStorage, id); resetSpacesSyncCursor(localStorage) } })
   const spaces = store.list()
     const urlSpaceID = spaceIDFromSearch(window.location.search)
-    const selection = readActiveSpace(spaces, urlSpaceID, sessionStorage, localStorage)
+    // A lane space is known only once the board arrives: an active lane
+    // space is kept until then (and left if the board does not list it).
+    const laneCandidates = [urlSpaceID, sessionStorage.getItem(activeSpaceSessionKey), localStorage.getItem(lastActiveSpaceKey)]
+      .flatMap((id) => id && laneOfSpace(id) ? [{ id, name: '', order: -1, created: 0, updated: 0 }] : [])
+    const selection = readActiveSpace([...laneCandidates, ...spaces], urlSpaceID, sessionStorage, localStorage)
     if (!selection.id) return unavailableSpacesRuntime(
       'Spaces are unavailable because their saved definitions could not be read. Your current layout is still being saved.',
       readLegacyLayoutFamilies(localStorage),
@@ -156,7 +170,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const viewRef = useRef(view)
   const setView = useCallback((next: LensView) => { viewRef.current = next; setViewState(next) }, [])
   const [lensSelected, setLensSelected] = useState<string | null>(spacesRuntime.activeSpaceID)
-  const [spaces, setSpaces] = useState(spacesRuntime.spaces)
+  const [ownSpaces, setOwnSpaces] = useState(spacesRuntime.spaces)
   const [recentSpaces, setRecentSpaces] = useState(spacesRuntime.recent)
   const [spacesStatus, setSpacesStatus] = useState(spacesRuntime.status)
   const [activeSpaceID, setActiveSpaceID] = useState(spacesRuntime.activeSpaceID)
@@ -164,6 +178,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const [spaceProblem, setSpaceProblem] = useState(spacesRuntime.problem)
   const [spaceAnnouncement, setSpaceAnnouncement] = useState('')
   const [pendingLookupSwitchID, setPendingLookupSwitchID] = useState<string>()
+  const [spacesPulled, setSpacesPulled] = useState(false)
+  // laneMoveDone holds the active-space fallback and member reconciliation
+  // until the one-time lane move has run (or found nothing to do), so no
+  // lane layout is written before this browser's own dock is moved there.
+  const [laneMoveDone, setLaneMoveDone] = useState(spacesRuntime.store === null)
   const [historySuppressor] = useState(() => createHistorySuppressor(
     (callback) => window.requestAnimationFrame(callback),
     (handle) => window.cancelAnimationFrame(handle),
@@ -176,6 +195,25 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const boardQuery = useQuery(fleetQueryOptions())
   const viewerQuery = useQuery(viewerQueryOptions())
   const mentionMatcher = useMemo(() => agentMentionMatcher(boardQuery.data), [boardQuery.data])
+  // spaces are the board's lanes (as lane spaces) ahead of the user's own.
+  // A board refresh that leaves every lane's id and name alone keeps the
+  // list, so the spaces it feeds do not re-render the dock.
+  const laneSpaceListRef = useRef<SpaceDefinition[]>([])
+  const laneSpaceList = useMemo(() => {
+    const next = laneSpaces(boardQuery.data)
+    const previous = laneSpaceListRef.current
+    if (next.length === previous.length && next.every((space, index) => space.id === previous[index]!.id && space.name === previous[index]!.name)) return previous
+    laneSpaceListRef.current = next
+    return next
+  }, [boardQuery.data])
+  const spaces = useMemo(() => [...laneSpaceList, ...ownSpaces], [laneSpaceList, ownSpaces])
+  const spacesRef = useRef(spaces)
+  spacesRef.current = spaces
+  // hasSpace reads the store for the user's own spaces (a space created this
+  // tick is switched to at once) and the board for lane spaces.
+  const hasSpace = useCallback((id: string) => laneOfSpace(id)
+    ? spacesRef.current.some((space) => space.id === id)
+    : Boolean(spacesRuntime.store?.list().some((space) => space.id === id)), [spacesRuntime.store])
   const fileWatchRegistry = useMemo(() => createFileWatchRegistry(setFileWatchTargets), [])
   const layout = useLayoutPersistence(apiRef, revision, spacesRuntime.initialization, activeSpaceID)
 
@@ -185,7 +223,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     const store = spacesRuntime.store
     if (!store) return
     const refresh = () => {
-      setSpaces(store.list())
+      setOwnSpaces(store.list())
       setRecentSpaces(store.recentlyClosed().filter((space) => hasRecoverableSpaceLayout(localStorage, space.id)))
       setSpacesStatus(store.status())
       if (store.status().problem) setSpaceProblem(store.status().problem)
@@ -252,7 +290,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   const switchSpace = useCallback((spaceID: string) => {
     const store = spacesRuntime.store
-    if (!store || !store.list().some((space) => space.id === spaceID) || activeSpaceIDRef.current === spaceID) return false
+    if (!store || !hasSpace(spaceID) || activeSpaceIDRef.current === spaceID) return false
     const api = apiRef.current
     if (!api) return false
     const historyWasSuppressed = historySuppressor.active()
@@ -284,7 +322,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         setRevision((value) => value + 1)
       },
     })
-  }, [historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
+  }, [hasSpace, historySuppressor, layout.beginRestore, layout.completeRestore, layout.flushBeforeSwitch, layout.noteBackupRecovery, layout.readSpace, spacesRuntime.store, updateHistory])
 
   // zoomInto shows a space's dock with agent's panel active (none: the
   // layout's focused panel as it is) and arrives there. From the lens (or
@@ -295,7 +333,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const zoomInto = useCallback((spaceID: string, agent?: string, focus = true, by: -1 | 1 = 1) => {
     const store = spacesRuntime.store
     const api = apiRef.current
-    if (!store?.list().some((space) => space.id === spaceID) || !api) return false
+    if (!store || !hasSpace(spaceID) || !api) return false
     const fromZoom = viewRef.current.kind === 'zoom'
     const fromLens = viewRef.current.kind === 'lens'
     const card = fromLens ? cardBounds(spaceID) : null
@@ -321,7 +359,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     if (fromLens) morphIn(card)
     else if (moving) swipe(by)
     return true
-  }, [arrive, historySuppressor, openAgent, setView, spacesRuntime.store, switchSpace, updateHistory])
+  }, [arrive, hasSpace, historySuppressor, openAgent, setView, spacesRuntime.store, switchSpace, updateHistory])
   // zoomOut returns to the lens with the zoomed space still selected.
   const zoomOut = useCallback(() => {
     const current = viewRef.current
@@ -381,6 +419,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       })
     }
     void sync.start().then(() => lookup?.firstPullCompleted(store.list().map(({ id }) => id)))
+    void sync.pulled().then(() => setSpacesPulled(true))
     const online = () => { void sync.retryNow() }
     window.addEventListener('online', online)
     return () => {
@@ -398,9 +437,12 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
 
   useEffect(() => {
     if (!spacesRuntime.store || !activeSpaceID || spaces.some((space) => space.id === activeSpaceID)) return
+    // A lane space waits for the board that lists it; an old space waits
+    // for the lane move.
+    if (!laneMoveDone || laneOfSpace(activeSpaceID) && !boardQuery.data) return
     const fallback = spaces[0]
     if (fallback) historySuppressor.run(() => switchSpace(fallback.id))
-  }, [activeSpaceID, historySuppressor, spaces, spacesRuntime.store, switchSpace])
+  }, [activeSpaceID, boardQuery.data, historySuppressor, laneMoveDone, spaces, spacesRuntime.store, switchSpace])
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     disposeDock.current()
@@ -465,7 +507,7 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       historySuppressor.run(() => replayHistoryRoute(
         route,
         activeSpaceIDRef.current,
-        (spaceID) => Boolean(spacesRuntime.store?.list().some((space) => space.id === spaceID)),
+        hasSpace,
         (params) => Boolean(apiRef.current?.getPanel(panelID(params))),
         { switchSpace, applyRoute },
       ))
@@ -483,12 +525,13 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   }) ?? restoredPanels
   const agentNames = [...new Set(openPanels.flatMap((params) => params.kind === 'agent' ? [params.name] : []))]
   const screenPaneIDs = screenSubscriptionPaneIDs(agentNames, agentTailPanes)
-  const { stateChanged: onMembersStateChanged, membersBySpace } = useSpaceMembers({
+  const { stateChanged: onMembersStateChanged, membersBySpace: pinnedBySpace, ready: membersReady, moveMembers } = useSpaceMembers({
     store: spacesRuntime.store,
     apiRef,
     activeSpaceIDRef,
     revision,
     spaces,
+    hold: !laneMoveDone,
     syncDock,
     withHistorySuppressed: historySuppressor.run,
     onProblem: (problem) => setSpaceProblem(problem || spacesRuntime.store?.status().problem || ''),
@@ -499,6 +542,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     onNotesStateChanged(namespace, rev)
     onReadMarkersStateChanged(namespace, rev)
   }, [onMembersStateChanged, onNotesStateChanged, onReadMarkersStateChanged])
+  // A lane space's members are its roster (lead first) and then its pins.
+  // Keyed by content, so a board refresh that moves no seat keeps the record.
+  const laneRosterKey = JSON.stringify(boardQuery.data?.lanes?.map((lane) => [lane.id, lane.lead, lane.members]) ?? [])
+  const laneRosters = useMemo(() => (JSON.parse(laneRosterKey) as [string, string, string[]][]).map(([id, lead, members]) => ({ id, lead, members })), [laneRosterKey])
+  const membersBySpace = useMemo(() => withLaneRosters(pinnedBySpace, laneRosters), [laneRosters, pinnedBySpace])
   const openBySpace = useSpaceAgents({ revision, spaces, activeSpaceID, activeAgents: agentNames })
   const activeParams = openPanels.find((params) => panelID(params) === activePanelID)
   const viewerFailure = viewerQuery.error ? apiProblem(viewerQuery.error) : null
@@ -537,24 +585,21 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     setSpaceProblem(result.ok ? store.status().problem : result.reason)
     return result.ok
   }, [spacesRuntime.problem, spacesRuntime.store, switchSpace])
-  // openGroupAsSpace: jump to the space named exactly after the group (or
-  // stay, when it is already active) and touch nothing in it; else create one
-  // with that name and open every member's transcript pinned once. Nothing is
-  // closed and no group/space link is persisted — the space itself is the
-  // only write.
-  const openGroupAsSpace = useCallback((group: string, members: string[]) => {
-    const store = spacesRuntime.store
-    if (!store) { setSpaceProblem(spacesRuntime.problem); return false }
-    return runOpenGroupAsSpace(planOpenGroupAsSpace(group, store.list()), members, {
-      activeID: activeSpaceIDRef.current,
-      switchTo: switchSpace,
-      createNamed: createNamedSpace,
-      open: (member) => openAgent(member, false),
-    })
-  }, [createNamedSpace, openAgent, spacesRuntime.problem, spacesRuntime.store, switchSpace])
+  // Renaming a lane space renames the lane (the name agents see); the board
+  // brings the new name back.
   const renameSpace = useCallback((id: string, name: string) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    const lane = laneOfSpace(id)
+    if (lane) {
+      const space = spacesRef.current.find((item) => item.id === id)
+      const trimmed = name.trim()
+      if (!space) return { ok: false as const, reason: 'This lane is no longer on the board.' }
+      if (trimmed && trimmed !== space.name) {
+        updateLane(lane, { name: trimmed }).then(() => setSpaceProblem(''), (error: unknown) => { const problem = mutationProblem(error); setSpaceProblem(`The lane was not renamed: ${problem.readOnly ?? problem.banner ?? problem.inline ?? 'request failed'}`) })
+      }
+      return { ok: true as const, value: space }
+    }
     const result = store.rename(id, name)
     if (!result.ok) setSpaceProblem(result.reason)
     else { store.flush(); setSpaceProblem(store.status().problem) }
@@ -563,10 +608,12 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
   const reorderSpace = useCallback((id: string, targetIndex: number) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    if (laneOfSpace(id)) return { ok: false as const, reason: 'Lanes are listed by name ahead of your spaces.' }
     const before = store.list()
     const sourceIndex = before.findIndex((space) => space.id === id)
     if (sourceIndex < 0) return { ok: false as const, reason: 'This space is no longer open.' }
-    const destination = Math.max(0, Math.min(Math.trunc(targetIndex), before.length - 1))
+    // targetIndex counts the lane spaces listed ahead.
+    const destination = Math.max(0, Math.min(Math.trunc(targetIndex) - laneSpaceList.length, before.length - 1))
     const result = store.reorder(id, destination)
     if (!result.ok) setSpaceProblem(result.reason)
     else {
@@ -577,10 +624,11 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
         : `Moved ${result.value.name} to position ${destination + 1} of ${before.length}.`)
     }
     return result
-  }, [spacesRuntime.problem, spacesRuntime.store])
+  }, [laneSpaceList.length, spacesRuntime.problem, spacesRuntime.store])
   const closeSpace = useCallback((id: string) => {
     const store = spacesRuntime.store
     if (!store) return { ok: false as const, reason: spacesRuntime.problem }
+    if (laneOfSpace(id)) return { ok: false as const, reason: 'A lane space closes when its last member leaves the board.' }
     const live = store.list()
     if (!live.some((space) => space.id === id)) return { ok: false as const, reason: 'This space is already closed.' }
     const movedAside = moveBeforeActiveClose(id, activeSpaceID, live, {
@@ -696,11 +744,48 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     selected: lensSelected, setSelected: setLensSelected, lastPanel, zoomInto, zoomOut, openAlone,
     markSpaceRead: spaceAttention.markSpaceRead, markSpaceUnread: spaceAttention.markSpaceUnread, readSeen,
   })
+  // The one-time lane move, once per browser: once the spaces and members
+  // have their first pull and the board is in, each {old space: lane} pair
+  // the move script wrote is applied (laneSpacesModel.runLaneMoves). An
+  // active old space is left first, then entered as its lane.
+  const { rekey: rekeyLens } = lens
+  const boardIn = boardQuery.data !== undefined
+  useEffect(() => {
+    const store = spacesRuntime.store
+    if (!store || !spacesPulled || !membersReady || !boardIn) return
+    let cancelled = false
+    laneMoves().then((moves) => {
+      const { applied } = readLaneMovesApplied(localStorage)
+      if (cancelled) return
+      if (pendingLaneMoves(moves, applied).length === 0) { setLaneMoveDone(true); return }
+      const wasActive = activeSpaceIDRef.current
+      const enter = wasActive && moves[wasActive] ? laneSpaceID(moves[wasActive]) : null
+      if (enter) {
+        const aside = moveBeforeActiveClose(wasActive!, wasActive, store.list(), { create: store.create, rollbackCreate: store.rollbackCreate, switchTo: switchSpace })
+        if (!aside.ok) { setSpaceProblem(aside.reason); setLaneMoveDone(true); return }
+      }
+      writeLaneMovesApplied(localStorage, runLaneMoves(moves, applied, {
+        hasSpace: (id) => store.list().some((space) => space.id === id),
+        moveMembers,
+        closeSpace: (id) => { store.close(id) },
+        moveLayout: (from, to) => moveStoredLayout(localStorage, from, to),
+        moveTier: rekeyLens,
+      }))
+      store.flush()
+      setLaneMoveDone(true)
+      if (enter) historySuppressor.run(() => switchSpace(enter))
+    }, () => { if (!cancelled) setLaneMoveDone(true) })
+    return () => { cancelled = true }
+  }, [boardIn, historySuppressor, membersReady, moveMembers, rekeyLens, spacesPulled, spacesRuntime.store, switchSpace])
+  // openLane goes to a lane's space; with agent, it zooms in with that agent focused.
+  const openLaneRef = useRef<(laneID: string, agent?: string) => boolean>(() => false)
+  const openLane = useCallback((laneID: string, agent?: string) => openLaneRef.current(laneID, agent), [])
   // The stream keeps the open panels' transcripts live, and the peeked agent's on the lens.
   const peeked = view.kind === 'lens' && lens.peek?.agent ? [lens.peek.agent] : []
   useFleetStream({ agents: spaceStreamAgents([...agentNames, ...peeked], openBySpace), screens: screenPaneIDs, watches: fileWatchTargets }, onStateChanged)
   // A space chosen anywhere but a zoom (⌥Tab or ⌘K on the lens) zooms into it.
   const switchSpaceAnywhere = useCallback((id: string, from?: 'quick-open') => viewRef.current.kind === 'zoom' ? switchSpaceFocusing(id, from) : lens.zoomCard(id), [lens.zoomCard, switchSpaceFocusing])
+  openLaneRef.current = (laneID, agent) => agent ? zoomInto(laneSpaceID(laneID), agent) : switchSpaceAnywhere(laneSpaceID(laneID))
   const docked = useCallback(() => viewRef.current.kind === 'zoom', [])
   useWorkspaceShortcuts({ apiRef, docked, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, stepSpace: lens.stepSpace, reply: lens.startReply, toggleRead, arrive })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceAnywhere })
@@ -743,8 +828,8 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     knownWorkspaceItems: layout.knownWorkspaceItems, setKnownWorkspaceItems: layout.setKnownWorkspaceItems,
     knownManagerItems: layout.knownManagerItems, setKnownManagerItems: layout.setKnownManagerItems,
     fleetView: layout.fleetView, setFleetView: layout.setFleetView,
-    pendingGroups: layout.pendingGroups, setPendingGroups: layout.setPendingGroups,
     board: boardQuery.data,
+    activeLane: laneOfSpace(activeSpaceID), openLane,
     activeAgent: activeParams?.kind === 'agent' ? activeParams.name : undefined,
     openAgent: zoomedOpenAgent, openFile: zoomedOpenFile, openFolder: zoomedOpenFolder,
     onLens: view.kind === 'lens',
@@ -762,7 +847,6 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
       switch: switchSpaceAnywhere,
       create: createSpace,
       createNamed: createNamedSpace,
-      openGroup: openGroupAsSpace,
       rename: renameSpace,
       reorder: reorderSpace,
       close: closeSpace,

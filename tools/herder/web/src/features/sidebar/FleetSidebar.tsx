@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { hotkeysCoreFeature, selectionFeature, syncDataLoaderFeature } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
 import { AgentStatusDot, gapLabel } from '../../shared/presentation'
-import { agentNodeID, buildGroupNodes, buildSidebarNodes, buildSupervisionNodes, expandedLabel, groupMembers, treeSummary } from './sidebarNodes'
+import { agentNodeID, buildLaneNodes, buildSidebarNodes, buildSupervisionNodes, expandedLabel, laneHeaderID, treeSummary } from './sidebarNodes'
 import type { SidebarNode } from './sidebarNodes'
 import { agentKinds, reconcileExpansion } from './sidebarView'
 import type { FleetView } from '../layout/shellPreferences'
@@ -12,11 +12,10 @@ import { openInSideLabel, placementFromModifiers, type OpenPlacement } from '../
 import { TreeRow, TreeState } from '../../shared/TreeRow'
 import { ContextUsed, contextUsedTooltip } from './ContextUsed'
 import { LaunchAgent } from '../launch/LaunchAgent'
-import { assignAgent, mutationProblem, renameAgent, type AssignmentPatch, type LifecycleProblem } from '../../api/client'
+import { assignAgent, createLane, mutationProblem, renameAgent, updateLane, type LifecycleProblem } from '../../api/client'
 import { beginRename, editingAt, prepareRename, renameValue, treeClickGuardSelector, type RenameState } from './renameModel'
-import { groupHeaderTooltip, openGroupTooltip } from './groupDropModel'
-import { addPendingGroup, realGroupLabels, remainingPendingGroups, removePendingGroup, validateGroupName } from './pendingGroupsModel'
-import { dropAssignment, planSidebarDrop } from './reparentModel'
+import { laneHeaderTooltip, validateLaneName } from './laneDropModel'
+import { dropAssignment, planSidebarDrop, type SidebarDrop } from './reparentModel'
 import { useAgentRowMenu } from '../workspace/DockTabMenu.tsx'
 import { DraftMark } from '../drafts/DraftMark.tsx'
 import { useDraftMarks } from '../drafts/useDraftMarks.ts'
@@ -24,19 +23,19 @@ import { useDraftMarks } from '../drafts/useDraftMarks.ts'
 const emptyExpandedItems: string[] = []
 
 // Memoised: Shell renders for dock and quick-open state the tree does not show.
-export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgent, onPreviewAgent, onPinAgent, onOpenTerminal, onOpenGroupAsSpace, pendingGroups, onPendingGroups, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
+export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgent, activeLane, onPreviewAgent, onPinAgent, onOpenTerminal, onOpenLaneSpace, expandedItems, onExpandedItems, knownWorkspaceItems, onKnownWorkspaceItems, knownManagerItems, onKnownManagerItems }: {
   board: Board | undefined
   view: FleetView
   activeAgent?: string
+  // activeLane is the lane id of the active space when it is a lane space:
+  // the lanes view expands that lane's header.
+  activeLane?: string | null
   onPreviewAgent: (name: string, placement?: OpenPlacement) => void
   onPinAgent: (name: string, placement?: OpenPlacement) => void
   // A terminal herdr cannot attribute to an agent opens in the herdr view.
   onOpenTerminal: (pane: Pane) => void
-  // Groups view only: jump to the space named after a group, creating it once.
-  onOpenGroupAsSpace: (group: string, members: string[]) => void
-  // Groups created on the web that no frame has shown yet (shell preferences).
-  pendingGroups: string[]
-  onPendingGroups: (groups: string[]) => void
+  // Lanes view only: go to a lane's space.
+  onOpenLaneSpace: (laneID: string) => void
   expandedItems: string[] | null
   onExpandedItems: (items: string[]) => void
   knownWorkspaceItems: string[] | null
@@ -51,21 +50,36 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
   const [assignmentProblem, setAssignmentProblem] = useState<LifecycleProblem | null>(null)
   const [dragSource, setDragSource] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
-  // newGroup is the inline "+ group" input: null when closed, else its text
-  // and the last refusal shown under it.
-  const [newGroup, setNewGroup] = useState<{ value: string, problem: string | null } | null>(null)
+  // newLane is the inline "+ lane" input: null when closed, else its text
+  // and the last refusal shown under it. pendingLane is the name it took:
+  // a header waiting for the first drop, which creates the lane with that
+  // agent as lead. Neither is stored.
+  const [newLane, setNewLane] = useState<{ value: string, problem: string | null } | null>(null)
+  const [pendingLane, setPendingLane] = useState<string | null>(null)
   const renameInput = useRef<HTMLInputElement | null>(null)
   const cancelOnBlur = useRef(false)
   const placementNodes = useMemo(() => buildSidebarNodes(board), [board])
   const supervisionNodes = useMemo(() => buildSupervisionNodes(board), [board])
-  const groupNodes = useMemo(() => buildGroupNodes(board, pendingGroups), [board, pendingGroups])
-  const nodes = view === 'placement' ? placementNodes : view === 'groups' ? groupNodes : supervisionNodes
+  const laneNodes = useMemo(() => buildLaneNodes(board, pendingLane), [board, pendingLane])
+  const nodes = view === 'placement' ? placementNodes : view === 'lanes' ? laneNodes : supervisionNodes
   const sideHint = openInSideLabel(navigator.userAgent)
 
-  const submitAssignment = async (name: string, assignment: AssignmentPatch) => {
+  const submitDrop = async (drop: SidebarDrop) => {
     setAssignmentProblem(null)
     try {
-      await assignAgent(name, assignment)
+      if ('newLane' in drop) {
+        await createLane(drop.newLane, drop.name)
+        setPendingLane(null)
+      } else await assignAgent(drop.name, drop.assignment)
+    } catch (error) {
+      setAssignmentProblem(mutationProblem(error))
+    }
+  }
+
+  const makeLead = async (laneID: string, name: string) => {
+    setAssignmentProblem(null)
+    try {
+      await updateLane(laneID, { lead: name })
     } catch (error) {
       setAssignmentProblem(mutationProblem(error))
     }
@@ -104,28 +118,27 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
 
   useEffect(() => {
     if (!board) return
-    const next = reconcileExpansion(placementNodes, supervisionNodes, { expandedItems, knownWorkspaceItems, knownManagerItems }, groupNodes)
+    const next = reconcileExpansion(placementNodes, supervisionNodes, { expandedItems, knownWorkspaceItems, knownManagerItems }, laneNodes)
     if (!next) return
     if (next.expandedItems) onExpandedItems(next.expandedItems)
     if (next.knownWorkspaceItems) onKnownWorkspaceItems(next.knownWorkspaceItems)
     if (next.knownManagerItems) onKnownManagerItems(next.knownManagerItems)
-  }, [board, expandedItems, groupNodes, knownManagerItems, knownWorkspaceItems, onExpandedItems, onKnownManagerItems, onKnownWorkspaceItems, placementNodes, supervisionNodes])
+  }, [board, expandedItems, laneNodes, knownManagerItems, knownWorkspaceItems, onExpandedItems, onKnownManagerItems, onKnownWorkspaceItems, placementNodes, supervisionNodes])
 
-  // A placeholder leaves preferences on the first frame that shows its label
-  // with members: the drop into it wrote the real assign event. The model
-  // computes the list that remains; the effect only stores it when it shrank.
+  // Entering a lane space opens that lane's header in the lanes view.
+  const activeLaneHeader = activeLane ? laneHeaderID(activeLane) : null
   useEffect(() => {
-    if (!board) return
-    const remaining = remainingPendingGroups(pendingGroups, groupNodes)
-    if (remaining.length !== pendingGroups.length) onPendingGroups(remaining)
-  }, [board, groupNodes, onPendingGroups, pendingGroups])
+    if (!activeLaneHeader || !expandedItems || expandedItems.includes(activeLaneHeader)) return
+    onExpandedItems([...expandedItems, activeLaneHeader])
+    // Only on entering the space: a header the operator folds afterwards stays folded.
+  }, [activeLaneHeader])
 
-  const commitNewGroup = () => {
-    if (!newGroup) return
-    const check = validateGroupName(newGroup.value, [...realGroupLabels(groupNodes), ...pendingGroups])
-    if (!check.ok) { setNewGroup({ ...newGroup, problem: check.reason }); return }
-    onPendingGroups(addPendingGroup(pendingGroups, check.name))
-    setNewGroup(null)
+  const commitNewLane = () => {
+    if (!newLane) return
+    const check = validateLaneName(newLane.value, (board?.lanes ?? []).map((lane) => lane.name))
+    if (!check.ok) { setNewLane({ ...newLane, problem: check.reason }); return }
+    setPendingLane(check.name)
+    setNewLane(null)
   }
 
   useEffect(() => {
@@ -154,6 +167,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
       const node = item.getItemData()
       if (node.pane?.agent && node.pane.agent !== '-') onPreviewAgent(node.pane.agent)
       else if (node.kind === 'pane' && node.pane?.agent === '-') onOpenTerminal(node.pane as Pane)
+      else if (node.pr) window.open(node.pr.url, '_blank', 'noopener')
     },
     hotkeys: {
       customPrimaryActionEnter: { hotkey: 'Enter', preventDefault: true, handler: (_event, currentTree) => currentTree.getFocusedItem()?.primaryAction() },
@@ -168,7 +182,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
   return <div className="fleet-sidebar-view">
     {agentRowMenu.menu}
     {sidebarProblem && <div className="sidebar-problem" role="alert">{sidebarProblem.readOnly ?? sidebarProblem.banner ?? sidebarProblem.inline}</div>}
-    {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps(view === 'placement' ? 'Workspaces and agents' : view === 'groups' ? 'Groups' : 'Supervision tree')}
+    {!board ? <TreeState depth={0} title="Waiting for fleet…" /> : <div {...tree.getContainerProps(view === 'placement' ? 'Workspaces and agents' : view === 'lanes' ? 'Lanes' : 'Supervision tree')}
       className={`fleet-tree panel-tree fleet-tree-${view}${dropTarget === 'tree-root' ? ' drop-target' : ''}`}
       onDragOver={(event) => {
         if (event.target !== event.currentTarget) return
@@ -180,22 +194,22 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
       onDrop={(event) => {
         if (event.target !== event.currentTarget) return
         setDropTarget(null)
-        if (dropAssignment(view, dragSource, null, nodes, submitAssignment)) event.preventDefault()
+        if (dropAssignment(view, dragSource, null, nodes, submitDrop)) event.preventDefault()
       }}>
-      {view === 'groups' && <div className="group-create-row" role="none">
-        {newGroup
-          ? <><input className="rename-agent-input group-create-input" aria-label="New group name" placeholder="group name" value={newGroup.value} autoFocus
-            onChange={(event) => setNewGroup({ value: event.target.value, problem: null })}
-            onBlur={() => setNewGroup(null)}
+      {view === 'lanes' && <div className="group-create-row" role="none">
+        {newLane
+          ? <><input className="rename-agent-input group-create-input" aria-label="New lane name" placeholder="lane name" value={newLane.value} autoFocus
+            onChange={(event) => setNewLane({ value: event.target.value, problem: null })}
+            onBlur={() => setNewLane(null)}
             onClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
               event.stopPropagation()
-              if (event.key === 'Enter') commitNewGroup()
-              if (event.key === 'Escape') setNewGroup(null)
+              if (event.key === 'Enter') commitNewLane()
+              if (event.key === 'Escape') setNewLane(null)
             }} />
-            {newGroup.problem && <span className="sidebar-problem group-create-problem" role="alert">{newGroup.problem}</span>}</>
-          : <button type="button" className="group-space-button group-create-button" aria-label="New group" title="New group: a local placeholder header until the first agent is dropped into it"
-            onClick={(event) => { event.stopPropagation(); setNewGroup({ value: '', problem: null }) }}>+ group</button>}
+            {newLane.problem && <span className="sidebar-problem group-create-problem" role="alert">{newLane.problem}</span>}</>
+          : <button type="button" className="group-space-button group-create-button" aria-label="New lane" title="New lane: the first agent dropped on it becomes its lead"
+            onClick={(event) => { event.stopPropagation(); setNewLane({ value: '', problem: null }) }}>+ lane</button>}
       </div>}
       {tree.getItems().map((item) => {
         const node = item.getItemData()
@@ -205,16 +219,17 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
         const folder = item.isFolder()
         const treeItemProps = item.getProps()
         const agentRow = agentKinds.has(node.kind)
-        const groupHeader = node.kind === 'group' || node.kind === 'ungrouped'
+        const groupHeader = node.kind === 'lane' || node.kind === 'no-lane'
         const draggableAgent = view !== 'placement' && (node.kind === 'agent' || node.kind === 'subagent') && !!pane?.agent && pane.agent !== '-' && pane.bus_status !== '-' && !editing
         const memberCount = groupHeader ? node.summary?.total ?? 0 : 0
-        const groupChip = view !== 'groups' && pane?.group ? <span className="group-chip" title={`group: ${pane.group}`}>{pane.group}</span> : null
+        const leadChip = node.lead ? <span className="group-chip" title="lane lead">lead</span> : null
         const folded = folder && !item.isExpanded() && node.summary !== undefined
         const summary = treeSummary(node, folded)
         const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
           : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
             : node.kind === 'tombstone' ? <span className="tombstone-glyph">⊘</span>
-              : <span>▰</span>
+              : node.kind === 'pr' ? <span className="pr-glyph">{node.pr ? 'PR' : '!'}</span>
+                : <span>▰</span>
         return <TreeRow
           key={item.getId()}
           itemProps={{
@@ -237,11 +252,13 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
             onDrop: (event) => {
               event.stopPropagation()
               setDropTarget(null)
-              if (dropAssignment(view, dragSource, item.getId(), nodes, submitAssignment)) event.preventDefault()
+              if (dropAssignment(view, dragSource, item.getId(), nodes, submitDrop)) event.preventDefault()
             },
             onFocus: () => item.setFocused(),
             onContextMenu: pane?.agent && pane.agent !== '-' && pane.bus_status !== '-'
-              ? (event) => agentRowMenu.open(event, pane.agent)
+              ? (event) => agentRowMenu.open(event, pane.agent, view === 'lanes' && node.lane && !node.lead
+                ? { label: 'Make lead', run: () => { void makeLead(node.lane!, pane.agent) } }
+                : null)
               : undefined,
             onClick: () => { item.setFocused(); setSelectedItems([item.getId()]); item.primaryAction() },
             onClickCapture: (event) => {
@@ -283,23 +300,23 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
                 if (event.key === 'Enter') event.currentTarget.blur()
                 if (event.key === 'Escape') { cancelOnBlur.current = true; event.currentTarget.blur() }
               }} /></span>
-            : <>{groupChip}<span className="tree-label" title={summary ? `${expandedLabel(node)} ${summary}` : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{summary && <span className="tree-summary"> {summary}</span>}</span></>}
+            : <><span className="tree-label" title={summary ? `${expandedLabel(node)} ${summary}` : expandedLabel(node)}>{node.name}{node.secondary && <span className="tree-secondary">{` · ${node.secondary}`}</span>}{summary && <span className="tree-summary"> {summary}</span>}</span>{leadChip}</>}
           trailing={<>{node.marker === 'unknown-manager' && <span className="unknown-manager-marker" title="manager unknown · adopt to take it on">?</span>}
             {node.kind === 'workspace' && node.workspace && <LaunchAgent workspaceID={node.workspace.workspace_id} workspaceName={node.name} checkoutPath={node.workspace.cwd} onOpenAgent={onPreviewAgent} />}
-            {groupHeader && !node.placeholder && <button type="button" className="group-space-button" aria-label={openGroupTooltip(node.name, memberCount)} title={openGroupTooltip(node.name, memberCount)}
-              onClick={(event) => { event.stopPropagation(); onOpenGroupAsSpace(node.name, groupMembers(nodes, node.id)) }}>space</button>}
-            {node.placeholder && <button type="button" className="group-space-button group-remove-button" aria-label={`Remove placeholder group ${node.name}`} title={`Remove placeholder group ${node.name} (nothing was written)`}
-              onClick={(event) => { event.stopPropagation(); onPendingGroups(removePendingGroup(pendingGroups, node.name)) }}>×</button>}
+            {node.kind === 'lane' && node.lane && <button type="button" className="group-space-button" aria-label={`Open space ${node.name}`} title={`Open space ${node.name}`}
+              onClick={(event) => { event.stopPropagation(); onOpenLaneSpace(node.lane!) }}>space</button>}
+            {node.placeholder && <button type="button" className="group-space-button group-remove-button" aria-label={`Remove new lane ${node.name}`} title={`Remove new lane ${node.name} (nothing was written)`}
+              onClick={(event) => { event.stopPropagation(); setPendingLane(null) }}>×</button>}
             {pane?.agent && pane.agent !== '-' && <ContextUsed value={node.contextUsed} />}
             {pane?.agent && pane.agent !== '-' && !renaming && <button type="button" className="rename-agent-button" aria-label={`Rename ${pane.agent}`} title={`Rename ${pane.agent}`}
               onClick={(event) => { event.stopPropagation(); startRename(pane.agent, node.id, pane.title) }}>✎</button>}
             {view === 'supervision' && node.marker === 'unknown-manager' && pane?.agent && pane.agent !== '-' && <button type="button" className="rename-agent-button adopt-agent-button" aria-label={`Adopt ${pane.agent}`} title={`Adopt ${pane.agent}: set its manager to you (human)`}
-              onClick={(event) => { event.stopPropagation(); void submitAssignment(pane.agent, { manager: 'human' }) }}>adopt</button>}
+              onClick={(event) => { event.stopPropagation(); void submitDrop({ name: pane.agent, assignment: { manager: 'human' } }) }}>adopt</button>}
             {folder && !folded && !groupHeader && <span className="count-badge">{node.count ?? node.summary?.total ?? node.children.length}</span>}
             {pane?.agent && pane.agent !== '-' && <DraftMark drafts={drafts[pane.agent]} />}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
-          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${pane.group ? ` · group ${pane.group}` : ''} · ${sideHint}` : node.placeholder ? `group ${node.name} · placeholder · drop an agent here to create it` : groupHeader ? groupHeaderTooltip(node, memberCount) : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
+          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${node.lead ? ' · lane lead' : ''} · ${sideHint}` : groupHeader ? laneHeaderTooltip(node, memberCount) : node.pr ? `${node.pr.repo}#${node.pr.number} · ${node.secondary || 'open'} · head ${node.pr.head || '?'} · open on GitHub` : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
           onToggle={() => { if (item.isExpanded()) item.collapse(); else item.expand() }}
         />
       })}

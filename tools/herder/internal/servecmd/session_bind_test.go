@@ -133,7 +133,7 @@ func TestLifeMirrorReadyWithFailedRefreshWritesUnstamped(t *testing.T) {
 // sequence end to end: a closed life, an annotate that opens a record before
 // hcom creates the roster row, the roster row's ready mirrored WITH its
 // session, then POST assignment; the fleet payload row must show the manager,
-// group and manager_state.
+// lane membership and manager_state.
 func TestAssignmentAfterAnnotateOnClosedLifeShowsOnTheFleetRow(t *testing.T) {
 	deps := supervisionDeps(t)
 	base, _ := deps.roster()
@@ -164,7 +164,7 @@ func TestAssignmentAfterAnnotateOnClosedLifeShowsOnTheFleetRow(t *testing.T) {
 		t.Fatalf("before the ready the record must fold as unregistered: %s", body)
 	}
 	runLifeMirror(t, deps, hcomevents.Life{ID: 245709, TS: "2026-09-11T02:30:38Z", Instance: "guna", Action: "ready", By: "riko"})
-	request := httptest.NewRequest(http.MethodPost, "/api/agents/query-topo-guna/assignment", strings.NewReader(`{"manager":"ziru","group":"fleet-refit"}`))
+	request := httptest.NewRequest(http.MethodPost, "/api/agents/query-topo-guna/assignment", strings.NewReader(`{"manager":"ziru","lane":"`+supervisionLane+`"}`))
 	request.SetPathValue("busName", "query-topo-guna")
 	response := httptest.NewRecorder()
 	newHandler(deps).ServeHTTP(response, request)
@@ -180,10 +180,13 @@ func TestAssignmentAfterAnnotateOnClosedLifeShowsOnTheFleetRow(t *testing.T) {
 	if end := strings.Index(row, "}"); end >= 0 {
 		row = row[:end]
 	}
-	for _, want := range []string{`"manager":"ziru"`, `"manager_state":"live"`, `"group":"fleet-refit"`, `"title":"queries-program-lead"`, `"created_at":"2026-09-11T02:30:33Z"`} {
+	for _, want := range []string{`"manager":"ziru"`, `"manager_state":"live"`, `"title":"queries-program-lead"`, `"created_at":"2026-09-11T02:30:33Z"`} {
 		if !strings.Contains(row, want) {
 			t.Fatalf("fleet row missing %s: %s", want, row)
 		}
+	}
+	if !strings.Contains(body, `"members":["impl-kolo","kolo_general_purpose_1","lone","query-topo-guna"]`) {
+		t.Fatalf("guna did not join the lane on the board: %s", body)
 	}
 }
 

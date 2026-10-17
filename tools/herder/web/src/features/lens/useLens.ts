@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Board } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { bindLensShortcuts, type LensKeyActions } from '../layout/shellShortcuts.ts'
-import { needsYou, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
+import { prSummary } from '../../shared/lanePRModel.ts'
+import { laneOfSpace, needsYou, rekeyRecord, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
 import {
   cardLook,
   cardShape,
@@ -53,6 +54,8 @@ export type LensCard = {
   status: LensStatus | null
   others: number
   text: string
+  // prs is a lane card's PR line (or its note); empty on other cards.
+  prs: string
   width: number
   lines: number
 }
@@ -124,9 +127,11 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
         const who = whoLine(members, agent)
         const fallback = statusText(agentRow, agent !== undefined && needing.has(agent))
         const body = !agent || !agentRow ? fallback : text === 'cwd' ? agentFolder(board, agent) : text === 'answer' ? answer(agent) ?? fallback : fallback
+        const lane = board?.lanes?.find((item) => item.id === laneOfSpace(space.id))
         return {
           id: space.id, name: space.name, needs, look: cardLook(needs, space.id === chosen, status),
           agent: who.name, status, others: who.others, text: body,
+          prs: lane?.pr_note ?? (lane?.prs ?? []).map(prSummary).join(' · '),
           ...cardShape(row, size),
         }
       }),
@@ -169,6 +174,9 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     }
   }, [leaveReply, readSeen])
   const setPeekWidth = useCallback((width: number) => setPrefs((current) => ({ ...current, peek: clampPeekWidth(width) })), [])
+  // rekey moves a space's tier and visible agent to another space id that
+  // has none (the one-time lane move).
+  const rekey = useCallback((from: string, to: string) => setPrefs((current) => ({ ...current, rows: rekeyRecord(current.rows, from, to), visible: rekeyRecord(current.visible, from, to) })), [])
 
   const select = useCallback((id: string) => {
     setSelected(id)
@@ -249,6 +257,6 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     else openAlone(agent)
   }, [membersBySpace, openAlone, order, zoomInto])
 
-  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total), peek, peekWidth: prefs.peek ?? peekWidth, setPeekWidth,
+  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total), peek, peekWidth: prefs.peek ?? peekWidth, setPeekWidth, rekey,
     reply: replying ? { agent: replying.agent, focus: replying.focus } : null, startReply, replySent, leaveReply }
 }

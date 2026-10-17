@@ -26,6 +26,7 @@ type Options = {
   activeSpaceIDRef: MutableRefObject<string | null>
   revision: number
   spaces: SpaceDefinition[]
+  hold: boolean
   syncDock: () => void
   withHistorySuppressed: <T>(operation: () => T) => T
   onProblem: (problem: string) => void
@@ -33,14 +34,21 @@ type Options = {
 
 // useSpaceMembers publishes each space's pinned agent and file tabs to the
 // spaces.members namespace and opens members another device or the native
-// client added. It never closes a panel because a member is missing.
-export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spaces, syncDock, withHistorySuppressed, onProblem }: Options) {
+// client added. It never closes a panel because a member is missing. Lane
+// spaces are live spaces like the user's own while the board lists them.
+// ready turns true once a full pull has landed; moveMembers re-keys a row
+// (the one-time lane move). hold keeps reconciliation off until that move
+// has run, so nothing writes a lane space's layout before it.
+export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spaces, hold, syncDock, withHistorySuppressed, onProblem }: Options) {
   const [members] = useState(() => store ? createSpaceMembersStore() : null)
   const syncRef = useRef<ReturnType<typeof createSpaceMembersSync> | null>(null)
   const started = useRef(false)
   const timer = useRef<number | undefined>(undefined)
   const onProblemRef = useRef(onProblem)
   onProblemRef.current = onProblem
+  const spacesRef = useRef(spaces)
+  spacesRef.current = spaces
+  const [ready, setReady] = useState(false)
 
   const read = useCallback((spaceID: string): SpaceMember[] | null => {
     if (spaceID !== activeSpaceIDRef.current) return storedSpaceMembers(localStorage, spaceID)
@@ -81,14 +89,14 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
   }, [activeSpaceIDRef, apiRef, syncDock, withHistorySuppressed])
 
   const reconcile = useCallback(() => {
-    if (!members || !store || !started.current) return
+    if (!members || !store || !started.current || hold) return
     reconcileSpaceMembers(members, {
-      liveSpaceIDs: store.list().map(({ id }) => id),
+      liveSpaceIDs: spacesRef.current.map(({ id }) => id),
       closedSpaceIDs: store.records().flatMap(({ record }) => record.deleted ? [record.id] : []),
       read,
       add,
     })
-  }, [add, members, read, store])
+  }, [add, hold, members, read, store])
   const reconcileRef = useRef(reconcile)
   reconcileRef.current = reconcile
 
@@ -113,11 +121,13 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
     })
     syncRef.current = sync
     let disposed = false
-    // The backfill waits for the first pull so a first run publishes the
+    // The backfill waits for a full pull so a first run publishes the
     // union of this browser's docks and what other devices already wrote.
-    void sync.start().finally(() => {
+    void sync.start()
+    void sync.pulled().then(() => {
       if (disposed) return
       started.current = true
+      setReady(true)
       schedule()
     })
     const online = () => { void sync.retryNow() }
@@ -132,7 +142,7 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
     }
   }, [members, schedule])
 
-  useEffect(() => { schedule() }, [revision, schedule, spaces])
+  useEffect(() => { schedule() }, [hold, revision, schedule, spaces])
 
   const stateChanged = useCallback((namespace: string, rev: number) => {
     void syncRef.current?.stateChanged(namespace, rev)
@@ -149,5 +159,14 @@ export function useSpaceMembers({ store, apiRef, activeSpaceIDRef, revision, spa
     })) as Record<string, SpaceMember[]>
     // revision covers a dock change in a space not yet published.
   }, [members, read, revision, spaces, version])
-  return { stateChanged, membersBySpace }
+  // moveMembers gives to the members row from has, unless to already has
+  // one, and removes from's.
+  const moveMembers = useCallback((from: string, to: string) => {
+    const row = members?.row(from)
+    if (!members || !row || row.deleted) return
+    const target = members.row(to)
+    if (!target || target.deleted || target.members.length === 0) members.publish(to, row.members)
+    members.remove(from)
+  }, [members])
+  return { stateChanged, membersBySpace, ready, moveMembers }
 }

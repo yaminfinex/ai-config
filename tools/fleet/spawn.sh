@@ -3,7 +3,7 @@
 # per-invocation fleet preset. Every seat gets a tab of its own: seats that
 # share a tab get tiny terminals and miss hcom deliveries, so --split-from and a
 # --pane that is not alone in its tab refuse unless --force-split is given. Failed launches leave created placement in place
-# and print its coordinates; cleanup is always explicit. Group and title events
+# and print its coordinates; cleanup is always explicit. Lane and title events
 # are stated after hcom returns the name and before launch-ready.
 
 set -euo pipefail
@@ -75,7 +75,7 @@ usage: spawn.sh <claude|codex> [--model MODEL] [--effort LEVEL] --tag TAG
                 [--workspace ID | --worktree-branch NAME --repo PATH |
                  --pane ID | --split-from PANE_ID|self --force-split]
                 [--split-direction right|down] [--force-split] [--prompt TEXT]
-                [--group NAME] [--title TEXT]
+                [--lane NAME|ID | --new-lane NAME] [--title TEXT]
 
 Every seat gets its own tab. With no placement flag, spawn opens a new tab in
 the caller's workspace; --workspace opens one in that workspace; a worktree
@@ -85,7 +85,9 @@ placement opens a new workspace (or a fresh tab in it if its pane is shared).
 tab get tiny terminals and miss hcom deliveries.
 --split-from self splits beside the caller's own pane (herdr pane current).
 --split-direction defaults to right.
-An absent --group inherits the launching agent's group; --group '' suppresses it.
+An absent --lane inherits the launching agent's lane; --lane '' suppresses it.
+An unknown --lane refuses before launch. --new-lane creates the lane with the
+new seat as its lead, and is the default --tag.
 EOF
   exit "$rc"
 }
@@ -106,8 +108,9 @@ split_from=
 split_direction=
 force_split=0
 prompt=
-group=
-group_set=0
+lane=
+lane_set=0
+new_lane=
 title=
 title_set=0
 
@@ -167,11 +170,19 @@ while (($# > 0)); do
       prompt=$2
       shift 2
       ;;
-    --group)
+    --lane)
       [[ $# -ge 2 ]] || usage
-      group=$2
-      group_set=1
+      lane=$2
+      lane_set=1
       shift 2
+      ;;
+    --new-lane)
+      [[ $# -ge 2 ]] || usage
+      new_lane=$2
+      shift 2
+      ;;
+    --group)
+      refuse "--group is retired; use --lane or --new-lane"
       ;;
     --title)
       [[ $# -ge 2 ]] || usage
@@ -188,6 +199,7 @@ while (($# > 0)); do
   esac
 done
 
+[[ -n $tag ]] || tag=$new_lane
 [[ -n $tag ]] || die "--tag is required"
 [[ $tag =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "--tag must contain only letters, digits, underscore, and hyphen"
 if [[ -n $effort ]]; then
@@ -244,10 +256,12 @@ if [[ -n $pane ]] && ((force_split == 0)) && probe_output=$(herdr pane get "$pan
     || refuse "pane $pane shares tab $probe_tab with $((probe_count - 1)) other pane(s); $shared_tab_reason. Omit placement for a new tab, or pass --force-split"
 fi
 
-group=$(jq -rn --arg value "$group" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
-if ((group_set == 1)) && [[ -n $group ]]; then
-  [[ $group != *[$'\r\n\t']* ]] || refuse "--group must not contain control characters"
-  ((${#group} <= 80)) || refuse "--group must not exceed 80 characters"
+lane=$(jq -rn --arg value "$lane" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
+new_lane=$(jq -rn --arg value "$new_lane" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
+((lane_set == 0)) || [[ -z $new_lane ]] || refuse "choose one of --lane and --new-lane"
+if [[ -n $new_lane ]]; then
+  [[ $new_lane != *[$'\r\n\t']* ]] || refuse "--new-lane must not contain control characters"
+  ((${#new_lane} <= 80)) || refuse "--new-lane must not exceed 80 characters"
 fi
 if ((title_set == 1)); then
   title=$(jq -rn --arg value "$title" '$value | sub("^\\s+"; "") | sub("\\s+$"; "")')
@@ -265,16 +279,38 @@ else
   [[ -z $self_name ]] || attrib=(--by "$self_name" --by-kind agent)
 fi
 
-if ((group_set == 0)) && [[ -n $self_name ]]; then
+# A named lane resolves before launch: a typo must not drop the seat out of its
+# lane, and a new lane must not take a live lane's name. Herder being down warns
+# and launches without a lane, as inheritance does.
+lane_lookup() {
+  local rc=0
+  lane_output=$(timeout --foreground 10s herder lane show "$1" --json 2>&1) || rc=$?
+  lane_detail=${lane_output//$'\n'/; }
+  return "$rc"
+}
+lane_id=
+if [[ -n $lane ]]; then
+  lane_rc=0
+  lane_lookup "$lane" || lane_rc=$?
+  case $lane_rc in
+    0) lane_id=$(jq -er '.id' <<<"$lane_output") || refuse "herder lane show returned no lane id for $lane" ;;
+    1 | 2) refuse "unknown lane $lane: $lane_detail" ;;
+    *) printf 'fleet spawn: lane %s skipped: %s\n' "$lane" "${lane_detail:-lookup failed}" >&2 ;;
+  esac
+elif [[ -n $new_lane ]]; then
+  if lane_lookup "$new_lane" && jq -e '.members | length > 0' <<<"$lane_output" >/dev/null 2>&1; then
+    refuse "lane $new_lane already exists with live members; use --lane"
+  fi
+elif ((lane_set == 0)) && [[ -n $self_name ]]; then
   inheritance_name=${HCOM_TAG:+$HCOM_TAG-}$self_name
   if inherit_output=$(timeout --foreground 10s herder show "$inheritance_name" --json 2>&1); then
-    group=$(jq -r '.assignment.group // empty' <<<"$inherit_output" 2>/dev/null) || {
-      printf 'fleet spawn: group inheritance skipped: invalid herder show JSON\n' >&2
-      group=
+    lane_id=$(jq -r '.lane.id // empty' <<<"$inherit_output" 2>/dev/null) || {
+      printf 'fleet spawn: lane inheritance skipped: invalid herder show JSON\n' >&2
+      lane_id=
     }
   else
     inherit_detail=${inherit_output//$'\n'/; }
-    printf 'fleet spawn: group inheritance skipped: %s\n' "${inherit_detail:-lookup failed}" >&2
+    printf 'fleet spawn: lane inheritance skipped: %s\n' "${inherit_detail:-lookup failed}" >&2
   fi
 fi
 
@@ -443,8 +479,10 @@ fi
 
 spawned_name=$hcom_name
 [[ $spawned_name == "$tag-"* ]] || spawned_name="$tag-$spawned_name"
-if [[ -n $group ]]; then
-  herder_mutation "assign $spawned_name --group $group" assign "$spawned_name" --group "$group"
+if [[ -n $new_lane ]]; then
+  herder_mutation "lane new $new_lane --lead $spawned_name" lane new "$new_lane" --lead "$spawned_name"
+elif [[ -n $lane_id ]]; then
+  herder_mutation "assign $spawned_name --lane $lane_id" assign "$spawned_name" --lane "$lane_id"
 fi
 if ((title_set == 1)); then
   herder_mutation "annotate $spawned_name --title" register annotate --name "$spawned_name" --title "$title"

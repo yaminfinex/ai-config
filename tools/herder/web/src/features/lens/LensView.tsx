@@ -23,6 +23,7 @@ function Card({ card, onSelect, onZoom }: { card: LensCard, onSelect: (id: strin
     onClick={() => onSelect(card.id)} onDoubleClick={() => onZoom(card.id)}>
     <div className="lens-title"><strong>{card.name}</strong>{card.needs > 0 && <span className="lens-pill">{card.needs}</span>}</div>
     <div className="lens-who"><LensGlyph status={card.status} /><span className="lens-agent">{card.agent}</span>{card.others > 0 && <span className="lens-others">+{card.others}</span>}</div>
+    {card.prs && <div className="lens-prs" title={card.prs}>{card.prs}</div>}
     {card.lines > 0 && <div className="lens-body" style={{ WebkitLineClamp: card.lines, height: `calc(${card.lines} * var(--lens-line))` }}>{card.text}</div>}
   </div>
 }

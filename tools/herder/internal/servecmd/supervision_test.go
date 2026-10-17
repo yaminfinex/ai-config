@@ -6,16 +6,42 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
 	"ai-config/tools/herder/internal/fleetview"
+	"ai-config/tools/herder/internal/githubprs"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"github.com/fsnotify/fsnotify"
 )
+
+var supervisionLane = agentstore.DerivedID([]byte("sup-lane-payload"))
+
+// appendRetired writes a line no writer may append any more (a group
+// assignment): old journals still hold them and they still fold.
+func appendRetired(t *testing.T, store *agentstore.Store, event agentstore.Event) {
+	t.Helper()
+	line, err := agentstore.Encode(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(store.EventsPath(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.Write(line); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // supervisionDeps is a fleet with every row source the board folds: two
 // placed panes, an unplaced row, a Task subagent, a terminal pane; a store
@@ -63,8 +89,16 @@ func supervisionDeps(t *testing.T) dependencies {
 		{ID: agentstore.DerivedID([]byte("sup-e-group-pane")), At: at.Add(8 * time.Second), Kind: agentstore.KindAssign, Name: "impl-kolo", Group: "builders", By: "ziru", ByKind: "agent"},
 		{ID: agentstore.DerivedID([]byte("sup-e-group-subagent")), At: at.Add(9 * time.Second), Kind: agentstore.KindAssign, Name: "kolo_general_purpose_1", Group: "helpers", By: "ziru", ByKind: "agent"},
 		{ID: agentstore.DerivedID([]byte("sup-e-group-unplaced")), At: at.Add(10 * time.Second), Kind: agentstore.KindAssign, Name: "lone", Group: "review", By: "ziru", ByKind: "agent"},
+		{ID: supervisionLane, At: at.Add(11 * time.Second), Kind: agentstore.KindLaneCreated, LaneName: "payload", Lead: "impl-kolo", By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-lane-lead")), At: at.Add(12 * time.Second), Kind: agentstore.KindAssign, Name: "impl-kolo", Lane: supervisionLane, By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-lane-lone")), At: at.Add(13 * time.Second), Kind: agentstore.KindAssign, Name: "lone", Lane: supervisionLane, By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-lane-empty")), At: at.Add(14 * time.Second), Kind: agentstore.KindLaneCreated, LaneName: "empty", Lead: "orch-dead", By: "ziru", ByKind: "agent"},
 	}
 	for _, event := range events {
+		if event.Group != "" {
+			appendRetired(t, store, event)
+			continue
+		}
 		if _, err := store.Append(event); err != nil {
 			t.Fatal(err)
 		}
@@ -83,25 +117,25 @@ func TestBoardCarriesManager(t *testing.T) {
 	if len(panes) != 3 {
 		t.Fatalf("panes = %d", len(panes))
 	}
-	type edge struct{ manager, state, group, title, created string }
+	type edge struct{ manager, state, title, created string }
 	got := map[string]edge{}
 	for _, pane := range panes {
-		got[pane.Agent] = edge{pane.Manager, pane.ManagerState, pane.Group, pane.Title, pane.CreatedAt}
+		got[pane.Agent] = edge{pane.Manager, pane.ManagerState, pane.Title, pane.CreatedAt}
 		for _, child := range pane.Subagents {
-			got[child.Agent] = edge{child.Manager, child.ManagerState, child.Group, child.Title, child.CreatedAt}
+			got[child.Agent] = edge{child.Manager, child.ManagerState, child.Title, child.CreatedAt}
 		}
 	}
 	for _, row := range board.Unplaced {
-		got[row.Agent] = edge{row.Manager, row.ManagerState, row.Group, row.Title, row.CreatedAt}
+		got[row.Agent] = edge{row.Manager, row.ManagerState, row.Title, row.CreatedAt}
 	}
 	want := map[string]edge{
-		"ziru":                   {"operator", fleetview.ManagerOperator, "", "", "2026-09-10T08:00:00Z"},
-		"impl-kolo":              {"ziru", fleetview.ManagerLive, "builders", "payload builder", "2026-09-10T08:01:00Z"},
-		"kolo_general_purpose_1": {"impl-kolo", fleetview.ManagerLive, "helpers", "", "2026-09-10T08:02:00Z"},
-		"sesh-nabi":              {"orch-dead", fleetview.ManagerEnded, "", "", "2026-09-10T08:03:00Z"},
-		"orch-hamo":              {"", fleetview.ManagerUnknown, "", "", "2026-09-10T08:04:00Z"},
-		"sesh-kele":              {"orch-hamo", fleetview.ManagerLive, "", "", "2026-09-10T08:05:00Z"},
-		"lone":                   {"", fleetview.ManagerUnknown, "review", "", "2026-09-10T08:06:00Z"},
+		"ziru":                   {"operator", fleetview.ManagerOperator, "", "2026-09-10T08:00:00Z"},
+		"impl-kolo":              {"ziru", fleetview.ManagerLive, "payload builder", "2026-09-10T08:01:00Z"},
+		"kolo_general_purpose_1": {"impl-kolo", fleetview.ManagerLive, "", "2026-09-10T08:02:00Z"},
+		"sesh-nabi":              {"orch-dead", fleetview.ManagerEnded, "", "2026-09-10T08:03:00Z"},
+		"orch-hamo":              {"", fleetview.ManagerUnknown, "", "2026-09-10T08:04:00Z"},
+		"sesh-kele":              {"orch-hamo", fleetview.ManagerLive, "", "2026-09-10T08:05:00Z"},
+		"lone":                   {"", fleetview.ManagerUnknown, "", "2026-09-10T08:06:00Z"},
 		"-":                      {},
 	}
 	for name, expected := range want {
@@ -112,8 +146,12 @@ func TestBoardCarriesManager(t *testing.T) {
 	if len(got) != len(want) {
 		t.Fatalf("rows = %#v", got)
 	}
+	// The empty lane (no live member) is left out; the Task child follows impl-kolo.
+	if wantLanes := []fleetview.Lane{{ID: supervisionLane, Name: "payload", Lead: "impl-kolo", Members: []string{"impl-kolo", "kolo_general_purpose_1", "lone"}, Repos: []string{}, Branches: []string{}, PRs: []githubprs.PR{}}}; !reflect.DeepEqual(board.Lanes, wantLanes) {
+		t.Fatalf("lanes = %#v", board.Lanes)
+	}
 	encoded, _ := json.Marshal(board)
-	for _, forbidden := range []string{`"launcher"`, `"mission"`, `"provenance"`, `"binding"`, `"vitals"`} {
+	for _, forbidden := range []string{`"launcher"`, `"group"`, `"mission"`, `"provenance"`, `"binding"`, `"vitals"`} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("board leaks %s: %s", forbidden, encoded)
 		}
@@ -149,7 +187,7 @@ func TestStoreAppendReemitsFleet(t *testing.T) {
 	for {
 		event, data := readEvent(t, reader)
 		if event == "fleet" {
-			if !strings.Contains(data, `"manager":"ziru","manager_state":"live","group":"builders","title":"payload builder"`) || !strings.Contains(data, `"manager":"operator","manager_state":"operator"`) {
+			if !strings.Contains(data, `"manager":"ziru","manager_state":"live","title":"payload builder"`) || !strings.Contains(data, `"manager":"operator","manager_state":"operator"`) {
 				t.Fatalf("initial fleet = %s", data)
 			}
 			break
