@@ -16,7 +16,7 @@ func ruzuJournal(t *testing.T, readySession string) *Store {
 	t.Helper()
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindMirrorReady, "query-topo-guna", 1, func(e *Event) { e.ByKind = "mirror"; e.Session = "old-S" }))
-	mustAppend(t, s, ev(KindAssign, "query-topo-guna", 2, func(e *Event) { e.Manager, e.Group = "old-manager", "old-mission" }))
+	mustAppend(t, s, ev(KindAssign, "query-topo-guna", 2, func(e *Event) { e.Manager, e.Lane = "old-manager", laneID("old-mission") }))
 	mustAppend(t, s, ev(KindMirrorStopped, "query-topo-guna", 3, func(e *Event) { e.ByKind, e.Reason = "mirror", "exit:other" }))
 	mustAppend(t, s, ev(KindAnnotate, "query-topo-guna", 10, func(e *Event) { e.Title = "queries-program-lead" }))
 	mustAppend(t, s, ev(KindMirrorReady, "query-topo-guna", 12, func(e *Event) { e.ByKind = "mirror"; e.Session = readySession }))
@@ -25,7 +25,7 @@ func ruzuJournal(t *testing.T, readySession string) *Store {
 
 func TestMirrorReadyWithSessionBindsARecordOpenedBeforeTheRosterRow(t *testing.T) {
 	s := ruzuJournal(t, "new-S")
-	mustAppend(t, s, ev(KindAssign, "query-topo-guna", 13, func(e *Event) { e.Manager, e.Group = "ziru", "fleet-refit" }))
+	mustAppend(t, s, ev(KindAssign, "query-topo-guna", 13, func(e *Event) { e.Manager, e.Lane = "ziru", laneID("fleet-refit") }))
 	proj, err := s.Replay()
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestMirrorReadyWithSessionBindsARecordOpenedBeforeTheRosterRow(t *testing.T
 	// roster created_at (11) is AFTER the record's FirstSeen (10): only the
 	// session evidence proves the record is this life.
 	got := proj.Incarnation("query-topo-guna", at(11), "new-S")
-	if got == nil || got.Manager != "ziru" || got.Assignment == nil || got.Assignment.Group != "fleet-refit" || currentSession(got) != "new-S" {
+	if got == nil || got.Manager != "ziru" || got.LaneID != laneID("fleet-refit") || currentSession(got) != "new-S" {
 		t.Fatalf("mirror.ready session did not bind the record: %+v", got)
 	}
 	if v := proj.View("query-topo-guna", &hcomidentity.Row{Name: "query-topo-guna", CreatedAt: at(11), SessionID: "new-S"}); v == nil || v.Manager != "ziru" {
@@ -64,7 +64,7 @@ func TestMirrorReadyWithoutSessionStillRefusesTheEarlierRecord(t *testing.T) {
 func TestResumeWithSessionBindsTheNewSession(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "session-a"; e.Tool = "claude" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Group = "ziru", "fleet-refit" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Lane = "ziru", laneID("fleet-refit") }))
 	mustAppend(t, s, ev(KindResume, "impl-gime", 4, func(e *Event) { e.FromSession, e.Session, e.Pane = "session-a", "session-b", "w80:p2" }))
 	proj, err := s.Replay()
 	if err != nil {
@@ -89,7 +89,7 @@ func TestSnapshotPlusTailEqualsFullReplayForTheRuzuJournal(t *testing.T) {
 		t.Fatalf("load: %v snapshotErr %v version %d", err, snap.SnapshotErr, snap.Version)
 	}
 	s.replays.Store(0)
-	mustAppend(t, s, ev(KindAssign, "query-topo-guna", 13, func(e *Event) { e.Manager, e.Group = "ziru", "fleet-refit" }))
+	mustAppend(t, s, ev(KindAssign, "query-topo-guna", 13, func(e *Event) { e.Manager, e.Lane = "ziru", laneID("fleet-refit") }))
 	mustAppend(t, s, ev(KindResume, "query-topo-guna", 14, func(e *Event) { e.FromSession, e.Session = "new-S", "new-S2" }))
 	tail, err := s.LoadNoSnapshot()
 	if err != nil {
@@ -120,7 +120,7 @@ func TestSnapshotPlusTailEqualsFullReplayForTheRuzuJournal(t *testing.T) {
 func TestMirrorReadyDoesNotBindOverAnUnclosedLifeWithSessionHistory(t *testing.T) {
 	_, s := scratch(t)
 	mustAppend(t, s, ev(KindLaunchReady, "impl-gime", 1, func(e *Event) { e.Session = "OLD" }))
-	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Group = "old-manager", "old-group" }))
+	mustAppend(t, s, ev(KindAssign, "impl-gime", 2, func(e *Event) { e.Manager, e.Lane = "old-manager", laneID("old-group") }))
 	mustAppend(t, s, ev(KindMirrorReady, "impl-gime", 12, func(e *Event) { e.ByKind = "mirror"; e.Session = "NEW" }))
 	proj, err := s.Replay()
 	if err != nil {
@@ -192,7 +192,7 @@ func TestLiteralVersion6SnapshotIsReplacedAndMirrorSessionReplayed(t *testing.T)
 		t.Fatalf("load: %v snapshotErr %v", err, proj.SnapshotErr)
 	}
 	v := proj.Latest("query-topo-guna")
-	if proj.Version != 7 || v == nil || currentSession(v) != "new-S" {
+	if proj.Version != ProjectionVersion || v == nil || currentSession(v) != "new-S" {
 		t.Fatalf("v6 snapshot trusted: version=%d view=%+v", proj.Version, v)
 	}
 	if b := proj.Incarnation("query-topo-guna", at(11), "new-S"); b == nil {

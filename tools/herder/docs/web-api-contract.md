@@ -160,7 +160,9 @@ GET `/api/fleet`
   - `group` — the agent's group label, the latest `assign` event's `group`
     from the agent store, when one is set. Absent when none was ever set or
     the last assign cleared it. Herder-mastered augmenting data, never
-    lifecycle authority; hcom tags are not groups.
+    lifecycle authority; hcom tags are not groups. Groups are retired: no
+    writer appends a group any more, so this carries only labels journaled
+    before lanes, until the web reads `lanes` instead.
   - `created_at` — hcom's roster creation time for the row, RFC3339 UTC.
   - `context_used` — used tokens from the serve's in-process observer. It is
     absent when the observer does not know the session and is never persisted;
@@ -192,6 +194,18 @@ GET `/api/fleet`
   `fleet` within the serve's debounce, with no herdr or hcom change required.
   The terminal `herder list` output is unchanged by this payload.
 
+  ### Lanes on the board
+
+  The board carries a top-level `lanes` array (always present, `[]` when
+  none), sorted by name case-insensitively:
+  `{"id":"<lane id>","name":"<name>","lead":"<seat>","members":["<bus-name>",…],"repos":[],"branches":[],"prs":[]}`.
+  `members` are the live roster names whose own incarnation's latest
+  `assign` put them in the lane, in roster order; the lead appears there only
+  when it is itself a live member. A lane with no live member is left out;
+  its store record stays (`herder lane list --all`). `repos`, `branches` and
+  `prs` are always empty arrays until the PR unit fills them. Rows carry no
+  lane field; `members` is the one membership source.
+
   Groups view (sidebar). The third fleet view is its own client-side
   builder over the same payload: one header per distinct `group` label
   (alphabetical) and an "Ungrouped" header last, drawn only while it has
@@ -204,7 +218,9 @@ GET `/api/fleet`
   view draws no group nodes. Dragging an agent row onto a header issues one
   `POST /api/agents/{bus-name}/assignment` with `{"group":"<header>"}`
   (the Ungrouped header sends `""`, which clears); the client updates
-  nothing optimistically and the next `fleet` frame re-groups. "Open group
+  nothing optimistically and the next `fleet` frame re-groups. Since lanes
+  the endpoint refuses `group` with 400, so this drop fails until the web
+  moves to lanes. "Open group
   as space" on a header switches to the space named exactly after the group
   or creates one, then opens every member transcript pinned; it closes
   nothing and stores no link between the group and the space.
@@ -1403,17 +1419,19 @@ POST `/api/agents/{bus-name}/annotation`
   return 502.
 
 POST `/api/agents/{bus-name}/assignment`
-  Body: `{"manager":"<live bus-name>|human","group":"<name>"}`; either
-  field may be omitted, but at least one is required. Values are trimmed. An
-  empty group clears it; a non-empty group is limited to 80 Unicode code
-  points. A manager cannot be the target itself and must be `human` or an
+  Body: `{"manager":"<live bus-name>|human","lane":"<lane id>"}`; either
+  field may be omitted, but at least one is required. Values are trimmed. A
+  `group` field is refused with 400 "group is retired; use lane". A lane
+  must be the id of a lane in the agent store (a name is refused, 400). A
+  manager cannot be the target itself and must be `human` or an
   exact live roster name: unknown and tombstone manager targets return 400.
   The target agent itself must be live (404 unknown, 409 retired). Success
   appends exactly one `assign` event with the server-derived `by`,
   `by_kind: web`, and returns
-  `{"name":"<bus-name>","manager":"<set-or-empty>","group":"<set-or-empty>","by":"<web-sender>"}`.
-  The next ordinary fleet frame carries the new manager/group; `human` folds
-  to `manager_state: operator`. The client does not update optimistically.
+  `{"name":"<bus-name>","manager":"<set-or-empty>","lane":"<set-or-empty>","by":"<web-sender>"}`.
+  The next ordinary fleet frame carries the new manager and `lanes`; `human`
+  folds to `manager_state: operator`. The endpoint does not apply `herder
+  lane move`'s lead rule. The client does not update optimistically.
   Invalid input returns 400, missing attribution or collision 409, and
   unavailable identity/store or append failure 502.
 

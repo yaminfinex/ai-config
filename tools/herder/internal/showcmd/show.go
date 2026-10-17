@@ -36,8 +36,16 @@ type showVitals struct {
 	Source      string     `json:"source,omitempty"`
 }
 
+// laneRef is the agent's lane as spawn.sh and the web read it.
+type laneRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Lead string `json:"lead"`
+}
+
 type showOutput struct {
 	*agentstore.AgentView
+	Lane        *laneRef   `json:"lane,omitempty"`
 	Vitals      showVitals `json:"vitals"`
 	VitalsError string     `json:"vitals_error,omitempty"`
 }
@@ -155,8 +163,12 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 			vitalsErr = readErr.Error()
 		}
 	}
+	var lane *laneRef
+	if record := proj.Lanes[view.LaneID]; record != nil {
+		lane = &laneRef{ID: record.ID, Name: record.Name, Lead: record.Lead}
+	}
 	if asJSON {
-		encoded, err := json.MarshalIndent(showOutput{AgentView: view, Vitals: outputVitals, VitalsError: vitalsErr}, "", "  ")
+		encoded, err := json.MarshalIndent(showOutput{AgentView: view, Lane: lane, Vitals: outputVitals, VitalsError: vitalsErr}, "", "  ")
 		if err != nil {
 			fmt.Fprintf(stderr, "herder show: %v\n", err)
 			return 1
@@ -164,7 +176,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stdout, "%s\n", encoded)
 		return 0
 	}
-	writeText(stdout, view, outputVitals)
+	writeText(stdout, view, lane, outputVitals)
 	return 0
 }
 
@@ -175,13 +187,13 @@ Usage:
   herder show --session <id> [--json]
 
 Prints provenance (launcher, requested model/effort/placement), the mutable
-manager pointer, assignment, annotation, session history and the last 32
+manager pointer, lane, annotation, session history and the last 32
 store events and live model/context vitals. Folds the live hcom roster when
 available (binding: verified, pending or conflict); the roster's session is
 always current. --session matches that current roster session exactly.
 `
 
-func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
+func writeText(out io.Writer, v *agentstore.AgentView, lane *laneRef, vitals showVitals) {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	field := func(label, value string) {
 		if value == "" {
@@ -223,12 +235,18 @@ func writeText(out io.Writer, v *agentstore.AgentView, vitals showVitals) {
 	if v.Closed != nil {
 		field("closed", stamp(v.Closed)+" "+v.CloseReason)
 	}
-	if v.Assignment != nil {
-		a := v.Assignment
-		field("group", a.Group)
-		field("assigned", stamp(&a.At)+" by "+a.By)
+	if lane != nil {
+		lead := ""
+		if lane.Lead == v.Name {
+			lead = " (lead)"
+		}
+		field("lane", lane.Name+lead)
+		field("lane_set", stamp(v.LaneAt))
 	} else {
-		field("group", "")
+		field("lane", "")
+	}
+	if v.Assignment != nil && v.Assignment.Group != "" {
+		field("group (retired)", v.Assignment.Group)
 	}
 	if v.Annotation != nil {
 		field("title", v.Annotation.Title)
@@ -328,6 +346,7 @@ func summary(e agentstore.Event) string {
 	if e.ClearGroup {
 		parts = append(parts, "clear_group=true")
 	}
+	add("lane", e.Lane)
 	add("manager", e.Manager)
 	add("title", e.Title)
 	if e.Placement != nil {

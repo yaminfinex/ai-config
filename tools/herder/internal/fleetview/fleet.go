@@ -31,7 +31,9 @@ type Row struct {
 	TurnEndID int64 `json:"turn_end_id,omitempty"`
 	Subagents *Rows `json:"subagents,omitempty"`
 	// Store-folded columns (FoldStore). Launcher is immutable provenance,
-	// Manager the mutable hierarchy pointer, Group the current assignment.
+	// Manager the mutable hierarchy pointer, Lane the current lane's name.
+	// Group is the retired group label, kept on the board until the web moves
+	// to lanes.
 	// A bus row with no store record prints "unregistered"; a pane with no
 	// bus row prints "-".
 	Launcher string `json:"launcher,omitempty"`
@@ -43,6 +45,7 @@ type Row struct {
 	ManagerState string                 `json:"manager_state,omitempty"`
 	CreatedAt    string                 `json:"created_at,omitempty"` // roster created_at, RFC3339 UTC
 	Group        string                 `json:"group,omitempty"`
+	Lane         string                 `json:"lane,omitempty"`
 	Provenance   *ProvenanceSummary     `json:"provenance,omitempty"`
 	Binding      *agentstore.Binding    `json:"binding,omitempty"` // claimed vs roster session; never touches placement
 	Title        string                 `json:"title,omitempty"`
@@ -69,7 +72,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 	for i := range out {
 		row := &out[i]
 		if row.BusStatus == "-" {
-			row.Launcher, row.Manager, row.Group = "-", "-", "-"
+			row.Launcher, row.Manager, row.Group, row.Lane = "-", "-", "-", "-"
 			continue
 		}
 		var view *agentstore.AgentView
@@ -83,7 +86,7 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		}
 		if view == nil {
 			row.ManagerState = ManagerUnknown
-			row.Launcher, row.Manager, row.Group = "unregistered", "-", "-"
+			row.Launcher, row.Manager, row.Group, row.Lane = "unregistered", "-", "-", "-"
 			row.Provenance = &ProvenanceSummary{Kind: "unregistered"}
 			continue
 		}
@@ -103,6 +106,10 @@ func FoldStore(rows []Row, roster []hcomidentity.Row, proj *agentstore.Projectio
 		row.Group = "-"
 		if view.Assignment != nil {
 			row.Group = display(view.Assignment.Group)
+		}
+		row.Lane = "-"
+		if lane := proj.Lanes[view.LaneID]; lane != nil {
+			row.Lane = lane.Name
 		}
 		if view.Annotation != nil {
 			row.Title = view.Annotation.Title
@@ -223,6 +230,28 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 		}
 	}
 	foldRows(board.Unplaced)
+	board.Lanes = BoardLanes(roster, proj)
+}
+
+// BoardLanes lists every lane with a live member, by name. Members are live
+// roster names in roster order; a lane with none is left out (its record
+// stays). Repos, branches and PRs are filled by a later unit.
+func BoardLanes(roster []hcomidentity.Row, proj *agentstore.Projection) []Lane {
+	lanes := []Lane{}
+	if proj == nil {
+		return lanes
+	}
+	for id, members := range proj.LaneMembers(roster) {
+		lane := proj.Lanes[id]
+		lanes = append(lanes, Lane{ID: id, Name: lane.Name, Lead: lane.Lead, Members: members, Repos: []string{}, Branches: []string{}, PRs: []string{}})
+	}
+	sort.Slice(lanes, func(i, j int) bool {
+		if a, b := strings.ToLower(lanes[i].Name), strings.ToLower(lanes[j].Name); a != b {
+			return a < b
+		}
+		return lanes[i].ID < lanes[j].ID
+	})
+	return lanes
 }
 
 type Rows []Row
@@ -230,6 +259,18 @@ type Rows []Row
 type Board struct {
 	Workspaces []Workspace `json:"workspaces"`
 	Unplaced   []Row       `json:"unplaced"`
+	Lanes      []Lane      `json:"lanes"`
+}
+
+// Lane is one board lane: the record's name and lead plus its live members.
+type Lane struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Lead     string   `json:"lead"`
+	Members  []string `json:"members"`
+	Repos    []string `json:"repos"`
+	Branches []string `json:"branches"`
+	PRs      []string `json:"prs"`
 }
 
 type Workspace struct {

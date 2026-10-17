@@ -12,7 +12,7 @@ import (
 
 // ProjectionVersion changes whenever Apply's fold changes, so a stale
 // snapshot is replayed instead of trusted.
-const ProjectionVersion = 7
+const ProjectionVersion = 8
 
 // EventsKept is how many trailing events each agent record retains.
 const EventsKept = 32
@@ -28,7 +28,24 @@ type Projection struct {
 	// UnnamedSessions are pane-only observations (no hcom name yet), keyed
 	// tool + "/" + session id. A later bind by name finds them here.
 	UnnamedSessions map[string]*SessionView `json:"unnamed_sessions"`
-	SnapshotErr     error                   `json:"-"`
+	// Lanes are keyed by lane id (the lane.created event's id).
+	Lanes       map[string]*LaneView `json:"lanes"`
+	SnapshotErr error                `json:"-"`
+}
+
+// LaneView is one lane's folded record. Members are not stored: an agent's
+// LaneID says which lane it is in (see LaneMembers).
+type LaneView struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Names   []string  `json:"names,omitempty"` // earlier names, oldest first
+	Lead    string    `json:"lead"`
+	LeadAt  time.Time `json:"lead_at"`
+	Created time.Time `json:"created"`
+	By      string    `json:"by,omitempty"`
+	PRs     []string  `json:"prs,omitempty"`
+	Repos   []string  `json:"repos,omitempty"`
+	Parent  string    `json:"parent,omitempty"` // reserved; nothing sets it yet
 }
 
 // RequestRecord ties launch-requested to its ready/failed outcome, including
@@ -56,6 +73,9 @@ type AgentView struct {
 	Provenance  Provenance  `json:"provenance"`
 	Assignment  *Assignment `json:"assignment,omitempty"`
 	Annotation  *Annotation `json:"annotation,omitempty"`
+	// LaneID is the lane this incarnation is in (latest assign --lane).
+	LaneID string     `json:"lane_id,omitempty"`
+	LaneAt *time.Time `json:"lane_at,omitempty"`
 	// Manager is the mutable hierarchy pointer ("who manages me"): the latest
 	// assignment, else the launcher. Provenance.Launcher is immutable.
 	Manager    string        `json:"manager,omitempty"`
@@ -141,7 +161,7 @@ type VitalsView struct {
 }
 
 func NewProjection() *Projection {
-	return &Projection{Version: ProjectionVersion, Agents: map[string][]*AgentView{}, Requests: map[string]*RequestRecord{}, UnnamedSessions: map[string]*SessionView{}}
+	return &Projection{Version: ProjectionVersion, Agents: map[string][]*AgentView{}, Requests: map[string]*RequestRecord{}, UnnamedSessions: map[string]*SessionView{}, Lanes: map[string]*LaneView{}}
 }
 
 // Marshal is the canonical snapshot encoding (sorted map keys, UTC times), so
@@ -187,6 +207,10 @@ func (p *Projection) Apply(e Event, _ int64) {
 		if req := p.Requests[e.Request]; req != nil {
 			req.State, req.Reason = "failed", e.Reason
 		}
+		return
+	}
+	if strings.HasPrefix(e.Kind, "lane.") {
+		p.applyLane(e)
 		return
 	}
 	if e.Kind == KindMirrorBatch && len(e.Instances) > 0 {
@@ -338,6 +362,9 @@ func (p *Projection) Apply(e Event, _ int64) {
 		if (e.ClearGroup || e.Group != "") && (v.Assignment == nil || !at.Before(v.Assignment.At)) {
 			v.Assignment = &Assignment{Group: e.Group, By: e.By, At: at}
 		}
+		if e.Lane != "" && (v.LaneAt == nil || !at.Before(*v.LaneAt)) {
+			v.LaneID, v.LaneAt = e.Lane, &at
+		}
 		if e.Manager != "" && (v.ManagerAt == nil || !at.Before(*v.ManagerAt)) {
 			v.Manager, v.ManagerBy = e.Manager, e.By
 			v.ManagerAt = &at
@@ -384,6 +411,68 @@ func (p *Projection) Apply(e Event, _ int64) {
 		reason := firstNonEmpty(e.Reason, map[string]string{KindSessionEnded: "ended", KindSessionSupersede: "superseded"}[e.Kind])
 		v.endNamedSession(e.Session, at, reason)
 	}
+}
+
+// applyLane folds lane.* events. An update or link for an unknown lane id is
+// dropped (no writer appends one; a hand-written line must not invent a lane).
+func (p *Projection) applyLane(e Event) {
+	if e.Kind == KindLaneCreated {
+		if p.Lanes[e.ID] == nil {
+			p.Lanes[e.ID] = &LaneView{ID: e.ID, Name: e.LaneName, Lead: e.Lead, LeadAt: e.At, Created: e.At, By: e.By}
+		}
+		return
+	}
+	lane := p.Lanes[e.Lane]
+	if lane == nil {
+		return
+	}
+	switch e.Kind {
+	case KindLaneUpdated:
+		if e.LaneName != "" && e.LaneName != lane.Name {
+			lane.Names = append(lane.Names, lane.Name)
+			lane.Name = e.LaneName
+		}
+		if e.Lead != "" && !e.At.Before(lane.LeadAt) {
+			lane.Lead, lane.LeadAt = e.Lead, e.At
+		}
+	case KindLaneLink:
+		if e.PR != "" {
+			lane.PRs = toggle(lane.PRs, e.PR, e.Remove)
+		}
+		if e.Repo != "" {
+			lane.Repos = toggle(lane.Repos, e.Repo, e.Remove)
+		}
+	}
+}
+
+func toggle(list []string, value string, remove bool) []string {
+	for i, have := range list {
+		if have == value {
+			if remove {
+				return append(list[:i:i], list[i+1:]...)
+			}
+			return list
+		}
+	}
+	if remove {
+		return list
+	}
+	return append(list, value)
+}
+
+// LaneMembers maps lane id to the live roster names in it, in roster order.
+// Membership is the roster row's own incarnation (ViewForRoster), so a name
+// reused after a close is not a member of its earlier life's lane.
+func (p *Projection) LaneMembers(roster []hcomidentity.Row) map[string][]string {
+	members := map[string][]string{}
+	for i := range roster {
+		view := p.ViewForRoster(&roster[i], roster)
+		if view == nil || view.LaneID == "" || p.Lanes[view.LaneID] == nil {
+			continue
+		}
+		members[view.LaneID] = append(members[view.LaneID], roster[i].Name)
+	}
+	return members
 }
 
 func (p *Projection) unnamedSession(e Event) {

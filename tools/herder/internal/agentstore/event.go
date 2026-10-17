@@ -8,6 +8,7 @@ package agentstore
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,9 @@ const (
 	KindSessionObserved  = "session.observed"
 	KindSessionEnded     = "session.ended"
 	KindSessionSupersede = "session.superseded"
+	KindLaneCreated      = "lane.created"
+	KindLaneUpdated      = "lane.updated"
+	KindLaneLink         = "lane.link"
 )
 
 // Kinds lists every accepted kind in CLI order.
@@ -42,6 +46,7 @@ var Kinds = []string{
 	KindAssign, KindAnnotate,
 	KindMirrorCreated, KindMirrorReady, KindMirrorStopped, KindMirrorBatch,
 	KindSessionObserved, KindSessionEnded, KindSessionSupersede,
+	KindLaneCreated, KindLaneUpdated, KindLaneLink,
 }
 
 // Placement is where a launch was asked to land (launch-requested only).
@@ -85,7 +90,8 @@ type Event struct {
 	FromName    string `json:"from_name,omitempty"`
 	SteerChars  *int   `json:"steer_chars,omitempty"`
 
-	// assign / annotate
+	// assign / annotate. Group and ClearGroup are retired: old lines still
+	// fold, no writer may append them (assign takes Lane).
 	Group      string `json:"group,omitempty"`
 	ClearGroup bool   `json:"clear_group,omitempty"`
 	Title      string `json:"title,omitempty"`
@@ -100,6 +106,15 @@ type Event struct {
 
 	// session.*
 	Path string `json:"path,omitempty"`
+
+	// lane.* (name-less; lane.created's own id is the lane id). Lane is also
+	// assign's membership: the lane id the agent joins.
+	Lane     string `json:"lane,omitempty"`
+	LaneName string `json:"lane_name,omitempty"`
+	Lead     string `json:"lead,omitempty"`
+	PR       string `json:"pr,omitempty"`   // owner/repo#n
+	Repo     string `json:"repo,omitempty"` // owner/repo
+	Remove   bool   `json:"remove,omitempty"`
 }
 
 // Spec is the per-kind field contract, keyed by CLI flag name (the JSON name
@@ -115,7 +130,7 @@ type Spec struct {
 var CommonFlags = []string{"name", "by", "by-kind", "at", "id", "request"}
 
 // BoolFlags identifies event flags that do not take a value.
-var BoolFlags = map[string]bool{"clear-group": true}
+var BoolFlags = map[string]bool{"remove": true}
 
 var mirrorFlags = []string{"hcom-event", "reason", "batch", "instances", "parent-name", "is-hcom-launched", "session"}
 var sessionFlags = []string{"tool", "path", "reason"}
@@ -129,7 +144,7 @@ var specs = map[string]Spec{
 	KindResume:           {Required: []string{"name"}, Optional: []string{"pane", "from-session", "session"}},
 	KindFork:             {Required: []string{"name", "from"}, Optional: []string{"pane"}},
 	KindCompactRequested: {Required: []string{"name"}, Optional: []string{"steer-chars"}},
-	KindAssign:           {Required: []string{"name"}, Optional: []string{"manager", "group", "clear-group"}},
+	KindAssign:           {Required: []string{"name"}, Optional: []string{"manager", "lane"}},
 	KindAnnotate:         {Required: []string{"name"}, Optional: []string{"title", "note"}},
 	KindMirrorCreated:    {Required: []string{"name"}, Optional: mirrorFlags},
 	KindMirrorReady:      {Required: []string{"name"}, Optional: mirrorFlags},
@@ -138,6 +153,9 @@ var specs = map[string]Spec{
 	KindSessionObserved:  {Required: []string{"session"}, Optional: sessionFlags},  // name optional: pane-only session
 	KindSessionEnded:     {Required: []string{"session"}, Optional: sessionFlags},
 	KindSessionSupersede: {Required: []string{"session"}, Optional: sessionFlags},
+	KindLaneCreated:      {Required: []string{"lane-name", "lead"}},
+	KindLaneUpdated:      {Required: []string{"lane"}, Optional: []string{"lane-name", "lead"}},
+	KindLaneLink:         {Required: []string{"lane"}, OneOf: []string{"pr", "repo"}, Optional: []string{"remove"}},
 }
 
 // SpecFor returns the contract for kind.
@@ -185,6 +203,12 @@ func (e Event) present() map[string]bool {
 	set("parent-name", e.ParentName != "")
 	set("is-hcom-launched", e.IsHcomLaunched != nil)
 	set("path", e.Path != "")
+	set("lane", e.Lane != "")
+	set("lane-name", e.LaneName != "")
+	set("lead", e.Lead != "")
+	set("pr", e.PR != "")
+	set("repo", e.Repo != "")
+	set("remove", e.Remove)
 	pane := e.Pane != ""
 	if e.Placement != nil {
 		set("workspace", e.Placement.Workspace != "")
@@ -215,6 +239,9 @@ func (e Event) Validate() error {
 	}
 	if e.ByKind != "" && !contains(ByKinds, e.ByKind) {
 		return fmt.Errorf("invalid by_kind %q (one of %s)", e.ByKind, strings.Join(ByKinds, ", "))
+	}
+	if e.Kind == KindAssign && (e.Group != "" || e.ClearGroup) {
+		return fmt.Errorf("assign no longer takes a group; use --lane")
 	}
 	allowed := map[string]bool{}
 	for _, list := range [][]string{CommonFlags, sp.Required, sp.OneOf, sp.Optional} {
@@ -267,17 +294,25 @@ func (e Event) Validate() error {
 	if e.Kind == KindAnnotate && e.Title == "" && e.Note == "" {
 		return fmt.Errorf("%s requires --title or --note", e.Kind)
 	}
-	if e.Kind == KindAssign && e.Manager == "" && e.Group == "" && !e.ClearGroup {
-		return fmt.Errorf("assign requires --manager, --group, or --clear-group")
+	if e.Kind == KindAssign && e.Manager == "" && e.Lane == "" {
+		return fmt.Errorf("assign requires --manager or --lane")
 	}
-	if e.Kind == KindAssign && e.Group != "" && e.ClearGroup {
-		return fmt.Errorf("assign accepts --group or --clear-group, not both")
+	if e.Lane != "" && !ValidID(e.Lane) {
+		return fmt.Errorf("lane %q is not a lane id", e.Lane)
 	}
-	if strings.ContainsAny(e.Group, "\r\n\t\x00") {
-		return fmt.Errorf("group must not contain control characters")
+	if e.Kind == KindLaneUpdated && e.LaneName == "" && e.Lead == "" {
+		return fmt.Errorf("%s requires --lane-name or --lead", e.Kind)
 	}
-	if utf8.RuneCountInString(strings.TrimSpace(e.Group)) > 80 {
-		return fmt.Errorf("group must not exceed 80 characters")
+	if e.LaneName != "" {
+		if err := ValidLaneName(e.LaneName); err != nil {
+			return err
+		}
+	}
+	if e.PR != "" && !prPattern.MatchString(e.PR) {
+		return fmt.Errorf("pr %q is not owner/repo#number", e.PR)
+	}
+	if e.Repo != "" && !repoPattern.MatchString(e.Repo) {
+		return fmt.Errorf("repo %q is not owner/repo", e.Repo)
 	}
 	if strings.ContainsAny(e.Title, "\r\n\t\x00") {
 		return fmt.Errorf("title must not contain control characters")
@@ -285,10 +320,34 @@ func (e Event) Validate() error {
 	if utf8.RuneCountInString(strings.TrimSpace(e.Title)) > 80 {
 		return fmt.Errorf("title must not exceed 80 characters")
 	}
-	for _, text := range []string{e.Name, e.Manager, e.FromName, e.ParentName, e.By} {
+	for _, text := range []string{e.Name, e.Manager, e.FromName, e.ParentName, e.By, e.Lead} {
 		if strings.ContainsAny(text, "\r\n\t\x00") {
 			return fmt.Errorf("identity fields must not contain control characters")
 		}
+	}
+	return nil
+}
+
+var (
+	repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	prPattern   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$`)
+)
+
+// ValidLaneName is the one lane-name rule: non-empty, at most 80 characters,
+// no control characters, and never UUID-shaped (a name must not read as an id).
+func ValidLaneName(name string) error {
+	trimmed := strings.TrimSpace(name)
+	switch {
+	case trimmed == "":
+		return fmt.Errorf("lane name must not be empty")
+	case trimmed != name:
+		return fmt.Errorf("lane name must not start or end with spaces")
+	case strings.ContainsAny(name, "\r\n\t\x00"):
+		return fmt.Errorf("lane name must not contain control characters")
+	case utf8.RuneCountInString(name) > 80:
+		return fmt.Errorf("lane name must not exceed 80 characters")
+	case ValidID(name):
+		return fmt.Errorf("lane name must not look like a lane id")
 	}
 	return nil
 }

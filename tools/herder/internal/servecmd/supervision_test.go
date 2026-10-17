@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,29 @@ import (
 	"ai-config/tools/herder/internal/herdrcli"
 	"github.com/fsnotify/fsnotify"
 )
+
+var supervisionLane = agentstore.DerivedID([]byte("sup-lane-payload"))
+
+// appendRetired writes a line no writer may append any more (a group
+// assignment): old journals still hold them and they still fold.
+func appendRetired(t *testing.T, store *agentstore.Store, event agentstore.Event) {
+	t.Helper()
+	line, err := agentstore.Encode(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(store.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(store.EventsPath(), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	if _, err := file.Write(line); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // supervisionDeps is a fleet with every row source the board folds: two
 // placed panes, an unplaced row, a Task subagent, a terminal pane; a store
@@ -63,8 +88,16 @@ func supervisionDeps(t *testing.T) dependencies {
 		{ID: agentstore.DerivedID([]byte("sup-e-group-pane")), At: at.Add(8 * time.Second), Kind: agentstore.KindAssign, Name: "impl-kolo", Group: "builders", By: "ziru", ByKind: "agent"},
 		{ID: agentstore.DerivedID([]byte("sup-e-group-subagent")), At: at.Add(9 * time.Second), Kind: agentstore.KindAssign, Name: "kolo_general_purpose_1", Group: "helpers", By: "ziru", ByKind: "agent"},
 		{ID: agentstore.DerivedID([]byte("sup-e-group-unplaced")), At: at.Add(10 * time.Second), Kind: agentstore.KindAssign, Name: "lone", Group: "review", By: "ziru", ByKind: "agent"},
+		{ID: supervisionLane, At: at.Add(11 * time.Second), Kind: agentstore.KindLaneCreated, LaneName: "payload", Lead: "impl-kolo", By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-lane-lead")), At: at.Add(12 * time.Second), Kind: agentstore.KindAssign, Name: "impl-kolo", Lane: supervisionLane, By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-lane-lone")), At: at.Add(13 * time.Second), Kind: agentstore.KindAssign, Name: "lone", Lane: supervisionLane, By: "ziru", ByKind: "agent"},
+		{ID: agentstore.DerivedID([]byte("sup-e-lane-empty")), At: at.Add(14 * time.Second), Kind: agentstore.KindLaneCreated, LaneName: "empty", Lead: "orch-dead", By: "ziru", ByKind: "agent"},
 	}
 	for _, event := range events {
+		if event.Group != "" {
+			appendRetired(t, store, event)
+			continue
+		}
 		if _, err := store.Append(event); err != nil {
 			t.Fatal(err)
 		}
@@ -111,6 +144,10 @@ func TestBoardCarriesManager(t *testing.T) {
 	}
 	if len(got) != len(want) {
 		t.Fatalf("rows = %#v", got)
+	}
+	// The empty lane (no live member) is left out.
+	if wantLanes := []fleetview.Lane{{ID: supervisionLane, Name: "payload", Lead: "impl-kolo", Members: []string{"impl-kolo", "lone"}, Repos: []string{}, Branches: []string{}, PRs: []string{}}}; !reflect.DeepEqual(board.Lanes, wantLanes) {
+		t.Fatalf("lanes = %#v", board.Lanes)
 	}
 	encoded, _ := json.Marshal(board)
 	for _, forbidden := range []string{`"launcher"`, `"mission"`, `"provenance"`, `"binding"`, `"vitals"`} {

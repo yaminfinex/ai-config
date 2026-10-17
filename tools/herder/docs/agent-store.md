@@ -55,10 +55,13 @@ observer|mirror`), `name` (absent on `launch-requested`), `request`.
 | `resume` | pane, from_session, session |
 | `fork` | from_name, pane |
 | `compact-requested` | steer_chars |
-| `assign` | manager, group, clear_group |
+| `assign` | manager, lane (lane id); `group`/`clear_group` are retired: old lines fold, no writer appends them |
 | `annotate` | title, note |
 | `mirror.created/ready/stopped/batch_launched` | hcom_event, reason, batch, instances, parent_name, is_hcom_launched; `mirror.ready` also session (stamped by the serve life mirror from the roster) |
 | `session.observed/ended/superseded` | session, tool, path, reason |
+| `lane.created` | lane_name, lead (no `name`; the event's own id is the lane id) |
+| `lane.updated` | lane, then lane_name and/or lead |
+| `lane.link` | lane, exactly one of pr (`owner/repo#n`) or repo (`owner/repo`), remove |
 
 `spawn.sh` records requested and ready (or failed) around the existing launch.
 When a serve launches it, `FLEET_LAUNCHER` carries the server-derived web
@@ -87,8 +90,41 @@ Before append, the mirror resolves `instance`, `by`, and every `instances`
 entry through the last roster already polled by the serve: exactly one matching
 `base_name` becomes that row's full `name`; zero or multiple matches stay raw.
 
-An `assign` event can change the manager, group, or both. `herder list` prints
-the folded group in its `GROUP` column and `show` includes the assignment.
+An `assign` event can change the manager, the lane, or both. `herder list` prints
+the lane's name in its `LANE` column; `herder show --json` carries
+`.lane {id,name,lead}` (absent when the seat is in no lane) beside `.lane_id`.
+`--group` and `--clear-group` are refused with "use --lane" (exit 2) by
+`herder assign` and `herder register assign`; `Validate` refuses a group on
+any in-process `assign`, so the web endpoint cannot write one either.
+
+## Lanes
+
+A lane is a named line of work with one lead. Three name-less events build it
+(table above) and fold into `Projection.Lanes` keyed by lane id: `{id, name,
+names, lead, lead_at, created, by, prs, repos, parent}`. `names` are the
+earlier names, oldest first, taken from the `lane.updated` history; `parent`
+is reserved and nothing sets it. A later `lead` wins by event time; a
+`lane.updated` or `lane.link` for an unknown lane id is dropped. A lane name is
+1–80 runes, has no control characters or edge spaces, and is never UUID-shaped.
+
+Membership is not stored on the lane: each incarnation's latest `assign
+--lane` is its `lane_id`. `LaneMembers(roster)` lists, per lane, the live
+roster names whose own incarnation is in it, so a name reused after a close is
+not a member of its earlier life's lane. A lane with no live member is hidden
+from `herder lane list` and the board; its record stays and `list --all`
+shows it. There is no close verb.
+
+`herder lane new|rename|lead|move|link|unlink|repo|list|show` (see `herder
+lane --help`) writes these events and `assign --lane`. `<lane>` is an id or a
+current name, case-insensitive; a name shared by several lanes resolves to
+the one with a live member, else the verb asks for an id. `new` refuses a
+name a live lane holds. `new` appends `lane.created` and the lead's `assign`;
+`lead` moves the seat in first when it is elsewhere. `move` and `lead` refuse
+to take a seat out of a lane it leads (exit 2, "set another lead first"), so a
+lane never loses its lead to a move. Any caller may run any verb; `--by` and
+`--by-kind` default as for `herder assign`. Exit 0 done, 1 lane not found, 2
+usage or refused, 3 store unavailable. Without hcom the verbs still write,
+with no lane counted as live.
 
 ## Locking and atomicity
 
@@ -158,8 +194,8 @@ roster-derived mirror cannot prove continuity across a crash or a missed
 wrapper close, so a reused name over an unclosed life still inherits nothing.
 `resume` accepts an optional `session`: the same id as the open session is a
 no-op on sessions, otherwise `from-session` (or the current one) ends
-"resumed" and the new one opens. ProjectionVersion 7 (mirror/resume sessions
-in the fold): older snapshots rebuild on load.
+"resumed" and the new one opens. ProjectionVersion 8 (lanes in the fold;
+7 added mirror/resume sessions): older snapshots rebuild on load.
 
 `mirror.batch_launched` fans out to its `instances` (name optional).
 `session.observed` without a name is a pane-only session kept under
@@ -194,8 +230,8 @@ current. The store is never re-keyed.
 `mirror.*`) is immutable provenance: who launched me. `manager` is the
 mutable hierarchy pointer: who manages me. It defaults to the launcher and
 changes through `assign {name, manager, by}` (`herder assign X --manager Y`).
-The literal manager `human` adopts the seat to the operator. A group is set with
-`herder assign X --group G` and removed with `--clear-group`. Hierarchy views
+The literal manager `human` adopts the seat to the operator. A lane is set with
+`herder assign X --lane <id>` or `herder lane move X <lane>`. Hierarchy views
 hang off `manager`; `launcher` stays for audit.
 
 The web serve appends `annotate` events for display-name writes with the
