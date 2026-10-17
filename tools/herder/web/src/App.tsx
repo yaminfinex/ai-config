@@ -120,7 +120,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       spaces={workspace.spaces.items} activeSpaceID={workspace.spaces.activeID} agents={liveRosterNames(workspace.board)}
       onClose={workspace.closeQuickOpen} onOpenFile={openFile} onOpenFolder={openFolder}
       onMode={(mode) => workspace.actions.showQuickOpen(workspace.quickOpenGroup, mode)}
-      onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} />
+      onOpenAgent={(name) => openAgent(name, true, undefined, true)} onSwitchSpace={workspace.spaces.switch} onCreateSpace={workspace.spaces.createNamed} onOpenLane={workspace.openLane} />
     <ShortcutReference open={workspace.shortcutReference} lens={workspace.onLens} onClose={() => workspace.setShortcutReference(false)} />
     <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     <SpaceSwitcher state={workspace.spaceSwitcher.state} spaces={workspace.spaces.items} activeID={workspace.spaces.activeID}

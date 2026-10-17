@@ -69,6 +69,33 @@ export interface Lane {
   name: string
   lead: string
   members: string[]
+  // repos are owner/name (members' GitHub origins plus explicit ones);
+  // branches are the members' branches. Absent from an older serve.
+  repos?: string[]
+  branches?: string[]
+  // prs are the linked PRs, in link order, then the ones whose description
+  // marks the lane. pr_note replaces them when the serve has no token.
+  prs?: LanePR[]
+  pr_note?: string
+}
+
+// LanePR is one pull request as the serve last polled it. A linked PR not
+// polled yet has only repo, number, url and linked.
+export interface LanePR {
+  repo: string
+  number: number
+  title: string
+  url: string
+  state: '' | 'OPEN' | 'MERGED' | 'CLOSED'
+  draft: boolean
+  mergeable?: string
+  checks?: string
+  review?: string
+  unresolved: number
+  head: string
+  linked?: boolean
+  // holder is a lane member whose checkout is on the head branch.
+  holder?: string
 }
 
 export interface SubstrateEvent {

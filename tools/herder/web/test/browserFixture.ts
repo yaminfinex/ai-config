@@ -181,7 +181,7 @@ export function fixtureAPI(agents: string[], options: {
   return { plugin, state, posts, board, send, entryRequests, subscriptionUpdates, holdEntries, messages, failSends, opens: () => opens, heldEntries: () => held.length }
 }
 
-type FixtureLane = { id: string, name: string, lead: string, members: string[] }
+type FixtureLane = { id: string, name: string, lead: string, members: string[], prs?: unknown[], pr_note?: string }
 type FixtureBoard = ReturnType<typeof fixtureAPI>['board'] & { lanes?: FixtureLane[] }
 
 // lanesAPI adds the serve's lane endpoints to a fixtureAPI: POST /api/lanes

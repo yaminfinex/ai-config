@@ -77,11 +77,12 @@ export type QuickOpenRowsContext = {
   reassignSubject?: string
   rows: Row[]
   descendantsOf: (subject: string) => Set<string>
+  board?: Board
 }
 
 export function quickOpenRows(mode: QuickOpenMode, query: string, context: QuickOpenRowsContext): QuickOpenActionRow[] {
   return mode.kind === 'normal'
-    ? quickOpenActionRows(query, context.spaces, context.agents, context.hasActivePanel, context.activeSpaceID, context.reassignSubject)
+    ? quickOpenActionRows(query, context.spaces, context.agents, context.hasActivePanel, context.activeSpaceID, context.reassignSubject, context.board)
     : reassignCandidates(mode.subject, context.rows, context.descendantsOf, query)
 }
 

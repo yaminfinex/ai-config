@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Board } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { bindLensShortcuts, type LensKeyActions } from '../layout/shellShortcuts.ts'
-import { needsYou, rekeyRecord, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
+import { prSummary } from '../../shared/lanePRModel.ts'
+import { laneOfSpace, needsYou, rekeyRecord, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
 import {
   cardLook,
   cardShape,
@@ -53,6 +54,8 @@ export type LensCard = {
   status: LensStatus | null
   others: number
   text: string
+  // prs is a lane card's PR line (or its note); empty on other cards.
+  prs: string
   width: number
   lines: number
 }
@@ -124,9 +127,11 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
         const who = whoLine(members, agent)
         const fallback = statusText(agentRow, agent !== undefined && needing.has(agent))
         const body = !agent || !agentRow ? fallback : text === 'cwd' ? agentFolder(board, agent) : text === 'answer' ? answer(agent) ?? fallback : fallback
+        const lane = board?.lanes?.find((item) => item.id === laneOfSpace(space.id))
         return {
           id: space.id, name: space.name, needs, look: cardLook(needs, space.id === chosen, status),
           agent: who.name, status, others: who.others, text: body,
+          prs: lane?.pr_note ?? (lane?.prs ?? []).map(prSummary).join(' · '),
           ...cardShape(row, size),
         }
       }),

@@ -777,14 +777,15 @@ export function useWorkspaceController(initialRoute: Exclude<Route, { page: 'mis
     }, () => { if (!cancelled) setLaneMoveDone(true) })
     return () => { cancelled = true }
   }, [boardIn, historySuppressor, membersReady, moveMembers, rekeyLens, spacesPulled, spacesRuntime.store, switchSpace])
-  const openLaneRef = useRef<(laneID: string) => void>(() => undefined)
-  const openLane = useCallback((laneID: string) => openLaneRef.current(laneID), [])
+  // openLane goes to a lane's space; with agent, it zooms in with that agent focused.
+  const openLaneRef = useRef<(laneID: string, agent?: string) => boolean>(() => false)
+  const openLane = useCallback((laneID: string, agent?: string) => openLaneRef.current(laneID, agent), [])
   // The stream keeps the open panels' transcripts live, and the peeked agent's on the lens.
   const peeked = view.kind === 'lens' && lens.peek?.agent ? [lens.peek.agent] : []
   useFleetStream({ agents: spaceStreamAgents([...agentNames, ...peeked], openBySpace), screens: screenPaneIDs, watches: fileWatchTargets }, onStateChanged)
   // A space chosen anywhere but a zoom (⌥Tab or ⌘K on the lens) zooms into it.
   const switchSpaceAnywhere = useCallback((id: string, from?: 'quick-open') => viewRef.current.kind === 'zoom' ? switchSpaceFocusing(id, from) : lens.zoomCard(id), [lens.zoomCard, switchSpaceFocusing])
-  openLaneRef.current = (laneID) => { switchSpaceAnywhere(laneSpaceID(laneID)) }
+  openLaneRef.current = (laneID, agent) => agent ? zoomInto(laneSpaceID(laneID), agent) : switchSpaceAnywhere(laneSpaceID(laneID))
   const docked = useCallback(() => viewRef.current.kind === 'zoom', [])
   useWorkspaceShortcuts({ apiRef, docked, shortcutReference, setShortcutReference, showQuickOpen, closePanel, toggleNotesRail, stepSpace: lens.stepSpace, reply: lens.startReply, toggleRead, arrive })
   const spaceSwitcher = useSpaceSwitcher({ enabled: Boolean(spacesRuntime.store), spaces, activeSpaceID, switchSpace: switchSpaceAnywhere })

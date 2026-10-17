@@ -189,6 +189,7 @@ h2, h3, p { margin-top: 0; }
 .agent-row { cursor: pointer; }
 .shell-row { color: var(--dimmer); font-style: italic; }
 .terminal-glyph { flex: 0 0 auto; color: var(--terminal-dim); font: 10px var(--mono); font-style: normal; }
+.pr-glyph { flex: 0 0 auto; color: var(--dim); font: 9px var(--mono); }
 .status-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--status-unknown); }
 .status-dot.active { background: var(--accent); box-shadow: 0 0 5px var(--accent-glow); }
 .status-dot.listening { background: var(--green); }
@@ -889,6 +890,7 @@ pre { max-width: 100%; overflow-x: auto; padding: 9px; border-radius: 5px; backg
 .lens-title, .lens-who { display: flex; min-width: 0; align-items: center; gap: 6px; }
 .lens-title strong, .lens-agent { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lens-who { color: var(--lens-slate); }
+.lens-prs { overflow: hidden; color: var(--lens-slate); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .lens-pill { margin-left: auto; padding: 0 7px; border-radius: 999px; background: var(--lens-pill-bg); color: var(--lens-pill-text); font-weight: 600; white-space: nowrap; }
 .lens-glyph { display: inline-flex; width: 10px; flex: 0 0 10px; justify-content: center; }
 .lens-glyph.blocked { color: var(--lens-red); }

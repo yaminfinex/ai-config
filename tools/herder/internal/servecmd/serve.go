@@ -32,6 +32,7 @@ import (
 	"ai-config/tools/herder/internal/fileresolver"
 	"ai-config/tools/herder/internal/fileroots"
 	"ai-config/tools/herder/internal/fleetview"
+	"ai-config/tools/herder/internal/githubprs"
 	"ai-config/tools/herder/internal/hcomevents"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/hcommessage"
@@ -110,7 +111,9 @@ type dependencies struct {
 	stateChanges         *stateChangeBroker
 	eventStreams         *eventStreams // Live SSE connections a subscription update can retarget.
 	rosterCache          *rosterCache
-	rootSets             *rootSetCache // Nil builds the root set per request.
+	rootSets             *rootSetCache     // Nil builds the root set per request.
+	laneRepos            *repoContextCache // Nil reads a lane member's git facts per board.
+	prs                  *githubprs.Poller // Nil: lanes carry no PRs.
 	// store is the agent store the serve opens once at Run: the life mirror
 	// appends to it and the board folds a read-only projection from it.
 	store *agentstore.Store
@@ -534,6 +537,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.stateChanges = newStateChangeBroker()
 	runtimeDependencies.rosterCache = &rosterCache{now: runtimeDependencies.now}
 	runtimeDependencies.rootSets = &rootSetCache{}
+	runtimeDependencies.laneRepos = &repoContextCache{}
+	runtimeDependencies.prs = startPRPoller(ctx, runtimeDependencies.audit)
 	runtimeDependencies.turnEnds = startTurnEnds(ctx, runtimeDependencies)
 	if runtimeDependencies.turnEnds != nil {
 		runtimeDependencies.replyEnds = newReplyEnds(readReplyTail)
@@ -1268,9 +1273,11 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 		}
 	}
 	board := fleetview.Build(snapshot, roster, parents)
-	fleetview.FoldBoard(&board, roster, readProjection(deps))
+	proj := readProjection(deps)
+	fleetview.FoldBoard(&board, roster, proj)
 	foldBoardVitals(&board, roster, deps.boardVitals)
 	foldBoardTurnEnds(&board, roster, deps.turnEnds, deps.replyEnds)
+	foldBoardLanes(&board, roster, proj, deps.laneRepos.reader(ctx, deps.repoContext), deps.prs)
 	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace

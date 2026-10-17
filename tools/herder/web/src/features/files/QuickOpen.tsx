@@ -25,7 +25,7 @@ function useDebounced(value: string, delay = 120) {
   return debounced
 }
 
-export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpaceID, agents, onClose, onMode, onOpenFile, onOpenFolder, onOpenAgent, onSwitchSpace, onCreateSpace }: {
+export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpaceID, agents, onClose, onMode, onOpenFile, onOpenFolder, onOpenAgent, onSwitchSpace, onCreateSpace, onOpenLane }: {
   open: boolean
   mode: QuickOpenMode
   agent?: string
@@ -41,6 +41,8 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   onOpenAgent: (name: string) => void
   onSwitchSpace: (id: string, from: 'quick-open') => boolean
   onCreateSpace: (name: string) => boolean
+  // onOpenLane zooms into a lane's space with agent focused.
+  onOpenLane: (laneID: string, agent: string) => boolean
 }) {
   const workspaceActions = useWorkspaceActionsContext()
   const workspaceData = useWorkspaceData()
@@ -67,7 +69,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const rows = useMemo(() => flattenedBoardRows(board), [board])
   const rowContext = {
     spaces, agents, hasActivePanel: Boolean(workspaceData.activePanel), activeSpaceID,
-    reassignSubject: agent, rows, descendantsOf: (subject: string) => reassignDescendants(subject, rows),
+    reassignSubject: agent, rows, descendantsOf: (subject: string) => reassignDescendants(subject, rows), board,
   }
   const actions = quickOpenRows(mode, query, rowContext)
   const settled = query.trim() === debounced
@@ -112,7 +114,11 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
   const noteIndex = noteRow ? leadingCount + candidates.length : -1
   const chooseAction = async (row: QuickOpenActionRow) => {
     let chosen = true
-    if (row.kind === 'space') {
+    if (row.kind === 'pr') {
+      // As a space switch: the zoom focuses the lead's composer.
+      chosen = onOpenLane(row.lane, row.lead)
+      if (chosen) restoreFocus.current = null
+    } else if (row.kind === 'space') {
       // The switch focuses the space's composer (the active space's too), so closing must not hand focus back.
       chosen = onSwitchSpace(row.id, 'quick-open')
       if (chosen) restoreFocus.current = null
@@ -144,6 +150,7 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
     }
     if (chosen) onClose()
   }
+  const prActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'pr')
   const spaceActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'space' || row.kind === 'create')
   const sendActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'send-space' || row.kind === 'send-new')
   const agentActions = actions.map((row, index) => ({ row, index })).filter(({ row }) => row.kind === 'agent')
@@ -193,6 +200,11 @@ export function QuickOpen({ open, mode, agent, groupID, board, spaces, activeSpa
             onMouseDown={(event) => event.preventDefault()} onClick={() => { void chooseAction(row) }}>
             <span>{row.label}</span>{row.kind === 'reassign' && row.title && <span className="quick-open-secondary">{row.title}</span>}
           </button>)}
+        </section>}
+        {prActions.length > 0 && <section className="quick-open-section" aria-label="Pull requests"><strong>Pull requests</strong>
+          {prActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}
+            className={activeIndex === index ? 'active' : ''} key={row.kind === 'pr' ? `${row.lane}:${row.ref}` : index}
+            onMouseDown={(event) => event.preventDefault()} onClick={() => chooseAction(row)}>{row.label}</button>)}
         </section>}
         {spaceActions.length > 0 && <section className="quick-open-section" aria-label="Spaces"><strong>Spaces</strong>
           {spaceActions.map(({ row, index }) => <button type="button" role="option" aria-selected={activeIndex === index}

@@ -1,11 +1,12 @@
 import { workspaceName } from '../../shared/workspaceName.ts'
 import { screenPanePresentation } from '../screen/screenPresentation.ts'
-import type { Board, Pane, Row, Workspace } from '../../types.ts'
+import { prFacts, prLabel } from '../../shared/lanePRModel.ts'
+import type { Board, Lane, LanePR, Pane, Row, Workspace } from '../../types.ts'
 
 export type SidebarNodeKind =
   | 'root' | 'workspace' | 'pane' | 'subagent' | 'unplaced'
   | 'agent' | 'tombstone' | 'terminals' | 'terminals-workspace'
-  | 'lane' | 'no-lane'
+  | 'lane' | 'no-lane' | 'pr'
 
 export type SidebarNode = {
   id: string
@@ -32,6 +33,9 @@ export type SidebarNode = {
   // placeholder marks the "+ lane" header: a name with no lane yet; the
   // first agent dropped on it creates the lane with that agent as lead.
   placeholder?: boolean
+  // pr is a lane's pull request row (kind 'pr'); a 'pr' row without one is
+  // the lane's note that PRs cannot be read.
+  pr?: LanePR
 }
 
 export function buildSidebarNodes(board: Board | undefined): Map<string, SidebarNode> {
@@ -288,7 +292,7 @@ export function buildLaneNodes(board: Board | undefined, pendingLane: string | n
 
   // A row is a root under a header when it is a member and its manager or
   // parent is not (otherwise it hangs under that one).
-  const addHeader = (id: string, kind: 'lane' | 'no-lane', name: string, lane: string | undefined, lead: string | undefined, member: (agent: string) => boolean) => {
+  const addHeader = (id: string, kind: 'lane' | 'no-lane', name: string, lane: string | undefined, lead: string | undefined, member: (agent: string) => boolean, prs: string[] = []) => {
     const placed = new Set<string>()
     const addAgent = (flat: FlatRow): string => {
       const { row } = flat
@@ -326,11 +330,27 @@ export function buildLaneNodes(board: Board | undefined, pendingLane: string | n
     }
     if (children.length === 0) return
     const summary = summarise(result, children)
+    children.unshift(...prs)
     result.set(id, { id, kind, name, children, lane, summary, count: summary.total, ...(lead ? { secondary: `lead ${lead}` } : {}) })
     root.children.push(id)
   }
+  // A lane's PR rows come first under its header, then its note.
+  const prRows = (header: string, lane: Lane): string[] => {
+    const ids = (lane.prs ?? []).map((pr) => {
+      const id = `${header}/pr:${pr.repo}#${pr.number}`
+      const facts = [...prFacts(pr), ...pr.holder ? [`${pr.holder} on ${pr.head}`] : []].join(', ')
+      result.set(id, { id, kind: 'pr', name: prLabel(pr), secondary: facts, children: [], lane: lane.id, pr })
+      return id
+    })
+    if (lane.pr_note) {
+      result.set(`${header}/pr-note`, { id: `${header}/pr-note`, kind: 'pr', name: lane.pr_note, children: [], lane: lane.id })
+      ids.push(`${header}/pr-note`)
+    }
+    return ids
+  }
   for (const lane of board.lanes ?? []) {
-    addHeader(laneHeaderID(lane.id), 'lane', lane.name, lane.id, lane.lead, (agent) => laneOf.get(agent) === lane.id)
+    const header = laneHeaderID(lane.id)
+    addHeader(header, 'lane', lane.name, lane.id, lane.lead, (agent) => laneOf.get(agent) === lane.id, prRows(header, lane))
   }
   if (pendingLane) {
     result.set(pendingLaneID, { id: pendingLaneID, kind: 'lane', name: pendingLane, children: [], placeholder: true, summary: { total: 0, active: 0 }, count: 0 })

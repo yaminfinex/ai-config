@@ -1,6 +1,9 @@
+import { parsePRQuery, prLabel, prLanes } from '../../shared/lanePRModel.ts'
+import type { Board } from '../../types.ts'
 import type { SpaceDefinition } from '../spaces/spacesModel.ts'
 
 export type QuickOpenActionRow =
+  | { kind: 'pr', lane: string, lead: string, ref: string, label: string }
   | { kind: 'space', id: string, label: string }
   | { kind: 'agent', name: string, label: string }
   | { kind: 'create', name: string, label: string }
@@ -14,7 +17,7 @@ export type QuickOpenMode = { kind: 'normal' } | { kind: 'reassign', subject: st
 
 export type QuickOpenKeyboardRow = { kind: 'action', index: number } | { kind: 'file', index: number }
 
-const OPENABLE_KINDS: QuickOpenActionRow['kind'][] = ['space', 'agent', 'reassign']
+const OPENABLE_KINDS: QuickOpenActionRow['kind'][] = ['pr', 'space', 'agent', 'reassign']
 
 function matchRank(label: string, query: string) {
   const normalized = label.toLocaleLowerCase()
@@ -39,9 +42,16 @@ export function quickOpenActionRows(
   hasActivePanel = false,
   activeSpaceID: string | null = null,
   reassignSubject?: string,
+  board?: Board,
 ): QuickOpenActionRow[] {
   const name = rawQuery.trim()
   const query = name.toLocaleLowerCase()
+  // A typed `#123`, `owner/repo#123` or PR URL lists each lane holding that
+  // PR first; choosing one zooms into the lane with its lead.
+  const pr = parsePRQuery(name)
+  const prRows: QuickOpenActionRow[] = pr ? prLanes(board, pr).map(({ lane, pr }) => ({
+    kind: 'pr', lane: lane.id, lead: lane.lead, ref: `${pr.repo}#${pr.number}`, label: `${prLabel(pr)} · ${pr.repo} · lane ${lane.name}`,
+  })) : []
   const spaceRows: QuickOpenActionRow[] = ranked(spaces, (space) => space.name, query)
     .map((space) => ({ kind: 'space', id: space.id, label: space.name }))
   const agentRows: QuickOpenActionRow[] = ranked(agents, (agent) => agent, query)
@@ -55,8 +65,9 @@ export function quickOpenActionRows(
     { kind: 'reassign-action' as const, subject: reassignSubject, label: `Reassign ${reassignSubject}…` },
   ], (row) => `${row.label} ${row.subject}`, query) : []
   return [
+    ...prRows,
     ...spaceRows,
-    ...name && !exactSpace
+    ...name && !pr && !exactSpace
       ? [{ kind: 'create' as const, name, label: `Create space “${name}”` }]
       : [],
     ...sendRows,
@@ -78,6 +89,7 @@ export function quickOpenKeyboardRows(rows: QuickOpenActionRow[], fileCount: num
 // landing under a selected note row) never move it onto a different row.
 export function quickOpenRowKey(row: QuickOpenActionRow): string {
   switch (row.kind) {
+    case 'pr': return `action:pr:${row.lane}:${row.ref}`
     case 'space': return `action:space:${row.id}`
     case 'agent': return `action:agent:${row.name}`
     case 'create': return `action:create:${row.name}`
@@ -117,8 +129,10 @@ export function quickOpenInitialSelection(rows: QuickOpenActionRow[], rawQuery: 
 }
 
 // The top-match tier of one action row, best first: exact space, exact agent, any other exact action,
-// space prefix, agent prefix, space contains, agent contains. Create and note never rank here.
+// space prefix, agent prefix, space contains, agent contains. Create and note never rank here; a PR row
+// (listed only when the query names that PR) always ranks first.
 function topMatchTier(row: QuickOpenActionRow, query: string) {
+  if (row.kind === 'pr') return 0
   const rank = matchRank(row.label, query)
   if (rank < 0) return -1
   if (row.kind === 'space') return [0, 3, 5][rank]

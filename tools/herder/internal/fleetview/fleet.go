@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ai-config/tools/herder/internal/agentstore"
+	"ai-config/tools/herder/internal/githubprs"
 	"ai-config/tools/herder/internal/hcomidentity"
 	"ai-config/tools/herder/internal/herdrcli"
 	"ai-config/tools/herder/internal/repoctx"
@@ -228,7 +229,7 @@ func FoldBoard(board *Board, roster []hcomidentity.Row, proj *agentstore.Project
 
 // BoardLanes lists every lane with a live member, by name. Members are live
 // roster names in roster order; a lane with none is left out (its record
-// stays). Repos, branches and PRs are filled by a later unit.
+// stays). The serve fills repos, branches and PRs (servecmd/laneprs.go).
 func BoardLanes(roster []hcomidentity.Row, proj *agentstore.Projection) []Lane {
 	lanes := []Lane{}
 	if proj == nil {
@@ -236,7 +237,7 @@ func BoardLanes(roster []hcomidentity.Row, proj *agentstore.Projection) []Lane {
 	}
 	for id, members := range proj.LaneMembers(roster) {
 		lane := proj.Lanes[id]
-		lanes = append(lanes, Lane{ID: id, Name: lane.Name, Lead: lane.Lead, Members: members, Repos: []string{}, Branches: []string{}, PRs: []string{}})
+		lanes = append(lanes, Lane{ID: id, Name: lane.Name, Lead: lane.Lead, Members: members, Repos: []string{}, Branches: []string{}, PRs: []githubprs.PR{}})
 	}
 	sort.Slice(lanes, func(i, j int) bool {
 		if a, b := strings.ToLower(lanes[i].Name), strings.ToLower(lanes[j].Name); a != b {
@@ -257,13 +258,15 @@ type Board struct {
 
 // Lane is one board lane: the record's name and lead plus its live members.
 type Lane struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Lead     string   `json:"lead"`
-	Members  []string `json:"members"`
-	Repos    []string `json:"repos"`
-	Branches []string `json:"branches"`
-	PRs      []string `json:"prs"`
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Lead     string         `json:"lead"`
+	Members  []string       `json:"members"`
+	Repos    []string       `json:"repos"`
+	Branches []string       `json:"branches"`
+	PRs      []githubprs.PR `json:"prs"`
+	// PRNote is the one line shown instead of PRs (no GitHub token).
+	PRNote string `json:"pr_note,omitempty"`
 }
 
 type Workspace struct {

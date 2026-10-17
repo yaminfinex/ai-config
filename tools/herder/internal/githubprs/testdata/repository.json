@@ -1,0 +1,152 @@
+{
+ "data": {
+  "repository": {
+   "open": {
+    "nodes": [
+     {
+      "number": 309,
+      "title": "PR 309 title",
+      "url": "https://github.com/acme/app/pull/309",
+      "state": "OPEN",
+      "isDraft": true,
+      "mergeable": "MERGEABLE",
+      "headRefName": "branch-309",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "body": "Linked by hand.",
+      "statusCheckRollup": {
+       "state": "FAILURE"
+      },
+      "reviewThreads": {
+       "nodes": []
+      }
+     },
+     {
+      "number": 314,
+      "title": "PR 314 title",
+      "url": "https://github.com/acme/app/pull/314",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefName": "branch-314",
+      "reviewDecision": null,
+      "body": "Shipping the derive flag.\n\n<!-- lane: lane-a -->\n",
+      "statusCheckRollup": {
+       "state": "SUCCESS"
+      },
+      "reviewThreads": {
+       "nodes": [
+        {
+         "isResolved": false
+        }
+       ]
+      }
+     },
+     {
+      "number": 313,
+      "title": "PR 313 title",
+      "url": "https://github.com/acme/app/pull/313",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefName": "branch-313",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "body": "No marker here.",
+      "statusCheckRollup": {
+       "state": "SUCCESS"
+      },
+      "reviewThreads": {
+       "nodes": []
+      }
+     },
+     {
+      "number": 312,
+      "title": "PR 312 title",
+      "url": "https://github.com/acme/app/pull/312",
+      "state": "OPEN",
+      "isDraft": true,
+      "mergeable": "MERGEABLE",
+      "headRefName": "branch-312",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "body": "Moves the token name.\n<!-- lane: lane-a -->\n<!--lane:lane-b-->",
+      "statusCheckRollup": {
+       "state": "SUCCESS"
+      },
+      "reviewThreads": {
+       "nodes": [
+        {
+         "isResolved": false
+        }
+       ]
+      }
+     },
+     {
+      "number": 233,
+      "title": "PR 233 title",
+      "url": "https://github.com/acme/app/pull/233",
+      "state": "OPEN",
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefName": "branch-233",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "body": "Old work.",
+      "statusCheckRollup": {
+       "state": "SUCCESS"
+      },
+      "reviewThreads": {
+       "nodes": []
+      }
+     }
+    ]
+   },
+   "n309": {
+    "number": 309,
+    "title": "PR 309 title",
+    "url": "https://github.com/acme/app/pull/309",
+    "state": "OPEN",
+    "isDraft": true,
+    "mergeable": "MERGEABLE",
+    "headRefName": "branch-309",
+    "reviewDecision": "REVIEW_REQUIRED",
+    "body": "Linked by hand.",
+    "statusCheckRollup": {
+     "state": "FAILURE"
+    },
+    "reviewThreads": {
+     "nodes": []
+    }
+   },
+   "n999": null,
+   "n7": {
+    "number": 7,
+    "title": "PR 7 title",
+    "url": "https://github.com/acme/app/pull/7",
+    "state": "MERGED",
+    "isDraft": false,
+    "mergeable": "UNKNOWN",
+    "headRefName": "branch-7",
+    "reviewDecision": null,
+    "body": "Merged work.",
+    "statusCheckRollup": null,
+    "reviewThreads": {
+     "nodes": []
+    }
+   }
+  }
+ },
+ "errors": [
+  {
+   "type": "NOT_FOUND",
+   "path": [
+    "repository",
+    "n999"
+   ],
+   "locations": [
+    {
+     "line": 5,
+     "column": 5
+    }
+   ],
+   "message": "Could not resolve to a PullRequest with the number of 999."
+  }
+ ]
+}

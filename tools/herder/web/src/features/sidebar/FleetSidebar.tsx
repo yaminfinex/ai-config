@@ -167,6 +167,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
       const node = item.getItemData()
       if (node.pane?.agent && node.pane.agent !== '-') onPreviewAgent(node.pane.agent)
       else if (node.kind === 'pane' && node.pane?.agent === '-') onOpenTerminal(node.pane as Pane)
+      else if (node.pr) window.open(node.pr.url, '_blank', 'noopener')
     },
     hotkeys: {
       customPrimaryActionEnter: { hotkey: 'Enter', preventDefault: true, handler: (_event, currentTree) => currentTree.getFocusedItem()?.primaryAction() },
@@ -227,7 +228,8 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
         const icon = pane?.agent && pane.agent !== '-' ? <AgentStatusDot status={pane.bus_status} />
           : pane?.agent === '-' ? <span className="terminal-glyph">›_</span>
             : node.kind === 'tombstone' ? <span className="tombstone-glyph">⊘</span>
-              : <span>▰</span>
+              : node.kind === 'pr' ? <span className="pr-glyph">{node.pr ? 'PR' : '!'}</span>
+                : <span>▰</span>
         return <TreeRow
           key={item.getId()}
           itemProps={{
@@ -314,7 +316,7 @@ export const FleetSidebar = memo(function FleetSidebar({ board, view, activeAgen
             {pane?.agent && pane.agent !== '-' && <DraftMark drafts={drafts[pane.agent]} />}
             {signal && <span className="bus-status">{signal}</span>}
             {pane && pane.agent !== '-' && pane.gap !== '-' && <span className="gap-badge">{gapLabel(pane.gap)}</span>}</>}
-          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${node.lead ? ' · lane lead' : ''} · ${sideHint}` : groupHeader ? laneHeaderTooltip(node, memberCount) : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
+          title={pane ? pane.agent === '-' ? `${pane.pane_id} · ${unattributedTerminalWarning} · ${sideHint}` : `${pane.title ? `${pane.agent} · ` : ''}${node.workspaceLabel ? `${node.workspaceLabel} · ` : ''}${pane.parent_agent ? `subagent of ${pane.parent_agent}` : pane.pane_id}${node.tabLabel ? ` · ${node.tabLabel}` : ''}${pane.manager ? ` · manager ${pane.manager}${pane.manager_state && pane.manager_state !== 'live' ? ` (${pane.manager_state})` : ''}` : ''} · ${pane.tool} · herdr ${pane.herdr_status}${signal ? ` · bus ${signal}` : ''}${contextUsedTooltip(node.contextUsed)}${node.lead ? ' · lane lead' : ''} · ${sideHint}` : groupHeader ? laneHeaderTooltip(node, memberCount) : node.pr ? `${node.pr.repo}#${node.pr.number} · ${node.secondary || 'open'} · head ${node.pr.head || '?'} · open on GitHub` : node.kind === 'tombstone' ? `${node.name} · ended · its reports wait here until reparented` : node.name}
           onToggle={() => { if (item.isExpanded()) item.collapse(); else item.expand() }}
         />
       })}
