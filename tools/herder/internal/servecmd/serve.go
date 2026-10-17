@@ -77,6 +77,7 @@ type dependencies struct {
 	life                 func(context.Context, *hcomevents.Cursor, func(hcomevents.Life) error) error
 	listening            func(context.Context, *hcomevents.Cursor, func(hcomevents.Status) error) error
 	turnEnds             *hcomevents.TurnEnds // Folded turn ends; nil means omit turn_end_id.
+	replyEnds            *replyEnds           // Turn ends judged plain text; nil means omit reply_end_id.
 	recentMessages       func(context.Context, int) ([]hcomevents.Message, error)
 	latestDelivery       func(context.Context, string) (hcomevents.DeliveryWatermark, bool, error)
 	entryEnd             func(hcomidentity.Row) (int64, error)
@@ -532,6 +533,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	runtimeDependencies.rosterCache = &rosterCache{now: runtimeDependencies.now}
 	runtimeDependencies.rootSets = &rootSetCache{}
 	runtimeDependencies.turnEnds = startTurnEnds(ctx, runtimeDependencies)
+	if runtimeDependencies.turnEnds != nil {
+		runtimeDependencies.replyEnds = newReplyEnds(readReplyTail)
+	}
 	var socket *herdersock.Server
 	stateDir, stateDirErr := herderstate.Dir()
 	if stateDirErr != nil {
@@ -1243,7 +1247,7 @@ func buildBoard(ctx context.Context, deps dependencies, snapshot herdrcli.Snapsh
 	board := fleetview.Build(snapshot, roster, parents)
 	fleetview.FoldBoard(&board, roster, readProjection(deps))
 	foldBoardVitals(&board, roster, deps.boardVitals)
-	foldBoardTurnEnds(&board, roster, deps.turnEnds)
+	foldBoardTurnEnds(&board, roster, deps.turnEnds, deps.replyEnds)
 	workspaces := make(map[string]herdrcli.Workspace, len(snapshot.Workspaces))
 	for _, workspace := range snapshot.Workspaces {
 		workspaces[workspace.WorkspaceID] = workspace
@@ -1326,12 +1330,13 @@ func foldBoardVitals(board *fleetview.Board, roster []hcomidentity.Row, lookup s
 	foldRows(board.Unplaced)
 }
 
-// foldBoardTurnEnds stamps each agent's latest turn end on every row and
-// pane that names it, placed or not, so a browser's read marker follows the
-// agent. hcom keys status events by base name; a row resolves through its
-// roster row, and only a turn folded from that row's current session counts,
-// so a new incarnation or a namesake never inherits another session's turn.
-func foldBoardTurnEnds(board *fleetview.Board, roster []hcomidentity.Row, ends *hcomevents.TurnEnds) {
+// foldBoardTurnEnds stamps each agent's latest turn end, and its latest
+// turn end that ended with plain text (replies), on every row and pane that
+// names it, placed or not, so a browser's read marker follows the agent.
+// hcom keys status events by base name; a row resolves through its roster
+// row, and only a turn folded from that row's current session counts, so a
+// new incarnation or a namesake never inherits another session's turn.
+func foldBoardTurnEnds(board *fleetview.Board, roster []hcomidentity.Row, ends *hcomevents.TurnEnds, replies *replyEnds) {
 	if ends == nil {
 		return
 	}
@@ -1339,22 +1344,22 @@ func foldBoardTurnEnds(board *fleetview.Board, roster []hcomidentity.Row, ends *
 	for _, row := range roster {
 		rosterRows[row.Name] = row
 	}
-	turnEnd := func(name string) int64 {
+	turnEnd := func(name string) (int64, int64) {
 		row, ok := rosterRows[name]
 		if name == "" || !ok {
-			return 0
+			return 0, 0
 		}
 		instance := row.BaseName
 		if instance == "" {
 			instance = row.Name
 		}
 		id, _ := ends.Lookup(instance, row.SessionID)
-		return id
+		return id, replies.lookup(row, instance, id)
 	}
 	var foldRows func([]fleetview.Row)
 	foldRows = func(rows []fleetview.Row) {
 		for i := range rows {
-			rows[i].TurnEndID = turnEnd(rows[i].Agent)
+			rows[i].TurnEndID, rows[i].ReplyEndID = turnEnd(rows[i].Agent)
 			if rows[i].Subagents != nil {
 				foldRows(*rows[i].Subagents)
 			}
@@ -1364,7 +1369,7 @@ func foldBoardTurnEnds(board *fleetview.Board, roster []hcomidentity.Row, ends *
 		for tabIndex := range board.Workspaces[workspaceIndex].Tabs {
 			panes := board.Workspaces[workspaceIndex].Tabs[tabIndex].Panes
 			for paneIndex := range panes {
-				panes[paneIndex].TurnEndID = turnEnd(panes[paneIndex].Agent)
+				panes[paneIndex].TurnEndID, panes[paneIndex].ReplyEndID = turnEnd(panes[paneIndex].Agent)
 				foldRows(panes[paneIndex].Subagents)
 			}
 		}

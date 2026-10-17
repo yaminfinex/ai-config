@@ -43,12 +43,17 @@ export function spaceStreamAgents(activeAgents: readonly string[], openBySpace: 
   return [...new Set([...activeAgents, ...Object.values(openBySpace).flat()])].slice(0, streamAgentLimit)
 }
 
-// turnEnd is the turn-end signal: the id of the agent's latest completed
-// turn, stamped by the serve on placed panes and unplaced rows alike. No id
-// means nothing can be unread; a retired or stopped agent never counts.
+// turnEnd is the unread signal: the id of the agent's latest turn that
+// ended with plain text (reply_end_id), stamped by the serve on placed panes
+// and unplaced rows alike; a turn ending with only <status> is not new. No
+// id means nothing can be unread; a retired or stopped agent never counts.
 export function turnEnd(row: Row | undefined): number | null {
+  return liveEnd(row, row?.reply_end_id)
+}
+
+function liveEnd(row: Row | undefined, id: number | undefined): number | null {
   if (!row || row.bus_status === 'retired' || row.bus_status === 'stopped') return null
-  return typeof row.turn_end_id === 'number' && row.turn_end_id > 0 ? row.turn_end_id : null
+  return typeof id === 'number' && id > 0 ? id : null
 }
 
 // Only a listening agent, or one already on its next turn, can be waiting
@@ -89,13 +94,16 @@ export function spaceAttention(board: Board | undefined, agents: readonly string
 
 // seedUpdates are the silent baselines for every open agent with no
 // marker: one never seen, or one whose first turn_end_id arrives late (an
-// unknown baseline is not a new completion). A panel then turns unread only
-// for a turn that ends after that. They are written weakly.
+// unknown baseline is not a new completion). The baseline is the latest
+// turn of any kind, so a first reply after status-only turns is still new.
+// A panel then turns unread only for a reply that ends after that. They are
+// written weakly.
 export function seedUpdates(markers: ReadMarkers, board: Board | undefined, agents: readonly string[]): Record<string, ReadMarker> {
   const updates: Record<string, ReadMarker> = {}
   for (const name of agents) {
     if (markers[name] !== undefined) continue
-    const id = turnEnd(findAgentRow(board, name))
+    const row = findAgentRow(board, name)
+    const id = liveEnd(row, row?.turn_end_id)
     if (id !== null) updates[name] = baselineMarker(id)
   }
   return updates

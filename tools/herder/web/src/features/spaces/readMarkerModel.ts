@@ -8,9 +8,10 @@ import type { ReadMarkersV2 } from './readMarkerStore.ts'
 export type ReadPosition = Readonly<{ session: string, offset: number, ts: string }>
 
 // A read marker is what the owner has read of one agent, keyed by agent
-// name. turn is the newest turn-end id (the board's turn_end_id) read, 0
-// while the baseline is unknown; pos is where in the transcript reading
-// reached, null until a transcript has been read; at is when (ms, 0 for
+// name. turn is the newest turn-end id read (the board's reply_end_id, or
+// its turn_end_id for a baseline), 0 while the baseline is unknown; pos is
+// where in the transcript reading reached, null until a transcript has been
+// read; at is when (ms, 0 for
 // never); unread is a deliberate "mark unread".
 export type ReadMarker = Readonly<{ turn: number, pos: ReadPosition | null, at: number, unread: boolean }>
 export type ReadMarkers = Readonly<Record<string, ReadMarker>>

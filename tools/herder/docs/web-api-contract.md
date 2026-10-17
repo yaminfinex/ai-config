@@ -176,6 +176,18 @@ GET `/api/fleet`
     Present on placed panes and unplaced rows alike, and on subagent rows;
     absent until the current incarnation finishes a turn the serve has seen. Ids are monotonic, so a
     browser can keep one as a read marker per agent name.
+  - `reply_end_id` — the `turn_end_id` of the agent's latest turn that ended
+    with plain text: the turn's final assistant text keeps visible text once
+    well-formed `<internal>` and one-line `<status>` fences are dropped (the
+    web's `parseAssistantFencing` rule; malformed fencing is literal text).
+    A turn ending with only fences, or with no text, leaves it where it was.
+    The serve judges each new turn end once, from the transcript tail, when
+    a board first carries it; while the turn's end marker (Claude
+    `turn_duration`, Codex `task_complete`) has not landed it keeps the
+    previous value and judges again on the next board. A tool with no
+    transcript reader, or a failed read, counts every turn. Same session
+    rule and placement as `turn_end_id`; absent until a plain-text turn is
+    seen. Unread reads it; the lens card text keys on `turn_end_id`.
 
   `created_at` is hcom-mastered: it is the roster's own creation time,
   passed through unchanged. `manager`, `manager_state` and `title` are
@@ -418,7 +430,8 @@ GET `/api/state/{namespace}?since={rev}` and POST `/api/state/{namespace}`
   `read.markers` holds what the owner has read of each agent, shared by
   every browser. The key is the agent's bus name and the value is
   `{"turn":<n>,"pos":{"session":"<id>","offset":<n>,"ts":"<rfc3339|''>"}|null,"at":<ms>,"unread":<bool>,"updated":<ms>}`.
-  `turn` is the newest board `turn_end_id` read (0 while unknown); `pos` is
+  `turn` is the newest board `reply_end_id` read, or the `turn_end_id` a
+  silent baseline was seeded at (0 while unknown); `pos` is
   the last transcript entry read, by session ID and byte offset, or null
   before any transcript was read; `at` is when it was read (0 for never);
   `unread` is a deliberate "mark unread". The server stores the value

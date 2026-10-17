@@ -16,7 +16,7 @@ function entries(agent: string) {
 // spaces makes one space per agent from a zoom, then opens the lens.
 async function spaces(agents: string[], name: string, context: Parameters<typeof startBrowser>[0], before?: (evaluate: (expression: string) => Promise<unknown>) => Promise<unknown>) {
   const api = fixtureAPI(agents, { entries })
-  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = 1
+  for (const pane of api.board.workspaces[0]!.tabs[0]!.panes) pane.turn_end_id = pane.reply_end_id = 1
   const session = await startBrowser(context, name, api.plugin)
   const { url, browser, evaluate, waitFor } = session
   await browser(['open', `${url}agents/${agents[0]}`])
@@ -70,7 +70,7 @@ test('/ replies to the peeked agent: typing stays in the reply, ⌘↵ sends and
   const draft = `localStorage.getItem('herder.web.messageDraft.v1:alpha')`
 
   // alpha has a new turn: unread, its card counts it.
-  pane('alpha').turn_end_id = 2
+  pane('alpha').turn_end_id = pane('alpha').reply_end_id = 2
   api.send('fleet', api.board)
   await evaluate(`${cardOf('alpha')}.click(), true`)
   await waitFor(`${selectedAgent} === 'alpha' && ${peekAgent} === 'alpha' && ${pill('alpha')} === '1'`)

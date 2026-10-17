@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Board } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { bindLensShortcuts, type LensKeyActions } from '../layout/shellShortcuts.ts'
-import { needsYou, turnEnd, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
+import { needsYou, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
 import {
   cardLook,
   cardShape,
@@ -104,7 +104,7 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
   const carded = useMemo((): CardRead[] => text !== 'answer' ? [] : spaces.flatMap((space) => {
     if (rowOf(prefs, space.id) === 'background') return []
     const agent = visibleAgent(liveMembers(membersBySpace[space.id] ?? [], board), prefs.visible[space.id])
-    return agent ? [{ agent, turn: turnEnd(findAgentRow(board, agent)) }] : []
+    return agent ? [{ agent, turn: findAgentRow(board, agent)?.turn_end_id ?? null }] : []
   }), [board, membersBySpace, prefs, spaces, text])
   const onBoard = useCallback((agent: string) => Boolean(findAgentRow(board, agent)), [board])
   const answer = useCardText(carded, onBoard)
