@@ -22,11 +22,9 @@ import (
 // branches are its members' branches. Its PRs are the linked ones, in link
 // order (a link not polled yet is a bare row), then the open ones whose
 // description marks the lane. It tells the poller what to ask next: every
-// lane repo and every linked number. A nil poller leaves PRs empty.
+// lane repo and every linked number, so a board with no lanes stops the
+// polling. A nil poller leaves PRs empty.
 func foldBoardLanes(board *fleetview.Board, roster []hcomidentity.Row, proj *agentstore.Projection, git func(cwd string) *repoctx.Git, prs *githubprs.Poller) {
-	if proj == nil || len(board.Lanes) == 0 {
-		return
-	}
 	directory := make(map[string]string, len(roster))
 	for _, row := range roster {
 		directory[row.Name] = row.Directory
@@ -34,7 +32,10 @@ func foldBoardLanes(board *fleetview.Board, roster []hcomidentity.Row, proj *age
 	want := map[string][]int{}
 	for index := range board.Lanes {
 		lane := &board.Lanes[index]
-		record := proj.Lanes[lane.ID]
+		var record *agentstore.LaneView
+		if proj != nil {
+			record = proj.Lanes[lane.ID]
+		}
 		type checkout struct{ repo, branch string }
 		held := map[string]checkout{}
 		for _, member := range lane.Members {

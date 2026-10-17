@@ -116,3 +116,26 @@ func TestFoldBoardLanesWithoutToken(t *testing.T) {
 		t.Errorf("a lane with no repo and no link says %q", board.Lanes[1].PRNote)
 	}
 }
+
+// The last live member leaving empties the board's lanes: the poller stops
+// asking and drops the old rows (reviewer repro, lanes-lagu).
+func TestLastLaneDisappearsStopsPRPolling(t *testing.T) {
+	poller, requests := laneFixture(t)
+	proj := &agentstore.Projection{Lanes: map[string]*agentstore.LaneView{
+		"lane-a": {ID: "lane-a", PRs: []string{"acme/app#309"}},
+		"lane-b": {ID: "lane-b"},
+	}}
+	board := laneBoard()
+	foldBoardLanes(&board, laneRoster, proj, laneGit, poller)
+	poller.Poll(context.Background())
+	before := *requests
+	empty := fleetview.Board{Lanes: []fleetview.Lane{}}
+	foldBoardLanes(&empty, nil, proj, laneGit, poller)
+	poller.Poll(context.Background())
+	if *requests != before {
+		t.Fatalf("empty lane union issued %d GitHub requests, want 0", *requests-before)
+	}
+	if _, ok := poller.Get(githubprs.Ref{Repo: "acme/app", Number: 309}); ok {
+		t.Error("the old rows outlived the empty lane union")
+	}
+}
