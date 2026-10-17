@@ -1166,6 +1166,27 @@ func newHandler(deps dependencies) http.Handler {
 		}
 		serveAssignment(w, r, deps, r.PathValue("busName"))
 	})
+	mux.HandleFunc("/api/lanes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveLaneNew(w, r, deps)
+	})
+	mux.HandleFunc("/api/lanes/moves", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			refuse(w, http.StatusBadRequest, "bad request", "GET required")
+			return
+		}
+		serveLaneMoves(w, deps)
+	})
+	mux.HandleFunc("/api/lanes/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			refuse(w, http.StatusBadRequest, "bad request", "POST required")
+			return
+		}
+		serveLaneUpdate(w, r, deps, r.PathValue("id"))
+	})
 	mux.HandleFunc("/api/panes/{paneID}/history", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			refuse(w, http.StatusBadRequest, "bad request", "GET required")

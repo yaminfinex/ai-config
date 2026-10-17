@@ -116,25 +116,25 @@ func TestBoardCarriesManager(t *testing.T) {
 	if len(panes) != 3 {
 		t.Fatalf("panes = %d", len(panes))
 	}
-	type edge struct{ manager, state, group, title, created string }
+	type edge struct{ manager, state, title, created string }
 	got := map[string]edge{}
 	for _, pane := range panes {
-		got[pane.Agent] = edge{pane.Manager, pane.ManagerState, pane.Group, pane.Title, pane.CreatedAt}
+		got[pane.Agent] = edge{pane.Manager, pane.ManagerState, pane.Title, pane.CreatedAt}
 		for _, child := range pane.Subagents {
-			got[child.Agent] = edge{child.Manager, child.ManagerState, child.Group, child.Title, child.CreatedAt}
+			got[child.Agent] = edge{child.Manager, child.ManagerState, child.Title, child.CreatedAt}
 		}
 	}
 	for _, row := range board.Unplaced {
-		got[row.Agent] = edge{row.Manager, row.ManagerState, row.Group, row.Title, row.CreatedAt}
+		got[row.Agent] = edge{row.Manager, row.ManagerState, row.Title, row.CreatedAt}
 	}
 	want := map[string]edge{
-		"ziru":                   {"operator", fleetview.ManagerOperator, "", "", "2026-09-10T08:00:00Z"},
-		"impl-kolo":              {"ziru", fleetview.ManagerLive, "builders", "payload builder", "2026-09-10T08:01:00Z"},
-		"kolo_general_purpose_1": {"impl-kolo", fleetview.ManagerLive, "helpers", "", "2026-09-10T08:02:00Z"},
-		"sesh-nabi":              {"orch-dead", fleetview.ManagerEnded, "", "", "2026-09-10T08:03:00Z"},
-		"orch-hamo":              {"", fleetview.ManagerUnknown, "", "", "2026-09-10T08:04:00Z"},
-		"sesh-kele":              {"orch-hamo", fleetview.ManagerLive, "", "", "2026-09-10T08:05:00Z"},
-		"lone":                   {"", fleetview.ManagerUnknown, "review", "", "2026-09-10T08:06:00Z"},
+		"ziru":                   {"operator", fleetview.ManagerOperator, "", "2026-09-10T08:00:00Z"},
+		"impl-kolo":              {"ziru", fleetview.ManagerLive, "payload builder", "2026-09-10T08:01:00Z"},
+		"kolo_general_purpose_1": {"impl-kolo", fleetview.ManagerLive, "", "2026-09-10T08:02:00Z"},
+		"sesh-nabi":              {"orch-dead", fleetview.ManagerEnded, "", "2026-09-10T08:03:00Z"},
+		"orch-hamo":              {"", fleetview.ManagerUnknown, "", "2026-09-10T08:04:00Z"},
+		"sesh-kele":              {"orch-hamo", fleetview.ManagerLive, "", "2026-09-10T08:05:00Z"},
+		"lone":                   {"", fleetview.ManagerUnknown, "", "2026-09-10T08:06:00Z"},
 		"-":                      {},
 	}
 	for name, expected := range want {
@@ -150,7 +150,7 @@ func TestBoardCarriesManager(t *testing.T) {
 		t.Fatalf("lanes = %#v", board.Lanes)
 	}
 	encoded, _ := json.Marshal(board)
-	for _, forbidden := range []string{`"launcher"`, `"mission"`, `"provenance"`, `"binding"`, `"vitals"`} {
+	for _, forbidden := range []string{`"launcher"`, `"group"`, `"mission"`, `"provenance"`, `"binding"`, `"vitals"`} {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("board leaks %s: %s", forbidden, encoded)
 		}
@@ -186,7 +186,7 @@ func TestStoreAppendReemitsFleet(t *testing.T) {
 	for {
 		event, data := readEvent(t, reader)
 		if event == "fleet" {
-			if !strings.Contains(data, `"manager":"ziru","manager_state":"live","group":"builders","title":"payload builder"`) || !strings.Contains(data, `"manager":"operator","manager_state":"operator"`) {
+			if !strings.Contains(data, `"manager":"ziru","manager_state":"live","title":"payload builder"`) || !strings.Contains(data, `"manager":"operator","manager_state":"operator"`) {
 				t.Fatalf("initial fleet = %s", data)
 			}
 			break

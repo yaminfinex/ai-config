@@ -105,7 +105,7 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
   const {
     openAgent, openFile, openFolder,
     fleetRail, setFleetRail, notesRail, setNotesRail, expandedItems, setExpandedItems, knownWorkspaceItems, setKnownWorkspaceItems,
-    knownManagerItems, setKnownManagerItems, fleetView, setFleetView, pendingGroups, setPendingGroups,
+    knownManagerItems, setKnownManagerItems, fleetView, setFleetView,
   } = workspace
   // Stable handlers let the memoised sidebar and notes rail skip Shell renders their props did not cause.
   const previewAgent = useCallback((name: string, placement?: OpenPlacement) => openAgent(name, true, placement, true), [openAgent])
@@ -130,9 +130,8 @@ function Shell({ initialRoute }: { initialRoute: Exclude<Route, { page: 'missing
       subheading={<FleetViewToggle view={fleetView} onView={setFleetView} />}
       width={fleetRail.width} collapsed={fleetRail.collapsed || workspace.onLens}
       onWidth={(width) => setFleetRail((rail) => ({ ...rail, width }))} onToggle={workspace.toggleFleetRail}>
-      <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent}
-        onPreviewAgent={previewAgent} onPinAgent={pinAgent} onOpenTerminal={openTerminal}
-        onOpenGroupAsSpace={workspace.spaces.openGroup} pendingGroups={pendingGroups} onPendingGroups={setPendingGroups}
+      <FleetSidebar board={workspace.board} view={fleetView} activeAgent={workspace.activeAgent} activeLane={workspace.activeLane}
+        onPreviewAgent={previewAgent} onPinAgent={pinAgent} onOpenTerminal={openTerminal} onOpenLaneSpace={workspace.openLane}
         expandedItems={expandedItems} onExpandedItems={setExpandedItems} knownWorkspaceItems={knownWorkspaceItems} onKnownWorkspaceItems={setKnownWorkspaceItems}
         knownManagerItems={knownManagerItems} onKnownManagerItems={setKnownManagerItems} />
     </UtilityRail>

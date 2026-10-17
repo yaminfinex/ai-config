@@ -22,7 +22,7 @@ test('supervision drops produce one assignment intent', () => {
 
 test('one drop submits exactly one assignment', () => {
   const submitted: unknown[] = []
-  const accepted = dropAssignment('supervision', 'agent:a', 'agent:d', nodes, (name, assignment) => { submitted.push({ name, assignment }) })
+  const accepted = dropAssignment('supervision', 'agent:a', 'agent:d', nodes, (drop) => { submitted.push(drop) })
   assert.equal(accepted, true)
   assert.deepEqual(submitted, [{ name: 'a', assignment: { manager: 'd' } }])
 })

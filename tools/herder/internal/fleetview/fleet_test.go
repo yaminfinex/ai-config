@@ -274,7 +274,7 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 	}
 	roster := []hcomidentity.Row{{Name: "mavu", CreatedAt: at.Add(9 * time.Second)}, {Name: "funa"}}
 	got := FoldStore(rows, roster, proj)
-	if got[0].Launcher != "vara" || got[0].Manager != "vara" || got[0].Group != "-" || got[0].Provenance == nil || got[0].Provenance.Kind != "registered" {
+	if got[0].Launcher != "vara" || got[0].Manager != "vara" || got[0].Provenance == nil || got[0].Provenance.Kind != "registered" {
 		t.Fatalf("reused name folded the old incarnation: %+v", got[0])
 	}
 	if got[1].Launcher != "-" || got[1].Provenance != nil {
@@ -287,7 +287,7 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 		t.Fatal("FoldStore mutated its input")
 	}
 	roster[0].CreatedAt = at.Add(-time.Minute)
-	if old := FoldStore(rows, roster, proj); old[0].Launcher != "ziru" || old[0].Group != "old" {
+	if old := FoldStore(rows, roster, proj); old[0].Launcher != "ziru" {
 		t.Fatalf("earlier created_at must fold the old incarnation: %+v", old[0])
 	}
 	if nilProj := FoldStore(rows, roster, nil); nilProj[0].Launcher != "unregistered" {
@@ -297,7 +297,7 @@ func TestFoldStoreMatchesByNameAndIncarnation(t *testing.T) {
 	apply(agentstore.Event{At: at.Add(20 * time.Second), Kind: agentstore.KindAssign, By: "vara", Name: "mavu", Group: "second-life"})
 	roster[0].CreatedAt = at.Add(time.Minute)
 	roster[0].SessionID = "brand-new"
-	if noClose := FoldStore(rows, roster, proj); noClose[0].Launcher != "unregistered" || noClose[0].Group != "-" || noClose[0].Manager != "-" {
+	if noClose := FoldStore(rows, roster, proj); noClose[0].Launcher != "unregistered" || noClose[0].Manager != "-" {
 		t.Fatalf("reused name without a close event inherited: %+v", noClose[0])
 	}
 	// Binding folds into the row without touching placement/GAP.

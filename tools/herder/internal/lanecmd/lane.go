@@ -110,7 +110,7 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
-	handler, ok := verbs[verb]
+	_, ok := verbs[verb]
 	if !ok {
 		fmt.Fprintf(stderr, "herder lane: unknown verb %q\n%s", verb, usage)
 		return 2
@@ -130,11 +130,6 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stderr, "herder lane %s: store unavailable: %v\n", verb, store.ImportErr)
 		return exitUnavailable
 	}
-	proj, err := store.LoadNoSnapshot()
-	if err != nil {
-		fmt.Fprintf(stderr, "herder lane %s: store unavailable: %v\n", verb, err)
-		return exitUnavailable
-	}
 	roster, err := deps.roster()
 	if err != nil {
 		// Without hcom no lane has a known live member: names resolve among
@@ -142,22 +137,49 @@ func run(args []string, stdout, stderr io.Writer, deps dependencies) int {
 		fmt.Fprintf(stderr, "herder lane %s: live hcom roster unavailable (%v); lanes have no known live members\n", verb, err)
 		roster = nil
 	}
-	s := &session{store: store, proj: proj, roster: roster, members: proj.LaneMembers(roster), opts: opts, now: deps.now().UTC(), stdout: stdout, stderr: stderr}
-	if err := handler(s); err != nil {
+	if err := exec(store, roster, deps.now(), verb, opts, stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "herder lane %s: %v\n", verb, err)
-		var nf notFound
-		var rf refusal
-		switch {
-		case errors.As(err, &nf):
-			return 1
-		case errors.As(err, &rf):
-			return 2
-		case errors.Is(err, agentstore.ErrUnavailable):
-			return exitUnavailable
-		}
-		return 2
+		return ExitCode(err)
 	}
 	return 0
+}
+
+// Exec runs one verb against an open store and a roster the caller already
+// holds: the serve's lane endpoints append the same events as the CLI. args
+// are the CLI's (verb first). The error's ExitCode is the CLI's exit code.
+func Exec(store *agentstore.Store, roster []hcomidentity.Row, now time.Time, args []string, stdout io.Writer) error {
+	if len(args) == 0 || verbs[args[0]] == nil {
+		return refusal{errors.New("unknown lane verb")}
+	}
+	opts, err := parse(args[1:])
+	if err != nil {
+		return refusal{err}
+	}
+	return exec(store, roster, now, args[0], opts, stdout, io.Discard)
+}
+
+func exec(store *agentstore.Store, roster []hcomidentity.Row, now time.Time, verb string, opts options, stdout, stderr io.Writer) error {
+	proj, err := store.LoadNoSnapshot()
+	if err != nil {
+		return fmt.Errorf("%w: %v", agentstore.ErrUnavailable, err)
+	}
+	s := &session{store: store, proj: proj, roster: roster, members: proj.LaneMembers(roster), opts: opts, now: now.UTC(), stdout: stdout, stderr: stderr}
+	return verbs[verb](s)
+}
+
+// ExitCode is the CLI exit code for a verb's error: 1 lane not found, 2
+// usage or refused, 3 store unavailable.
+func ExitCode(err error) int {
+	var nf notFound
+	switch {
+	case err == nil:
+		return 0
+	case errors.As(err, &nf):
+		return 1
+	case errors.Is(err, agentstore.ErrUnavailable):
+		return exitUnavailable
+	}
+	return 2
 }
 
 var verbs = map[string]func(*session) error{

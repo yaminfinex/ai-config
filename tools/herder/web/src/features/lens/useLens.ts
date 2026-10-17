@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Board } from '../../types.ts'
 import { findAgentRow } from '../../shared/agentStatus.ts'
 import { bindLensShortcuts, type LensKeyActions } from '../layout/shellShortcuts.ts'
-import { needsYou, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
+import { needsYou, rekeyRecord, type SpaceAttention, type SpaceDefinition, type SpaceMember } from '../spaces/index.ts'
 import {
   cardLook,
   cardShape,
@@ -169,6 +169,9 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     }
   }, [leaveReply, readSeen])
   const setPeekWidth = useCallback((width: number) => setPrefs((current) => ({ ...current, peek: clampPeekWidth(width) })), [])
+  // rekey moves a space's tier and visible agent to another space id that
+  // has none (the one-time lane move).
+  const rekey = useCallback((from: string, to: string) => setPrefs((current) => ({ ...current, rows: rekeyRecord(current.rows, from, to), visible: rekeyRecord(current.visible, from, to) })), [])
 
   const select = useCallback((id: string) => {
     setSelected(id)
@@ -249,6 +252,6 @@ export function useLens({ enabled, spaces, membersBySpace, board, attention, tot
     else openAlone(agent)
   }, [membersBySpace, openAlone, order, zoomInto])
 
-  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total), peek, peekWidth: prefs.peek ?? peekWidth, setPeekWidth,
+  return { prefs, order, rows, selected: chosen, select, zoomCard, stepSpace, summon, revealTick, needYou: needsYou(total), peek, peekWidth: prefs.peek ?? peekWidth, setPeekWidth, rekey,
     reply: replying ? { agent: replying.agent, focus: replying.focus } : null, startReply, replySent, leaveReply }
 }

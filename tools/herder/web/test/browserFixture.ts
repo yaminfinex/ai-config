@@ -168,6 +168,90 @@ export function fixtureAPI(agents: string[], options: {
   return { plugin, state, posts, board, send, entryRequests, subscriptionUpdates, holdEntries, messages, failSends, opens: () => opens, heldEntries: () => held.length }
 }
 
+type FixtureLane = { id: string, name: string, lead: string, members: string[] }
+type FixtureBoard = ReturnType<typeof fixtureAPI>['board'] & { lanes?: FixtureLane[] }
+
+// lanesAPI adds the serve's lane endpoints to a fixtureAPI: POST /api/lanes
+// (lane new: the lead is its first member), POST /api/lanes/{id} (rename or
+// lead), POST /api/agents/{name}/assignment with {lane}, and GET
+// /api/lanes/moves ({} until setMoves). Every request lands in requests.
+// A write changes the record, sets board.lanes to the lanes with a member
+// (as the serve's board does) and pushes a fleet event, like the serve's
+// store watch. Mount it ahead of the fixture's plugin.
+export function lanesAPI(fixture: ReturnType<typeof fixtureAPI>, lanes: FixtureLane[] = []) {
+  let moves: Record<string, string> = {}
+  const record = lanes.map((lane) => ({ ...lane, members: [...lane.members] }))
+  const requests: { method: string, path: string, body: unknown }[] = []
+  const board = fixture.board as FixtureBoard
+  let next = 0
+  const publish = () => {
+    board.lanes = record.filter((lane) => lane.members.length > 0).map((lane) => ({ ...lane, members: [...lane.members] }))
+    fixture.send('fleet', board)
+  }
+  publish()
+  const join = (agent: string, laneID: string) => {
+    for (const lane of record) lane.members = lane.members.filter((member) => member !== agent)
+    record.find((lane) => lane.id === laneID)?.members.push(agent)
+  }
+  const plugin: Plugin = {
+    name: 'herder-fixture-lanes',
+    configureServer(server) {
+      server.middlewares.use((request, response, nextMiddleware) => {
+        const url = new URL(request.url ?? '/', 'http://fixture')
+        const json = (body: unknown, status = 200) => {
+          response.statusCode = status
+          response.setHeader('Content-Type', 'application/json')
+          response.end(JSON.stringify(body))
+        }
+        if (url.pathname === '/api/lanes/moves' && request.method === 'GET') {
+          requests.push({ method: 'GET', path: url.pathname, body: null })
+          return json(moves)
+        }
+        const lane = url.pathname.match(/^\/api\/lanes(?:\/([^/]+))?$/)
+        const assignment = url.pathname.match(/^\/api\/agents\/([^/]+)\/assignment$/)
+        if (request.method !== 'POST' || (!lane && !assignment)) return nextMiddleware()
+        let raw = ''
+        request.on('data', (chunk) => { raw += chunk })
+        request.on('end', () => {
+          const body = JSON.parse(raw || '{}') as { name?: string, lead?: string, lane?: string }
+          requests.push({ method: 'POST', path: url.pathname, body })
+          if (assignment) {
+            if (!body.lane || !record.some((item) => item.id === body.lane)) return json({ error: 'bad request', detail: 'is not a lane id' }, 400)
+            join(assignment[1], body.lane)
+            publish()
+            return json({ name: assignment[1], lane: body.lane, by: 'web-owner' })
+          }
+          if (!lane![1]) {
+            const id = `lane${++next}`
+            record.push({ id, name: body.name ?? '', lead: body.lead ?? '', members: [] })
+            if (body.lead) join(body.lead, id)
+            publish()
+            return json({ id })
+          }
+          const target = record.find((item) => item.id === lane![1])
+          if (!target) return json({ error: 'not found', detail: 'no such lane' }, 404)
+          if (body.name) target.name = body.name
+          if (body.lead) target.lead = body.lead
+          publish()
+          json({})
+        })
+      })
+    },
+  }
+  // drop(agent) takes a seat off the board's lanes, as a seat that ended.
+  const drop = (agent: string) => {
+    for (const item of record) item.members = item.members.filter((member) => member !== agent)
+    publish()
+  }
+  const add = (item: FixtureLane) => {
+    record.push({ ...item, members: [...item.members] })
+    publish()
+  }
+  // setMoves is what the move script would write to lane-move.json.
+  const setMoves = (next: Record<string, string>) => { moves = next }
+  return { plugin, requests, record, drop, add, publish, setMoves }
+}
+
 // A minimal React devtools hook, installed before React loads, that counts
 // each component that rendered in a commit: mounted, or updated with work
 // performed. Subtrees React bailed out of are skipped.

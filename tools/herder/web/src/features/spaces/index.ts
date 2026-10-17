@@ -10,6 +10,8 @@ export {
   removeLayoutRecovery,
   reopenSpaceLayout,
   writeActiveSpace,
+  activeSpaceSessionKey,
+  lastActiveSpaceKey,
   type SpaceDefinition,
   type LegacyLayoutFamilies,
   type SpacesInitialization,
@@ -29,3 +31,4 @@ export { arriveDecision, focusAtEnd, focusOrigin, type ArriveDecision, type Arri
 export { memberParams, membersFromDock, parseMembersRow, reconcileSpaceMembers, sameMembers, storedSpaceMembers, type SpaceMember, type SpaceMembersRow } from './spaceMembersModel.ts'
 export { createSpaceMembersStore, type SpaceMembersStore } from './spaceMembersStore.ts'
 export { browserSpaceMembersTransport, createSpaceMembersSync, createSpaceMembersSyncPersistence, spaceMembersNamespace, spaceMembersStoreSyncAdapter } from './spaceMembersSync.ts'
+export { laneOfSpace, laneRoster, laneSpaceID, laneSpaces, moveStoredLayout, pendingLaneMoves, readLaneMovesApplied, rekeyRecord, runLaneMoves, withLaneRosters, writeLaneMovesApplied, type LaneMoveTarget } from './laneSpacesModel.ts'

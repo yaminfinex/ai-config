@@ -43,7 +43,6 @@ export type InitialLayout = {
   knownWorkspaceItems: string[] | null
   knownManagerItems: string[] | null
   fleetView: FleetView
-  pendingGroups: string[]
   spacesCollapsed: boolean
 }
 
@@ -60,7 +59,6 @@ function legacyInitial(initialization: Extract<SpacesInitialization, { mode: 'le
     knownWorkspaceItems: source?.knownWorkspaceItems ?? null,
     knownManagerItems: null,
     fleetView: defaultFleetView,
-    pendingGroups: [],
     spacesCollapsed: false,
   }
 }
@@ -81,7 +79,6 @@ function spacesInitial(spaceID: string): InitialLayout {
     knownWorkspaceItems: shell.stored.knownWorkspaceItems ?? null,
     knownManagerItems: shell.stored.knownManagerItems ?? null,
     fleetView: shell.stored.fleetView ?? defaultFleetView,
-    pendingGroups: shell.stored.pendingGroups ?? [],
     spacesCollapsed: shell.stored.spacesCollapsed ?? false,
   }
 }
@@ -110,7 +107,6 @@ export function useLayoutPersistence(
   const [knownWorkspaceItems, setKnownWorkspaceItems] = useState<string[] | null>(initial.knownWorkspaceItems)
   const [knownManagerItems, setKnownManagerItems] = useState<string[] | null>(initial.knownManagerItems)
   const [fleetView, setFleetView] = useState<FleetView>(initial.fleetView)
-  const [pendingGroups, setPendingGroups] = useState<string[]>(initial.pendingGroups)
   const [spacesCollapsed, setSpacesCollapsed] = useState(initial.spacesCollapsed)
   const [dockReady, setDockReady] = useState(false)
   const persistenceReady = useRef(false)
@@ -123,7 +119,7 @@ export function useLayoutPersistence(
   const spaceStates = useRef(new Map<string, LayoutWriteState>())
   const [initialShellState] = useState(initialShellWriteState)
   const shellState = useRef<LayoutWriteState>(initialShellState)
-  const preferenceSnapshot = useRef(JSON.stringify([initial.fleetRail, initial.notesRail, initial.expandedItems, initial.knownWorkspaceItems, initial.knownManagerItems, initial.fleetView, initial.pendingGroups, initial.spacesCollapsed]))
+  const preferenceSnapshot = useRef(JSON.stringify([initial.fleetRail, initial.notesRail, initial.expandedItems, initial.knownWorkspaceItems, initial.knownManagerItems, initial.fleetView, initial.spacesCollapsed]))
 
   const cancelTimer = useCallback(() => {
     if (timer.current === undefined) return
@@ -160,14 +156,14 @@ export function useLayoutPersistence(
 
   const flushShell = useCallback(() => {
     if (initialization.mode !== 'spaces' || !shellDirty.current) return false
-    const value = shellPreferencesValue({ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, pendingGroups, spacesCollapsed })
+    const value = shellPreferencesValue({ fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, spacesCollapsed })
     const previous = shellState.current
     const next = writeShellPreferences(localStorage, JSON.stringify(value), previous)
     if (next === previous) return false
     shellState.current = next
     shellDirty.current = false
     return true
-  }, [expandedItems, fleetRail, fleetView, initialization.mode, knownManagerItems, knownWorkspaceItems, notesRail, pendingGroups, spacesCollapsed])
+  }, [expandedItems, fleetRail, fleetView, initialization.mode, knownManagerItems, knownWorkspaceItems, notesRail, spacesCollapsed])
 
   const flushLayout = useCallback(() => {
     if (!persistenceReady.current || !layoutDirty.current) return false
@@ -232,7 +228,7 @@ export function useLayoutPersistence(
 
   useEffect(() => {
     if (!dockReady) return
-    const nextPreferences = JSON.stringify([fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, pendingGroups, spacesCollapsed])
+    const nextPreferences = JSON.stringify([fleetRail, notesRail, expandedItems, knownWorkspaceItems, knownManagerItems, fleetView, spacesCollapsed])
     if (preferenceSnapshot.current !== nextPreferences) {
       preferenceSnapshot.current = nextPreferences
       if (initialization.mode === 'spaces') shellDirty.current = true
@@ -246,7 +242,7 @@ export function useLayoutPersistence(
       if (scheduledGeneration === generation.current) flushAll()
     }, 120)
     return cancelTimer
-  }, [cancelTimer, dockReady, expandedItems, fleetRail, fleetView, flushAll, initialization.mode, knownManagerItems, knownWorkspaceItems, notesRail, pendingGroups, revision, spacesCollapsed])
+  }, [cancelTimer, dockReady, expandedItems, fleetRail, fleetView, flushAll, initialization.mode, knownManagerItems, knownWorkspaceItems, notesRail, revision, spacesCollapsed])
 
   useDOMEvent(window, 'pagehide', () => { flushAll() })
   useDOMEvent<StorageEvent>(window, 'storage', (event) => {
@@ -277,8 +273,6 @@ export function useLayoutPersistence(
     setKnownManagerItems,
     fleetView,
     setFleetView,
-    pendingGroups,
-    setPendingGroups,
     spacesCollapsed,
     setSpacesCollapsed,
     markDirty,

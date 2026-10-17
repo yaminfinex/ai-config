@@ -5,6 +5,7 @@ import type { SpaceDefinition, SpaceResult } from './spacesModel.ts'
 import type { SpacesStatus } from './spacesStore.ts'
 import { attentionLabel, quietAttention, spaceMenuItems, type SpaceAttention } from './spaceAttentionModel.ts'
 import { draftCountLabel } from '../drafts/draftMarksModel.ts'
+import { laneOfSpace } from './laneSpacesModel.ts'
 
 type Props = {
   enabled: boolean
@@ -116,9 +117,12 @@ export function SpacesSection(props: Props) {
       {props.items.map((space) => {
         const attention = attentionOf(space.id)
         const active = space.id === props.activeID
+        // A lane space is listed by name and leaves with its last member:
+        // no drag, no close. Renaming it renames the lane.
+        const lane = laneOfSpace(space.id) !== null
         return <li
           className={`space-row${active ? ' active' : ''}${dragging === space.id ? ' dragging' : ''}${dropTarget?.id === space.id ? dropTarget.after ? ' drop-after' : ' drop-before' : ''}`}
-          data-space-id={space.id} draggable={editing !== space.id} key={space.id}
+          data-space-id={space.id} data-lane={lane ? 'true' : undefined} draggable={editing !== space.id && !lane} key={space.id}
           onDragStart={(event) => {
             if ((event.target as HTMLElement).closest('.space-close')) { event.preventDefault(); return }
             event.dataTransfer.effectAllowed = 'move'
@@ -128,14 +132,14 @@ export function SpacesSection(props: Props) {
           }}
           onDragOver={(event) => {
             event.preventDefault()
-            if (!draggingID.current || draggingID.current === space.id) return
+            if (!draggingID.current || draggingID.current === space.id || lane) return
             const rect = event.currentTarget.getBoundingClientRect()
             setDropTarget({ id: space.id, after: event.clientY >= rect.top + rect.height / 2 })
           }}
           onDrop={(event) => {
             event.preventDefault()
             const sourceID = event.dataTransfer.getData('text/plain') || draggingID.current
-            if (!sourceID || sourceID === space.id) return
+            if (!sourceID || sourceID === space.id || lane) return
             const sourceIndex = props.items.findIndex((item) => item.id === sourceID)
             const targetIndex = props.items.findIndex((item) => item.id === space.id)
             const rect = event.currentTarget.getBoundingClientRect()
@@ -158,7 +162,7 @@ export function SpacesSection(props: Props) {
                 }
               }} />
             : <button type="button" className="space-name" aria-current={active ? 'true' : undefined}
-              aria-label={`${space.name}, ${attentionLabel(attention)}`} title={space.name}
+              aria-label={`${space.name}, ${attentionLabel(attention)}`} title={lane ? `lane ${space.name}` : space.name}
               onClick={() => props.switch(space.id)} onDoubleClick={() => beginRename(space)}
               onContextMenu={(event) => openSpaceMenu(space, { x: event.clientX, y: event.clientY }, event.currentTarget, event)} onKeyDown={(event) => {
                 if (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey) {
@@ -177,7 +181,7 @@ export function SpacesSection(props: Props) {
                   event.preventDefault()
                 }
               }}><span className="space-label">{space.name}</span><AttentionMarks attention={attention} /></button>}
-          {active && editing !== space.id && <button type="button" className="space-close"
+          {active && !lane && editing !== space.id && <button type="button" className="space-close"
             aria-label={`Close space ${space.name}`} title={`Close ${space.name}`} onClick={() => props.close(space.id)}>×</button>}
         </li>
       })}

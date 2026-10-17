@@ -113,8 +113,8 @@ func TestAssignmentEndpointReemitsFleetForManagerAndHuman(t *testing.T) {
 			t.Fatal("assignment did not re-emit fleet within the debounce")
 		}
 	}
-	post(`{"manager":"sesh-nabi"}`, `"manager":"sesh-nabi","manager_state":"live","group":"builders"`)
-	post(`{"manager":"human"}`, `"manager":"operator","manager_state":"operator","group":"builders"`)
+	post(`{"manager":"sesh-nabi"}`, `"manager":"sesh-nabi","manager_state":"live"`)
+	post(`{"manager":"human"}`, `"manager":"operator","manager_state":"operator"`)
 }
 
 func TestAssignmentEndpointRefusals(t *testing.T) {

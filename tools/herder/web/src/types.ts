@@ -20,7 +20,6 @@ export interface Row {
   // created_at is hcom's roster creation time (RFC3339 UTC).
   manager?: string
   manager_state?: ManagerState
-  group?: string
   title?: string
   created_at?: string
 }
@@ -60,6 +59,16 @@ export interface Workspace {
 export interface Board {
   workspaces: Workspace[]
   unplaced: Row[]
+  // lanes are the lanes with a live member, by name; members are live
+  // roster names (a Task subagent follows its owner). Absent from an older serve.
+  lanes?: Lane[]
+}
+
+export interface Lane {
+  id: string
+  name: string
+  lead: string
+  members: string[]
 }
 
 export interface SubstrateEvent {
